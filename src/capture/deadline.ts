@@ -219,8 +219,13 @@ export function deadlinePage(
             };
           const result = value.apply(object, args);
           if (factories.has(String(key)) && result) return wrap(result);
-          if (result && typeof result.then === "function")
+          if (result && typeof result.then === "function") {
+            // The operation has already started. If the deadline expires
+            // first, run() never awaits it, and a later rejection (a page
+            // closed on timeout) must not surface as unhandled.
+            (result as Promise<unknown>).catch(() => undefined);
             return deadline.run(() => result);
+          }
           return result;
         };
       },

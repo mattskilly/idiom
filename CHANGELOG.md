@@ -4,6 +4,14 @@ User-visible changes to Idiom are recorded here, newest first.
 
 ## [Unreleased]
 
+## [v0.9.1] - 2026-10-25
+
+A safety release for the interaction probe, which v0.9.0 turned on by default. Please upgrade.
+
+- **Safety fix: the interaction probe no longer changes your app's data.** In v0.9.0 the default-on probe could click submit and action buttons that sent real requests: on a booking app it created bookings and cancelled one, which then broke later states in the same capture. While probing, every request other than GET, HEAD and OPTIONS is now blocked in the browser and still counts as the control's effect, so working buttons are not reported as dead. A state's own declared steps, replayed to reset it, still run normally. Please upgrade from 0.9.0.
+- Fixed a capture that could stall for its full 30-minute limit after probing a state: closing the probed page or its browser context now gives up after 10 seconds and capture moves on.
+- Fixed a crash on real apps: when the interaction probe's time limit expired while a page call was starting, the page was closed and the abandoned call rejected unhandled, ending the capture and leaving the app server running. Abandoned calls are now always handled, and any stray browser error during capture ends it through normal cleanup, so the server is always stopped.
+
 ## [v0.9.0] - 2026-10-25
 
 Idiom stands on its own as a design reviewer and QA agent. It learns your design system from code, generates flows from your routes, catches the benchmark with zero configuration, leads with the top issues, guards regressions by default (with a GitHub Action), and runs the repair loop with `idiom fix`. The interaction probe can no longer hang a capture, and a start command that pins its port now fails fast with the fix. Benchmark: 7/7 before, none after, with no `checks` config.

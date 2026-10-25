@@ -12695,7 +12695,7 @@ function readPackageVersion() {
   return metadata2.version;
 }
 var IDIOM_VERSION = readPackageVersion();
-var IDIOM_BUILD_COMMIT = true ? "93383917be3b3274b490a2bb0f7b2c8482d168e2" : "unknown";
+var IDIOM_BUILD_COMMIT = true ? "c41b0db5ef406600ca00b6b836b1dac4b1baf046" : "unknown";
 var IDIOM_VERSION_DISPLAY = `${IDIOM_VERSION} (${IDIOM_BUILD_COMMIT.slice(0, 7)})`;
 
 // src/baseline/config-hash.ts
@@ -19185,8 +19185,10 @@ function deadlinePage(page, deadline) {
             };
           const result = value.apply(object2, args);
           if (factories.has(String(key3)) && result) return wrap(result);
-          if (result && typeof result.then === "function")
+          if (result && typeof result.then === "function") {
+            result.catch(() => void 0);
             return deadline.run(() => result);
+          }
           return result;
         };
       }
@@ -21160,6 +21162,7 @@ function appeared(after, before) {
   });
 }
 var destructive2 = /\b(delete|remove|sign ?out|log ?out|publish|unpublish|reset|discard|clear all|archive|deactivate|unsubscribe|pay|purchase|buy|checkout|send|submit order)\b/i;
+var safeMethods = /* @__PURE__ */ new Set(["GET", "HEAD", "OPTIONS"]);
 var ignoredRequest = (request2) => /(?:webpack-hmr|__nextjs|_next\/static|hot-update|favicon|\/__vite|sockjs)/.test(
   request2.url()
 );
@@ -21712,11 +21715,20 @@ async function probeControls(options) {
   let effects;
   const owned = /* @__PURE__ */ new Set([options.page]);
   const protections = /* @__PURE__ */ new Map();
+  let replaying = 0;
+  const restore = async (page) => {
+    replaying += 1;
+    try {
+      await options.restore(page);
+    } finally {
+      replaying -= 1;
+    }
+  };
   let creating = false;
   let retireAfterAttempt = false;
   const context2 = options.page.context();
   const close2 = (page) => {
-    protections.get(page)?.();
+    void protections.get(page)?.();
     protections.delete(page);
     void page.close({ runBeforeUnload: false }).then(
       () => owned.delete(page),
@@ -21752,6 +21764,12 @@ async function probeControls(options) {
     const onRequest = (request2) => {
       if (!ignoredRequest(request2)) effects?.add("network");
     };
+    const onRoute = (route) => {
+      if (replaying > 0 || safeMethods.has(route.request().method()) || ignoredRequest(route.request()))
+        return route.fallback();
+      effects?.add("network");
+      return route.abort("blockedbyclient").catch(() => void 0);
+    };
     page.on("dialog", onDialog);
     page.on("filechooser", onFileChooser);
     page.on("download", onDownload);
@@ -21763,7 +21781,9 @@ async function probeControls(options) {
       page.off("download", onDownload);
       page.off("popup", onPopup);
       page.off("request", onRequest);
+      return page.unroute("**/*", onRoute).catch(() => void 0);
     });
+    await deadline.run(() => page.route("**/*", onRoute));
     await deadline.run(() => page.addInitScript(suppressNativeUi));
     for (const frame of page.frames())
       await deadline.run(() => frame.evaluate(suppressNativeUi));
@@ -21830,7 +21850,7 @@ async function probeControls(options) {
         explanation = new ExplanationCollector(page, "probe", options.waitMs);
         if (dirty) {
           progress(`${phase}: restore`);
-          await options.restore(page);
+          await restore(page);
           deadline.check();
           dirty = false;
         }
@@ -21975,9 +21995,9 @@ async function probeControls(options) {
               candidate: explanation,
               collector,
               waitMs: options.waitMs,
-              restore: options.restore
+              restore
             });
-            await options.restore(page);
+            await restore(page);
             dirty = false;
           }
           progress("observe");
@@ -22009,7 +22029,7 @@ async function probeControls(options) {
           "nested menu",
           async (page, motion, _collector, deadline) => {
             dirty = true;
-            await options.restore(page);
+            await restore(page);
             await page.locator(candidate2.path).first().click({ timeout: 1500, noWaitAfter: true });
             await page.waitForTimeout(options.waitMs);
             const skipped2 = intent ? await intentSkip(page, item) : void 0;
@@ -22078,7 +22098,7 @@ async function probeControls(options) {
             candidate: explanation,
             collector,
             waitMs: options.waitMs,
-            restore: options.restore
+            restore
           });
           return {};
         }
@@ -22099,7 +22119,7 @@ async function probeControls(options) {
         "collection discovery",
         async (page) => {
           dirty = true;
-          await options.restore(page);
+          await restore(page);
           const item = page.locator(itemSelector).filter({ visible: true }).first();
           if (!await item.count()) {
             entry.reason = "no rendered item";
@@ -22150,7 +22170,7 @@ async function probeControls(options) {
           "collection",
           async (page) => {
             dirty = true;
-            await options.restore(page);
+            await restore(page);
             const item = page.locator(itemSelector).filter({ visible: true }).first();
             await item.hover({ timeout: 1500 }).catch(() => void 0);
             const before = await visibleMenuItems(page);
@@ -22181,7 +22201,7 @@ async function probeControls(options) {
     if (dirty && current) {
       const final = deadlinePage(current, state);
       try {
-        await state.run(() => options.restore(final.page));
+        await state.run(() => restore(final.page));
       } finally {
         final.dispose();
       }
@@ -22230,7 +22250,7 @@ async function probeControls(options) {
     }
     artifact.motion ??= initialMotion?.evidence(artifact.reason);
     context2.off("page", onNewPage);
-    for (const dispose of protections.values()) dispose();
+    await Promise.all([...protections.values()].map((dispose) => dispose()));
     state.dispose();
     progress("complete");
   }
@@ -22603,7 +22623,7 @@ async function captureReferenceUrl(options) {
       fullPage: false
     });
   } finally {
-    await page?.close().catch(() => void 0);
+    await closeWithin(() => page?.close());
     await context2?.close().catch(() => void 0);
     await browser.close().catch(() => void 0);
   }
@@ -22769,8 +22789,19 @@ async function captureInContext(context2, tuple, runtime) {
       } : void 0
     });
   } finally {
-    await page?.close().catch(() => void 0);
+    await closeWithin(() => page?.close());
   }
+}
+var CLOSE_TIMEOUT_MS = 1e4;
+async function closeWithin(close2) {
+  let timer;
+  await Promise.race([
+    Promise.resolve(close2()).catch(() => void 0),
+    new Promise((resolve50) => {
+      timer = setTimeout(resolve50, CLOSE_TIMEOUT_MS);
+    })
+  ]);
+  clearTimeout(timer);
 }
 function createBrowserLauncher(overrides = {}) {
   return async (options) => {
@@ -22854,7 +22885,7 @@ function createBrowserLauncher(overrides = {}) {
             endedAt: runtime.now().toISOString()
           };
         } finally {
-          await context2?.close().catch(() => void 0);
+          await closeWithin(() => context2?.close());
         }
       },
       async measure(tuple, selectors) {
@@ -24152,8 +24183,14 @@ async function runCapture(options) {
   const owner2 = new CaptureOwnership(options.project.capture.maxMinutes ?? 30);
   const sigint = () => owner2.controller.abort(new IdiomError("capture interrupted by SIGINT"));
   const sigterm = () => owner2.controller.abort(new IdiomError("capture interrupted by SIGTERM"));
+  const unhandled = (reason) => owner2.controller.abort(
+    new IdiomError(
+      `capture failed on an unhandled browser error: ${String(reason).split("\n")[0]}`
+    )
+  );
   process.once("SIGINT", sigint);
   process.once("SIGTERM", sigterm);
+  process.on("unhandledRejection", unhandled);
   let failure3;
   let result;
   const abort = () => {
@@ -24183,6 +24220,7 @@ async function runCapture(options) {
       owner2.deadline.dispose();
       process.off("SIGINT", sigint);
       process.off("SIGTERM", sigterm);
+      process.off("unhandledRejection", unhandled);
     }
   }
   if (failure3 !== void 0) throw failure3;

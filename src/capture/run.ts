@@ -287,8 +287,17 @@ export async function runCapture(
     owner.controller.abort(new IdiomError("capture interrupted by SIGINT"));
   const sigterm = () =>
     owner.controller.abort(new IdiomError("capture interrupted by SIGTERM"));
+  // A stray rejection from abandoned browser work must end this capture
+  // through the normal path, so the application server is always stopped.
+  const unhandled = (reason: unknown) =>
+    owner.controller.abort(
+      new IdiomError(
+        `capture failed on an unhandled browser error: ${String(reason).split("\n")[0]}`,
+      ),
+    );
   process.once("SIGINT", sigint);
   process.once("SIGTERM", sigterm);
+  process.on("unhandledRejection", unhandled);
   let failure: unknown;
   let result: CaptureRunResult | undefined;
   // Start cleanup at expiry, independently of the losing operation's finally.
@@ -322,6 +331,7 @@ export async function runCapture(
       owner.deadline.dispose();
       process.off("SIGINT", sigint);
       process.off("SIGTERM", sigterm);
+      process.off("unhandledRejection", unhandled);
     }
   }
   if (failure !== undefined) throw failure;

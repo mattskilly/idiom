@@ -107,7 +107,7 @@ export async function captureReferenceUrl(options: {
       fullPage: false,
     });
   } finally {
-    await page?.close().catch(() => undefined);
+    await closeWithin(() => page?.close());
     await context?.close().catch(() => undefined);
     await browser.close().catch(() => undefined);
   }
@@ -317,8 +317,26 @@ async function captureInContext(
         : undefined,
     });
   } finally {
-    await page?.close().catch(() => undefined);
+    await closeWithin(() => page?.close());
   }
+}
+
+/**
+ * Page and context teardown can wait forever on a page the probe left
+ * mid-navigation or behind native UI; capture must move on regardless.
+ */
+const CLOSE_TIMEOUT_MS = 10_000;
+async function closeWithin(
+  close: () => Promise<unknown> | undefined,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.resolve(close()).catch(() => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, CLOSE_TIMEOUT_MS);
+    }),
+  ]);
+  clearTimeout(timer);
 }
 
 export function createBrowserLauncher(
@@ -409,7 +427,7 @@ export function createBrowserLauncher(
             endedAt: runtime.now().toISOString(),
           };
         } finally {
-          await context?.close().catch(() => undefined);
+          await closeWithin(() => context?.close());
         }
       },
       async measure(tuple, selectors) {

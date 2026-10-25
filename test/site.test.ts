@@ -266,6 +266,7 @@ describe("standalone site build", () => {
       expect(absoluteUrls.length).toBeGreaterThan(0);
       for (const value of absoluteUrls) {
         const url = new URL(value, "https://idiom.build/");
+        if (url.href === "https://github.com/mattskilly/idiom") continue;
         expect(url.origin).toBe("https://idiom.build");
       }
     } finally {
@@ -358,11 +359,12 @@ describe("standalone site build", () => {
 });
 
 describe("landing-page copy follows the shipped command surface", () => {
-  test("the version pin forces a re-audit, and no install is offered before the public release", () => {
+  test("the version pin forces a re-audit, and the only install is the published package", () => {
     // Bump this literal deliberately at every release; the page must be
     // re-read against the shipped CLI each time.
-    expect(packageJson.version).toBe("0.9.0");
-    expect(source).not.toMatch(/\bbun add\b|\bnpm i(?:nstall)?\b/);
+    expect(packageJson.version).toBe("0.9.1");
+    expect(source).toContain("npm install -g @mattskilly/idiom");
+    expect(source).not.toMatch(/git\+ssh|\bbun add\b/);
     expect([...source.matchAll(/\bv\d+\.\d+\.\d+\b/g)]).toEqual([]);
   });
 
@@ -411,7 +413,7 @@ describe("landing-page presentation contract", () => {
                   /^(?:https?:)?\/\//i.test(attribute.value.trim()) &&
                   !(
                     attribute.name === "href" &&
-                    /^https:\/\/idiom\.build(?:\/|$)/i.test(
+                    /^https:\/\/(?:idiom\.build(?:\/|$)|github\.com\/mattskilly\/idiom$)/i.test(
                       attribute.value.trim(),
                     )
                   ),

@@ -1,5 +1,10 @@
+import type { Page } from "playwright";
 import { afterEach, expect, test, vi } from "vitest";
-import { Deadline, DeadlineExpired } from "../src/capture/deadline.js";
+import {
+  Deadline,
+  DeadlineExpired,
+  deadlinePage,
+} from "../src/capture/deadline.js";
 
 afterEach(() => vi.useRealTimers());
 const never = () => new Promise<never>(() => {});
@@ -85,4 +90,43 @@ test("long timers rearm without overflowing", async () => {
   await vi.advanceTimersByTimeAsync(2_147_483_647);
   expect(d.remaining()).toBe(852_516_353);
   d.dispose();
+});
+
+test("a page operation abandoned at expiry never rejects unhandled", async () => {
+  // Real capture: the deadline passes while the call is being issued, so the
+  // started evaluate is never awaited; the page is then closed and it
+  // rejects with "Target page ... has been closed".
+  let clock = 0;
+  let reject: (error: Error) => void = () => {};
+  const page = {
+    evaluate: () => {
+      clock = 1_000;
+      return new Promise((_resolve, fail) => {
+        reject = fail;
+      });
+    },
+  } as unknown as Page;
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  const d = new Deadline("control", 100, () => "#menu observe", {
+    now: () => clock,
+  });
+  const bound = deadlinePage(page, d);
+  try {
+    await expect(
+      (async () => bound.page.evaluate(() => 1))(),
+    ).rejects.toBeInstanceOf(DeadlineExpired);
+    reject(
+      new Error(
+        "page.evaluate: Target page, context or browser has been closed",
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(unhandled).toEqual([]);
+  } finally {
+    bound.dispose();
+    d.dispose();
+    process.off("unhandledRejection", onUnhandled);
+  }
 });

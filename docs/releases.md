@@ -15,7 +15,7 @@ Start from a clean `main` checkout with the intended release commit integrated. 
 - The update-smoke candidate `version` names this exact Idiom version.
 - The update-smoke `previous_version` names the immediately older release heading in the newest-first changelog.
 
-The current smoke pair is `previous_version="0.8.0"` and `version="0.9.0"`. When preparing the next release, advance both literals — the candidate becomes `version` and the newest released heading becomes `previous_version` — as part of the source commit. The published `v0.6.0` predates embedded provenance and prints a bare version; `v0.7.0` is the first release that prints `<version> (<short source commit>)`.
+The current smoke pair is `previous_version="0.9.0"` and `version="0.9.1"`. When preparing the next release, advance both literals — the candidate becomes `version` and the newest released heading becomes `previous_version` — as part of the source commit. The published `v0.6.0` predates embedded provenance and prints a bare version; `v0.7.0` is the first release that prints `<version> (<short source commit>)`.
 
 ### Record the source, then commit the distribution
 
@@ -249,8 +249,8 @@ Every release after the first must also prove replacement in place. Create anoth
   test "$(bun pm cache)" = "$BUN_INSTALL_CACHE_DIR"
   bun pm cache rm
   cd "$smoke_root/work"
-  previous_version="0.8.0"
-  version="0.9.0"
+  previous_version="0.9.0"
+  version="0.9.1"
   expected_display="$version ($(printf '%s' "$build_source_commit" | cut -c1-7))"
   idiom_bin="$BUN_INSTALL/bin/idiom"
 

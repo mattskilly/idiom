@@ -640,3 +640,54 @@ test("intent lookup on a control missing after restore does not stop the probe",
     await page.close();
   }
 }, 30_000);
+
+test("probe clicks never send mutating requests; declared restore steps still may", async () => {
+  const { createServer } = await import("node:http");
+  const methods: string[] = [];
+  const server = createServer((request, response) => {
+    if (request.url !== "/") methods.push(`${request.method} ${request.url}`);
+    response.setHeader("content-type", "text/html");
+    response.end(
+      request.url === "/"
+        ? `<form method="post" action="/book"><button id="book">Book this time</button></form>
+           <button id="cancel" onclick="fetch('/booking',{method:'DELETE'})">Cancel this booking</button>
+           <button id="refresh" onclick="fetch('/slots')">Refresh times</button>`
+        : "ok",
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  const origin = `http://127.0.0.1:${port}`;
+  const page = await browser.newPage();
+  try {
+    await page.goto(`${origin}/`);
+    const artifact = await probeControls({
+      page,
+      skip: [],
+      maxControls: 80,
+      waitMs: 100,
+      respectControlIntent: true,
+      restore: async (target) => {
+        await target.goto(`${origin}/`);
+        await target.evaluate(() => fetch("/setup", { method: "POST" }));
+      },
+    });
+    const effects = (id: string) =>
+      artifact.results.find((entry) => entry.selector === `#${id}`)?.effects;
+    expect(methods.filter((entry) => !entry.startsWith("POST /setup"))).toEqual(
+      expect.not.arrayContaining([
+        expect.stringMatching(/^(?:POST|PUT|PATCH|DELETE) /),
+      ]),
+    );
+    expect(methods).toContain("GET /slots");
+    expect(methods).toContain("POST /setup");
+    expect(effects("book")).toContain("network");
+    expect(effects("cancel")).toContain("network");
+    // The capture page is reused by the next tuple, whose steps may submit.
+    await page.evaluate(() => fetch("/after", { method: "POST" }));
+    expect(methods).toContain("POST /after");
+  } finally {
+    await page.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}, 30_000);

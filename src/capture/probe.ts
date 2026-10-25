@@ -1,4 +1,11 @@
-import type { Dialog, Download, FileChooser, Page, Request } from "playwright";
+import type {
+  Dialog,
+  Download,
+  FileChooser,
+  Page,
+  Request,
+  Route,
+} from "playwright";
 import { menuTriggerPattern } from "../checks/collection-actions.js";
 import type {
   ProbeArtifact,
@@ -88,6 +95,8 @@ function appeared(after: string[], before: string[]): string[] {
  */
 const destructive =
   /\b(delete|remove|sign ?out|log ?out|publish|unpublish|reset|discard|clear all|archive|deactivate|unsubscribe|pay|purchase|buy|checkout|send|submit order)\b/i;
+
+const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 
 const ignoredRequest = (request: Request) =>
   /(?:webpack-hmr|__nextjs|_next\/static|hot-update|favicon|\/__vite|sockjs)/.test(
@@ -935,12 +944,24 @@ export async function probeControls(
   let dirty = false;
   let effects: Set<ProbeEffect> | undefined;
   const owned = new Set<Page>([options.page]);
-  const protections = new Map<Page, () => void>();
+  const protections = new Map<Page, () => Promise<void>>();
+  // Probe clicks must never change the application's data: requests other
+  // than GET/HEAD/OPTIONS are blocked (and still count as a network effect),
+  // except while the state's own declared steps are being replayed.
+  let replaying = 0;
+  const restore = async (page: Page) => {
+    replaying += 1;
+    try {
+      await options.restore(page);
+    } finally {
+      replaying -= 1;
+    }
+  };
   let creating = false;
   let retireAfterAttempt = false;
   const context = options.page.context();
   const close = (page: Page) => {
-    protections.get(page)?.();
+    void protections.get(page)?.();
     protections.delete(page);
     void page.close({ runBeforeUnload: false }).then(
       () => owned.delete(page),
@@ -978,6 +999,16 @@ export async function probeControls(
     const onRequest = (request: Request) => {
       if (!ignoredRequest(request)) effects?.add("network");
     };
+    const onRoute = (route: Route) => {
+      if (
+        replaying > 0 ||
+        safeMethods.has(route.request().method()) ||
+        ignoredRequest(route.request())
+      )
+        return route.fallback();
+      effects?.add("network");
+      return route.abort("blockedbyclient").catch(() => undefined);
+    };
     page.on("dialog", onDialog);
     page.on("filechooser", onFileChooser);
     page.on("download", onDownload);
@@ -989,7 +1020,9 @@ export async function probeControls(
       page.off("download", onDownload);
       page.off("popup", onPopup);
       page.off("request", onRequest);
+      return page.unroute("**/*", onRoute).catch(() => undefined);
     });
+    await deadline.run(() => page.route("**/*", onRoute));
     await deadline.run(() => page.addInitScript(suppressNativeUi));
     for (const frame of page.frames())
       await deadline.run(() => frame.evaluate(suppressNativeUi));
@@ -1068,7 +1101,7 @@ export async function probeControls(
         explanation = new ExplanationCollector(page, "probe", options.waitMs);
         if (dirty) {
           progress(`${phase}: restore`);
-          await options.restore(page);
+          await restore(page);
           deadline.check();
           dirty = false;
         }
@@ -1226,9 +1259,9 @@ export async function probeControls(
               candidate: explanation,
               collector,
               waitMs: options.waitMs,
-              restore: options.restore,
+              restore,
             });
-            await options.restore(page);
+            await restore(page);
             dirty = false;
           }
           progress("observe");
@@ -1264,7 +1297,7 @@ export async function probeControls(
           "nested menu",
           async (page, motion, _collector, deadline) => {
             dirty = true;
-            await options.restore(page);
+            await restore(page);
             await page
               .locator(candidate.path)
               .first()
@@ -1343,7 +1376,7 @@ export async function probeControls(
             candidate: explanation,
             collector,
             waitMs: options.waitMs,
-            restore: options.restore,
+            restore,
           });
           return {};
         },
@@ -1364,7 +1397,7 @@ export async function probeControls(
         "collection discovery",
         async (page) => {
           dirty = true;
-          await options.restore(page);
+          await restore(page);
           const item = page
             .locator(itemSelector)
             .filter({ visible: true })
@@ -1427,7 +1460,7 @@ export async function probeControls(
           "collection",
           async (page) => {
             dirty = true;
-            await options.restore(page);
+            await restore(page);
             const item = page
               .locator(itemSelector)
               .filter({ visible: true })
@@ -1466,7 +1499,7 @@ export async function probeControls(
     if (dirty && current) {
       const final = deadlinePage(current, state);
       try {
-        await state.run(() => options.restore(final.page));
+        await state.run(() => restore(final.page));
       } finally {
         final.dispose();
       }
@@ -1529,7 +1562,9 @@ export async function probeControls(
     }
     artifact.motion ??= initialMotion?.evidence(artifact.reason);
     context.off("page", onNewPage);
-    for (const dispose of protections.values()) dispose();
+    // The capture page is reused for the next tuple, whose own steps may
+    // submit forms: the mutation block must be gone before returning.
+    await Promise.all([...protections.values()].map((dispose) => dispose()));
     state.dispose();
     progress("complete");
   }

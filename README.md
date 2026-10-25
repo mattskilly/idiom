@@ -40,7 +40,7 @@ npm install -g @mattskilly/idiom
 idiom --version
 ```
 
-The version command prints `<version> (<short source commit>)`, for example `0.9.0 (a6439b1)`. To pin a project to an exact release instead, add it as a dev dependency (`bun add -d --exact @mattskilly/idiom@0.9.0`) and run it with `bunx idiom` or `npx idiom`.
+The version command prints `<version> (<short source commit>)`, for example `0.9.1 (a6439b1)`. To pin a project to an exact release instead, add it as a dev dependency (`bun add -d --exact @mattskilly/idiom@0.9.1`) and run it with `bunx idiom` or `npx idiom`.
 
 ### Browser setup
 
