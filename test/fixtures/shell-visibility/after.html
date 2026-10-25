@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Editor selection</title>
+<style>
+* { box-sizing: border-box; } body { margin: 0; }
+.ed-shell { position: relative; height: 100vh; overflow: auto; display: flex; }
+.brand { width: 240px; height: 100%; overflow: auto; }
+.brand-content { height: 2400px; }
+.canvas { flex: 1; height: 100%; overflow: auto; position: relative; border: 3px solid #ccc; }
+.hero { height: 1916px; background: #fafafa; }
+#selected-footer { height: 80px; }
+.sg-readability__context { position: absolute; top: 0px; left: 0; width: 1px; height: 1px; padding: 0; margin: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+#selection-toolbar, #selection-breadcrumb { position: fixed; top: 80px; left: 300px; width: 240px; height: 36px; background: #ddd; }
+#selection-breadcrumb { left: 580px; pointer-events: none; }
+</style>
+<div class="ed-shell">
+<aside class="brand" aria-label="Brand"><button aria-label="Select global footer" title="Select global footer" onclick="document.querySelector('#selected-footer').scrollIntoView({block: 'nearest'})">Global footer</button><div class="brand-content">Brand settings</div></aside>
+<main class="canvas"><div class="hero">Hero</div><footer id="selected-footer">Global footer</footer></main>
+<span class="sg-readability__context">Readability context</span>
+</div>
+<div id="selection-toolbar"><button>Arrange</button></div>
+<div id="selection-breadcrumb">Page / Global footer</div>
+</html>

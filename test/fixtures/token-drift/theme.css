@@ -1,0 +1,6 @@
+:root {
+  --fg: var(--primitive-fg);
+  --fg-muted: var(--primitive-fg-muted);
+  --accent: var(--primitive-accent);
+  --direct: light-dark(rgb(44, 55, 66), rgb(210, 211, 212));
+}

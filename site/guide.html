@@ -1,0 +1,320 @@
+<title>Idiom Field Guide</title>
+<style>
+  :root {
+    --paper: #f5f5f2;
+    --surface: #ffffff;
+    --surface-sunk: #eeeeea;
+    --ink: #16181a;
+    --ink-muted: #5a625d;
+    --ink-faint: #888e89;
+    --rule: #dcdcd6;
+    --rule-strong: #c4c5be;
+    --verdict: #0b5d4a;
+    --verdict-wash: #e4ede9;
+    --finding: #8c3a2b;
+
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", "Roboto Mono", monospace;
+    --serif: "Iowan Old Style", Charter, "Bitstream Charter", "Palatino Linotype", Palatino, Georgia, serif;
+
+    --step--1: clamp(0.78rem, 0.76rem + 0.1vw, 0.83rem);
+    --step-0: clamp(0.98rem, 0.95rem + 0.15vw, 1.05rem);
+    --step-1: clamp(1.2rem, 1.13rem + 0.35vw, 1.4rem);
+    --step-2: clamp(1.45rem, 1.3rem + 0.7vw, 1.9rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #101211;
+      --surface: #171a18;
+      --surface-sunk: #0b0d0c;
+      --ink: #edefec;
+      --ink-muted: #9aa39d;
+      --ink-faint: #737b76;
+      --rule: #272b29;
+      --rule-strong: #383d3a;
+      --verdict: #52d3a9;
+      --verdict-wash: #12271f;
+      --finding: #e39280;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #101211;
+    --surface: #171a18;
+    --surface-sunk: #0b0d0c;
+    --ink: #edefec;
+    --ink-muted: #9aa39d;
+    --ink-faint: #737b76;
+    --rule: #272b29;
+    --rule-strong: #383d3a;
+    --verdict: #52d3a9;
+    --verdict-wash: #12271f;
+    --finding: #e39280;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: var(--step-0);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: var(--verdict); color: var(--paper); }
+
+  .wrap { max-width: 52rem; margin: 0 auto; padding: 0 1.5rem 4rem; }
+
+  header {
+    border-bottom: 1px solid var(--rule);
+    padding: 1.5rem 0 1.25rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  .wordmark { font-family: var(--mono); font-weight: 600; letter-spacing: -0.03em; margin: 0; font-size: var(--step-1); }
+  header .meta { font-family: var(--mono); font-size: var(--step--1); color: var(--ink-faint); }
+
+  section { padding: 2rem 0 0.5rem; }
+
+  h2 {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--verdict);
+    font-weight: 600;
+    margin: 0 0 0.9rem;
+  }
+
+  p { margin: 0 0 1rem; max-width: 62ch; text-wrap: pretty; }
+
+  .lede {
+    font-size: var(--step-1);
+    line-height: 1.45;
+    max-width: 44ch;
+    margin: 0 0 1rem;
+  }
+  .lede em { font-style: normal; color: var(--verdict); }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    padding: 0.05em 0.35em;
+  }
+
+  /* pitch cards */
+  .pitch { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+  @media (min-width: 40rem) { .pitch { grid-template-columns: 1fr 1fr 1fr; } }
+  .pitch > div { background: var(--surface); padding: 1rem 1.1rem; }
+  .pitch h3 { font-family: var(--mono); font-size: var(--step-0); font-weight: 600; letter-spacing: -0.02em; margin: 0 0 0.4rem; }
+  .pitch p { font-size: var(--step--1); color: var(--ink-muted); margin: 0; font-family: var(--mono); line-height: 1.55; }
+
+  /* loop */
+  .loop { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); counter-reset: step; }
+  .loop li {
+    display: grid;
+    grid-template-columns: 7.5rem 1fr;
+    gap: 0 1.25rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid var(--rule);
+    align-items: baseline;
+  }
+  .loop .step { font-family: var(--mono); font-size: var(--step--1); color: var(--verdict); font-weight: 600; }
+  .loop .step::before { counter-increment: step; content: counter(step, decimal-leading-zero) "  "; color: var(--ink-faint); font-weight: 400; }
+  .loop p { margin: 0; color: var(--ink-muted); font-size: var(--step--1); max-width: none; }
+  @media (max-width: 34rem) { .loop li { grid-template-columns: 1fr; gap: 0.15rem; } }
+
+  /* command table */
+  table { border-collapse: collapse; width: 100%; font-size: var(--step--1); }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--rule); }
+  th, td { text-align: left; padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--rule); vertical-align: baseline; }
+  tr:last-child td { border-bottom: none; }
+  th {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--ink-faint);
+    background: var(--surface-sunk);
+    border-bottom: 1px solid var(--rule-strong);
+  }
+  td:first-child { font-family: var(--mono); white-space: nowrap; color: var(--ink); font-weight: 500; }
+  td:last-child { color: var(--ink-muted); font-family: var(--serif); }
+  tbody.group-head td {
+    font-family: var(--mono);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--verdict);
+    font-weight: 600;
+    background: var(--verdict-wash);
+    white-space: normal;
+  }
+
+  /* terminal */
+  .terminal {
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    padding: 1rem 1.15rem;
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    line-height: 1.9;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .terminal .cmd::before { content: "$ "; color: var(--verdict); }
+  .terminal .out { color: var(--ink-faint); }
+
+  /* figures */
+  .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+  .figure { background: var(--surface); padding: 0.9rem 1rem; }
+  .figure .num { font-family: var(--mono); font-size: var(--step-2); font-weight: 600; letter-spacing: -0.04em; display: block; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .figure .cap { font-family: var(--mono); font-size: var(--step--1); color: var(--ink-muted); display: block; margin-top: 0.35rem; line-height: 1.45; }
+
+  .not-list { margin: 0; padding: 0; list-style: none; font-family: var(--mono); font-size: var(--step--1); color: var(--ink-muted); }
+  .not-list li { padding: 0.45rem 0; border-bottom: 1px solid var(--rule); }
+  .not-list li:last-child { border-bottom: none; }
+  .not-list strong { color: var(--finding); font-weight: 600; }
+
+  footer { border-top: 1px solid var(--rule); margin-top: 2.5rem; padding-top: 1.25rem; font-family: var(--mono); font-size: var(--step--1); color: var(--ink-faint); display: flex; flex-wrap: wrap; gap: 0.5rem 2rem; justify-content: space-between; }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="wordmark">idiom · field guide</p>
+    <p class="meta">v0.7.0 · design acceptance for AI-built software</p>
+  </header>
+
+  <section>
+    <h2>What it is, in one breath</h2>
+    <p class="lede">
+      Your coding agent builds fast. Nobody looks at every screen in every condition.
+      Idiom opens your <em>real, running app</em>, walks every state you declare —
+      the expired link, the error message, mobile, dark mode — judges what rendered
+      against <em>your own</em> design rules, and turns problems into small,
+      provable fixes. Then it remembers what you decided, so the same argument
+      never happens twice.
+    </p>
+  </section>
+
+  <section>
+    <h2>The pitch — why try it</h2>
+    <div class="pitch">
+      <div>
+        <h3>It sees what you don't</h3>
+        <p>Crawlers and your own eyes see the happy path. Idiom drives fixture-fed
+        states no crawler can reach — expired, taken, invalid, empty — at every
+        viewport, in light and dark, on web pages and desktop (Electron) apps.</p>
+      </div>
+      <div>
+        <h3>Evidence, not opinion</h3>
+        <p>Screenshots tied to a commit. Findings that cite the rule they break.
+        Before/after proof a fix landed. Reports that say what was not checked.
+        Never a 0–100 score.</p>
+      </div>
+      <div>
+        <h3>It converges</h3>
+        <p>Reject a finding once — "that's intentional" — and it never comes back.
+        Accepted taste becomes rules fed to your agent before it writes code.
+        Review tools nag; Idiom learns.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>How it works — the loop</h2>
+    <ol class="loop">
+      <li><span class="step">Learn</span><p><code>idiom init</code> mines your repo, interviews you for what code can't answer, and writes PRODUCT.md and DESIGN.md — your product's design law.</p></li>
+      <li><span class="step">Render</span><p><code>idiom capture</code> starts your app for real and photographs every declared state × viewport × color scheme, keyed to the exact commit.</p></li>
+      <li><span class="step">Critique</span><p><code>idiom review</code> runs ten measurable checks (overflow, contrast, tap targets, console errors, breaks in your product's own spacing rhythm…) plus a model judge armed with your law. Five findings max.</p></li>
+      <li><span class="step">Repair</span><p>You accept or reject each finding. Accepted ones become bounded tickets — or paste-ready instructions for Claude Code, Lovable, Cursor, whatever builds your code.</p></li>
+      <li><span class="step">Verify</span><p><code>idiom verify</code> re-renders the same states after the fix and proves the finding is gone. No model — the exit code is the verdict. Wire it into CI.</p></li>
+      <li><span class="step">Remember</span><p>Every decision is logged forever. <code>idiom context</code> hands the accumulated judgment to the next agent before it writes a line of UI.</p></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Commands</h2>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead>
+      <tbody class="group-head"><tr><td colspan="2">The doorway — zero setup</td></tr></tbody>
+      <tbody>
+        <tr><td>idiom quick &lt;url…&gt;</td><td>Review any running page (localhost works): desktop + mobile, light + dark, all measurable checks, an HTML report — and an honest list of what it couldn't reach without setup. Two minutes, no config.</td></tr>
+      </tbody>
+      <tbody class="group-head"><tr><td colspan="2">Setting up</td></tr></tbody>
+      <tbody>
+        <tr><td>idiom init</td><td>Scaffold PRODUCT.md, DESIGN.md, and .idiom/. Interactive form interviews you; can also wire itself into an autobuild pipeline. <code>--yes</code> for scripts.</td></tr>
+        <tr><td>idiom validate [flow]</td><td>Check the config and flow files are well-formed before anything runs.</td></tr>
+        <tr><td>idiom reference add</td><td>Pin images or URLs of designs you're aiming for — or, with <code>--anti</code>, ones to avoid. The review holds your app against them.</td></tr>
+      </tbody>
+      <tbody class="group-head"><tr><td colspan="2">The loop</td></tr></tbody>
+      <tbody>
+        <tr><td>idiom capture &lt;flow&gt;</td><td>Drive the real app — a web page or an Electron desktop window — through every declared state and store screenshots, DOM, console, and accessibility data, tied to the commit.</td></tr>
+        <tr><td>idiom review &lt;flow&gt;</td><td>Judge a capture: deterministic checks + model critique against your design law, references, and past decisions.</td></tr>
+        <tr><td>idiom report [run]</td><td>Open the self-contained HTML report — printable, sendable, states its own coverage and limits.</td></tr>
+        <tr><td>idiom decide</td><td>Accept or reject findings, with reasons. Recorded permanently; rule-scope rejections suppress the pattern forever.</td></tr>
+        <tr><td>idiom ruling</td><td>Answer the design questions a review raised ("you style inputs three ways — which is law?"). Your answer is appended to DESIGN.md.</td></tr>
+        <tr><td>idiom instruction</td><td>Render one accepted finding as plain paste-ready text for any coding tool or chat.</td></tr>
+        <tr><td>idiom tickets</td><td>Emit accepted findings as bounded repair tickets into your tracker's triage.</td></tr>
+        <tr><td>idiom verify &lt;flow&gt;</td><td>After the fix merges: re-render, compare before/after, exit 0 only if the finding is provably gone. Model-free, CI-safe.</td></tr>
+      </tbody>
+      <tbody class="group-head"><tr><td colspan="2">Improving — when the law doesn't exist yet</td></tr></tbody>
+      <tbody>
+        <tr><td>idiom explore &lt;flow&gt;</td><td>Give one state and one sentence of dissatisfaction; get three real rendered directions of your own app to choose between. Choosing writes a rule into your design law — the rule, not a patch, is the product. Repair tickets offered, declinable.</td></tr>
+        <tr><td>idiom explore resolve</td><td>Record your choice (or an explicit no-choice) against a completed exploration run later — the run survives even if the process, terminal, or session didn't.</td></tr>
+      </tbody>
+      <tbody class="group-head"><tr><td colspan="2">Memory, made visible</td></tr></tbody>
+      <tbody>
+        <tr><td>idiom system</td><td>Open your design system as a visual page: token palette as swatches, the colors and type that actually shipped, your rules, your rulings, your standing rejections with evidence, and what's covered.</td></tr>
+        <tr><td>idiom context [flow]</td><td>Print the accumulated design brief — law, rulings, prohibitions, tokens, open work — sized to paste into any agent before it writes UI.</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Your first ten minutes</h2>
+    <div class="terminal"><span class="cmd">bun add -g "git+ssh://git@github.com/mattskilly/idiom.git#v0.7.0"</span>
+<span class="cmd">bunx playwright@1.62.1 install chromium</span>
+<span class="cmd">idiom quick http://localhost:3000</span>
+<span class="out">→ report.html: findings + what a no-config pass cannot see</span>
+<span class="cmd">idiom init</span>          <span class="out">← when you want the full loop: states, law, memory</span>
+<span class="cmd">idiom system</span>        <span class="out">← your design system, as actually shipped, on one page</span></div>
+  </section>
+
+  <section>
+    <h2>Proof — from a shipping product, not a demo</h2>
+    <div class="figures">
+      <div class="figure"><span class="num">60</span><span class="cap">states rendered per run — every viewport and color scheme</span></div>
+      <div class="figure"><span class="num">8/11</span><span class="cap">findings accepted by a human; all 8 fixed and verified</span></div>
+      <div class="figure"><span class="num">1</span><span class="cap">rejection recorded once — never raised again</span></div>
+      <div class="figure"><span class="num">3 → 1</span><span class="cap">rendered directions → one recorded rule (explore, ruling-1, 2026-08-29)</span></div>
+      <div class="figure"><span class="num">0</span><span class="cap">scores. Coverage disclosure instead: judged, not judged, why</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What it deliberately is not</h2>
+    <ul class="not-list">
+      <li><strong>Not a design generator.</strong> Figma, Claude Design, v0 decide what should exist. Idiom proves what shipped meets the standard — and when it renders alternatives (explore), they are variants of your own running app, and the output is a rule in your law, never a mockup.</li>
+      <li><strong>Not a grader.</strong> No 0–100 score to game. It reports what it judged, what it found, and what it could not see.</li>
+      <li><strong>Not a cloud service.</strong> A local CLI with documented file formats. Your evidence stays in your repo; any agent or pipeline can drive it.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <a href="https://idiom.build/">idiom.build</a>
+    <span>every state, not every page · build in your idiom.</span>
+  </footer>
+
+</div>

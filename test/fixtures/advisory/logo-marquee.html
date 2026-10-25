@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Logo marquee</title>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+  main { padding: 48px 64px; }
+  .logos h2 { margin: 0 0 24px; font-size: 24px; text-align: center; }
+  .logos .track { display: flex; gap: 32px; overflow: hidden; white-space: nowrap; }
+  .logo { flex: 0 0 160px; height: 64px; display: flex; align-items: center; justify-content: center;
+          border: 2px dashed #b8bcc4; border-radius: 6px; background: #eef0f3; color: #8a8f98; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <section class="logos" aria-labelledby="logos-title">
+    <h2 id="logos-title">Trusted by teams everywhere</h2>
+    <div class="track">
+      <div class="logo" role="img" aria-label="Logo">Logo</div>
+      <div class="logo" role="img" aria-label="Logo">Logo</div>
+      <div class="logo" role="img" aria-label="Logo">Logo</div>
+      <div class="logo" role="img" aria-label="Logo">Logo</div>
+      <div class="logo" role="img" aria-label="Logo">Logo</div>
+      <div class="logo" role="img" aria-label="Logo">Logo</div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

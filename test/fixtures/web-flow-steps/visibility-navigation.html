@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Visibility navigation</title>
+<link rel="icon" href="data:,">
+<button id="open" aria-label="Open editor" title="Open editor">Open editor</button>
+<script>
+document.querySelector('#open').onclick = () => {
+  setTimeout(() => location.assign('/shell-after'), 600);
+};
+</script>
+</html>

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Page geometry</title>
+<style>
+* { box-sizing: border-box } body { margin: 0; font-family: monospace }
+.content { width: min(1170px, calc(100% - 48px)); margin: auto }
+nav { width: min(992px, calc(100% - 48px)); margin: auto; padding: 24px 0 }
+section { padding: 32px 0 } h1,h2 { margin: 0 0 16px; font: 32px/1.2 monospace }
+button { font: 24px/1.2 monospace; padding: 0; border: 0 }
+.media img { display: block; width: 100%; height: 120px; object-fit: cover }
+#background { background: #ddd } #background .content { width: calc(min(1170px, 100% - 48px) - 40px) }
+footer { padding: 30px 0 }
+@media (max-width: 900px) {
+ nav { width: calc(100% - 48px) }
+ #broken-heading { width: 8ch; word-break: break-all }
+ #inline-heading { width: 6ch; word-break: break-all }
+ #broken-button { width: 6ch; word-break: break-all }
+ #normal-heading, #normal-button { width: 9ch }
+}
+</style>
+<body><div id="app"><header id="header"><nav id="nav"><span>Logo</span><a href="#one">Explore</a></nav></header>
+<main id="main"><section id="one"><div class="content" id="first-content">
+<h1 id="broken-heading">purposeful</h1><h2 id="inline-heading">solu<span>tions</span></h2>
+<button id="broken-button">solutions</button>
+<h2 id="normal-heading">normal wrap</h2><button id="normal-button">normal wrap</button>
+</div></section>
+<div id="stack"><section id="two"><div class="content"><h2>Another section</h2><div class="cards"><article><h3>Card one</h3></article><article><h3>Card two</h3></article></div></div></section>
+<section id="three"><div class="content"><p>Third content band</p></div></section></div>
+<section class="media" id="media"><img alt="Landscape" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1440' height='120'%3E%3Crect width='1440' height='120' fill='teal'/%3E%3C/svg%3E"></section>
+<section id="background"><div class="content"><p>Inset text on a full-width background</p></div></section>
+</main><footer id="footer"><div class="content">Footer content</div></footer></div></body></html>

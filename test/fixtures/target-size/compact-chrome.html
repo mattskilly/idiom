@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Compact editor chrome</title>
+  <style>
+    body { margin: 24px; font-family: sans-serif; }
+    .tools { display: flex; align-items: center; gap: 4px; height: 36px; }
+    button { box-sizing: border-box; padding: 0; }
+    .tool { width: 32px; height: 32px; }
+    .menu-item { display: block; width: 160px; height: 24px; margin-top: 16px; }
+    .tiny { width: 20px; height: 20px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Editor</h1>
+  <div class="tools" role="toolbar" aria-label="Canvas tools">
+    <button class="tool" aria-label="Undo" title="Undo">↶</button>
+    <button class="tool" aria-label="Redo" title="Redo">↷</button>
+    <button class="tool" aria-label="Page settings" title="Page settings">⚙</button>
+  </div>
+  <div role="menu" aria-label="Project">
+    <button class="menu-item" role="menuitem">Project settings</button>
+  </div>
+  <button class="tiny" aria-label="More options" title="More options">⋯</button>
+</body>
+</html>

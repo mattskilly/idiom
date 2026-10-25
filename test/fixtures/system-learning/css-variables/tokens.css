@@ -1,0 +1,18 @@
+@import "./base.css";
+:root {
+  --space-card: 8px;
+  --space-unused: 24px;
+  --radius-button: 6px;
+  --radius-unused: 12px;
+  --button-height: 32px;
+  --input-height: 40px;
+  --color-brand: hsl(var(--channels));
+  --color-alias: var(--color-brand);
+  --color-unused: #abcdef;
+}
+[data-theme="dark"] {
+  --color-brand: #abcdef;
+}
+[data-theme="ocean"] {
+  --color-brand: #124455;
+}

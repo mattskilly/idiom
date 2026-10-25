@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Glyph buttons</title>
+    <style>
+      body {
+        margin: 24px;
+        font: 14px/1.4 system-ui, sans-serif;
+        color: #1b1f24;
+      }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+      .vh {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        margin: 16px 0;
+      }
+      .icon-button {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        background: #2d5bff;
+        color: #fff;
+      }
+      .step {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        border-radius: 6px;
+        background: #eef1ff;
+        color: #2d5bff;
+        font-size: 18px;
+        line-height: 1;
+      }
+      .chip {
+        box-sizing: border-box;
+        display: block;
+        height: 28px;
+        padding: 0 12px;
+        line-height: 28px;
+        border-radius: 14px;
+        background: #eef1ff;
+        color: #2d5bff;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Composer</h1>
+      <div class="row">
+        <button class="icon-button" id="send" type="button" aria-label="Send" title="Send">
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><path d="M2 9l14-7-5 14-2-6z" fill="currentColor" /></svg>
+          <span class="sr-only">Send</span>
+        </button>
+        <button class="icon-button" id="send-vh" type="button" aria-label="Send" title="Send">
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><path d="M2 9l14-7-5 14-2-6z" fill="currentColor" /></svg>
+          <span class="vh">Send</span>
+        </button>
+      </div>
+      <div class="row">
+        <button class="step" id="plus" type="button" aria-label="Increase">+</button>
+        <button class="step" id="minus" type="button" aria-label="Decrease">−</button>
+        <button class="step" id="times" type="button" aria-label="Remove">×</button>
+        <button class="step" id="plus-off" type="button" aria-label="Add row" style="padding-top:6px">+</button>
+      </div>
+      <div class="row">
+        <span class="chip" id="chip" style="padding-top:5px;line-height:23px">Button</span>
+        <span class="chip" id="chip-ok">Body</span>
+      </div>
+    </main>
+  </body>
+</html>

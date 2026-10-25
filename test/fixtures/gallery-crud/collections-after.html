@@ -1,0 +1,58 @@
+<!doctype html><html lang="en"><title>Dashboard</title><style>
+body { margin:24px; font:14px system-ui; }
+.cards { display:flex; gap:16px; }
+.page-card { width:220px; padding:12px; border:1px solid #d4d4d8; border-radius:8px; display:flex; justify-content:space-between; align-items:start; }
+.project-row { display:flex; gap:12px; padding:8px 0; }
+[role=menu] { position:fixed; display:flex; flex-direction:column; background:#fff; border:1px solid #d4d4d8; padding:4px; }
+</style><body>
+<h1>Dashboard</h1>
+<section id="pages"><h2>Pages</h2><div class="cards">
+<article class="page-card"><a href="#/pages/1" aria-label="Landing page A" title="Landing page A">Landing page A</a><button type="button" class="more" aria-haspopup="menu" aria-label="More actions" title="More actions">⋯</button></article>
+<article class="page-card"><a href="#/pages/2" aria-label="Landing page B" title="Landing page B">Landing page B</a><button type="button" class="more" aria-haspopup="menu" aria-label="More actions" title="More actions">⋯</button></article>
+<article class="page-card"><a href="#/pages/3" aria-label="Landing page C" title="Landing page C">Landing page C</a><button type="button" class="more" aria-haspopup="menu" aria-label="More actions" title="More actions">⋯</button></article>
+</div></section>
+<section id="projects"><h2>Projects</h2><ul>
+<li class="project-row"><a href="#/projects/1">Spring launch</a></li>
+<li class="project-row"><a href="#/projects/2">Summer sale</a></li>
+<li class="project-row"><a href="#/projects/3">Autumn webinar</a></li>
+</ul></section>
+<script>
+{
+const closeMenu = () => document.querySelector("[role=menu]")?.remove();
+const openMenu = (x, y, labels) => {
+  closeMenu();
+  const menu = document.createElement("div");
+  menu.setAttribute("role", "menu");
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  for (const label of labels) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.setAttribute("role", "menuitem");
+    item.textContent = label;
+    item.addEventListener("click", () => {
+      if (label === "Delete") console.log("delete invoked");
+      closeMenu();
+    });
+    menu.append(item);
+  }
+  document.body.append(menu);
+};
+document.addEventListener("click", (event) => {
+  const more = event.target.closest(".more");
+  if (more) {
+    const rect = more.getBoundingClientRect();
+    openMenu(rect.left, rect.bottom, ["Open", "Rename", "Delete"]);
+  } else if (!event.target.closest("[role=menu]")) closeMenu();
+});
+for (const row of document.querySelectorAll(".project-row"))
+  row.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    openMenu(event.clientX, event.clientY, ["Rename", "Delete"]);
+  });
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeMenu();
+});
+}
+</script>
+</body></html>

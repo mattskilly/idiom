@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><head><title>Probe replay</title><link rel="icon" href="data:,"></head><body>
+<main><h1>Probe replay</h1><button id="open">Open editor</button><section id="editor" hidden>
+<button id="first" onclick="this.textContent='Changed first'">First control</button>
+<button id="second" onclick="this.textContent='Changed second'">Second control</button>
+</section></main>
+<script>
+sessionStorage.probeVisits = Number(sessionStorage.probeVisits || 0) + 1;
+document.querySelector('#open').onclick = () => {
+  if (location.search.includes('brokenReplay') && Number(sessionStorage.probeVisits) > 1) console.error('replay failed');
+  document.querySelector('#editor').hidden = false;
+  document.querySelector('#open').hidden = true;
+};
+</script></body></html>

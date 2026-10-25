@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Edit profile</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; color: #1d2330; }
+  dialog { width: 520px; max-height: 90vh; padding: 0; border: 1px solid #d8dce6; border-radius: 12px; overflow: auto; background: #fff; }
+  .head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; }
+  .head h2 { margin: 0; font-size: 18px; }
+  .close { width: 32px; height: 32px; border: 0; background: none; font-size: 20px; cursor: pointer; }
+  .body { padding: 0 20px; }
+  .field { display: grid; gap: 4px; margin-bottom: 16px; }
+  .field input { height: 32px; border: 1px solid #c4cad6; border-radius: 6px; }
+  .foot { display: flex; justify-content: flex-end; padding: 16px 20px; border-top: 1px solid #d8dce6; }
+  .primary { height: 36px; padding: 0 16px; border: 0; border-radius: 6px; background: #2d5bff; color: #fff; font: inherit; }
+  .foot { position: sticky; bottom: 0; background: #fff; }
+</style>
+</head>
+<body>
+  <main><h1>Account</h1></main>
+  <dialog id="edit" aria-labelledby="edit-title">
+    <form method="dialog">
+      <header class="head"><h2 id="edit-title">Edit profile</h2><button type="button" class="close" aria-label="Close" onclick="this.closest('dialog').close()">×</button></header>
+      <div class="body">
+          <label class="field">Field 1<input name="f1" type="text"></label>
+          <label class="field">Field 2<input name="f2" type="text"></label>
+          <label class="field">Field 3<input name="f3" type="text"></label>
+          <label class="field">Field 4<input name="f4" type="text"></label>
+          <label class="field">Field 5<input name="f5" type="text"></label>
+          <label class="field">Field 6<input name="f6" type="text"></label>
+          <label class="field">Field 7<input name="f7" type="text"></label>
+          <label class="field">Field 8<input name="f8" type="text"></label>
+          <label class="field">Field 9<input name="f9" type="text"></label>
+          <label class="field">Field 10<input name="f10" type="text"></label>
+          <label class="field">Field 11<input name="f11" type="text"></label>
+          <label class="field">Field 12<input name="f12" type="text"></label>
+          <label class="field">Field 13<input name="f13" type="text"></label>
+          <label class="field">Field 14<input name="f14" type="text"></label>
+          <label class="field">Field 15<input name="f15" type="text"></label>
+          <label class="field">Field 16<input name="f16" type="text"></label>
+          <label class="field">Field 17<input name="f17" type="text"></label>
+          <label class="field">Field 18<input name="f18" type="text"></label>
+          <label class="field">Field 19<input name="f19" type="text"></label>
+          <label class="field">Field 20<input name="f20" type="text"></label>
+          <label class="field">Field 21<input name="f21" type="text"></label>
+          <label class="field">Field 22<input name="f22" type="text"></label>
+          <label class="field">Field 23<input name="f23" type="text"></label>
+          <label class="field">Field 24<input name="f24" type="text"></label>
+          <label class="field">Field 25<input name="f25" type="text"></label>
+          <label class="field">Field 26<input name="f26" type="text"></label>
+          <label class="field">Field 27<input name="f27" type="text"></label>
+          <label class="field">Field 28<input name="f28" type="text"></label>
+      </div>
+      <footer class="foot"><button type="submit" class="primary">Save changes</button></footer>
+    </form>
+  </dialog>
+  <script>document.getElementById("edit").showModal();</script>
+</body>
+</html>

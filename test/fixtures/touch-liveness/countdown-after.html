@@ -1,0 +1,5 @@
+<!doctype html><html lang="en"><title>Published countdown</title><body>
+<article><h2>Thumbnail</h2><span id="thumbnail">1:23:45:59</span></article>
+<main><h1>Published countdown</h1><div id="published" role="timer">0:00:00:00</div><p id="stalled">01:12:30</p></main>
+<script>let n=59; setInterval(()=>document.querySelector('#thumbnail').textContent=`1:23:45:${--n}`,200);setInterval(()=>{document.querySelector('#published').textContent=`1:23:45:${n}`;document.querySelector('#stalled').textContent=`01:12:${n}`},200);</script>
+</body></html>

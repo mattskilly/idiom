@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Probe timeouts</title>
+<style>button{margin:4px;padding:8px} #spinner[hidden]{display:none}</style>
+<body><h1>Timeout fixture</h1>
+<button id="print" onclick="window.print()">Print</button>
+<button id="confirm" onclick="confirm('Unanswered confirmation')">Confirm</button>
+<button id="fetch" onclick="document.querySelector('#spinner').hidden=false;fetch('/never')">Fetch</button>
+<button id="navigate" onclick="location.href='/loading'">Navigate</button>
+<button id="alert" onclick="alert('Alert')">Alert</button>
+<button id="prompt" onclick="prompt('Prompt')">Prompt</button>
+<button id="beforeunload" onclick="window.onbeforeunload=()=>'';location.href='/next'">Before unload</button>
+<button id="upload" onclick="document.querySelector('#file').click()">Upload</button><input id="file" type="file" hidden>
+<button id="download" onclick="document.querySelector('#attachment').click()">Download</button><a id="attachment" href="/attachment" download hidden>File</a>
+<button id="popup" onclick="window.open('/no-headers')">Window</button>
+<button id="menu" onclick="document.querySelector('#items').hidden=false">Menu</button>
+<div id="items" role="menu" aria-label="Tools" hidden><button id="nested" role="menuitem" onclick="document.querySelector('#result').textContent='nested'">Nested</button></div>
+<button id="working" onclick="document.querySelector('#result').textContent='working'">Working</button>
+<button id="dead">Dead</button>
+<div id="spinner" role="status" hidden>Loading…</div><output id="result"></output>
+<script>
+// Audit traffic uses a dev-server namespace excluded from application effects.
+document.addEventListener('click',e=>{const id=e.target.id;if(id)navigator.sendBeacon('/__vite/click/'+id)},true);
+</script></body></html>

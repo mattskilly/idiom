@@ -1,0 +1,21 @@
+:root {
+  --brand: #123456;
+}
+@theme {
+  --color-*: initial;
+  --color-removed: red;
+}
+@theme {
+  --color-*: initial;
+  --color-brand: oklch(0.319168 0.072455 251.168);
+  --color-unused: #abcdef;
+  --spacing: 4px;
+  --spacing-card: 8px;
+  --radius-button: 6px;
+  --radius-unused: 12px;
+  --control-height: 32px;
+  --input-height: 40px;
+}
+@theme inline {
+  --color-alias: var(--brand);
+}

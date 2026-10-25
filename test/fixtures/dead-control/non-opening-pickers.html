@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<title>Non-opening picker calls</title>
+<main>
+  <input id="range" type="range" list="ticks" aria-label="Scale">
+  <datalist id="ticks"><option value="25"><option value="75"></datalist>
+  <button id="range-open" onclick="attemptPicker(this, 'range')">Choose scale</button>
+  <select id="multiple" multiple aria-label="Formats"><option>One</option><option>Two</option></select>
+  <button id="multiple-open" onclick="attemptPicker(this, 'multiple')">Choose formats</button>
+  <select id="listbox" size="3" aria-label="Format list"><option>One</option><option>Two</option><option>Three</option></select>
+  <button id="listbox-open" onclick="attemptPicker(this, 'listbox')">Choose listed format</button>
+  <select id="dropdown" size="1" aria-label="Single format"><option>One</option><option>Two</option></select>
+  <button id="dropdown-open" onclick="attemptPicker(this, 'dropdown')">Choose single format</button>
+</main>
+<script>
+  function attemptPicker(opener, id) {
+    const target = document.getElementById(id);
+    target.showPicker();
+    window.recordPickerAttempt({ id, open: target.matches(':open'), focusOnOpener: document.activeElement === opener });
+  }
+</script>
+</html>

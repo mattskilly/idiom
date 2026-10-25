@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<title>Control intent fixture</title>
+<style>button, [role=tab], [role=radio] { margin: 4px; padding: 8px; } [hidden] { display: none; }</style>
+<main aria-label="Editor">
+  <button id="desktop" aria-pressed="true">Desktop</button>
+  <button id="light" aria-pressed="true">Light</button>
+  <button id="default" aria-checked="true">Default</button>
+  <button id="colors" role="tab" aria-selected="true">Colors</button>
+  <button id="home" aria-current="page">Home</button>
+  <input id="radio" type="radio" checked aria-label="Compact">
+  <input id="live-radio" type="radio" aria-label="Comfortable">
+  <div id="role-tab" role="tab" aria-selected="true" tabindex="0">Design</div>
+  <div id="role-radio" role="radio" aria-checked="true" tabindex="0">Automatic</div>
+  <input id="unselected-radio" type="radio" aria-label="Expanded">
+  <div id="unselected-tab" role="tab" aria-selected="false" tabindex="0">Other tab</div>
+  <a id="current-link" href="#home" aria-current="page">Home link</a>
+  <button id="draggable" draggable="true" aria-label="Position element" title="Position element">↕</button>
+  <button id="description" aria-roledescription="DrAg handle">Position</button>
+  <button id="move" aria-label="Move element" title="Move element">↕</button>
+  <button id="drag">Drag element</button>
+  <button id="reorder">Reorder layers</button>
+  <button id="account" onclick="document.getElementById('account-menu').hidden=false">Account</button>
+  <div id="account-menu" role="menu" aria-label="Account" hidden>
+    <button id="menu-light" role="menuitemradio" aria-checked="true">Light</button>
+    <button id="menu-move" role="menuitem" aria-label="Move item" title="Move item">↕</button>
+  </div>
+  <button id="upload" aria-label="Upload image" title="Upload image" onclick="document.getElementById('file').click()">↑</button>
+  <input id="file" type="file" hidden>
+  <button id="date-open" onclick="document.getElementById('date').showPicker()">Choose date</button>
+  <input id="date" type="date" hidden>
+  <button id="color-open" onclick="document.getElementById('color').click()">Choose color</button>
+  <input id="color" type="color" value="#123456" hidden>
+  <button id="color-second" onclick="document.getElementById('color').click()">Another color</button>
+  <button id="color-cancel" onclick="document.getElementById('canceled-color').click()">Canceled color</button>
+  <input id="canceled-color" type="color" hidden onclick="event.preventDefault()">
+  <button id="color-ancestor" onclick="document.getElementById('ancestor-color').click()">Ancestor canceled color</button>
+  <div onclick="event.preventDefault()"><input id="ancestor-color" type="color" hidden></div>
+  <button id="color-disabled" onclick="document.getElementById('disabled-color').click()">Disabled color</button>
+  <input id="disabled-color" type="color" hidden disabled>
+  <button id="color-fieldset" onclick="document.getElementById('fieldset-color').click()">Fieldset disabled color</button>
+  <fieldset disabled hidden><input id="fieldset-color" type="color"></fieldset>
+  <button id="color-inert">Choose color without handler</button>
+  <button id="date-disabled" onclick="try { document.getElementById('disabled-date').showPicker() } catch {}">Unavailable date</button>
+  <input id="disabled-date" type="date" disabled hidden>
+  <button id="text-picker" onclick="document.getElementById('plain-text').showPicker()">Text picker attempt</button>
+  <input id="plain-text" type="text" hidden>
+  <button id="select-open" onclick="document.getElementById('select').showPicker()">Choose format</button>
+  <select id="select" aria-label="Format"><option>One</option><option>Two</option></select>
+  <button id="dead">Enabled inert button</button>
+  <button id="false-toggle" aria-pressed="false">Broken toggle</button>
+  <button id="false-current" aria-current="false">False current</button>
+  <button id="empty-current" aria-current="">Empty current</button>
+  <button id="false-drag" draggable="false">Stationary</button>
+  <button id="whole-word">Movement and dragon</button>
+</main>
+<script>
+  document.getElementById('live-radio').checked = true;
+  // Track actions without creating DOM mutations that would mask dead controls.
+  window.intentActions = [];
+  document.addEventListener('click', event => window.intentActions.push(event.target.id));
+  document.addEventListener('pointerover', event => {
+    if (event.target.id) (window.intentHovers ??= []).push(event.target.id);
+  });
+</script>
+</html>

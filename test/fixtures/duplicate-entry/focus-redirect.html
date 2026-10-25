@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Create New Page</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; padding: 12px; }
+  button { min-height: 32px; }
+  .field.is-focused { outline: 2px solid #36c; }
+</style></head>
+<body>
+<main>
+  <section aria-label="Create New Page">
+    <h1>Create New Page</h1>
+    <button id="keep-brand" onclick="document.getElementById('brand-status').textContent='Using current project brand';document.getElementById('prompt').focus()">Keep current project brand</button>
+    <button id="use-template" onclick="document.getElementById('templates').hidden=false;document.getElementById('prompt').focus()">Get started with a template</button>
+    <p id="brand-status" role="status"></p>
+    <ul id="templates" hidden><li>Landing page</li><li>Menu</li></ul>
+    <div class="field"><textarea id="prompt" placeholder="Describe your page"></textarea></div>
+  </section>
+</main>
+<script>
+  const field = document.querySelector('.field');
+  field.addEventListener('focusin', () => field.classList.add('is-focused'));
+  field.addEventListener('focusout', () => field.classList.remove('is-focused'));
+</script>
+</body></html>

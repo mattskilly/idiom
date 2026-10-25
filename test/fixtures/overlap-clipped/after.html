@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>App builder — overlap, clipped labels and field groups (after)</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/20px Arial, sans-serif; color: #1f2328; background: #fff; }
+button, select, input { font: inherit; }
+.app { display: flex; min-height: 100vh; }
+#layers-drawer { width: 280px; flex: none; border-right: 1px solid #d0d7de; padding: 12px; }
+#layers-drawer h2 { font-size: 13px; margin: 0 0 8px; }
+#layers-drawer ul { list-style: none; margin: 0; padding: 0; }
+#layers-drawer li { padding: 4px 0; }
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* The right cluster takes its place in the row, which wraps when it runs out of room. */
+#toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 48px; padding: 8px 12px; border-bottom: 1px solid #d0d7de; }
+#toolbar > button { flex: none; width: 80px; height: 32px; border: 1px solid #d0d7de; border-radius: 6px; background: #f6f8fa; }
+#page-name { flex: none; width: 120px; height: 32px; border: 1px solid #d0d7de; border-radius: 6px; padding: 0 8px; }
+#zoom-fit { flex: none; width: 96px; height: 32px; border: 1px solid #d0d7de; border-radius: 6px; }
+#right { margin-left: auto; display: flex; gap: 8px; }
+#theme-toggle { display: flex; }
+#theme-toggle button { width: 56px; height: 32px; border: 1px solid #d0d7de; background: #fff; }
+#theme-toggle button:first-child { border-radius: 6px 0 0 6px; }
+#theme-toggle button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
+.icon { width: 32px; height: 32px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; }
+.canvas { padding: 24px; background: #f6f8fa; }
+#canvas-menu { width: 200px; padding: 4px; background: #fff; border: 1px solid #d0d7de; border-radius: 8px; }
+.menuitem { display: block; width: 180px; height: 28px; padding: 4px 8px; text-align: center; overflow: hidden; border-radius: 4px; }
+/* One line, truncated with an ellipsis; the full request is in the title. */
+#undo-label { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#style-guide { margin: 24px; padding: 20px; max-width: 360px; border: 1px solid #d0d7de; border-radius: 12px; }
+#style-guide h2 { font-size: 18px; margin: 0 0 4px; }
+#style-guide h3 { font-size: 13px; margin: 0 0 12px; color: #59636e; }
+/* Each group holds together at 4px; groups sit 16px apart. */
+.overrides { display: flex; flex-direction: column; gap: 16px; }
+.field { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.overrides label { font-weight: 600; }
+.overrides input { width: 200px; height: 32px; border: 1px solid #d0d7de; border-radius: 6px; padding: 0 8px; }
+.chip { font-size: 12px; line-height: 20px; padding: 0 8px; border-radius: 10px; background: #ddf4ff; color: #0550ae; }
+@media (max-width: 700px) { #layers-drawer { display: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside id="layers-drawer">
+    <h2>Layers</h2>
+    <ul><li>Hero</li><li>Features</li><li>Footer</li></ul>
+  </aside>
+  <div class="main">
+    <header id="toolbar">
+      <button type="button">Select</button>
+      <button type="button">Frame</button>
+      <button type="button">Text</button>
+      <button type="button">Shape</button>
+      <button type="button">Image</button>
+      <button type="button">Comment</button>
+      <input id="page-name" aria-label="Page name" value="Home">
+      <select id="zoom-fit" aria-label="Zoom"><option>Fit</option><option>100%</option></select>
+      <div id="right">
+        <div id="theme-toggle" role="group" aria-label="Theme">
+          <button type="button" id="theme-light" aria-pressed="true">Light</button>
+          <button type="button" id="theme-dark" aria-pressed="false">Dark</button>
+        </div>
+        <button type="button" class="icon" id="eye" aria-label="Preview">👁</button>
+        <button type="button" class="icon" id="more" aria-label="More">⋮</button>
+      </div>
+    </header>
+    <div class="canvas">
+      <div id="canvas-menu" role="menu" aria-label="Canvas">
+        <div id="menu-undo" class="menuitem" role="menuitem"><span id="undo-label" title="Undo &quot;Make the hero section feel calmer and more spacious&quot;">Undo "Make the hero section feel calmer and more spacious"</span></div>
+        <div id="menu-redo" class="menuitem" role="menuitem"><span>Redo</span></div>
+      </div>
+    </div>
+    <section id="style-guide" role="dialog" aria-labelledby="sg-title">
+      <h2 id="sg-title">Advanced Style Guide</h2>
+      <h3>Mobile text-style overrides</h3>
+      <div class="overrides">
+        <div class="field">
+          <label for="lh">Line height</label>
+          <input id="lh" value="1.4">
+          <span class="chip" id="lh-chip">Inherited</span>
+        </div>
+        <div class="field">
+          <label for="ls">Letter spacing</label>
+          <input id="ls" value="0">
+          <span class="chip" id="ls-chip">Inherited</span>
+        </div>
+        <div class="field">
+          <label for="fs">Font size</label>
+          <input id="fs" value="16">
+          <span class="chip" id="fs-chip">Inherited</span>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+</body>
+</html>

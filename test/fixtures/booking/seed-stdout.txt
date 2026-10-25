@@ -1,0 +1,32 @@
+seeded /tmp/t1-data
+start the app against it, then drive these paths in order:
+
+  BOOKING_DATABASE_URL= BOOKING_DATA_DIR=/tmp/t1-data BOOKING_DEMO_CALENDAR=1 bun run --cwd apps/web start
+
+  EXPECT CONFIRMATION — known recipient — one click                                 http://localhost:3000/book/jane-doe/euLiP0HA1kadz2U0
+  EXPECT CONFIRMATION — unknown recipient — name + email                            http://localhost:3000/book/jane-doe/wENwnDXjm_XEO3yr
+  EXPECT TAKEN (busy after known booking) — intentional overlap; drive after known  http://localhost:3000/book/jane-doe/HWNpATLH61NuF67E
+  EXPECT CONFIRMED — pre-seeded booked slot                                         http://localhost:3000/book/jane-doe/K6rsnBVraPH0zrhz
+  EXPECT TAKEN — sibling of the pre-seeded booking                                  http://localhost:3000/book/jane-doe/YLFN-3HNhixbRuRm
+  EXPECT EXPIRED — pre-seeded expired offer                                         http://localhost:3000/book/jane-doe/GrECyDhxghMjNJz5
+  EXPECT WITHDRAWN — pre-seeded withdrawn offer                                     http://localhost:3000/book/jane-doe/d13yhet-a6R5I15J
+  EXPECT NOT-FOUND — plain-mode offers have no links                                http://localhost:3000/b/PKbyHRYpge23WQ8P/Ej2jWQc6EhVO5OUT
+  EXPECT 301 → CANONICAL — former handle redirects permanently to jane-doe          http://localhost:3000/book/jane/2_nlJFwx2sSJSygG
+  EXPECT NOT-FOUND — valid code under a handle that never owned it                  http://localhost:3000/book/somebody-else/2_nlJFwx2sSJSygG
+  EXPECT CONFIRMATION — historical 22-character /b link                             http://localhost:3000/b/oooooooooooooooooooooo/aaaaaaaaaaaaaaaaaaaaaa
+  EXPECT NOT-FOUND — unknown but well-formed slugs                                  http://localhost:3000/b/m2S2prVKJHrzxzlq/xKTHizXHytRkWwF9
+  EXPECT NOT-FOUND — malformed slugs — no query issued                              http://localhost:3000/b/nope/nope
+
+standing booking path:
+  EXPECT PICKER                    http://localhost:3000/book/jane-doe/intro-30
+  EXPECT 301 → CANONICAL          http://localhost:3000/book/jane/intro-30?tz=America/New_York
+  EXPECT PRIVATE NOT-FOUND        http://localhost:3000/book/somebody-else/intro-30
+  EXPECT PRIVATE NOT-FOUND        http://localhost:3000/book/jane-doe/disabled-link
+  EXPECT NAME + EMAIL BOOKING     http://localhost:3000/book/jane-doe/intro-30?start=1787058000000&tz=America/New_York
+
+Bookable choices run 14:00–16:45 Europe/London. In America/New_York they are
+09:00–11:45 normally and 10:00–12:45 while US/UK DST offsets differ, safely
+inside the recipient's 08:00–20:00 window. The overlap is driven after the
+known booking so its busy/taken result diagnoses calendar occupancy, not a window failure.
+
+Add ?tz=Asia/Kolkata to any booking link to see the half-hour-offset rendering.

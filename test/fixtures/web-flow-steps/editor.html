@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><head><title>Editor</title><link rel="icon" href="data:,"></head><body>
+<main><h1>Editor ready</h1><p hidden>Published</p><p>Published page</p><p>Published page</p><div id="loading" hidden>Loading</div>
+<button id="submit">Publish</button><button id="next">Next</button><label>Code <input id="code"></label>
+<script>
+const mode = new URLSearchParams(location.search).get('mode') || 'healthy';
+document.querySelector('#next').onclick = () => fetch('/next');
+document.querySelector('#submit').onclick = () => {
+  if (mode === 'console') setTimeout(() => console.error('renderer broken'), 100);
+  else if (mode === 'pageerror') setTimeout(() => { throw Error('uncaught fixture'); }, 100);
+  else if (mode === 'settle') setTimeout(() => console.error('settle failure'), 450);
+  else if (mode === 'timer') setTimeout(() => fetch('/broken'), 150);
+  else if (mode === 'quiet') {
+    setTimeout(() => console.info('still working'), 170);
+    setTimeout(() => fetch('/broken'), 340);
+  }
+  else fetch('/' + mode);
+};
+</script></main></body></html>

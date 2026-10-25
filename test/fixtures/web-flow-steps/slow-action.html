@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><head><title>Slow action</title><link rel="icon" href="data:,"></head><body>
+<main><h1>Slow action</h1><button id="first" disabled>First action</button><button id="next">Next action</button></main>
+<script>
+const mode = new URLSearchParams(location.search).get('mode');
+const first = document.querySelector('#first');
+setTimeout(() => { first.disabled = false; }, 500);
+first.onclick = () => setTimeout(() => {
+  if (mode === 'http') void fetch('/broken');
+  else if (mode === 'pageerror') throw Error('first action failed');
+  else console.error('first action failed');
+}, 100);
+document.querySelector('#next').onclick = () => fetch('/next');
+</script></body></html>

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Side-by-side settings rows</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font: 16px system-ui, sans-serif; }
+      main { width: 720px; padding: 24px; }
+      .row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 16px 0;
+        border-bottom: 1px solid #ddd;
+      }
+      .copy { flex: 1; }
+      h3, p { margin: 0; }
+      button { width: 100px; height: 32px; }
+    </style>
+  </head>
+  <body>
+    <main class="settings">
+      <section>
+        <div class="row"><div class="copy"><h3>Display name</h3><p>Shown on bookings.</p></div><button type="button">Edit</button></div>
+        <div class="row"><div class="copy"><h3>Time zone</h3><p>Used for slots.</p></div><button type="button">Edit</button></div>
+        <div class="row"><div class="copy"><h3>Email</h3><p>Where we reach you.</p></div><button type="button">Edit</button></div>
+        <div class="row"><div class="copy"><h3>Billing</h3><p>Plan and invoices.</p></div><button type="button">Edit</button></div>
+        <div class="row"><div class="copy"><h3>Calendar</h3><p>Connect a calendar so Plannery can read your existing events, avoid conflicts, protect private time, and keep every availability window accurate for invitees across all of your calendars.</p></div><button type="button">Edit</button></div>
+      </section>
+    </main>
+  </body>
+</html>

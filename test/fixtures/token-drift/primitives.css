@@ -1,0 +1,6 @@
+:root {
+  color-scheme: light dark;
+  --primitive-fg: light-dark(rgb(16, 18, 16), rgb(235, 238, 235));
+  --primitive-fg-muted: light-dark(rgb(87, 92, 87), rgb(174, 181, 174));
+  --primitive-accent: light-dark(rgb(10, 124, 82), rgb(88, 214, 166));
+}

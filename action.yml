@@ -1,0 +1,79 @@
+name: Idiom regression guard
+description: Check PR design regressions against the merge base and publish GitHub artifact evidence.
+inputs:
+  flow:
+    description: Flow manifest id
+    required: true
+  project:
+    description: Project directory relative to the repository root
+    default: '.'
+  version:
+    description: Compatible published @mattskilly/idiom npm version or tag
+    default: latest
+  fail-on:
+    description: Minimum new-finding severity (blocker, major, minor, never)
+    default: major
+  setup-command:
+    description: Shell script run at each revision's repository root
+    default: npm ci
+  token:
+    description: Token with pull-requests write permission for the managed comment
+    default: ${{ github.token }}
+outputs:
+  baseline-sha:
+    description: Actual PR merge-base SHA
+    value: ${{ steps.run.outputs.baseline-sha }}
+  new-findings:
+    description: Number of new deterministic finding occurrences
+    value: ${{ steps.run.outputs.new-findings }}
+  artifact-url:
+    description: Authenticated evidence artifact download URL
+    value: ${{ steps.upload.outputs.artifact-url }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+        package-manager-cache: false
+    - name: Capture and compare merge base and head
+      id: run
+      if: ${{ always() }}
+      shell: bash
+      env:
+        IDIOM_ACTION_PATH: ${{ github.action_path }}
+        IDIOM_ACTION_FLOW: ${{ inputs.flow }}
+        IDIOM_ACTION_PROJECT: ${{ inputs.project }}
+        IDIOM_ACTION_VERSION: ${{ inputs.version }}
+        IDIOM_ACTION_FAIL_ON: ${{ inputs.fail-on }}
+        IDIOM_ACTION_SETUP: ${{ inputs.setup-command }}
+      run: node "$IDIOM_ACTION_PATH/scripts/github-action/run.mjs"
+    - name: Upload evidence
+      id: upload
+      if: ${{ always() && steps.run.outputs.evidence-directory != '' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: idiom-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ steps.run.outputs.evidence-directory }}
+        if-no-files-found: error
+        retention-days: 14
+    - name: Update PR comment and job summary
+      id: comment
+      if: ${{ always() && steps.run.outputs.result-file != '' }}
+      shell: bash
+      env:
+        IDIOM_ACTION_PATH: ${{ github.action_path }}
+        IDIOM_ACTION_RESULT: ${{ steps.run.outputs.result-file }}
+        IDIOM_ACTION_ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        IDIOM_ACTION_UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        IDIOM_ACTION_TOKEN: ${{ inputs.token }}
+      run: node "$IDIOM_ACTION_PATH/scripts/github-action/comment.mjs"
+    - name: Gate new findings
+      if: ${{ always() }}
+      shell: bash
+      env:
+        IDIOM_ACTION_PATH: ${{ github.action_path }}
+        IDIOM_ACTION_RESULT: ${{ steps.run.outputs.result-file }}
+        IDIOM_ACTION_UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        IDIOM_ACTION_COMMENT_OUTCOME: ${{ steps.comment.outcome }}
+      run: node "$IDIOM_ACTION_PATH/scripts/github-action/run.mjs" gate

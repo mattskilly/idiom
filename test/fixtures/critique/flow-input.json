@@ -1,0 +1,48 @@
+{
+  "flow": "booking",
+  "surface": "web",
+  "intent": ["Booking is obvious in one screen."],
+  "screenshots": [
+    {
+      "label": "state-0/desktop/light",
+      "path": "state-0/desktop/light/screenshot.png",
+      "readPath": "/tmp/none.png",
+      "state": "state-0",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    }
+  ],
+  "domExcerpts": [
+    {
+      "label": "state-0/desktop/light",
+      "state": "state-0",
+      "viewport": "desktop",
+      "colorScheme": "light",
+      "content": "<main><h1>Book</h1></main>"
+    }
+  ],
+  "productMd": "Serve recipients quickly.",
+  "designMd": "Keep one dominant action.",
+  "references": [
+    {
+      "label": "ref-1",
+      "polarity": "reference",
+      "kind": "text",
+      "content": "Calm."
+    },
+    {
+      "label": "ref-2",
+      "polarity": "anti-reference",
+      "kind": "image",
+      "readPath": "/tmp/r.png",
+      "mediaType": "image/png",
+      "note": "busy"
+    }
+  ],
+  "priorDecisions": [],
+  "priorRules": [],
+  "deterministicFindings": [],
+  "modelCandidateAllowance": 5,
+  "decisionObservationAllowance": 3,
+  "rulingResolutions": []
+}

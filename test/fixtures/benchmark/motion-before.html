@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Motion lab</title><style>
+body { font: 16px system-ui; padding: 32px; } button { padding: 12px; }
+aside { width: 280px; height: 180px; overflow: hidden; background: #eee; }
+aside.closed { height: 0; opacity: 0; }
+[role=tooltip] { opacity: 0; position: absolute; top: 300px; background: #222; color: white; padding: 16px; transition: opacity 400ms; }
+#tip:hover + [role=tooltip], #tip[aria-pressed=true] + [role=tooltip] { opacity: 1; }
+</style></head><body>
+<button id="toggle" aria-controls="layers" aria-expanded="true">Toggle Layers</button>
+<aside id="layers" aria-label="Layers panel"><h2>Layers</h2><p>Canvas content</p></aside>
+<button id="tip" title="Help" aria-pressed="false">Help</button><div role="tooltip" id="help">Layer help</div>
+<script>toggle.onclick = () => { const closed = layers.classList.toggle('closed'); toggle.setAttribute('aria-expanded', String(!closed)); }; tip.onclick=()=>tip.setAttribute('aria-pressed',String(tip.getAttribute('aria-pressed')!=='true'));</script>
+</body></html>

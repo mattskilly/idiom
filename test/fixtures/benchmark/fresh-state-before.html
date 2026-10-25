@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Studio — fresh</title><style>/*CSS*/
+.field, .describe-field {
+  display: block;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #c9d0db;
+  border-radius: 6px;
+  background: #fff;
+  color: #1d2330;
+  font: inherit;
+  text-align: left;
+}
+.describe-field { color: #8a93a3; cursor: text; }
+textarea.field { height: 72px; padding: 8px 10px; resize: none; }
+.field-row { margin-bottom: 12px; }
+.field-row label { display: block; margin-bottom: 4px; font-weight: 600; }
+.select-trigger { display: flex; align-items: center; width: 100%; height: 36px; padding: 0 10px; border: 1px solid #c9d0db; border-radius: 6px; background: #fff; color: #8a93a3; text-align: left; }
+#site-search { width: 240px; }
+</style></head>
+<body>
+<header class="topbar">
+  <strong>Builder</strong>
+  <button class="btn icon-btn" id="undo" aria-label="Undo" title="Undo">↶</button>
+  <button class="btn icon-btn" id="redo" aria-label="Redo" title="Nothing to redo yet" disabled>↷</button>
+  <span class="spacer"></span>
+  <input type="search" id="site-search" class="field" aria-label="Search pages" placeholder="Search…">
+  <button class="btn" id="save-as" onclick="document.title='Save as'">Save as…</button>
+</header>
+<main class="layout">
+  <aside class="panel">
+    <div class="panel-head"><h2>Page</h2></div>
+    <div class="field-row"><label for="title">Title</label><input id="title" class="field" value="Pricing"></div>
+    <div class="field-row"><label for="slug">Slug</label><input id="slug" class="field" value="pricing" readonly></div>
+    <div class="field-row"><label id="theme-label">Theme</label><button class="select-trigger" id="theme" role="combobox" aria-expanded="false" aria-labelledby="theme-label" onclick="this.setAttribute('aria-expanded','true')">Select a theme…</button></div>
+  </aside>
+  <section class="canvas" aria-label="Canvas"><h1>Pricing</h1><p>Simple plans for every team.</p></section>
+  <aside class="panel right">
+    <div class="panel-head"><h2>Inspector</h2></div>
+    <button class="describe-field" id="inspector-describe" onclick="document.getElementById('composer').focus()">Describe a change</button>
+    <div class="panel-head" style="margin-top:24px"><h2>AI</h2></div>
+    <label for="composer" class="field-row" style="display:block;font-weight:600">Ask for a change</label>
+    <textarea id="composer" class="field" placeholder="Describe a change"></textarea>
+  </aside>
+</main>
+</body></html>

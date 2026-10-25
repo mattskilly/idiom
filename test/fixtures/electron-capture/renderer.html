@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Electron Capture Fixture</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      window.bootEnvironment = {
+        theme: document.documentElement.getAttribute("data-theme"),
+        reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+      };
+      console.error("selected duplicate diagnostic");
+      queueMicrotask(() => {
+        throw new Error("selected duplicate exception");
+      });
+    </script>
+    <style>
+      :root { font: 16px system-ui; color-scheme: light dark; }
+      body { margin: 0; padding: 24px; background: Canvas; color: CanvasText; }
+      nav { display: flex; gap: 12px; margin-bottom: 24px; }
+      main { max-width: 680px; }
+      label { display: grid; gap: 6px; margin: 16px 0; }
+      input { min-height: 34px; }
+      .environment { margin-top: 24px; font-size: 12px; }
+      .compact-only { display: none; }
+      @media (max-width: 500px) {
+        body { padding: 12px; }
+        .compact-only { display: block; }
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <button id="composer-tab" type="button">Composer</button>
+      <button id="settings-tab" type="button">Settings</button>
+    </nav>
+    <main id="content"></main>
+    <p class="compact-only">Compact window</p>
+    <dl class="environment">
+      <dt>Boot theme</dt><dd id="boot-theme"></dd>
+      <dt>Boot reduced motion</dt><dd id="boot-motion"></dd>
+      <dt>Live theme</dt><dd id="live-theme"></dd>
+      <dt>Live reduced motion</dt><dd id="live-motion"></dd>
+    </dl>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const person = params.get("person");
+      const availability = params.get("availability");
+      let view = "composer";
+      let draft = "";
+
+      function updateEnvironment() {
+        document.querySelector("#boot-theme").textContent = String(window.bootEnvironment.theme);
+        document.querySelector("#boot-motion").textContent = String(window.bootEnvironment.reducedMotion);
+        document.querySelector("#live-theme").textContent = String(document.documentElement.getAttribute("data-theme"));
+        document.querySelector("#live-motion").textContent = String(matchMedia("(prefers-reduced-motion: reduce)").matches);
+      }
+
+      function render() {
+        const content = document.querySelector("#content");
+        if (view === "composer") {
+          content.innerHTML = `<h1>New availability for ${person}</h1><p>${availability}</p><label>Message<input id="message" value="${draft}"></label><button id="save">Save draft</button>`;
+          const message = document.querySelector("#message");
+          message.addEventListener("input", () => { draft = message.value; });
+          message.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") document.querySelector("#save").click();
+          });
+          document.querySelector("#save").addEventListener("click", () => {
+            content.insertAdjacentHTML("beforeend", `<p id="saved">Saved ${draft}</p>`);
+          });
+        } else {
+          content.innerHTML = `<h1>Settings</h1><p>Account: ${person}</p><label><input id="reminders" type="checkbox"> Reminders</label>`;
+        }
+        updateEnvironment();
+      }
+
+      document.querySelector("#composer-tab").addEventListener("click", () => { view = "composer"; render(); });
+      document.querySelector("#settings-tab").addEventListener("click", () => { view = "settings"; render(); });
+      const motion = matchMedia("(prefers-reduced-motion: reduce)");
+      motion.addEventListener("change", updateEnvironment);
+      new MutationObserver(updateEnvironment).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+      render();
+      console.error("selected duplicate diagnostic");
+      queueMicrotask(() => {
+        throw new Error("selected duplicate exception");
+      });
+    </script>
+  </body>
+</html>

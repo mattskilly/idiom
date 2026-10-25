@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><head><title>Payment status</title><link rel="icon" href="data:,"></head><body>
+<main><h1>Payment status</h1><p id="status">Payment <span hidden>successful</span></p></main>
+<script>
+const mode = new URLSearchParams(location.search).get('mode');
+const status = document.querySelector('#status');
+if (mode === 'visible') status.innerHTML = 'Payment <span hidden>pending</span>successful';
+if (mode === 'delayed') setTimeout(() => { status.querySelector('span').hidden = false; }, 500);
+</script></body></html>

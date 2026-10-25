@@ -1,0 +1,26 @@
+<!doctype html><html lang="en"><title>Templates</title><style>
+body { margin:24px; font:14px system-ui; background:#fff; }
+.grid { display:flex; gap:16px; margin-bottom:24px; }
+.card { width:240px; border:1px solid #d4d4d8; border-radius:8px; overflow:hidden; background:#fff; }
+.thumb { width:240px; height:150px; overflow:hidden; position:relative; }
+.thumb iframe { width:1200px; height:960px; border:0; transform:scale(0.2); transform-origin:0 0; position:absolute; left:0; top:0; }
+.card h3 { margin:8px 12px; font-size:14px; }
+.tile { margin:0; width:240px; }
+.frame { width:240px; height:150px; overflow:hidden; background:#e5e7eb; }
+.frame img { display:block; width:100%; height:100%; object-fit:contain; }
+.brand img { display:block; width:200px; height:120px; }
+</style><body>
+<h1>Choose a template</h1>
+<div class="grid" id="templates">
+<div class="card"><div class="thumb"><iframe tabindex="-1" title="Launch preview" srcdoc='<body style="margin:0"><div style="height:300px;background:#fff"></div><div style="height:960px;background:repeating-linear-gradient(45deg,rgba(255,255,255,.35) 0 18px,transparent 18px 36px),linear-gradient(90deg,#0f766e,#7c3aed,#db2777);color:#fff;font:bold 72px sans-serif;padding:60px">Launch hero</div></body>'></iframe></div><h3 aria-label="Launch template" title="Launch template">Launch</h3></div>
+<div class="card"><div class="thumb"><iframe tabindex="-1" title="Webinar preview" srcdoc='<body style="margin:0"><div style="height:300px;background:#fff"></div><div style="height:960px;background:repeating-linear-gradient(45deg,rgba(255,255,255,.35) 0 18px,transparent 18px 36px),linear-gradient(90deg,#0f766e,#7c3aed,#db2777);color:#fff;font:bold 72px sans-serif;padding:60px">Webinar hero</div></body>'></iframe></div><h3 aria-label="Webinar template" title="Webinar template">Webinar</h3></div>
+<div class="card"><div class="thumb"><iframe tabindex="-1" title="Ebook preview" srcdoc='<body style="margin:0"><div style="height:300px;background:#fff"></div><div style="height:960px;background:repeating-linear-gradient(45deg,rgba(255,255,255,.35) 0 18px,transparent 18px 36px),linear-gradient(90deg,#0f766e,#7c3aed,#db2777);color:#fff;font:bold 72px sans-serif;padding:60px">Ebook hero</div></body>'></iframe></div><h3 aria-label="Ebook template" title="Ebook template">Ebook</h3></div>
+<div class="card"><div class="thumb"><iframe tabindex="-1" title="Sale preview" srcdoc='<body style="margin:0"><div style="height:300px;background:#fff"></div><div style="height:960px;background:repeating-linear-gradient(45deg,rgba(255,255,255,.35) 0 18px,transparent 18px 36px),linear-gradient(90deg,#0f766e,#7c3aed,#db2777);color:#fff;font:bold 72px sans-serif;padding:60px">Sale hero</div></body>'></iframe></div><h3 aria-label="Sale template" title="Sale template">Sale</h3></div>
+</div>
+<div class="grid" id="images">
+<figure class="tile"><div class="frame"><img alt="North banner" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='100'><defs><linearGradient id='g'><stop offset='0' stop-color='%23c2410c'/><stop offset='1' stop-color='%231d4ed8'/></linearGradient><pattern id='p' width='12' height='12' patternUnits='userSpaceOnUse' patternTransform='rotate(45)'><rect width='6' height='12' fill='%23fde68a'/></pattern></defs><rect width='400' height='100' fill='url(%23g)'/><rect width='400' height='100' fill='url(%23p)' opacity='.5'/></svg>"></div><figcaption>North</figcaption></figure>
+<figure class="tile"><div class="frame"><img alt="South banner" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='100'><defs><linearGradient id='g'><stop offset='0' stop-color='%23c2410c'/><stop offset='1' stop-color='%231d4ed8'/></linearGradient><pattern id='p' width='12' height='12' patternUnits='userSpaceOnUse' patternTransform='rotate(45)'><rect width='6' height='12' fill='%23fde68a'/></pattern></defs><rect width='400' height='100' fill='url(%23g)'/><rect width='400' height='100' fill='url(%23p)' opacity='.5'/></svg>"></div><figcaption>South</figcaption></figure>
+<figure class="tile"><div class="frame"><img alt="East banner" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='100'><defs><linearGradient id='g'><stop offset='0' stop-color='%23c2410c'/><stop offset='1' stop-color='%231d4ed8'/></linearGradient><pattern id='p' width='12' height='12' patternUnits='userSpaceOnUse' patternTransform='rotate(45)'><rect width='6' height='12' fill='%23fde68a'/></pattern></defs><rect width='400' height='100' fill='url(%23g)'/><rect width='400' height='100' fill='url(%23p)' opacity='.5'/></svg>"></div><figcaption>East</figcaption></figure>
+</div>
+<div class="brand"><img alt="Brand" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='120'><rect width='200' height='120' fill='%237c3aed'/></svg>"></div>
+</body></html>

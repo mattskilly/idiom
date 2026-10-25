@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Editor</title>
+<style>
+* { box-sizing: border-box; } body { margin: 0; font: 13px/1.4 system-ui, sans-serif; display: flex; height: 100vh; }
+.rail { width: 48px; border-right: 1px solid #ddd; display: flex; flex-direction: column; }
+.rail button { width: 48px; height: 44px; border: 0; background: none; font: inherit; }
+.left-panel { width: 260px; border-right: 1px solid #ddd; }
+.panel-header { display: flex; align-items: center; justify-content: space-between; height: 44px; padding: 0 8px 0 12px; border-bottom: 1px solid #ddd; }
+.panel-header h2 { font-size: 13px; margin: 0; }
+.panel-header button { width: 32px; height: 32px; border: 0; background: none; font: inherit; }
+.panel-body { padding: 12px; }
+.panel-body button { height: 32px; padding: 0 12px; }
+main { flex: 1; background: #f6f6f6; }
+</style>
+<nav class="rail" aria-label="Panels"><button aria-label="Layers">L</button><button aria-label="Add">+</button><button aria-label="Brand">B</button><button aria-label="Settings">S</button><button aria-label="History">H</button><button aria-label="AI">AI</button></nav>
+<aside class="left-panel" aria-label="__TITLE__">
+  <div class="panel-header"><h2>__TITLE__</h2>__TOGGLE__</div>
+  <div class="panel-body">__BODY__</div>
+</aside>
+<main>Canvas</main>
+</html>

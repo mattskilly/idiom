@@ -1,0 +1,241 @@
+{
+  "id": "booking",
+  "target": { "kind": "web" },
+  "surface": "recipient-booking",
+  "title": "Recipient booking page",
+  "intent": [
+    "A recipient understands whose time they are looking at and what is being offered within two seconds.",
+    "A recipient decides and books in one screen with zero learned UI.",
+    "Terminal states read as calm, resolved outcomes rather than errors."
+  ],
+  "setup": [
+    {
+      "run": "bun run seed:booking",
+      "env": {
+        "BOOKING_DATA_DIR": "${dataDir}",
+        "BOOKING_DATABASE_URL": ""
+      },
+      "captureStdout": true
+    }
+  ],
+  "states": [
+    {
+      "id": "valid-known",
+      "description": "Bookable offer for known recipient Ada Lovelace with one-click confirmation",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT CONFIRMATION — known recipient — one click\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": ["Booking as Ada Lovelace.", "Book this time"],
+        "selectorPresent": ["form[data-book-form]"],
+        "selectorAbsent": ["input[name=\"name\"]", "input[name=\"email\"]"]
+      },
+      "mask": [".mt-6.text-lg", ".divide-y.divide-rule"]
+    },
+    {
+      "id": "valid-anonymous",
+      "description": "Bookable offer for an unknown recipient with name and email controls",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT CONFIRMATION — unknown recipient — name \\+ email\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": ["Your name", "Your email", "Book this time"],
+        "selectorPresent": ["form[data-book-form]", "input[name=\"name\"]", "input[name=\"email\"]"]
+      },
+      "mask": [".mt-6.text-lg", ".divide-y.divide-rule"]
+    },
+    {
+      "id": "confirmed",
+      "description": "Recipient's pre-seeded completed booking",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT CONFIRMED — pre-seeded booked slot\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": ["You said when.", "The invite — with your meeting link — is in your calendar."],
+        "selectorAbsent": ["form"]
+      },
+      "mask": ["h1"]
+    },
+    {
+      "id": "taken",
+      "description": "Sibling slot already booked by someone else",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT TAKEN — sibling of the pre-seeded booking\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": ["That time has been booked.", "Reply to Jane and they'll send fresh times."],
+        "selectorAbsent": ["form"]
+      },
+      "mask": [".divide-y.divide-rule"]
+    },
+    {
+      "id": "expired",
+      "description": "Offer expired before booking",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT EXPIRED — pre-seeded expired offer\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": [
+          "These times have expired.",
+          "These times are no longer available — reply to Jane for fresh ones."
+        ],
+        "selectorAbsent": ["form"]
+      }
+    },
+    {
+      "id": "withdrawn",
+      "description": "Host withdrew the offer",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT WITHDRAWN — pre-seeded withdrawn offer\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": [
+          "These times were withdrawn.",
+          "These times are no longer available — reply to Jane for fresh ones."
+        ],
+        "selectorAbsent": ["form"]
+      }
+    },
+    {
+      "id": "not-found",
+      "description": "Malformed private link returns the non-disclosing not-found page",
+      "url": "/b/nope/nope?tz=America/New_York",
+      "expect": {
+        "status": 404,
+        "textPresent": [
+          "This link isn't available.",
+          "Check the link you were sent, or reply to whoever sent it for fresh times."
+        ],
+        "selectorAbsent": ["form"]
+      }
+    },
+    {
+      "id": "error-name",
+      "description": "Anonymous form reports a missing name",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT CONFIRMATION — unknown recipient — name \\+ email\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York&error=name"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": ["Enter your name."],
+        "selectorPresent": ["form[data-book-form]", "[role=\"alert\"]"]
+      },
+      "mask": [".mt-6.text-lg", ".divide-y.divide-rule"]
+    },
+    {
+      "id": "error-email-empty",
+      "description": "Anonymous form reports an empty email address",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT CONFIRMATION — unknown recipient — name \\+ email\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York&error=email-empty"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": ["Enter an email address."],
+        "selectorPresent": ["form[data-book-form]", "[role=\"alert\"]"]
+      },
+      "mask": [".mt-6.text-lg", ".divide-y.divide-rule"]
+    },
+    {
+      "id": "error-email-long",
+      "description": "Anonymous form reports an overlong email address",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT CONFIRMATION — unknown recipient — name \\+ email\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York&error=email-long"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": ["That address is too long."],
+        "selectorPresent": ["form[data-book-form]", "[role=\"alert\"]"]
+      },
+      "mask": [".mt-6.text-lg", ".divide-y.divide-rule"]
+    },
+    {
+      "id": "error-email-invalid",
+      "description": "Anonymous form reports an invalid email address",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT CONFIRMATION — unknown recipient — name \\+ email\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York&error=email-invalid"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": ["That doesn't look like an email address."],
+        "selectorPresent": ["form[data-book-form]", "[role=\"alert\"]"]
+      },
+      "mask": [".mt-6.text-lg", ".divide-y.divide-rule"]
+    },
+    {
+      "id": "error-link",
+      "description": "Anonymous form reports a meeting-link attachment failure",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT CONFIRMATION — unknown recipient — name \\+ email\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York&error=link"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": [
+          "We couldn't attach a meeting link, so nothing was booked. Pick another time, or reply to your host."
+        ],
+        "selectorPresent": ["form[data-book-form]", "[role=\"alert\"]"]
+      },
+      "mask": [".mt-6.text-lg", ".divide-y.divide-rule"]
+    },
+    {
+      "id": "error-calendar",
+      "description": "Anonymous form reports an unavailable host calendar",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT CONFIRMATION — unknown recipient — name \\+ email\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York&error=calendar"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": [
+          "We couldn't reach the host's calendar, so nothing was booked. Reply to your host and they'll send fresh times."
+        ],
+        "selectorPresent": ["form[data-book-form]", "[role=\"alert\"]"]
+      },
+      "mask": [".mt-6.text-lg", ".divide-y.divide-rule"]
+    },
+    {
+      "id": "taken-race",
+      "description": "A race-lost query resolves an otherwise open slot as taken",
+      "urlFrom": {
+        "source": "setup-stdout",
+        "pattern": "EXPECT CONFIRMATION — unknown recipient — name \\+ email\\s+http://localhost:3000(\\S+)",
+        "append": "?tz=America/New_York&taken=1"
+      },
+      "expect": {
+        "status": 200,
+        "textPresent": ["That time has been booked.", "Reply to Jane and they'll send fresh times."],
+        "selectorAbsent": ["form"]
+      },
+      "mask": [".divide-y.divide-rule"]
+    }
+  ],
+  "viewports": ["desktop", "mobile"]
+}

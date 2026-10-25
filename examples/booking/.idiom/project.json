@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "app": {
+    "name": "Booking demo",
+    "framework": "nextjs"
+  },
+  "server": {
+    "build": "bun run --cwd apps/web build",
+    "start": "bun run --cwd apps/web start",
+    "readyUrl": "http://127.0.0.1:3107/",
+    "port": 3107,
+    "env": {
+      "BOOKING_DATABASE_URL": "",
+      "BOOKING_DATA_DIR": "${dataDir}",
+      "BOOKING_DEMO_CALENDAR": "1",
+      "BOOKING_ORIGIN": "http://127.0.0.1:3107",
+      "PORT": "3107"
+    },
+    "startupTimeoutMs": 60000
+  },
+  "viewports": [
+    { "name": "desktop", "width": 1440, "height": 900 },
+    { "name": "mobile", "width": 390, "height": 844 }
+  ],
+  "surfaces": [
+    { "id": "recipient-booking", "name": "Recipient booking" },
+    { "id": "desktop-composer", "name": "Desktop composer" },
+    { "id": "update-feed", "name": "Update feed" }
+  ],
+  "capture": {
+    "timezoneId": "America/New_York",
+    "locale": "en-US",
+    "colorScheme": "light",
+    "reducedMotion": true,
+    "fullPage": true,
+    "settleMs": 250
+  },
+  "design": {
+    "tokensFile": "packages/design/src/theme.css",
+    "productFile": "PRODUCT.md",
+    "designFile": "DESIGN.md"
+  },
+  "model": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "maxFindings": 5
+  }
+}

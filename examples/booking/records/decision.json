@@ -1,0 +1,10 @@
+{
+  "at": "2026-08-14T19:01:12Z",
+  "commit": "b1946ac92492d2347c6235b4d2611184e0f7a8c3",
+  "findingId": "finding-3",
+  "fingerprint": "9f2c41d0e6b8a75c3d1f0e9b2a4c6d8e0f1a2b3c4d5e6f708192a3b4c5d6e7f8",
+  "decision": "accept",
+  "scope": "instance",
+  "reason": "Real readability problem on the only explanatory text in the state.",
+  "actor": "human"
+}

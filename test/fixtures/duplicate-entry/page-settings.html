@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Editor</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; }
+  header, main, footer { display: flex; gap: 8px; align-items: center; padding: 12px; }
+  main { flex-direction: column; align-items: flex-start; }
+  button { min-width: 32px; min-height: 32px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  aside { padding: 12px; border-left: 1px solid #ccc; }
+</style></head>
+<body>
+<header>
+  <strong>Builder</strong>
+  <button id="project-menu" aria-haspopup="menu" onclick="document.getElementById('menu').hidden=!document.getElementById('menu').hidden">Project</button>
+  <div role="menu" id="menu" hidden aria-label="Project">
+    <button role="menuitem" onclick="openSettings()">Page settings</button>
+  </div>
+</header>
+<main>
+  <div class="page-title"><h1>Ridgeline Coffee — Home</h1><button class="icon-btn" id="title-gear" aria-label="Page settings" title="Page settings" onclick="openSettings()">⚙</button></div>
+  <div role="toolbar" aria-label="Tools">
+    <span class="tip"><button class="icon-btn" id="undo" aria-label="Undo" title="Undo" onclick="document.getElementById('history').setAttribute('data-last','undo')">↶</button></span>
+    <span class="tip"><button class="icon-btn" id="redo" aria-label="Redo" title="Redo" onclick="document.getElementById('history').setAttribute('data-last','redo')">↷</button></span>
+    <span class="tip"><button class="icon-btn" id="tool-gear" aria-label="Page settings" title="Page settings" onclick="openSettings()">⚙</button></span>
+  </div>
+  <p id="history" data-last="">History</p>
+  <div class="sections">
+    <div class="row"><span>Section A</span><button onclick="openSettings()">Edit</button></div>
+    <div class="row"><span>Section B</span><button onclick="openSettings()">Edit</button></div>
+    <div class="row"><span>Section C</span><button onclick="openSettings()">Edit</button></div>
+  </div>
+</main>
+<aside id="settings" aria-label="Page settings" hidden><h2>Page settings</h2></aside>
+<script>function openSettings(){document.getElementById('menu').hidden=true;document.getElementById('settings').hidden=false;}</script>
+</body></html>

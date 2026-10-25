@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pattern library — named patterns in a picker grid</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 24px; color: #1d2330; }
+  section { margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 160px); gap: 12px; list-style: none; padding: 0; margin: 0; }
+  .grid > li, .row > div { border: 1px solid #d6dae1; border-radius: 8px; padding: 12px; }
+  .row { display: flex; gap: 12px; }
+  .label { font-size: 14px; font-weight: 500; }
+  .tab { font-size: 13px; font-weight: 400; }
+</style>
+</head>
+<body>
+<main>
+  <!-- The picker as the page builder ships it: pattern names are Title Case. -->
+  <section aria-label="Patterns">
+    <ul class="grid" role="list">
+      <li><span class="label" id="p-hero-centered">Hero Centered</span></li>
+      <li><span class="label" id="p-cta-centered">CTA Centered</span></li>
+      <li><span class="label" id="p-hero-split">Hero split</span></li>
+      <li><span class="label" id="p-feature-grid">Feature grid centered</span></li>
+    </ul>
+  </section>
+  <!-- The same picker, each card marked as a named thing. -->
+  <section aria-label="Named patterns">
+    <ul class="grid" role="list">
+      <li data-idiom-name><span class="label" id="n-hero-centered">Hero Centered</span></li>
+      <li data-idiom-name><span class="label" id="n-cta-centered">CTA Centered</span></li>
+      <li data-idiom-name><span class="label" id="n-hero-split">Hero split</span></li>
+      <li data-idiom-name><span class="label" id="n-feature-grid">Feature grid centered</span></li>
+    </ul>
+  </section>
+  <!-- Ordinary sibling labels: a real casing inconsistency. -->
+  <section aria-label="Sessions">
+    <div class="row">
+      <div><span class="tab" id="s-one">Coding Sessions</span></div>
+      <div><span class="tab" id="s-two">Coding sessions</span></div>
+      <div><span class="tab" id="s-three">Coding sessions</span></div>
+    </div>
+  </section>
+  <!-- A named card whose label uses a glossary term. -->
+  <section aria-label="Lead patterns">
+    <ul class="grid" role="list">
+      <li data-idiom-name><span class="label" id="g-leads-grid">Leads Grid</span></li>
+      <li data-idiom-name><span class="label" id="g-pricing">Pricing table</span></li>
+    </ul>
+  </section>
+  <!-- A mis-cased variant of a declared name beside other names. -->
+  <section aria-label="Recent patterns">
+    <ul class="grid" role="list">
+      <li><span class="label" id="m-hero-centered">Hero Centered</span></li>
+      <li><span class="label" id="m-hero-miscased">Hero centered</span></li>
+      <li><span class="label" id="m-pricing-centered">Pricing Centered</span></li>
+    </ul>
+  </section>
+  <!-- Marked names outside any list or grid collection are not exempt. -->
+  <section aria-label="Loose patterns">
+    <div class="row">
+      <div data-idiom-name><span class="tab" id="l-hero-centered">Hero Centered</span></div>
+      <div data-idiom-name><span class="tab" id="l-banner-centered">Banner Centered</span></div>
+      <div data-idiom-name><span class="tab" id="l-feature-grid">Feature grid centered</span></div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

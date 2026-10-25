@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dashboard — page thumbnails cropped by their cards</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 24px; color: #1d2330; }
+  .cards { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  .box { overflow: hidden; border: 0; padding: 0; }
+  iframe { border: 0; display: block; }
+  .scaler iframe { transform-origin: 0 0; }
+  /* Recent-pages thumbnails: a 960x770 page scaled to 10%, in a wrapper sized
+     to the scaled page (96x77), cropped by a 96x72 card. */
+  #thumb-small { width: 96px; height: 72px; }
+  #thumb-small .scaler { width: 96px; height: 77px; }
+  #thumb-small iframe { width: 960px; height: 770px; transform: scale(0.1); }
+  /* Gallery thumbnails: a 722x578 page scaled to 50% (361x289) in a 361x225 card. */
+  #thumb-large { width: 361px; height: 225px; }
+  #thumb-large .scaler { width: 361px; height: 289px; }
+  #thumb-large iframe { width: 722px; height: 578px; transform: scale(0.5); }
+  #avatar { width: 80px; height: 60px; }
+  #avatar img { display: block; width: 120px; height: 90px; }
+  #sparkline { width: 100px; height: 100px; }
+  #sparkline canvas { display: block; }
+  #declared-crop, #plain-overflow { width: 100px; height: 100px; }
+  #declared-crop > div, #plain-overflow > div { width: 300px; height: 300px; background: #eef1f5; }
+  #captioned { width: 200px; height: 120px; }
+  #captioned iframe { width: 200px; height: 120px; }
+  #crop-text { width: 120px; height: 24px; }
+  #crop-text span { white-space: nowrap; }
+  #fixed-text { width: 160px; height: 40px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="cards">
+    <div class="box" id="thumb-small"><div class="scaler"><iframe title="Spring launch" srcdoc="<body style='margin:0;height:770px;background:#f4f6fa'></body>"></iframe></div></div>
+    <div class="box" id="thumb-large"><div class="scaler"><iframe title="Pricing page" srcdoc="<body style='margin:0;height:578px;background:#f4f6fa'></body>"></iframe></div></div>
+    <div class="box" id="avatar"><img alt="Team photo" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='90'%3E%3Crect width='120' height='90' fill='%23c9d3e3'/%3E%3C/svg%3E"></div>
+    <div class="box" id="sparkline"><canvas width="200" height="200"></canvas></div>
+    <div class="box" id="declared-crop" data-idiom-crop><div></div></div>
+    <div class="box" id="plain-overflow"><div></div></div>
+    <div class="box" id="captioned"><iframe title="Draft" srcdoc="<body style='margin:0'></body>"></iframe><div>Draft, edited two days ago</div></div>
+    <div class="box" id="crop-text" data-idiom-crop><span>Quarterly retention review for the growth team</span></div>
+    <div class="box" id="fixed-text">Leads captured this week across every published page and form</div>
+  </div>
+</main>
+</body>
+</html>

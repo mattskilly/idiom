@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><title>Countdown edges</title><body>
+<main>
+<p id="prose">The sale ends at 10:30 on 2026-10-24, chapter 1:2:3 is a reference in prose text.</p>
+<span id="clock">10:30</span>
+<div id="split" class="countdown"><span>0</span><span>0</span>:<span>0</span><span>0</span></div>
+<div id="labelled">0 days 0 hours 0 minutes</div>
+<div id="starting">0:00:00:00</div>
+<div id="detaching">1:00:00:00</div>
+<div id="nested"><span id="inner">2:00:00:00</span></div>
+<div style="display:none" id="hidden-timer">0:00:00:00</div>
+</main>
+<script>
+setTimeout(()=>{document.querySelector('#starting').textContent='1:23:45:10'},300);
+setTimeout(()=>{document.querySelector('#detaching').replaceWith(Object.assign(document.createElement('div'),{id:'detaching',textContent:'1:00:00:00'}))},300);
+</script>
+</body></html>

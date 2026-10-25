@@ -1,0 +1,69 @@
+{
+  "name": "@mattskilly/idiom",
+  "version": "0.9.0",
+  "description": "Design acceptance for AI-built software.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "homepage": "https://idiom.build",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mattskilly/idiom.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mattskilly/idiom/issues"
+  },
+  "keywords": [
+    "design",
+    "design-review",
+    "ui",
+    "accessibility",
+    "playwright",
+    "ai-agents",
+    "claude-code",
+    "codex"
+  ],
+  "bin": {
+    "idiom": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist/",
+    "templates/"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun run build && vitest run",
+    "lint": "biome check .",
+    "build": "tsup --config tsup.config.ts",
+    "build:site": "node scripts/build-site.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
+    "@axe-core/playwright": "^4.13.0",
+    "commander": "^15.0.0",
+    "pixelmatch": "^7.2.0",
+    "playwright": "1.62.1",
+    "pngjs": "^7.0.0",
+    "postcss": "^8.5.26",
+    "smol-toml": "^1.8.0",
+    "tailwindcss-v3": "npm:tailwindcss@3.4.17",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@defrex/autobuild": "0.14.0",
+    "@types/node": "^26.2.0",
+    "@types/pixelmatch": "^5.2.6",
+    "@types/pngjs": "^6.0.5",
+    "electron": "42.5.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0",
+    "yaml": "^2.9.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

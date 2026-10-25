@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Layers</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; display: flex; }
+  .layers { display: flex; flex-direction: column; gap: 4px; padding: 12px; }
+  button { min-height: 32px; }
+  aside { padding: 12px; border-left: 1px solid #ccc; }
+</style></head>
+<body>
+<main>
+  <div class="layers">
+    <button class="layer" onclick="inspect('Header')">Header</button>
+    <button class="layer" onclick="inspect('Hero')">Hero</button>
+    <button class="layer" onclick="inspect('Footer')">Footer</button>
+  </div>
+</main>
+<aside id="inspector" aria-label="Layer settings" hidden><h2>Layer settings</h2><p id="current"></p></aside>
+<script>function inspect(name){document.getElementById('current').textContent=name;document.getElementById('inspector').hidden=false;}</script>
+</body></html>

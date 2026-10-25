@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "app": {
+    "name": "__IDIOM_APP_NAME__",
+    "framework": "other"
+  },
+  "server": {
+    "build": "npm run build",
+    "start": "npm start",
+    "readyUrl": "http://127.0.0.1:3000/",
+    "port": 3000,
+    "env": {},
+    "startupTimeoutMs": 60000
+  },
+  "viewports": [
+    { "name": "desktop", "width": 1440, "height": 900 },
+    { "name": "mobile", "width": 390, "height": 844 }
+  ],
+  "surfaces": [],
+  "colorSchemes": ["light"],
+  "capture": {
+    "timezoneId": "America/New_York",
+    "locale": "en-US",
+    "colorScheme": "light",
+    "reducedMotion": true,
+    "fullPage": true,
+    "settleMs": 250
+  },
+  "design": {
+    "productFile": "PRODUCT.md",
+    "designFile": "DESIGN.md"
+  },
+  "model": {
+    "provider": "claude-code",
+    "model": "claude-sonnet-4-5",
+    "maxFindings": 5
+  }
+}

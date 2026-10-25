@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Panel combination toolbar</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px system-ui; color: #202124; background: #fff; }
+    .switches { display: flex; gap: 8px; padding: 12px; }
+    .editor { display: flex; align-items: flex-start; width: 100%; }
+    .drawer, .inspector { flex: none; height: 240px; background: #eef0f2; }
+    .drawer { width: 0; }
+    [data-drawer="360"] .drawer { width: 360px; }
+    [data-drawer="480"] .drawer { width: 480px; }
+    .inspector { width: 320px; display: none; }
+    [data-inspector="open"] .inspector { display: block; }
+    .ed-controls { display: flex; flex: 1; min-width: 0; flex-wrap: wrap; gap: 0 8px; background: #f6f7f8; }
+    .ed-controls button { flex: 0 0 136px; height: 64px; font: inherit; }
+    [data-fixed] .ed-controls { flex-wrap: nowrap; }
+    [data-fixed] .ed-controls button { flex: 1 1 136px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  </style>
+</head>
+<body data-drawer="closed" data-inspector="closed">
+  <nav class="switches" aria-label="Panel switches">
+    <button id="drawer-360">Drawer 360</button>
+    <button id="drawer-480">Drawer 480</button>
+    <button id="inspector-open">Open inspector</button>
+    <button id="inspector-hide">Hide inspector</button>
+  </nav>
+  <main class="editor">
+    <aside class="drawer" aria-label="Drawer"></aside>
+    <div class="ed-controls" role="toolbar" aria-label="Editor controls">
+      <button>Insert</button><button>Arrange</button><button>Preview</button><button>Undo</button><button>Redo</button>
+    </div>
+    <aside class="inspector" aria-label="Inspector"></aside>
+  </main>
+  <script>
+    if (new URLSearchParams(location.search).has('fixed')) document.body.dataset.fixed = '';
+    for (const size of ['360', '480']) document.querySelector('#drawer-' + size).onclick = () => { document.body.dataset.drawer = size; };
+    document.querySelector('#inspector-open').onclick = () => { document.body.dataset.inspector = 'open'; };
+    document.querySelector('#inspector-hide').onclick = () => { document.body.dataset.inspector = 'hidden'; };
+  </script>
+</body>
+</html>

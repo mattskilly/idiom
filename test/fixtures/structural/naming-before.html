@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Editor</title>
+<style>
+  body { margin: 0; display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; font: 14px/1.5 system-ui, sans-serif; color: #1f2933; }
+  #tree { padding: 12px; border-right: 1px solid #e4e4e0; }
+  #tree ul { list-style: none; margin: 0; padding-left: 12px; }
+  #tree > ul { padding-left: 0; }
+  .canvas { padding: 12px 24px; }
+  #toolbar { display: flex; align-items: center; gap: 12px; height: 40px; border-bottom: 1px solid #e4e4e0; }
+  
+  #crumbs { display: flex; gap: 6px; padding: 8px 0; color: #52606d; }
+  #chip { display: inline-block; padding: 2px 8px; border-radius: 4px; background: #2563eb; color: #fff; }
+</style>
+</head>
+<body>
+  <aside id="tree" aria-label="Layers">
+    <ul role="tree">
+      <li data-node-id="root" role="treeitem"><span>Page</span>
+        <ul role="group">
+          <li data-node-id="stack" role="treeitem"><span>Stack</span>
+            <ul role="group">
+              <li data-node-id="h1" role="treeitem"><span>Heading</span></li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </aside>
+  <section class="canvas">
+    <div id="toolbar"><span class="node-label" data-node-id="h1">Heading 1</span><button type="button">Duplicate</button></div>
+    <nav id="crumbs" aria-label="Breadcrumb">
+      <span data-node-id="root">Page ›</span>
+      <span data-node-id="stack">Stack</span>
+      <span aria-hidden="true">›</span>
+      <span data-node-id="h1">Stack</span>
+    </nav>
+    <div id="chip" data-node-id="h1">Heading</div>
+    <h1>Welcome</h1>
+  </section>
+</body>
+</html>

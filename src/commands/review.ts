@@ -1,0 +1,113 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  type BaselineComparisonSummary,
+  summarizeBaselineComparison,
+} from "../baseline/summary.js";
+import {
+  type PageReviewDependencies,
+  type PageReviewResult,
+  runPageReview,
+} from "../review/page.js";
+import {
+  type ReviewDependencies,
+  type ReviewRunResult,
+  runReview,
+} from "../review/run.js";
+import type { Finding } from "../schemas/finding.js";
+import { isPublishedFlow } from "../schemas/flow.js";
+import { validateProject } from "../validation.js";
+
+export type PublishedBudgetViolation = {
+  id: string;
+  state: string;
+  viewport: string;
+  explanation: string;
+};
+
+/** Open (or approved) published-budget findings: the published review gate. */
+function publishedBudgetViolations(
+  findings: Finding[],
+): PublishedBudgetViolation[] {
+  return findings
+    .filter(
+      (finding) =>
+        finding.category === "published-budget" &&
+        (finding.status === "open" || finding.status === "approved"),
+    )
+    .map(({ id, state, viewport, explanation }) => ({
+      id,
+      state,
+      viewport,
+      explanation,
+    }));
+}
+
+export async function reviewCommand(options: {
+  flow: string;
+  project?: string | undefined;
+  cwd?: string | undefined;
+  from?: string | undefined;
+  latest?: boolean | undefined;
+  deterministicOnly?: boolean | undefined;
+  sinceBaseline?: boolean | undefined;
+  dependencies?: ReviewDependencies | undefined;
+}): Promise<
+  ReviewRunResult & {
+    comparison?: BaselineComparisonSummary & { unclassified: number };
+    publishedBudget?: { violations: PublishedBudgetViolation[] };
+  }
+> {
+  const { sinceBaseline, ...reviewOptions } = options;
+  const result = await runReview({
+    ...reviewOptions,
+    ...(sinceBaseline === true
+      ? { includeDeterministicOccurrences: true }
+      : {}),
+  });
+  const published = (
+    await validateProject({
+      project: options.project,
+      cwd: options.cwd,
+      flow: options.flow,
+    })
+  ).flows.some(({ flow }) => isPublishedFlow(flow));
+  let material: Finding[] | undefined;
+  const readMaterial = async () => {
+    material ??= JSON.parse(
+      await readFile(result.findingsPath, "utf8"),
+    ) as Finding[];
+    return material;
+  };
+  const publishedBudget = published
+    ? {
+        violations: publishedBudgetViolations([
+          ...(await readMaterial()),
+          ...result.deferredFindings,
+        ]),
+      }
+    : undefined;
+  const gated =
+    publishedBudget === undefined ? result : { ...result, publishedBudget };
+  if (sinceBaseline !== true) return gated;
+  const findings = await readMaterial();
+  const comparison = {
+    ...(await summarizeBaselineComparison(options, result, findings)),
+    unclassified: [...findings, ...result.deferredFindings].filter(
+      (finding) => finding.layer !== "deterministic",
+    ).length,
+  };
+  await writeFile(
+    join(result.runDirectory, "baseline-comparison.json"),
+    `${JSON.stringify(comparison, null, 2)}\n`,
+  );
+  return { ...gated, comparison };
+}
+
+export async function pageReviewCommand(
+  options: Parameters<typeof runPageReview>[0] & {
+    dependencies?: PageReviewDependencies | undefined;
+  },
+): Promise<PageReviewResult> {
+  return await runPageReview(options);
+}

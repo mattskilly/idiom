@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Equal layouts, independent evidence</title>
+  <style>
+    body { margin: 0; font: 16px system-ui; background: white; color: #222; }
+    nav { display: flex; gap: 8px; padding: 8px; }
+    button { height: 40px; }
+    #panel { position: absolute; left: 20px; top: 100px; width: 200px; height: 64px; background: #eee; }
+    #field { width: 60px; }
+    [data-mode="verify"] #panel { height: 80px; }
+    [data-mode="verify"][data-panel="b"] #panel { width: 300px; height: 96px; }
+    [data-mode="verify"][data-fixed] #panel { width: 200px; height: 64px; }
+  </style>
+</head>
+<body data-panel="a">
+  <nav aria-label="Panel switches">
+    <button id="break">Break content</button>
+    <button id="panel-a">Panel A</button><button id="panel-b">Panel B</button>
+  </nav>
+  <main id="panel"><span id="required">Required</span><input id="field" aria-label="Name"></main>
+  <script>
+    const query = new URLSearchParams(location.search);
+    document.body.dataset.mode = query.get('mode') || 'content';
+    if (query.has('fixed')) document.body.dataset.fixed = '';
+    document.querySelector('#break').onclick = () => {
+      document.querySelector('#required').remove();
+      document.querySelector('#field').removeAttribute('aria-label');
+    };
+    for (const option of ['a', 'b']) document.querySelector('#panel-' + option).onclick = () => { document.body.dataset.panel = option; };
+  </script>
+</body>
+</html>

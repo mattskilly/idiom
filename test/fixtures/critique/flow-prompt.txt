@@ -1,0 +1,125 @@
+You are Idiom's narrow product-design critique adapter. Return only the requested JSON object.
+
+## Flow
+booking
+
+## Declared surface
+web
+
+## Flow intent
+[
+  "Booking is obvious in one screen."
+]
+
+## PRODUCT.md
+Serve recipients quickly.
+
+## DESIGN.md
+Keep one dominant action.
+
+## Text references and anti-references
+[
+  {
+    "label": "ref-1",
+    "polarity": "reference",
+    "content": "Calm."
+  }
+]
+
+## Labeled images
+[
+  {
+    "label": "state-0/desktop/light",
+    "kind": "captured-screenshot",
+    "state": "state-0",
+    "viewport": "desktop",
+    "colorScheme": "light"
+  },
+  {
+    "label": "ref-2",
+    "kind": "anti-reference",
+    "note": "busy"
+  }
+]
+
+## Full-run governed screenshot coordinate manifest (citation universe; only the current batch images above are visible now)
+[
+  {
+    "label": "state-0/desktop/light",
+    "state": "state-0",
+    "viewport": "desktop",
+    "colorScheme": "light"
+  }
+]
+
+## DOM excerpts
+[
+  {
+    "label": "state-0/desktop/light",
+    "state": "state-0",
+    "viewport": "desktop",
+    "colorScheme": "light",
+    "content": "<main><h1>Book</h1></main>"
+  }
+]
+
+## Already evaluated deterministic findings; do not duplicate them
+[]
+
+## Standing human rejections; do not re-litigate matching rules
+[]
+
+## Project-authored suppressions; do not emit matching findings
+[]
+
+## Recorded rulings; these choices are resolved and must not be observed again
+[]
+
+Return no more than 5 model candidate findings from only hierarchy, density, brand-alignment, generic-pattern, or reference-mismatch. These candidates will be ranked with the already evaluated deterministic findings after this critique. Prioritize blocker, then major, then minor. Treat references and anti-references as equally binding judgment context: references identify qualities to follow and anti-references identify qualities to avoid. Every finding must cite at least one captured screenshot label from this request, use exactly that screenshot's state, viewport, and colorScheme when present, name the explicit product/design/reference guidance violated in rule, describe observable evidence, and provide observable acceptance criteria. Return references as the exact reference or anti-reference labels used by the finding; use an empty array when the finding does not rely on one, while reference-mismatch must cite at least one. confidence must be >= 0 and < 1. suggestedArea must name a UI surface, never a repository path. Do not emit a numeric or aggregate design score, rating, grade, or rubric total.
+
+Separately, return no more than 3 decisionObservations for visible states where the product makes a potentially systemic design choice that DESIGN.md does not rule on. These are questions, never findings. Emit at most one observation per visible state and choice. Spend this allowance on observations, not distinct choices: when the same choice appears in multiple visible states, emit it for each such state before introducing additional choice keys. Use a normalized project-wide choiceKey that will match the same choice in another state, but do not decide whether it recurs. Cite the exact visible screenshot coordinate and copy the nearest exact non-empty excerpt from DESIGN.md even though that passage does not settle the choice. A candidate ruling is optional and must never be invented: every candidate must cite either an exact DESIGN.md excerpt with kind law, or a screenshot in the full-run coordinate manifest showing the same choice already resolved on this governed flow with kind governed-surface. If neither precedent exists, candidates must be empty. Do not cite another flow or any image outside the full-run manifest. Do not repeat a choice listed in Recorded rulings.
+
+## Exact JSON shape
+{
+  "findings": [
+    {
+      "category": "hierarchy",
+      "severity": "major",
+      "confidence": 0.8,
+      "rule": "Exact guidance violated",
+      "selectorHint": "stable UI surface selector or semantic hint",
+      "state": "captured-state",
+      "viewport": "captured-viewport",
+      "colorScheme": "light",
+      "screenshots": [
+        "captured-state/captured-viewport"
+      ],
+      "references": [],
+      "explanation": "Observable problem and why it violates the guidance",
+      "suggestedArea": "surface-level area",
+      "acceptance": [
+        "Observable criterion"
+      ]
+    }
+  ],
+  "decisionObservations": [
+    {
+      "choiceKey": "systemic-choice-key",
+      "question": "What rule should govern this recurring choice?",
+      "state": "captured-state",
+      "viewport": "captured-viewport",
+      "colorScheme": "light",
+      "screenshot": "captured-state/captured-viewport",
+      "nearestLawExcerpt": "Exact excerpt copied from DESIGN.md",
+      "candidates": [
+        {
+          "wording": "Candidate wording derived from cited precedent",
+          "precedent": {
+            "kind": "law",
+            "excerpt": "Exact excerpt copied from DESIGN.md"
+          }
+        }
+      ]
+    }
+  ]
+}

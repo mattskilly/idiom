@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><title>Template edges</title><style>
+body { margin:24px; font:16px system-ui; } article { padding:16px; margin:12px; background:#eee; }
+.actions { visibility:hidden; } article:hover .actions, article:focus-within .actions { visibility:visible; }
+.menu-host .menu { visibility:hidden; } .menu-host:hover .menu { visibility:visible; }
+</style><body>
+<article id="focusable" tabindex="0"><h2>Focusable card</h2><div class="actions"><button id="focusable-action">Preview focusable</button></div></article>
+<article id="companion"><h2>Companion</h2><button id="more" aria-label="More actions">More</button><div class="actions"><button id="companion-action">Use companion</button></div></article>
+<article id="ignored" class="ignored"><h2>Ignored</h2><div class="actions"><button id="ignored-action">Ignored action</button></div></article>
+<article id="visible"><h2>Always visible</h2><button id="always">Always there</button></article>
+<div class="menu-host"><button id="menu-trigger" aria-expanded="false">Menu</button><div class="menu" role="menu"><button role="menuitem" id="menu-item">Rename</button></div></div>
+<dialog id="closed"><button id="dialog-action">Confirm</button></dialog>
+<div hidden><button id="hidden-attr">Hidden attr</button></div>
+<button id="disabled" disabled style="visibility:hidden">Disabled</button>
+</body></html>

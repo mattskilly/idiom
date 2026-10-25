@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Studio — panels</title><style>/*CSS*/
+.shell { display: flex; min-height: 760px; }
+#drawer { width: 280px; flex: none; }
+.stage { flex: 1; display: flex; }
+.stage .canvas { flex: 1; }
+#inspector { width: 320px; flex: none; }
+.collapse { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: none; display: inline-flex; align-items: center; justify-content: center; color: #5b6475; cursor: pointer; }
+.collapse svg { width: 16px; height: 16px; }
+</style></head>
+<body>
+<header class="topbar"><strong>Builder</strong></header>
+<div class="shell">
+  <aside class="panel" id="drawer">
+    <div class="panel-head">
+      <h2>Pages</h2>
+      <button class="collapse" id="drawer-collapse" aria-label="Collapse pages" title="Collapse pages" onclick="document.body.dataset.drawer='closed'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 4 5 8l4 4M13 4 9 8l4 4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>
+    </div>
+    <p>Home</p><p>Pricing</p>
+  </aside>
+  <main class="stage">
+    <section class="canvas" aria-label="Canvas"><h1>Pricing</h1><p>Simple plans for every team.</p></section>
+    <aside class="panel right" id="inspector">
+      <div class="panel-head">
+        <button class="collapse" id="inspector-collapse" aria-label="Collapse inspector" title="Collapse inspector" onclick="document.body.dataset.inspector='closed'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 4l4 4-4 4M3 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>
+        <h2>Goals</h2>
+      </div>
+      <p>Convert visitors to trials.</p>
+    </aside>
+  </main>
+</div>
+</body></html>

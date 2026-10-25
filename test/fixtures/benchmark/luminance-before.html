@@ -1,0 +1,10 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width"><style>
+* { box-sizing: border-box; } body { margin:0; background:#111; font:14px Arial; }
+#chrome { padding:20px; background:#f5f5f5; color:#111; }
+input,button { width:100px; height:40px; border:0; background:white; color:#111; margin:4px; }
+#publish { background:#222; color:white; }
+#workspace { position:relative; height:500px; }
+#canvas { position:absolute; inset:0; background:white; pointer-events:none; }
+#page-frame { position:absolute; left:40px; top:40px; width:240px; height:360px; background:white; }
+@media(prefers-color-scheme:dark) { #chrome { background:#222; color:white; } #peer { background:#333; color:white; } #publish { background:#777; color:#aaa; } }
+</style></head><body><form id="chrome"><input id="title" aria-label="Title" value="Untitled"><div style="display:inline"><input id="peer" aria-label="Subtitle" value="Subtitle"></div><button id="publish">Publish</button></form><div id="workspace"><div id="canvas"></div><main id="page-frame"></main></div></body></html>

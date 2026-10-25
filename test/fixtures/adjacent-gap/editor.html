@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Editor — flush layout regions, indicator dots, steppers and composer</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/20px Arial, sans-serif; color: #1f2328; background: #fff; }
+button, input, textarea { font: inherit; }
+.shell { display: grid; grid-template-columns: 56px 1fr; gap: 0; }
+nav[aria-label="Panels"] { display: flex; flex-direction: column; gap: 8px; padding: 8px; background: #f6f8fa; border-radius: 8px; }
+nav[aria-label="Panels"] button { width: 32px; height: 32px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; }
+.content { border: 1px solid #d0d7de; border-radius: 8px; padding: 16px; min-height: 120px; }
+.content h2 { margin: 0 0 8px; font-size: 16px; }
+.ed-controls { display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 12px; background: #f6f8fa; border-bottom: 1px solid #d0d7de; }
+.chrome-select { display: inline-flex; border: 1px solid #d0d7de; border-radius: 6px; padding: 2px; }
+.chrome-select button { border: 0; background: none; height: 28px; padding: 0 8px; }
+dialog.inline { position: static; display: block; margin: 0; padding: 0; border: 1px solid #d0d7de; border-radius: 8px; width: 480px; }
+.asg-content { border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; background: #fff; }
+.asg-content h3 { margin: 0 0 8px; font-size: 14px; }
+.sg-field { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.sg-field input { height: 28px; border: 1px solid #d0d7de; border-radius: 4px; padding: 0 6px; width: 120px; }
+dialog.sections { position: static; display: block; margin: 16px 0 0; padding: 0; border: 1px solid #d0d7de; border-radius: 8px; width: 480px; }
+dialog.sections section { border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; background: #fff; }
+dialog.sections section h3 { margin: 0; font-size: 14px; }
+.panel-row { display: flex; gap: 0; margin-top: 16px; }
+.side-panel { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; }
+.side-panel h3 { margin: 0 0 8px; font-size: 14px; }
+.units { display: flex; align-items: center; gap: 0; margin-top: 16px; }
+.dot { display: inline-block; border-radius: 50%; }
+.dot.small { width: 8px; height: 8px; background: #f5a524; }
+.dot.ring { width: 12px; height: 12px; border: 1px solid #2d5bff; }
+.unit { height: 28px; padding: 0 8px; border: 1px solid #d0d7de; border-radius: 4px; background: #fff; }
+.steppers { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; align-items: flex-start; }
+.chrome-number-field { display: inline-flex; align-items: center; gap: 0; border: 1px solid #d0d7de; border-radius: 6px; padding: 2px; }
+.chrome-number-field input { width: 64px; height: 28px; border: 1px solid #d0d7de; border-radius: 4px; padding: 0 6px; }
+.chrome-number-field button { width: 28px; height: 28px; border: 1px solid #d0d7de; border-radius: 4px; background: #fff; }
+.composer { display: flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid #d0d7de; border-radius: 8px; margin-top: 24px; width: 480px; }
+.composer-prompt { flex: 1; display: flex; }
+.composer textarea { flex: 1; height: 32px; border: 0; background: transparent; padding: 6px; resize: none; }
+.composer button { height: 32px; padding: 0 12px; border: 1px solid #2d5bff; border-radius: 6px; background: #2d5bff; color: #fff; }
+.composer :focus-visible { outline: 2px solid #2d5bff; outline-offset: 2px; }
+.cards { display: flex; gap: 0; margin-top: 24px; }
+.card { border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; width: 160px; }
+.unrelated { display: flex; margin-top: 24px; }
+.unrelated > div { width: 160px; }
+.loose-card { border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav aria-label="Panels">
+    <button aria-label="Layers" title="Layers">L</button>
+    <button aria-label="Assets" title="Assets">A</button>
+  </nav>
+  <div class="content" id="content"><h2>Canvas</h2><p>Page content</p></div>
+</div>
+<div class="ed-controls" id="ed-controls">
+  <div class="chrome-select"><button type="button">Desktop</button></div>
+</div>
+<dialog class="inline" id="style-dialog" open aria-label="Style guide">
+  <div class="asg-content" id="asg-content">
+    <h3>Typography</h3>
+    <div class="sg-field"><label for="font-size">Size</label><input id="font-size" value="16"></div>
+    <div class="sg-field"><label for="font-weight">Weight</label><input id="font-weight" value="400"></div>
+  </div>
+</dialog>
+<dialog class="sections" id="settings-dialog" open aria-label="Settings">
+  <section id="section-general"><h3>General</h3></section>
+  <section id="section-advanced"><h3>Advanced</h3></section>
+</dialog>
+<div class="panel-row">
+  <div class="side-panel" id="panel-left"><h3>Layout</h3><p>Columns</p></div>
+  <div class="side-panel" id="panel-right"><h3>Spacing</h3><p>Rhythm</p></div>
+</div>
+<div class="units">
+  <span class="dot small" id="dot-small"></span><button class="unit" id="unit-px" type="button">px</button>
+  <span class="dot ring" id="dot-ring"></span><button class="unit" id="unit-em" type="button">em</button>
+</div>
+<div class="steppers">
+  <span class="chrome-number-field" id="field-line-height"><input aria-label="Line height" value="1.5"><button type="button" aria-label="Decrease line height">−</button><button type="button" aria-label="Increase line height">+</button></span>
+  <span class="chrome-number-field" id="field-letter-spacing"><input aria-label="Letter spacing" value="0"><button type="button" aria-label="Decrease letter spacing">−</button><button type="button" aria-label="Increase letter spacing">+</button></span>
+  <span class="chrome-number-field" id="field-opacity"><input aria-label="Opacity" value="100"><button type="button" aria-label="Decrease opacity">−</button><button type="button" aria-label="Increase opacity" aria-disabled="true">+</button></span>
+</div>
+<div class="composer" id="composer">
+  <label class="composer-prompt"><textarea id="ai-input" rows="1" aria-label="Describe a change" placeholder="Describe a change"></textarea></label>
+  <button type="button" id="ai-send" aria-label="Send" title="Send request" aria-disabled="true">Send</button>
+</div>
+<div class="cards" id="cards">
+  <div class="card" id="card-a">Draft</div>
+  <div class="card" id="card-b">Published</div>
+</div>
+<div class="unrelated">
+  <div><div class="loose-card" id="loose-a">Left</div></div>
+  <div><div class="loose-card" id="loose-b">Right</div></div>
+</div>
+</body>
+</html>

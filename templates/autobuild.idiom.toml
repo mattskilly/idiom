@@ -1,0 +1,30 @@
+# Copy these entries into the target repository's autobuild.toml.
+# Also append "idiom" at the desired position in that repository's existing
+# [verify].steps array; this template intentionally does not replace the array.
+
+[commands]
+idiom-verify = "idiom verify booking --spec .ab/spec.md --out .ab/idiom"
+
+[verify.idiom]
+kind = "agent"
+skill = "ab-verify-idiom"
+paths = ["apps/web/**", ".idiom/**", "PRODUCT.md", "DESIGN.md", "packages/design/**"]
+
+# Check protects against new findings by default. Initialize with a clean HEAD
+# check and commit .idiom/baselines; use idiom baseline accept booking after
+# intentional changes. This strict CI gate requires the committed baseline:
+#   in builds: idiom check booking --since-baseline --fail-on major
+# Add under the existing [commands] table:
+# idiom-check = "idiom check booking --since-baseline --fail-on major"
+# Append "idiom-check" to the existing [verify].steps array, then add:
+# [verify.idiom-check]
+# kind = "check"
+# command = "idiom-check"
+
+# Optional before/after composites for any two stored captures (for example
+# the build's capture against one taken at the merge base):
+#   idiom compare booking --from <after-run> --against <before-run> --out .ab/idiom-compare
+# Its attachments.json and before-after.md follow the exact ab-verify-idiom
+# contract (idiom-before-after-NNN composites, then the idiom-verify-report
+# report), so deposit each composite and then the report with --attach the same
+# way. Use its own --out so it never replaces the verify output in .ab/idiom.

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Search</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; }
+  header, main, footer { padding: 12px; }
+  button { min-height: 32px; }
+  .field.is-focused { outline: 2px solid #36c; }
+</style></head>
+<body>
+<header><button id="header-search" onclick="document.getElementById('search').focus()">Search pages</button></header>
+<main>
+  <h1>Pages</h1>
+  <div class="field"><input id="search" type="search" placeholder="Find a page"></div>
+  <button id="main-search" onclick="document.getElementById('search').focus()">Find a page</button>
+</main>
+<footer><button id="footer-search" onclick="document.getElementById('search').focus()">Jump to search</button></footer>
+<script>
+  const field = document.querySelector('.field');
+  field.addEventListener('focusin', () => field.classList.add('is-focused'));
+  field.addEventListener('focusout', () => field.classList.remove('is-focused'));
+</script>
+</body></html>

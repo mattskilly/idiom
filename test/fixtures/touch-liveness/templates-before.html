@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><title>Templates</title><style>
+body { margin:24px; font:16px system-ui; } article { padding:16px; margin:12px; background:#eee; }
+.actions { visibility:hidden; } article:hover .actions, article:focus-within .actions { visibility:visible; }
+.fade .actions { visibility:visible; opacity:0; } .fade:hover .actions, .fade:focus-within .actions { opacity:1; }
+.ancestor .wrapper { opacity:0; } .ancestor .actions { visibility:visible; }
+.ancestor:hover .wrapper, .ancestor:focus-within .wrapper { opacity:1; }
+.transition .actions { transition:opacity .08s; }
+</style><body>
+<article id="card"><h2>Template</h2><div class="actions"><button id="preview" aria-label="Preview" title="Preview">Preview</button><button id="use" aria-label="Use Template" title="Use Template">Use Template</button></div></article>
+<article id="fade" class="fade transition"><h2>Another template</h2><div class="actions"><button id="fade-action">Preview faded</button></div></article>
+<article id="ancestor" class="ancestor"><h2>Third template</h2><div class="wrapper"><div class="actions"><button id="ancestor-action">Use third template</button></div></div></article>
+</body></html>

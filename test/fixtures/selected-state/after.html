@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Colour picker</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 32px; color: #1d2330; background: #fff; }
+  h1 { font-size: 20px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid #d8dce6; margin-bottom: 16px; }
+  .tab { font: inherit; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: #5b6475; cursor: pointer; }
+  .swatches { display: grid; grid-template-columns: repeat(9, 28px); gap: 8px; }
+  .swatch { width: 28px; height: 28px; border: 0; border-radius: 50%; padding: 0; cursor: pointer; }
+  .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px #fff, 0 0 0 4px #1d2330; }
+  .tab[aria-selected="true"] { border-bottom-color: #2d5bff; color: #1d2330; }
+</style>
+</head>
+<body>
+  <h1>Layer style</h1>
+  <div class="tabs" role="tablist" aria-label="Style"><button role="tab" class="tab" aria-selected="true">Fill</button><button role="tab" class="tab" aria-selected="false">Stroke</button><button role="tab" class="tab" aria-selected="false">Effects</button></div>
+  <div id="swatches" class="swatches" role="radiogroup" aria-label="Colour">
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #e11d48" style="background:#e11d48"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #db2777" style="background:#db2777"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #c026d3" style="background:#c026d3"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #9333ea" style="background:#9333ea"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #7c3aed" style="background:#7c3aed"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #4f46e5" style="background:#4f46e5"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="true" aria-label="Colour #2563eb" style="background:#2563eb"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #0284c7" style="background:#0284c7"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #0891b2" style="background:#0891b2"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #0d9488" style="background:#0d9488"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #059669" style="background:#059669"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #16a34a" style="background:#16a34a"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #65a30d" style="background:#65a30d"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #ca8a04" style="background:#ca8a04"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #d97706" style="background:#d97706"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #ea580c" style="background:#ea580c"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #dc2626" style="background:#dc2626"></button>
+      <button type="button" role="radio" class="swatch" aria-checked="false" aria-label="Colour #57534e" style="background:#57534e"></button>
+  </div>
+</body>
+</html>

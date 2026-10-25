@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><head><title>Payment status</title><link rel="icon" href="data:,"></head><body>
+<main><h1>Payment status</h1><payment-status></payment-status></main>
+<script>
+const mode = new URLSearchParams(location.search).get('mode');
+const host = document.querySelector('payment-status');
+let root = host.attachShadow({mode:'open'});
+if (mode === 'nested') {
+  root.innerHTML = '<status-message></status-message>';
+  root = root.querySelector('status-message').attachShadow({mode:'open'});
+}
+root.innerHTML = '<p>Payment successful</p>';
+if (mode === 'hidden-word') root.innerHTML = '<p>Payment <span hidden>pending</span>successful</p>';
+if (mode === 'bare') root.textContent = 'Payment successful';
+if (mode === 'hidden-host') host.hidden = true;
+if (mode === 'delayed') {
+  root.innerHTML = '<p>Payment <span hidden>successful</span></p>';
+  setTimeout(() => {
+    root.querySelector('span').hidden = false;
+    host.dataset.revealed = 'true';
+  }, 500);
+}
+</script></body></html>

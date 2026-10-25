@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Studio</title><style>/*CSS*/</style></head>
+<body>
+<header class="topbar">
+  <strong>Builder</strong>
+  <div class="segmented" role="group" aria-label="Appearance"><button class="btn" aria-pressed="true" onclick="this.setAttribute('aria-pressed','true');this.nextElementSibling.setAttribute('aria-pressed','false')">Light</button><button class="btn" aria-pressed="false" onclick="this.setAttribute('aria-pressed','true');this.previousElementSibling.setAttribute('aria-pressed','false')">Dark</button></div>
+  <span class="spacer"></span>
+  <button class="btn" id="project-menu" aria-haspopup="menu" onclick="document.getElementById('menu').hidden=!document.getElementById('menu').hidden">Project</button>
+  <div role="menu" id="menu" hidden aria-label="Project">
+    <button role="menuitem" onclick="openSettings()">Page settings</button>
+    <button role="menuitem" onclick="document.getElementById('menu').hidden=true; document.title='Duplicated'">Duplicate project</button>
+  </div>
+  <button class="btn" id="top-help" aria-disabled="true" title="Help is coming soon">Help</button>
+  <button class="btn" id="copy-link" onclick="navigator.clipboard.writeText(location.href).catch(()=>{})">Copy link</button>
+  <button class="btn primary" id="share" onclick="document.getElementById('share-note').hidden=false">Share</button>
+</header>
+<div id="share-note" hidden role="status">Link ready</div>
+<div class="layout">
+  <aside class="panel" aria-label="Layers">
+    <div class="panel-head">
+      <h2>Layers</h2>
+      <details id="layers-help"><summary aria-label="Layer keyboard shortcuts" title="Layer keyboard shortcuts">?</summary><div class="footnote">Arrow keys move between layers.</div></details>
+    </div>
+    <div class="layer-row"><span>Hero</span><span class="bp-override-dot" style="width:12px;height:12px" title="Mobile override"></span></div>
+    <div class="layer-row"><span>Features</span><span class="bp-override-dot" style="width:12px;height:12px" title="Tablet override"></span></div>
+    <div class="layer-row"><span>Footer</span></div>
+    <div class="list-row"><span>Section A</span><button class="btn" onclick="openSettings()">Edit</button></div>
+    <div class="list-row"><span>Section B</span><button class="btn" onclick="openSettings()">Edit</button></div>
+    <div class="list-row"><span>Section C</span><button class="btn" onclick="openSettings()">Edit</button></div>
+  </aside>
+  <main class="canvas">
+    <div class="page-name"><strong>Ridgeline Coffee — Home</strong><button class="btn icon-btn" id="page-settings-gear" aria-label="Page settings" title="Page settings" onclick="openSettings()"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="2"/></svg></button></div>
+    <div class="tool-row" role="toolbar" aria-label="Tools" style="display:flex;gap:8px;margin-top:8px"><button class="btn icon-btn" id="tool-grid" aria-label="Show grid" title="Show grid" aria-pressed="false" onclick="this.setAttribute('aria-pressed', String(this.getAttribute('aria-pressed')!=='true'))"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"/></svg></button><button class="btn icon-btn" id="tool-rulers" aria-label="Show rulers" title="Show rulers" aria-pressed="false" onclick="this.setAttribute('aria-pressed', String(this.getAttribute('aria-pressed')!=='true'))"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"/></svg></button><button class="btn icon-btn" id="tool-outlines" aria-label="Show outlines" title="Show outlines" aria-pressed="false" onclick="this.setAttribute('aria-pressed', String(this.getAttribute('aria-pressed')!=='true'))"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"/></svg></button><button class="btn icon-btn" id="tool-settings" aria-label="Page settings" title="Page settings" onclick="openSettings()"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="2"/></svg></button></div>
+    <h3>Style guide</h3>
+    <div class="chips"><span class="chip" id="chip-button" style="padding-top:5px;line-height:23px">Button</span><span class="chip" id="chip-highlight" style="padding-top:5px;line-height:23px">Highlight</span><span class="chip" id="chip-body">Body</span></div>
+    <div class="composer"><label class="composer-prompt"><textarea id="ai-input" rows="1" aria-label="Describe a change" placeholder="Describe a change"></textarea></label><button class="btn primary" id="ai-send" aria-label="Send" title="Send request" onclick="document.getElementById('ai-input').value=''; document.getElementById('ai-status').textContent='Sent'">Send</button></div>
+    <p id="ai-status" role="status"></p>
+    <p class="footnote">By publishing you agree to our policies. <button class="text-link" id="view-terms" aria-disabled="true" title="Terms are coming soon">View terms</button></p>
+  </main>
+  <aside class="panel right" aria-label="Versions">
+    <h2>Versions</h2>
+    <div class="versions" style="gap:0">
+      <div class="version-card" id="current-version">Current page — unsaved changes</div>
+      <button class="btn" id="name-version">Name this version</button>
+      <div class="version-card" style="margin-top:8px">Oct 21, 4:12pm</div>
+    </div>
+  </aside>
+</div>
+<dialog id="settings" aria-labelledby="settings-title"><h2 id="settings-title">Page settings</h2><button class="btn" onclick="this.closest('dialog').close()">Close</button></dialog>
+<script>function openSettings(){document.getElementById('menu').hidden=true;document.getElementById('settings').showModal();}</script>
+</body></html>

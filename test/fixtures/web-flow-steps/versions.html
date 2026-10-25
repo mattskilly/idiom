@@ -1,0 +1,39 @@
+<!doctype html><html lang="en"><head><title>Page editor</title><link rel="icon" href="data:,">
+<style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}</style></head><body>
+<main><h1>Page editor</h1>
+<header><button id="history" aria-label="History" title="History"><svg width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor"/></svg></button></header>
+<aside id="panel" hidden aria-label="History panel">
+  <div role="tablist" aria-label="History views">
+    <button role="tab" id="tab-activity" aria-selected="true" aria-controls="activity">Activity</button>
+    <button role="tab" id="tab-versions" aria-selected="false" aria-controls="versions">Versions</button>
+  </div>
+  <section role="tabpanel" id="activity"><p>Edited the hero heading</p></section>
+  <section role="tabpanel" id="versions" hidden>
+    <label for="version-search" class="sr-only">Search versions</label>
+    <input id="version-search" type="search">
+    <p id="search-hint" hidden>Searching versions</p>
+    <p id="search-result"></p>
+    <ul><li>Draft from Monday <button id="restore">Restore</button></li></ul>
+    <button id="name-version">Name this version</button>
+  </section>
+</aside>
+<p id="status"></p>
+</main>
+<script>
+const $ = (selector) => document.querySelector(selector);
+$('#history').onclick = () => { $('#panel').hidden = !$('#panel').hidden; };
+const select = (name) => {
+  for (const tab of ['activity', 'versions']) {
+    $(`#tab-${tab}`).setAttribute('aria-selected', String(tab === name));
+    $(`#${tab}`).hidden = tab !== name;
+  }
+};
+$('#tab-activity').onclick = () => select('activity');
+$('#tab-versions').onclick = () => select('versions');
+$('#version-search').addEventListener('focus', () => { $('#search-hint').hidden = false; });
+$('#version-search').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') $('#search-result').textContent = `Results for ${event.target.value}`;
+});
+$('#restore').onclick = () => { $('#status').textContent = 'Restored Draft from Monday'; };
+// "Name this version" is deliberately left without a handler.
+</script></body></html>
