@@ -153,6 +153,14 @@ function antecedent(before: string): string[] {
 function nameBefore(before: string): string[] {
   const clause = before.split(/[.;!?|()[\]{}]/).at(-1) ?? "";
   const list = tokens(clause);
+  // "Override dots are small (about 8px)": a parenthetical holding only
+  // fillers is about the sentence's subject.
+  const open = before.length - clause.length - 1;
+  if (
+    before[open] === "(" &&
+    list.every((token) => fillers.has(token.toLowerCase()))
+  )
+    return antecedent(before.slice(0, open));
   const words: string[] = [];
   for (let index = list.length - 1; index >= 0; index -= 1) {
     const token = list[index] ?? "";

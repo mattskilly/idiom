@@ -1,0 +1,598 @@
+{
+  "runId": "2026-10-25T21-24-17-478Z-665994a1",
+  "counts": {
+    "findings": 74,
+    "issues": 14,
+    "groups": 37,
+    "captures": {
+      "passed": 4,
+      "failed": 0,
+      "total": 4
+    }
+  },
+  "runDirectory": "/tmp/idiom-quick-reports/run",
+  "issues": [
+    {
+      "id": "quick:2026-10-25T21-24-17-478Z-665994a1:group-efefd6884e81",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "rules": ["idiom:elements-overlap"],
+      "family": "idiom:elements-overlap",
+      "salience": 9,
+      "prominence": 1.0416666666666667,
+      "score": 9.375,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["quick:2026-10-25T21-24-17-478Z-665994a1:group-efefd6884e81"],
+      "elements": 1,
+      "places": 2,
+      "findings": 2,
+      "primaryAction": false,
+      "representative": {
+        "cropPath": "/tmp/idiom-quick-reports/run/page-1/desktop/light/screenshot.png",
+        "finding": {
+          "state": "page-1",
+          "viewport": "desktop",
+          "colorScheme": "light",
+          "explanation": "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div > div > div > div > div > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(2) > span overlaps svg[role=\"application\"] by 21.6×9.6px at 1440px (below the fold, geometry only).",
+          "verification": {
+            "kind": "deterministic-check",
+            "check": "element-overlap",
+            "params": {
+              "selectors": [
+                "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div > div > div > div > div > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(2) > span",
+                "svg[role=\"application\"]"
+              ],
+              "overlap": {
+                "width": 21.6,
+                "height": 9.6
+              },
+              "viewportWidth": 1440
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "quick:2026-10-25T21-24-17-478Z-665994a1:group-f8bb87dbbd51",
+      "severity": "major",
+      "category": "adjacent-gap",
+      "rule": "idiom:adjacent-elements-touch",
+      "rules": ["idiom:focus-ring-collision", "idiom:adjacent-elements-touch"],
+      "family": "adjacent-gap",
+      "salience": 9,
+      "prominence": 1.0416666666666667,
+      "score": 9.375,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["quick:2026-10-25T21-24-17-478Z-665994a1:group-f8bb87dbbd51"],
+      "elements": 1,
+      "places": 2,
+      "findings": 2,
+      "primaryAction": false,
+      "representative": {
+        "cropPath": "/tmp/idiom-quick-reports/run/page-1/desktop/light/screenshot.png",
+        "finding": {
+          "state": "page-1",
+          "viewport": "desktop",
+          "colorScheme": "light",
+          "explanation": "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div > div > div > div > div > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(2) > div > span overlaps svg[role=\"application\"] by 46.1×9.6px at 1440px (below the fold, geometry only).",
+          "verification": {
+            "kind": "deterministic-check",
+            "check": "element-overlap",
+            "params": {
+              "selectors": [
+                "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div > div > div > div > div > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(2) > div > span",
+                "svg[role=\"application\"]"
+              ],
+              "overlap": {
+                "width": 46.1,
+                "height": 9.6
+              },
+              "viewportWidth": 1440
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "quick:2026-10-25T21-24-17-478Z-665994a1:group-3bca68ce6235",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "rules": ["idiom:elements-overlap"],
+      "family": "idiom:elements-overlap",
+      "salience": 9,
+      "prominence": 1.0416666666666667,
+      "score": 9.375,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["quick:2026-10-25T21-24-17-478Z-665994a1:group-3bca68ce6235"],
+      "elements": 1,
+      "places": 2,
+      "findings": 2,
+      "primaryAction": false,
+      "representative": {
+        "cropPath": "/tmp/idiom-quick-reports/run/page-1/desktop/dark/screenshot.png",
+        "finding": {
+          "state": "page-1",
+          "viewport": "desktop",
+          "colorScheme": "dark",
+          "explanation": "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div > div > div > div > div > div:nth-of-type(1) overlaps svg[role=\"application\"] by 39.2×9.6px at 1440px (below the fold, geometry only).",
+          "verification": {
+            "kind": "deterministic-check",
+            "check": "element-overlap",
+            "params": {
+              "selectors": [
+                "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div > div > div > div > div > div:nth-of-type(1)",
+                "svg[role=\"application\"]"
+              ],
+              "overlap": {
+                "width": 39.2,
+                "height": 9.6
+              },
+              "viewportWidth": 1440
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "quick:2026-10-25T21-24-17-478Z-665994a1:group-f36b0149c16d",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "rules": ["idiom:elements-overlap"],
+      "family": "idiom:elements-overlap",
+      "salience": 9,
+      "prominence": 1.0416666666666667,
+      "score": 9.375,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["quick:2026-10-25T21-24-17-478Z-665994a1:group-f36b0149c16d"],
+      "elements": 1,
+      "places": 2,
+      "findings": 2,
+      "primaryAction": false,
+      "representative": {
+        "cropPath": "/tmp/idiom-quick-reports/run/page-1/desktop/light/screenshot.png",
+        "finding": {
+          "state": "page-1",
+          "viewport": "desktop",
+          "colorScheme": "light",
+          "explanation": "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div > div > div > div > div > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > span overlaps svg[role=\"application\"] by 21.6×9.6px at 1440px (below the fold, geometry only).",
+          "verification": {
+            "kind": "deterministic-check",
+            "check": "element-overlap",
+            "params": {
+              "selectors": [
+                "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div > div > div > div > div > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > span",
+                "svg[role=\"application\"]"
+              ],
+              "overlap": {
+                "width": 21.6,
+                "height": 9.6
+              },
+              "viewportWidth": 1440
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "quick:2026-10-25T21-24-17-478Z-665994a1:group-a685ba08dc55",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "rules": ["idiom:elements-overlap"],
+      "family": "idiom:elements-overlap",
+      "salience": 9,
+      "prominence": 1.0416666666666667,
+      "score": 9.375,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["quick:2026-10-25T21-24-17-478Z-665994a1:group-a685ba08dc55"],
+      "elements": 1,
+      "places": 2,
+      "findings": 2,
+      "primaryAction": false,
+      "representative": {
+        "cropPath": "/tmp/idiom-quick-reports/run/page-1/desktop/dark/screenshot.png",
+        "finding": {
+          "state": "page-1",
+          "viewport": "desktop",
+          "colorScheme": "dark",
+          "explanation": "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div > div > div > div > div > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div > span overlaps svg[role=\"application\"] by 36.9×9.6px at 1440px (below the fold, geometry only).",
+          "verification": {
+            "kind": "deterministic-check",
+            "check": "element-overlap",
+            "params": {
+              "selectors": [
+                "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div > div > div > div > div > div > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div > span",
+                "svg[role=\"application\"]"
+              ],
+              "overlap": {
+                "width": 36.9,
+                "height": 9.6
+              },
+              "viewportWidth": 1440
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "quick:2026-10-25T21-24-17-478Z-665994a1:group-c34717107e44",
+      "severity": "minor",
+      "category": "dead-affordance",
+      "rule": "idiom:placeholder-link",
+      "rules": ["idiom:placeholder-link"],
+      "family": "idiom:placeholder-link",
+      "salience": 4,
+      "prominence": 1.0416666666666667,
+      "score": 4.166666666666667,
+      "explanation": {
+        "selector": "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(3) > div > ul > li:nth-of-type(2) > a",
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": [
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-c34717107e44",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-1c603008e1e5",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-efc2b916401e",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-61657fb98c74",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-337be8a91188",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-f6c82f01b806",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-703ca3c4c2b2"
+      ],
+      "elements": 7,
+      "places": 2,
+      "findings": 14,
+      "primaryAction": false,
+      "representative": {
+        "selector": "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(3) > div > ul > li:nth-of-type(2) > a",
+        "cropPath": "/tmp/idiom-quick-reports/run/page-1/desktop/dark/crops/067f92cbeee5098c.png",
+        "finding": {
+          "state": "page-1",
+          "viewport": "desktop",
+          "colorScheme": "dark",
+          "explanation": "\"Get Help\" (body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(3) > div > ul > li:nth-of-type(2) > a) is a placeholder link (href=\"#\"); it is visible and clickable but goes nowhere yet.",
+          "verification": {
+            "kind": "deterministic-check",
+            "check": "dead-affordance",
+            "params": {
+              "selector": "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(3) > div > ul > li:nth-of-type(2) > a"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "quick:2026-10-25T21-24-17-478Z-665994a1:group-4b51ef642cc4",
+      "severity": "minor",
+      "category": "heading-structure",
+      "rule": "idiom:multiple-h1",
+      "rules": ["idiom:multiple-h1"],
+      "family": "idiom:multiple-h1",
+      "salience": 4,
+      "prominence": 1.0416666666666667,
+      "score": 4.166666666666667,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["quick:2026-10-25T21-24-17-478Z-665994a1:group-4b51ef642cc4"],
+      "elements": 1,
+      "places": 2,
+      "findings": 2,
+      "primaryAction": false,
+      "representative": {
+        "cropPath": "/tmp/idiom-quick-reports/run/page-1/desktop/light/screenshot.png",
+        "finding": {
+          "state": "page-1",
+          "viewport": "desktop",
+          "colorScheme": "light",
+          "explanation": "The page has 2 visible level-one headings.",
+          "verification": {
+            "kind": "deterministic-check",
+            "check": "heading-structure"
+          }
+        }
+      }
+    },
+    {
+      "id": "quick:2026-10-25T21-24-17-478Z-665994a1:group-6e3806545e9e",
+      "severity": "minor",
+      "category": "target-size",
+      "rule": "idiom:minimum-target-size",
+      "rules": ["idiom:minimum-target-size"],
+      "family": "idiom:minimum-target-size",
+      "salience": 1,
+      "prominence": 1.0833333333333333,
+      "score": 1.0833333333333333,
+      "explanation": {
+        "selector": "a.\\[\\&\\>svg\\]\\:pointer-events-none.\\[\\&\\>svg\\]\\:size-3.\\[a\\&\\]\\:hover\\:bg-secondary\\/90",
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 4,
+        "geometryAvailable": false
+      },
+      "groups": [
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-6e3806545e9e",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-5b847db29e4c",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-f032f2b922d5",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-8d6784452191",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-ef871ff1f288",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-298485c03d65",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-e6237e013983",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-d984eb946f0c",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-9769d7cc993d",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-626c45fd2ea2",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-6e6e8147bb2a",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-053062c5e3fb",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-3867d793c236",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-aaac41312883",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-01359561a5f8",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-d6ea36852e20",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-58134e875d1b",
+        "quick:2026-10-25T21-24-17-478Z-665994a1:group-4df88701c8fb"
+      ],
+      "elements": 18,
+      "places": 4,
+      "findings": 36,
+      "primaryAction": false,
+      "representative": {
+        "selector": "a.\\[\\&\\>svg\\]\\:pointer-events-none.\\[\\&\\>svg\\]\\:size-3.\\[a\\&\\]\\:hover\\:bg-secondary\\/90",
+        "cropPath": "/tmp/idiom-quick-reports/run/page-1/desktop/light/crops/49e5cff203fc090c.png",
+        "finding": {
+          "state": "page-1",
+          "viewport": "desktop",
+          "colorScheme": "light",
+          "explanation": "a.\\[\\&\\>svg\\]\\:pointer-events-none.\\[\\&\\>svg\\]\\:size-3.\\[a\\&\\]\\:hover\\:bg-secondary\\/90 is 228×22 at desktop (fine pointer, minimum 24); interactive targets here must be at least 24×24 CSS pixels.",
+          "verification": {
+            "kind": "deterministic-check",
+            "check": "target-size",
+            "params": {
+              "selector": "a.\\[\\&\\>svg\\]\\:pointer-events-none.\\[\\&\\>svg\\]\\:size-3.\\[a\\&\\]\\:hover\\:bg-secondary\\/90",
+              "minimum": 24,
+              "inputClass": "fine"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "quick:2026-10-25T21-24-17-478Z-665994a1:group-8eb329a9afac",
+      "severity": "minor",
+      "category": "control-anatomy",
+      "rule": "idiom:sibling-select-inconsistent",
+      "rules": ["idiom:sibling-select-inconsistent"],
+      "family": "idiom:sibling-select-inconsistent",
+      "salience": 1,
+      "prominence": 1.0416666666666667,
+      "score": 1.0416666666666667,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["quick:2026-10-25T21-24-17-478Z-665994a1:group-8eb329a9afac"],
+      "elements": 1,
+      "places": 2,
+      "findings": 2,
+      "primaryAction": false,
+      "representative": {
+        "cropPath": "/tmp/idiom-quick-reports/run/page-1/desktop/dark/screenshot.png",
+        "finding": {
+          "state": "page-1",
+          "viewport": "desktop",
+          "colorScheme": "dark",
+          "explanation": "Sibling selects in body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > table > tbody > tr:nth-of-type(9) differ in padding-left: 0px (body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > table > tbody > tr:nth-of-type(9) > td:nth-of-type(9) > button), 12px (#\\39 -reviewer).",
+          "verification": {
+            "kind": "deterministic-check",
+            "check": "control-anatomy",
+            "params": {
+              "property": "paddingLeft",
+              "selectors": [
+                "#\\39 -reviewer",
+                "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > table > tbody > tr:nth-of-type(9) > td:nth-of-type(9) > button"
+              ],
+              "tolerance": 0.5
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "quick:2026-10-25T21-24-17-478Z-665994a1:group-73bbd5642d95",
+      "severity": "minor",
+      "category": "control-anatomy",
+      "rule": "idiom:sibling-select-inconsistent",
+      "rules": ["idiom:sibling-select-inconsistent"],
+      "family": "idiom:sibling-select-inconsistent",
+      "salience": 1,
+      "prominence": 1.0416666666666667,
+      "score": 1.0416666666666667,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["quick:2026-10-25T21-24-17-478Z-665994a1:group-73bbd5642d95"],
+      "elements": 1,
+      "places": 2,
+      "findings": 2,
+      "primaryAction": false,
+      "representative": {
+        "cropPath": "/tmp/idiom-quick-reports/run/page-1/desktop/light/screenshot.png",
+        "finding": {
+          "state": "page-1",
+          "viewport": "desktop",
+          "colorScheme": "light",
+          "explanation": "Sibling selects in body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > table > tbody > tr:nth-of-type(8) differ in padding-right: 0px (body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > table > tbody > tr:nth-of-type(8) > td:nth-of-type(9) > button), 12px (#\\38 -reviewer).",
+          "verification": {
+            "kind": "deterministic-check",
+            "check": "control-anatomy",
+            "params": {
+              "property": "paddingRight",
+              "selectors": [
+                "#\\38 -reviewer",
+                "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > table > tbody > tr:nth-of-type(8) > td:nth-of-type(9) > button"
+              ],
+              "tolerance": 0.5
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "quick:2026-10-25T21-24-17-478Z-665994a1:group-e2db2ef89985",
+      "severity": "minor",
+      "category": "control-anatomy",
+      "rule": "idiom:sibling-select-inconsistent",
+      "rules": ["idiom:sibling-select-inconsistent"],
+      "family": "idiom:sibling-select-inconsistent",
+      "salience": 1,
+      "prominence": 1.0416666666666667,
+      "score": 1.0416666666666667,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["quick:2026-10-25T21-24-17-478Z-665994a1:group-e2db2ef89985"],
+      "elements": 1,
+      "places": 2,
+      "findings": 2,
+      "primaryAction": false,
+      "representative": {
+        "cropPath": "/tmp/idiom-quick-reports/run/page-1/desktop/dark/screenshot.png",
+        "finding": {
+          "state": "page-1",
+          "viewport": "desktop",
+          "colorScheme": "dark",
+          "explanation": "Sibling selects in body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > table > tbody > tr:nth-of-type(9) differ in padding-right: 0px (body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > table > tbody > tr:nth-of-type(9) > td:nth-of-type(9) > button), 12px (#\\39 -reviewer).",
+          "verification": {
+            "kind": "deterministic-check",
+            "check": "control-anatomy",
+            "params": {
+              "property": "paddingRight",
+              "selectors": [
+                "#\\39 -reviewer",
+                "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > table > tbody > tr:nth-of-type(9) > td:nth-of-type(9) > button"
+              ],
+              "tolerance": 0.5
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "quick:2026-10-25T21-24-17-478Z-665994a1:group-d5ba31834d3a",
+      "severity": "minor",
+      "category": "control-anatomy",
+      "rule": "idiom:sibling-select-inconsistent",
+      "rules": ["idiom:sibling-select-inconsistent"],
+      "family": "idiom:sibling-select-inconsistent",
+      "salience": 1,
+      "prominence": 1.0416666666666667,
+      "score": 1.0416666666666667,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["quick:2026-10-25T21-24-17-478Z-665994a1:group-d5ba31834d3a"],
+      "elements": 1,
+      "places": 2,
+      "findings": 2,
+      "primaryAction": false,
+      "representative": {
+        "cropPath": "/tmp/idiom-quick-reports/run/page-1/desktop/light/screenshot.png",
+        "finding": {
+          "state": "page-1",
+          "viewport": "desktop",
+          "colorScheme": "light",
+          "explanation": "Sibling selects in body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > table > tbody > tr:nth-of-type(10) differ in padding-right: 0px (body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > table > tbody > tr:nth-of-type(10) > td:nth-of-type(9) > button), 12px (#\\31 0-reviewer).",
+          "verification": {
+            "kind": "deterministic-check",
+            "check": "control-anatomy",
+            "params": {
+              "property": "paddingRight",
+              "selectors": [
+                "#\\31 0-reviewer",
+                "body > div:nth-of-type(2) > main > div:nth-of-type(2) > div > div > div:nth-of-type(2) > main > div > div > div > div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > table > tbody > tr:nth-of-type(10) > td:nth-of-type(9) > button"
+              ],
+              "tolerance": 0.5
+            }
+          }
+        }
+      }
+    }
+  ]
+}

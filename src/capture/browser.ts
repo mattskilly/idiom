@@ -4,17 +4,22 @@ import {
   type BrowserContext,
   chromium,
   type Page,
+  request as playwrightRequest,
+  type Route,
 } from "playwright";
 import { inferredComponentInputs } from "../checks/design-components.js";
+import { navigateDesign } from "../design/source.js";
 import {
   type ColorScheme,
   checkMarks,
   type Project,
 } from "../schemas/project.js";
 import { ExplanationCollector } from "./explanations.js";
+import { sweepFocusVisible } from "./focus.js";
+import { createLinkChecker, type LinkChecker } from "./links.js";
 import { MotionCollector } from "./motion.js";
 import { collectPageEvidence } from "./page.js";
-import { probeControls } from "./probe.js";
+import { probeControls, probeRequestAllowed } from "./probe.js";
 import { ProgressCollector } from "./progress.js";
 import type {
   BrowserLauncher,
@@ -117,6 +122,7 @@ async function captureInContext(
   context: BrowserContext,
   tuple: BrowserTuple,
   runtime: BrowserRuntime,
+  linkChecker: (() => LinkChecker) | undefined,
 ): Promise<TupleResult> {
   const records: ConsoleRecord[] = [];
   let page: Page | undefined;
@@ -171,6 +177,25 @@ async function captureInContext(
           recordImage(response.url(), `HTTP ${response.status()}`);
       });
     }
+    const failedFonts = new Map<string, string>();
+    const recordFont = (url: string, reason: string) => {
+      if (!url.startsWith("data:") && !failedFonts.has(url))
+        failedFonts.set(url, reason);
+    };
+    page.on("requestfailed", (request) => {
+      if (request.resourceType() === "font")
+        recordFont(
+          request.url(),
+          request.failure()?.errorText ?? "request failed",
+        );
+    });
+    page.on("response", (response) => {
+      if (
+        response.request().resourceType() === "font" &&
+        response.status() >= 400
+      )
+        recordFont(response.url(), `HTTP ${response.status()}`);
+    });
     const target = page;
     const screenshotOptions = deterministicScreenshotOptions(tuple.project);
     const explanations =
@@ -218,7 +243,10 @@ async function captureInContext(
       settleMs: tuple.state.settleMs ?? tuple.project.capture.settleMs,
       statusExpectation: tuple.state.expect.status ?? 200,
       reachStage: "navigation",
-      reach: () => reach(runner),
+      reach: () =>
+        tuple.designReference
+          ? navigateDesign(target, tuple.designReference)
+          : reach(runner),
       healthGuard: runner,
       assertDestination:
         "path" in tuple.state.expect && tuple.state.expect.path !== undefined
@@ -251,32 +279,74 @@ async function captureInContext(
       reuseScreenshot: tuple.reuseScreenshot,
       now: runtime.now,
       monotonicNow: runtime.monotonicNow,
-      observe: {
-        touchReachability: tuple.project.checks.touchReachability,
-        liveness: tuple.project.checks.liveness,
-        mediaFill: tuple.project.checks.mediaFill,
-        ...(tuple.project.checks.collections.length === 0
-          ? {}
-          : {
-              collections: tuple.project.checks.collections.map(
-                ({ selector }) => ({ selector }),
-              ),
-            }),
-        components: tuple.project.checks.components,
-        inferredComponents: inferredComponentInputs(tuple.designComponents),
-        invariants: tuple.invariants,
-        shell: tuple.shell,
-        floatingOverlays:
-          tuple.project.checks.shellVisibility?.floatingOverlays,
-        fresh: tuple.state.fresh === true,
-        marks: checkMarks(tuple.project.checks),
-        ...(tuple.published ? { images: true } : {}),
-        emptyState: tuple.project.checks.emptyState,
-        bandEdges: tuple.project.checks.bandEdges?.enabled === true,
-        wordBreak: tuple.project.checks.wordBreak?.enabled === true,
-      },
+      observe: tuple.designReference
+        ? { designComparison: true }
+        : {
+            designComparison: tuple.state.design !== undefined,
+            touchReachability: tuple.project.checks.touchReachability,
+            liveness: tuple.project.checks.liveness,
+            mediaFill: tuple.project.checks.mediaFill,
+            ...(tuple.project.checks.collections.length === 0
+              ? {}
+              : {
+                  collections: tuple.project.checks.collections.map(
+                    ({ selector }) => ({ selector }),
+                  ),
+                }),
+            components: tuple.project.checks.components,
+            inferredComponents: inferredComponentInputs(tuple.designComponents),
+            invariants: tuple.invariants,
+            shell: tuple.shell,
+            floatingOverlays:
+              tuple.project.checks.shellVisibility?.floatingOverlays,
+            fresh: tuple.state.fresh === true,
+            marks: checkMarks(tuple.project.checks),
+            ...(tuple.published ? { images: true } : {}),
+            emptyState: tuple.project.checks.emptyState,
+            bandEdges: tuple.project.checks.bandEdges?.enabled === true,
+            wordBreak: tuple.project.checks.wordBreak?.enabled === true,
+            // Cheap facts, recorded even when a check is disabled so replay
+            // works once it is re-enabled. Links cost network, so they follow
+            // the setting.
+            fonts: true,
+            lineLength: true,
+            orphanWord: true,
+            imageRenders: true,
+            layoutShift: true,
+            links: linkChecker !== undefined,
+          },
       imageFailures: tuple.published
         ? () => [...failedImages].map(([url, reason]) => ({ url, reason }))
+        : undefined,
+      fontFailures: () =>
+        [...failedFonts].map(([url, reason]) => ({ url, reason })),
+      checkLinks:
+        linkChecker === undefined
+          ? undefined
+          : (records) => linkChecker().check(records),
+      focusSweep: tuple.probe
+        ? async () => {
+            const readonly = (route: Route) =>
+              probeRequestAllowed(route.request())
+                ? route.fallback()
+                : route.abort("blockedbyclient").catch(() => undefined);
+            await context.route("**/*", readonly);
+            try {
+              await target.route("**/*", readonly);
+              return await sweepFocusVisible(target, {
+                maxStops: tuple.project.checks.probe.maxControls,
+                ignore: [
+                  ...tuple.project.checks.focusVisible.ignore,
+                  ...tuple.project.checks.probe.skip,
+                ],
+                budgetMs: tuple.project.checks.probe.stateTimeoutMs,
+                monotonicNow: runtime.monotonicNow,
+              });
+            } finally {
+              await target.unroute("**/*", readonly).catch(() => undefined);
+              await context.unroute("**/*", readonly).catch(() => undefined);
+            }
+          }
         : undefined,
       probe: tuple.probe
         ? () => {
@@ -284,6 +354,8 @@ async function captureInContext(
             const target = page as Page;
             return probeControls({
               page: target,
+              enumerateOnly: tuple.enumerateProbe,
+              flowBudget: tuple.probeBudget,
               signal: tuple.signal,
               onActivity: tuple.onActivity,
               onProbeProgress: tuple.onProbeProgress,
@@ -300,6 +372,9 @@ async function captureInContext(
               collections: tuple.project.checks.collections.map(
                 ({ selector }) => selector,
               ),
+              ledger: tuple.probeLedger,
+              stateId: tuple.state.id,
+              ledgerPartition: `${tuple.viewport.name}\0${tuple.colorScheme ?? tuple.project.capture.colorScheme}`,
               restore: async (activePage) => {
                 const replay = createRunner(false, activePage);
                 try {
@@ -361,6 +436,24 @@ export function createBrowserLauncher(
       void browser.close().catch(() => undefined);
     };
     options?.signal?.addEventListener("abort", abort, { once: true });
+    let links: LinkChecker | undefined;
+    const linkCheckerFor = (tuple: BrowserTuple) => {
+      const settings = tuple.project.checks.links;
+      if (!settings.enabled) return undefined;
+      return () => {
+        links ??= createLinkChecker({
+          external: settings.external,
+          timeoutMs: settings.timeoutMs,
+          budgetMs: settings.budgetMs,
+          concurrency: settings.concurrency,
+          ignore: settings.ignore,
+          monotonicNow: runtime.monotonicNow,
+          request: () =>
+            playwrightRequest.newContext({ ignoreHTTPSErrors: false }),
+        });
+        return links;
+      };
+    };
     const newContext = async (tuple: BrowserTuple) => {
       tuple.signal?.throwIfAborted();
       const context = await browser.newContext(
@@ -409,13 +502,19 @@ export function createBrowserLauncher(
     };
     return {
       version: browser.version(),
+      planProbes: true,
       async capture(tuple) {
         const startedAt = runtime.now().toISOString();
         let context: BrowserContext | undefined;
         try {
           tuple.signal?.throwIfAborted();
           context = await newContext(tuple);
-          return await captureInContext(context, tuple, runtime);
+          return await captureInContext(
+            context,
+            tuple,
+            runtime,
+            linkCheckerFor(tuple),
+          );
         } catch (error) {
           return {
             ok: false,
@@ -496,6 +595,7 @@ export function createBrowserLauncher(
       },
       async close() {
         options?.signal?.removeEventListener("abort", abort);
+        await links?.dispose();
         await browser.close();
       },
     };

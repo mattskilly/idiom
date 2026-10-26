@@ -79,6 +79,7 @@ export async function appendDecision(options: {
   decision: "accept" | "reject";
   scope: "instance" | "rule";
   reason?: string | undefined;
+  designChoice?: Decision["designChoice"] | undefined;
   now?: (() => Date) | undefined;
 }): Promise<{ path: string; record: Decision }> {
   // Validate the complete existing boundary before extending it.
@@ -103,6 +104,9 @@ export async function appendDecision(options: {
     scope: options.scope,
     ...(options.reason === undefined ? {} : { reason: options.reason }),
     actor: "human",
+    ...(options.designChoice === undefined
+      ? {}
+      : { designChoice: options.designChoice }),
   });
   const prefix = source.length > 0 && !source.endsWith("\n") ? "\n" : "";
   try {

@@ -5,7 +5,7 @@ import {
   tupleCoordinate,
   tupleCoordinateKey,
 } from "../baseline/coordinate.js";
-import { checksConfigFrom } from "../checks/registry.js";
+import { projectChecksConfig } from "../checks/project-config.js";
 import type { CheckTuple } from "../checks/types.js";
 import { IdiomError } from "../errors.js";
 import { loadRunTuples, resolveStoredRun } from "../review/artifacts.js";
@@ -244,7 +244,7 @@ export async function runCompare(options: {
       })
       .filter(({ key }) => !afterKeys.has(key));
 
-    const config = checksConfigFrom(validated.project.checks);
+    const config = await projectChecksConfig(validated);
     const records = (loaded: typeof before) =>
       deterministicCandidateRecords({
         tuples: loaded.tuples,

@@ -5,6 +5,7 @@ How to run each Idiom command, its flags and what it prints. What to write in `.
 ## Command index
 
 ```
+idiom mcp                    # stdio MCP tools for coding agents
 idiom quick <url...>         # public-page review with no setup
 idiom init                   # safe project scaffold
 idiom validate [flow]        # project + manifest validation
@@ -30,6 +31,10 @@ idiom verify <flow>          # offline recapture and proof of resolution
 idiom context [flow]         # bounded write-time design brief on stdout
 ```
 
+## mcp
+
+Run `idiom mcp [--project <dir>]` to expose eight local tools over stdio. The root is the launch directory or the resolved `--project` argument. Startup needs no initialized project; configured tools validate when called. Stdout contains only protocol messages. See [mcp.md](mcp.md) for client setup, schemas, progress/cancellation and the repair handoff.
+
 ## quick
 
 Start the application yourself, then point Idiom at one or more public pages from the same origin:
@@ -49,6 +54,15 @@ idiom quick \
 ```
 
 The command captures every supplied page at desktop (1440×900) and mobile (390×844) sizes in both light and dark colour schemes. It runs the deterministic checks and prints the exact `report.md` and `report.html` paths. By default, the timestamped result is written beneath `idiom-quick-reports/`; use `--out <dir>` for an exact new directory.
+
+Compare one page against an intended design with `--design`, without a project:
+
+```sh
+idiom quick http://127.0.0.1:3000/pricing --design ./exports/pricing.png
+idiom quick http://127.0.0.1:3000/pricing --design https://example.com/pricing
+```
+
+The value can be a local PNG, JPEG or WebP image, a local HTML file or directory, a live site URL, or a Figma frame URL. A Claude share URL counts as an HTML design. Any other HTTP(S) URL is captured as a live reference site. A Figma frame URL is fetched with `FIGMA_TOKEN` and pinned under `.idiom/designs/` beside the working directory, as in a project ([Figma frames](configuration.md#figma-frames)). `--design` compares one page, so pass a single URL. See [design comparison](configuration.md#design-comparison).
 
 Read the final **Quick-review limits** section as part of the result. It names the fixture-dependent error and empty states, authenticated surfaces, form/interaction destinations, and product/design judgments that a public-page pass cannot cover. To cover those, run `idiom init`, declare a flow, and use `idiom review <flow>`.
 
@@ -291,11 +305,13 @@ idiom check studio-lab --fail-on minor # exit non-zero at this severity (default
 idiom check studio-lab --all --ungrouped # full view, one entry per finding
 ```
 
-The full `--all` view starts with **Top issues** (five by default, adjustable with `--top <n>`), ranked by severity, then the number of distinct places (state/viewport/colour scheme/combination coordinates), then whether the issue affects a primary action. Similar sibling elements failing the same rule collapse into one issue with the element count and one example. This is a selector heuristic: positional indices and digit runs in IDs and quoted attribute values are ignored after selector normalisation; tag names and stable classes stay distinct. It can combine structurally similar controls that are not DOM siblings. Complete ties preserve first-seen order. Places are a union across the sibling groups, so forty rows on four screens count as four places. The remaining issues are counted per category. `--all` lists them in ranked order and exposes every sibling group's evidence and decision command.
+The full `--all` view starts with **Top issues** (five by default, adjustable with `--top <n>`), ranked by salience × prominence, then worst severity and first-seen order. Salience is a fixed rule/category policy. Prominence uses viewport-clipped area, visibility, primary region/action and bounded logarithmic state/place breadth. Known deterministic rules aggregate across selectors, with explicit adjacent-gap and clipping repair families. Compact output shows one prominent example and the family occurrence count; `--all` exposes every original group's evidence, rule and decision command. See [the ranking model](ranking.md) for the normative salience table, exact formula, fallback grouping, tie rules and worked example.
 
-The same element failing the same rule in several states, viewports or colour schemes remains one group: `Seen: seen in 2 states; viewports: mobile, mobile-short; schemes: light, dark (8 coordinates)`, member finding IDs, one representative crop, and `idiom decide --group <id>`. A collapsed issue's decision command applies only to its example group; use `--all` to decide other elements individually. Finding IDs, fingerprints and decisions stay per member, so `--fail-on` and the blocking count are unchanged, and a decision on one member still suppresses only that member. `--all --json` keeps every open finding in the flat `findings` array and the existing `groups`, each with every member and its coordinates (`state/viewport[/scheme][#combination]`). It adds the complete ranked `issues` array with group IDs, element/places/finding counts and the primary-action signal. Every group appears in exactly one issue. Default JSON uses `findings` for new occurrences and `preExistingFindings` for existing occurrences, with `fixed` and `baseline` provenance. Full mode JSON also includes `groups` and `issues`. Reports, `groups.json` and legacy `--baseline` retain their existing forms.
+Findings from different rules that share one source — the same design token or custom property, component, authored style rule or failing region — appear as one **root cause** entry (for example ``N. [minor] root cause — `--r-md` is not applied: 9 controls render 4px against 8px``), followed by its confidence, grouping evidence, a suggested fix where there is one, and every symptom (rule, element, measurement, group id). It ranks by its best symptom plus a bounded breadth factor. `--all` lists each symptom group with its own decision command; JSON adds `rootCause` to the issue, with every symptom's finding ids, fingerprints and status. Findings, groups, decisions and `--fail-on` are unchanged.
 
-`--emit-tickets <dir>` writes spec-standard proposals for this check's persisted, actionable findings, grouped by observed component and category within the flow. It requires no acceptance decision and creates none. Deferred-only and occurrence-only rows are excluded; in default and recorded-baseline modes, only reported new material findings qualify. The directory is a **file tracker root**: `.autobuild/tickets` writes beneath `.autobuild/tickets/triage/`; passing the `triage/` directory itself works too. Existing member identities suppress retries, including after a ticket is renamed or promoted. Crop links point to the retained report, with full screenshots as fallback and missing crops marked unavailable. Ticket counts, covered IDs and paths appear in text and the optional JSON `tickets` result. Emission runs before `--fail-on` is applied, so a failing check still deposits its requested proposals. Without the flag, check output and behavior stay unchanged.
+The same element failing the same rule in several states, viewports or colour schemes remains one group: `Seen: seen in 2 states; viewports: mobile, mobile-short; schemes: light, dark (8 coordinates)`, member finding IDs, one representative crop, and `idiom decide --group <id>`. A collapsed issue's decision command applies only to its example group; use `--all` to decide other elements individually. Finding IDs, fingerprints and decisions stay per member, so `--fail-on` and the blocking count are unchanged, and a decision on one member still suppresses only that member. `--all --json` keeps every open finding in the flat `findings` array and the existing `groups`, each with every member and its coordinates (`state/viewport[/scheme][#combination]`). It adds the complete ranked `issues` array with group IDs, element/places/finding counts, constituent rules, salience, prominence, score, the primary-action signal and the winning score inputs. Every group appears in exactly one issue. Default JSON uses `findings` for new occurrences and `preExistingFindings` for existing occurrences, with `fixed` and `baseline` provenance. Full mode JSON also includes `groups` and `issues`. Reports, `groups.json` and legacy `--baseline` retain their existing forms.
+
+`--emit-tickets <dir>` writes spec-standard proposals for this check's persisted, actionable findings, grouped by observed component and category within the flow; the symptoms of one root cause form one ticket across categories, with an "all symptoms clear" criterion. It requires no acceptance decision and creates none. Deferred-only and occurrence-only rows are excluded; in default and recorded-baseline modes, only reported new material findings qualify. The directory is a **file tracker root**: `.autobuild/tickets` writes beneath `.autobuild/tickets/triage/`; passing the `triage/` directory itself works too. Existing member identities suppress retries, including after a ticket is renamed or promoted. Crop links point to the retained report, with full screenshots as fallback and missing crops marked unavailable. Ticket counts, covered IDs and paths appear in text and the optional JSON `tickets` result. Emission runs before `--fail-on` is applied, so a failing check still deposits its requested proposals. Without the flag, check output and behavior stay unchanged.
 
 A recorded baseline is a small committable file at `.idiom/baselines/<flow>.json`: deterministic finding fingerprints and aliases per state, viewport, colour scheme and combination, plus the captured commit, version and checks configuration hash. It contains no screenshots. `baseline record <flow>` and `baseline accept [flow]` require a clean captured tree and accept `--from <runId>`, `--latest`, `--prod`, `--port`, `--json` and `--out <directory>` (overrides both JSON and pixel destinations). Accept infers the flow only when exactly one is configured; otherwise it lists the choices. It stores the capture's commit, even when replayed later, and replaces an existing record for that commit. Each file retains up to twenty records.
 
@@ -342,7 +358,11 @@ and bounded output. A missing CLI, login failure, or unsupported CLI version fai
 with its diagnostic; there is no automatic provider fallback.
 
 `--top` bounds the findings assigned to each attempt, following check's issue
-order, including findings beyond the review attention cap. Applicable rejected
+order, including findings beyond the review attention cap. A root cause is
+attempted whole, even past `--top`, and never split: the prompt leads with the
+shared cause, and the round is verified for that cause only when every symptom
+is proven fixed (`Root cause <id>: verified (k/n symptoms cleared)` or
+`partial (k/n)`). Applicable rejected
 findings are excluded before selection and from sibling instructions. Open and
 accepted findings may be attempted; fix records no human acceptances and creates
 no tickets. Ordinary `idiom instruction` still requires an explicit acceptance.
@@ -648,6 +668,24 @@ Missing/cyclic aliases, conditional declarations
 and conflicting independent sources are disclosed instead of becoming rules.
 A recognized source that cannot be read or parsed aborts the proposal.
 
+Learn tokens from a Figma file's local variables instead of code:
+
+```sh
+idiom system --learn "https://www.figma.com/design/<file>/<name>"
+idiom system --learn "https://www.figma.com/design/<file>/<name>" --yes --refresh-design
+```
+
+The URL needs no `node-id`. Colour variables become `color` tokens (`#rrggbb`, or
+`#rrggbbaa` below full opacity); numbers scoped to corner radius become `radius`,
+numbers scoped to gap become `spacing`, and other numbers `other`, all in `px`.
+Aliases are resolved (with a cycle guard), remote and boolean/string variables are
+skipped, and a collection's non-default modes become themes (for example `dark`).
+The response is cached at `.idiom/designs/figma/<file>/variables/<version>.json`
+and reused until `--refresh-design`. The proposal goes through the same confirmed
+diff as code learning. Figma's variables REST endpoint is available only on
+Enterprise plans with a token carrying `file_variables:read`; otherwise learning
+fails with that explanation.
+
 `checks.scales.spacing` accepts CSS-pixel numbers and base-step entries such as
 `[8, 12, { "multipleOf": 4 }]`. The latter represents v4's unbounded `--spacing`
 family. It checks authored padding, margin magnitudes and row/column gaps on
@@ -902,3 +940,75 @@ idiom context booking > .ab/design-brief.md
 ```
 
 That worktree is exactly the case both primary-checkout roots exist for. A linked worktree materializes tracked files only, so it has neither `.idiom/reports/` nor `.autobuild/tickets/`: without the report root every prohibition would collapse to an opaque fingerprint, and without the tracker root every already-built ticketed finding would be handed to the implementer as outstanding work.
+
+
+<a id="intended-designs-html-and-figma"></a>
+
+## Intended designs
+
+```sh
+idiom design add <state> <source> [--flow <id>] [--name <name>] [--viewport <name>]
+idiom review --page <url> --design <source> --deterministic-only
+idiom decide --finding <id> --choose <reference>
+```
+
+For a worked example, matching, tolerances and auth, see the [design comparison guide](design-compare.md).
+
+`<source>` accepts local HTML files/directories, public HTML prototype URLs and
+local PNG/JPEG/WebP images (download remote images first). Live sites use a flow
+state's `"design": { "site": "https://example.com/checkout" }`; this object is not
+a `design add` argument. `<source>` may also be a Figma frame URL (`https://www.figma.com/design/<file>/…?node-id=…`,
+from right-click → Copy link to selection). Without `--name`, `design add` replaces
+the state's design with that one source; with `--name`, it adds or replaces that
+named reference and keeps the others, so a state can carry, for example, a Figma
+frame and an HTML prototype. `--viewport` limits a reference to one project
+viewport. See [configuration](configuration.md#figma-frames) for the token, the
+pinned cache and viewport selection.
+
+`capture`, `review`, `check` and `verify` accept `--refresh-design`, which
+refetches pinned Figma frames instead of reusing
+`.idiom/designs/`. Verify refreshes only before its first recapture, so both
+recaptures compare against the same frame. Outside a configured project,
+`idiom quick <url> --design <source>` compares exactly one page against an image,
+HTML, Figma or live-site source; quick has no refresh flag. `fix` always uses
+the pinned cache so a repair loop's reference cannot move under it.
+
+When a state's references disagree with each other about a matched element, the
+finding is an `idiom:design-decision`: it shows each reference's value beside the
+build and says which one the build matches. It is never a defect against either
+reference. `idiom decide --finding <id> --choose <name>` records the intended
+reference (the interactive prompt offers the names too). From then on the
+`design-drift` check reports that element and property only against the chosen
+reference, in every review, check and verify run. `--choose` is valid only for
+design decisions and cannot be combined with `--accept`, `--reject` or `--group`.
+
+`design add` updates only an authored state's `design` field in its original JSON
+manifest. Use `--flow` for repeated state IDs. A generated route/page/combination
+needs an explicit authored state to attach its own design. Repeating an assignment
+is a no-op. Local paths are relative to the command's working directory and stored
+relative to the project root when possible. Flow declarations resolve from the
+project root. `review --page --design` resolves from the invocation directory;
+`--design` without `--page` is rejected with configuration guidance.
+
+Sources are a standalone `.html`/`.htm` file, a directory of exported HTML and
+assets, or an absolute HTTP(S) HTML prototype URL without credentials. A directory
+uses `index.html`, otherwise its sole top-level HTML file; ambiguous entry points
+fail with a candidate list. Local assets are served from the file's containing
+folder, or the selected directory. No build or dependency install runs for exports.
+
+Accessible Claude Design/artifact shares use rendered preview discovery: a single
+visible iframe (including `srcdoc`) or explicit `rel="preview"` link is opened as
+the design page. The editor/share shell is never the comparison target. Restricted,
+expired, login-only, missing or ambiguous previews fail with an export-HTML remedy.
+No private API, account integration or share-ID-to-URL conversion is used. The generic
+resolver is deliberately conservative; it does not promise that every provider
+wrapper exposes a usable preview. Claude documents [exports](https://support.claude.com/en/articles/14604416-get-started-with-claude-design)
+and [sharing/access](https://support.claude.com/en/articles/9547008-share-artifacts).
+
+Capture first, then `idiom review <flow> --from <run-id> --deterministic-only` to
+compare saved evidence without reopening the source. The report shows labelled
+Design / App capture full views even when no drift is found. Findings carry both
+property values, a match method and a proposed fix with paired crops; Markdown and
+JSON retain this evidence too. To accept an intentional departure, use the normal
+`idiom decide` rejection/suppression decision for the finding. Comparison never
+edits application code or the reference.

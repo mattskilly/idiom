@@ -2,6 +2,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { PNG } from "pngjs";
 import type { CheckTuple, Rect } from "../checks/types.js";
+import { tupleDesigns } from "../design/evidence.js";
+import type { LoadedDesign } from "../design/types.js";
 import type { Finding } from "../schemas/finding.js";
 
 const padding = 24;
@@ -93,6 +95,109 @@ export async function attachCrops(
         (finding.colorScheme === undefined ||
           candidate.colorScheme === finding.colorScheme),
     );
+    if (finding.evidence.designDrift && tuple) {
+      const drift = finding.evidence.designDrift;
+      const crops: NonNullable<typeof drift.crops> = [];
+      const designs = tupleDesigns(tuple);
+      const named = (name: string | undefined) =>
+        designs.find((d) => (d.descriptor.name ?? "design") === name);
+      // A decision shows every reference; other findings show the one they cite.
+      const sides: Array<{
+        label: string;
+        design?: LoadedDesign | undefined;
+        selector?: string | undefined;
+      }> = [
+        ...(drift.designDecision
+          ? drift.designDecision.references.map((reference) => ({
+              label: `Design: ${reference.name}`,
+              design: named(reference.name),
+              selector: reference.designSelector,
+            }))
+          : [
+              {
+                label:
+                  designs.length > 1
+                    ? `Design: ${drift.chosenReference ?? drift.reference ?? designs[0]?.descriptor.name ?? "design"}`
+                    : "Design",
+                design:
+                  named(drift.chosenReference ?? drift.reference) ??
+                  tuple.design,
+              },
+            ]),
+        { label: "App capture" },
+      ];
+      for (const [index, entry] of sides.entries()) {
+        const side = entry.label;
+        const design = side !== "App capture";
+        const screenshot = design
+          ? entry.design?.screenshotPath
+          : tuple.screenshotPath;
+        const path = `${dirname(tuple.metadataPath)}/crops/${finding.fingerprint.slice(0, 16)}-${design ? (sides.length > 2 ? `design-${index + 1}` : "design") : "app"}.png`;
+        if (drift.region) {
+          // Image regions carry their own rects on each side.
+          if (
+            screenshot &&
+            (await cropToFile({
+              runDirectory,
+              screenshotPath: screenshot,
+              images: decoded,
+              viewportWidth: tuple.width,
+              rect: design ? drift.region.designRect : drift.region.rect,
+              padding,
+              relativePath: path,
+            }))
+          )
+            crops.push({ label: side, path });
+          continue;
+        }
+        const observation = design
+          ? entry.design?.observations
+          : tuple.observations;
+        const selector = design
+          ? (entry.selector ?? drift.designSelector ?? drift.designContext)
+          : (drift.appSelector ?? drift.appContext);
+        const neighbour = design
+          ? drift.neighbour?.designSelector
+          : drift.neighbour?.appSelector;
+        if (!screenshot || !observation || !selector) continue;
+        const rect = union(
+          observation.elements
+            .filter((e) => e.selector === selector || e.selector === neighbour)
+            .map((e) => e.rect),
+        );
+        if (!rect) continue;
+        if (
+          await cropToFile({
+            runDirectory,
+            screenshotPath: screenshot,
+            images: decoded,
+            viewportWidth: tuple.width,
+            rect,
+            padding,
+            relativePath: path,
+          })
+        ) {
+          const absent = design
+            ? drift.designSelector === null
+            : drift.appSelector === null;
+          crops.push({ label: absent ? `${side} (absent)` : side, path });
+        }
+      }
+      result.push({
+        ...finding,
+        evidence: {
+          ...finding.evidence,
+          screenshots: [
+            ...new Set([
+              ...finding.evidence.screenshots,
+              ...crops.map((crop) => crop.path),
+            ]),
+          ],
+          designDrift: { ...drift, crops },
+        },
+      });
+      continue;
+    }
     const selectors = selectorsFor(finding);
     const observations = tuple?.observations;
     if (

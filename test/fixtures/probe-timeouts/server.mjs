@@ -28,7 +28,18 @@ export async function fixtureServer(port = 0) {
       response.write(Buffer.alloc(1024));
       return;
     }
-    response.writeHead(200, { "content-type": "text/html" }).end(html);
+    // Keep the effect window active for the CLI deadline regression. Quiet
+    // controls now finish early, so a long waitMs alone no longer times out.
+    const body =
+      path === "/continuous-effect"
+        ? html
+            .toString()
+            .replace(
+              "</body>",
+              `<script>document.querySelector('#print').addEventListener('click',()=>setInterval(()=>{document.body.dataset.probeActivity=String(performance.now())},25))</script></body>`,
+            )
+        : html;
+    response.writeHead(200, { "content-type": "text/html" }).end(body);
   });
   server.on("connection", (socket) => {
     sockets.add(socket);

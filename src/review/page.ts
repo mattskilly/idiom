@@ -28,6 +28,7 @@ import {
   writeReviewReports,
 } from "../quick/run.js";
 import { buildReviewCoverage } from "../report/coverage.js";
+import { designSourceSchema } from "../schemas/design.js";
 import type { Finding } from "../schemas/finding.js";
 import { checksConfigSchema, type Project } from "../schemas/project.js";
 import { validateProjectConfiguration } from "../validation.js";
@@ -125,6 +126,8 @@ function defaultRunName(now: Date): string {
  */
 export async function runPageReview(options: {
   url: string;
+  design?: string | undefined;
+  refreshDesign?: boolean | undefined;
   brief?: string | undefined;
   direction?: string | undefined;
   focus?: PageFocusArea[] | undefined;
@@ -163,6 +166,12 @@ export async function runPageReview(options: {
     page: project?.checks.page ?? {},
   });
   const configuration = createQuickConfiguration([options.url], {
+    design:
+      options.design === undefined
+        ? undefined
+        : /^https?:/i.test(designSourceSchema.parse(options.design))
+          ? options.design
+          : resolve(cwd, options.design),
     flowId: "page-review",
     title: "Page review",
     colorSchemes: ["light"],
@@ -186,6 +195,7 @@ export async function runPageReview(options: {
     checks,
     startedAt,
     label: "page review",
+    refreshDesign: options.refreshDesign,
     dependencies: options.dependencies?.capture,
   });
 

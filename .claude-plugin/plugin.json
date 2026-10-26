@@ -1,0 +1,11 @@
+{
+  "name": "idiom",
+  "description": "Design acceptance tools and the conversational Idiom skill.",
+  "skills": ["./templates/idiom"],
+  "mcpServers": {
+    "idiom": {
+      "command": "npx",
+      "args": ["-y", "@mattskilly/idiom", "mcp"]
+    }
+  }
+}

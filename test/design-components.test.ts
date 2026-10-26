@@ -63,6 +63,31 @@ test("size statements next to a name become inferred components with their line"
   ]);
 });
 
+test("a size in a filler-only parenthetical names the sentence's subject", () => {
+  expect(infer("Status dots are small (about 8px).")).toEqual([
+    {
+      name: "status dot",
+      words: ["status", "dot"],
+      width: 8,
+      height: 8,
+      source: "DESIGN.md:1",
+    },
+  ]);
+  // The shape real design files use: a bold lead-in, then the subject.
+  expect(
+    infer(
+      "- **Indicators are quiet.** Override dots and status marks are small (about 8px) and sized to the type.",
+    ),
+  ).toMatchObject([{ name: "override dot", width: 8, height: 8 }]);
+  // Tables and fenced code still infer nothing.
+  expect(infer("| Dot | (about 8px) |")).toEqual([]);
+  expect(infer("```\nStatus dots are small (about 8px).\n```")).toEqual([]);
+  // A named parenthetical keeps its own name.
+  expect(infer("Rows (chips 24px high) stack.")).toMatchObject([
+    { name: "chip", height: 24 },
+  ]);
+});
+
 test("ambiguous sizes, token tables, fenced code and repeats are not components", () => {
   expect(infer("Buttons 32px.")).toEqual([]);
   expect(infer("Spacing steps are 4px and 8px.")).toEqual([]);

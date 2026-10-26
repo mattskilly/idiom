@@ -6,6 +6,7 @@ import {
 
 export async function quickCommand(options: {
   urls: string[];
+  design?: string | undefined;
   project?: string | undefined;
   cwd?: string | undefined;
   out?: string | undefined;

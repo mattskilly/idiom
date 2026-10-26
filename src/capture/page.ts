@@ -3,6 +3,9 @@ import { PNG } from "pngjs";
 import { type ObserveOptions, observePage } from "../checks/observe.js";
 import type {
   FailedImageRequest,
+  FocusVisibleObservation,
+  GeometryScan,
+  LinkObservation,
   MotionArtifact,
   ObservationArtifact,
   ProbeArtifact,
@@ -56,6 +59,16 @@ export async function collectPageEvidence(options: {
   explanation?: "default" | "visible" | undefined;
   explanationWaitMs?: number | undefined;
   imageFailures?: (() => FailedImageRequest[]) | undefined;
+  /** Failed web font requests, merged into observations.fonts. */
+  fontFailures?: (() => FailedImageRequest[]) | undefined;
+  /** Resolves the observed links (run-scoped cache); web captures only. */
+  checkLinks?:
+    | ((records: LinkObservation[]) => Promise<GeometryScan<LinkObservation>>)
+    | undefined;
+  /** Keyboard focus sweep; runs in the probe branch before the click probe. */
+  focusSweep?:
+    | (() => Promise<GeometryScan<FocusVisibleObservation>>)
+    | undefined;
   progress?: (() => ProgressArtifact | undefined) | undefined;
 }): Promise<TupleResult> {
   const clock = options.monotonicNow ?? (() => performance.now());
@@ -91,6 +104,38 @@ export async function collectPageEvidence(options: {
     await options.page.waitForTimeout(options.settleMs);
     await options.healthGuard?.checkpoint();
 
+    if (options.observe?.designComparison) {
+      activity("design resources");
+      await options.page.evaluate(async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            (async () => {
+              await document.fonts.ready;
+              await Promise.all(
+                [...document.images]
+                  .filter((image) => image.complete || image.currentSrc)
+                  .map((image) => image.decode().catch(() => undefined)),
+              );
+            })(),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      "Design comparison resources did not settle within 30 seconds",
+                    ),
+                  ),
+                30_000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      });
+      options.signal?.throwIfAborted();
+    }
     stage = "expectation";
     activity(stage);
     options.assertDestination?.();
@@ -179,6 +224,41 @@ export async function collectPageEvidence(options: {
         ...observations,
         failedImageRequests: options.imageFailures(),
       };
+    if (
+      observations.version === 2 &&
+      observations.fonts !== undefined &&
+      options.fontFailures !== undefined
+    ) {
+      const known = new Set(
+        observations.fonts.failedRequests.map(({ url }) => url),
+      );
+      observations = {
+        ...observations,
+        fonts: {
+          ...observations.fonts,
+          failedRequests: [
+            ...observations.fonts.failedRequests,
+            ...options.fontFailures().filter(({ url }) => !known.has(url)),
+          ],
+        },
+      };
+    }
+    if (
+      observations.version === 2 &&
+      observations.links !== undefined &&
+      options.checkLinks !== undefined
+    ) {
+      const scan = observations.links;
+      const checked = await options.checkLinks(scan.records);
+      observations = {
+        ...observations,
+        links:
+          scan.status === "ran" || checked.status !== "ran"
+            ? checked
+            : { ...scan, records: checked.records },
+      };
+      await options.healthGuard?.checkpoint();
+    }
     if (options.assertDestination !== undefined) {
       stage = "expectation";
       activity(stage);
@@ -276,6 +356,19 @@ export async function collectPageEvidence(options: {
     const probeStarted = clock();
     try {
       activity("probe");
+      if (options.focusSweep !== undefined) {
+        let focusVisible: GeometryScan<FocusVisibleObservation>;
+        try {
+          focusVisible = await options.focusSweep();
+        } catch (error) {
+          focusVisible = {
+            status: "partial",
+            reason: `focus sweep failed: ${errorMessage(error).split("\n")[0]}`,
+            records: [],
+          };
+        }
+        observations = { ...observations, focusVisible };
+      }
       const probe = await options.probe();
       observations = {
         ...observations,

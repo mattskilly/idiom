@@ -1,6 +1,6 @@
 {
   "name": "@mattskilly/idiom",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "Design acceptance for AI-built software.",
   "type": "module",
   "license": "Apache-2.0",
@@ -23,14 +23,15 @@
     "codex"
   ],
   "bin": {
-    "idiom": "./dist/cli.js"
+    "idiom": "dist/cli.js"
   },
   "engines": {
     "node": ">=20"
   },
   "files": [
     "dist/",
-    "templates/"
+    "templates/",
+    ".claude-plugin/"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -42,6 +43,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
     "@axe-core/playwright": "^4.13.0",
+    "@modelcontextprotocol/server": "2.4.0",
     "commander": "^15.0.0",
     "pixelmatch": "^7.2.0",
     "playwright": "1.62.1",
@@ -54,6 +56,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
     "@defrex/autobuild": "0.14.0",
+    "@modelcontextprotocol/client": "2.4.0",
     "@types/node": "^26.2.0",
     "@types/pixelmatch": "^5.2.6",
     "@types/pngjs": "^6.0.5",

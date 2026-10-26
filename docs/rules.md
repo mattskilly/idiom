@@ -1,0 +1,505 @@
+# Rules
+
+A rule, or check, is a deterministic judgement over the evidence Idiom captured for one state, viewport and colour scheme: the DOM, computed styles and geometry, the screenshot, the axe-core results, the console, and what the interaction probe saw. The same evidence always gives the same findings, so `idiom review <flow> --from <runId> --deterministic-only` re-judges a stored run offline, and `idiom check` gates on it.
+
+Each finding has one of three severities:
+
+- **blocker**: the state did not render as declared, or a published page broke its hard budget. Nothing else about the state can be trusted until it is fixed.
+- **major**: a defect people will hit, such as an unreadable label, a dead control or a broken link. `idiom check` fails on major and above by default (`--fail-on major`).
+- **minor**: craft debt that is worth fixing but does not block, such as an off-scale value or a lonely last word.
+
+Every check reports coverage as well as findings. A check whose evidence is missing (an older capture, a capture path that cannot record it, or a probe that did not run) reports coverage `unavailable` rather than passing; recapture to measure it. A check you turn off reports `skipped`.
+
+Configure checks under `checks.*` in `.idiom/project.json`; every field is optional, and [configuration.md](configuration.md#checks) has the full reference. Some checks are opt-in and do nothing until their block is present.
+
+Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `--reject` dismisses that occurrence, and `--reject --scope rule` suppresses it in every later run. To change a finding's severity or suppress it by category, flow, state or rule, add an override to `.idiom/rules.json` (see [Rules](configuration.md#rules)). Questions a review cannot settle on its own arrive as `ruling-N` decisions, which `idiom ruling` records in `DESIGN.md`.
+
+## Checks
+
+### `overflow-clip`
+
+- **Catches:** A document wider than its viewport, and boxes with `overflow: hidden` or `clip` that cut off part of their content; a text field whose value is wider than the field is reported separately.
+- **Why it matters:** Hidden content is content nobody can read or reach, and a page that scrolls sideways feels broken.
+- **Severity:** major; minor for a value truncated inside an `input` or `textarea`.
+- **Source:** WCAG 2.2 1.4.10 Reflow, for document overflow; otherwise craft convention: content should not be silently cut off.
+- **Configure or decide:** No settings; crop-to-fit media and boxes marked `data-idiom-crop` are exempt, and findings are decided with `idiom decide` or a `.idiom/rules.json` override.
+
+### `responsive-break`
+
+- **Catches:** At the narrowest viewport, two visible interactive elements in normal flow that overlap, confirmed by a hit test at capture.
+- **Why it matters:** Overlapping controls on small screens hide each other and cause mis-taps.
+- **Severity:** major.
+- **Source:** WCAG 2.2 1.4.10 Reflow.
+- **Configure or decide:** No settings; it runs on the narrowest captured viewport, and findings are decided with `idiom decide` or a `.idiom/rules.json` override.
+
+### `contrast`
+
+- **Catches:** Text that fails axe-core's rendered `color-contrast` rule against its background.
+- **Why it matters:** Low-contrast text is hard or impossible to read for many people, and in bright light for everyone.
+- **Severity:** major for serious or critical axe impact; minor otherwise.
+- **Source:** WCAG 2.2 1.4.3 Contrast (Minimum).
+- **Configure or decide:** No settings; decide findings with `idiom decide` or a `.idiom/rules.json` override.
+
+### `a11y-label`
+
+- **Catches:** Buttons, links, form fields, selects and ARIA widgets with no accessible name, according to axe-core's naming rules (`button-name`, `link-name`, `label` and similar).
+- **Why it matters:** A control without a name is announced as "button" or "edit text", so screen reader and voice control users cannot tell what it does.
+- **Severity:** major for serious or critical axe impact; minor otherwise.
+- **Source:** WCAG 2.2 4.1.2 Name, Role, Value; for form fields also 3.3.2 Labels or Instructions.
+- **Configure or decide:** No settings; decide findings with `idiom decide` or a `.idiom/rules.json` override.
+
+### `target-size`
+
+- **Catches:** Interactive targets smaller than the minimum for the viewport's input class: 24×24 CSS px for fine pointers, 44×44 for narrow or touch viewports.
+- **Why it matters:** Small targets are hard to hit, especially by touch or with limited dexterity.
+- **Severity:** minor.
+- **Source:** WCAG 2.2 2.5.8 Target Size (Minimum) for the 24px figure; the 44px touch figure follows 2.5.5 Target Size (Enhanced) and Apple's Human Interface Guidelines.
+- **Configure or decide:** `checks.targetSize` sets `fine`, `coarse` and `narrowBelow` (defaults 24, 44 and 768); spacing-based exemptions are not assessed, so decide those with `idiom decide`.
+
+### `heading-structure`
+
+- **Catches:** Pages with no visible level-one heading or more than one, and headings that skip a level, from axe-core's heading rules and Idiom's own heading scan.
+- **Why it matters:** Screen reader users navigate by headings, and a broken outline hides the page's structure from them.
+- **Severity:** minor.
+- **Source:** WCAG 2.2 1.3.1 Info and Relationships and 2.4.6 Headings and Labels.
+- **Configure or decide:** No settings; decide findings with `idiom decide` or a `.idiom/rules.json` override.
+
+### `token-drift`
+
+- **Catches:** Rendered colours and radii on visible elements that do not resolve to a value declared in the project's design tokens.
+- **Why it matters:** Off-token values drift from the design system one hard-coded colour at a time.
+- **Severity:** minor.
+- **Source:** Craft convention: rendered values should come from the declared design tokens.
+- **Configure or decide:** Runs only when `design.tokensFile` is set in `.idiom/project.json` (otherwise skipped); there are no `checks` settings, so decide findings with `idiom decide` or a `.idiom/rules.json` override.
+
+### `console-error`
+
+- **Catches:** `console.error` calls and uncaught page errors recorded during capture, grouped by message and location.
+- **Why it matters:** Errors in the console usually mean something on screen is missing or broken, even when it looks fine.
+- **Severity:** major.
+- **Source:** Craft convention: a declared state should render without runtime errors.
+- **Configure or decide:** No settings; the expected load error of a state that declares a non-200 status is ignored, and other findings are decided with `idiom decide` or a `.idiom/rules.json` override.
+
+### `missing-state`
+
+- **Catches:** A declared state that failed to capture or failed its `expect` block, and a declared colour scheme that renders identically to the previous one across the whole flow.
+- **Why it matters:** If the state you meant to review never rendered, every other judgement about it is unreliable.
+- **Severity:** blocker.
+- **Source:** Craft convention: every declared state and colour scheme must actually render.
+- **Configure or decide:** Configured through the flow's states, `expect` blocks and `colorSchemes`, not `checks`; fix the state or its declaration, or decide with `idiom decide`.
+
+### `spacing-rhythm`
+
+- **Catches:** Buttons, links and inputs whose vertical clearance to the nearest boundary sharply diverges from a strongly prevailing clearance among comparable placements in the same run.
+- **Why it matters:** Inconsistent spacing around controls makes a layout feel careless and harder to scan.
+- **Severity:** minor.
+- **Source:** Craft convention: comparable controls should keep the same spacing rhythm.
+- **Configure or decide:** No settings; the rhythm is inferred from the run, so uniformly tight products are not judged, and findings are decided with `idiom decide` or a `.idiom/rules.json` override.
+
+### `unexplained-control`
+
+- **Catches:** Icon-only or single-glyph controls (`?`, `⋮`) with no visible label, description or tooltip, and disabled controls that give no reason.
+- **Why it matters:** People cannot use a control whose meaning they have to guess.
+- **Severity:** major for enabled controls; minor for disabled ones and for probed single-glyph controls in the default mode.
+- **Source:** Craft convention: a control's purpose should be visible, not only exposed to assistive technology.
+- **Configure or decide:** `checks.explanation` set to `"visible"` requires a visible explanation on hover and focus; `checks.probe` (on by default) supplies tooltip evidence and its `skip` list exempts controls; decide findings with `idiom decide`.
+
+### `text-centering`
+
+- **Catches:** Single-line labels in chips, buttons and badges sitting off their box's vertical centre.
+- **Why it matters:** Off-centre labels are a small misalignment people notice without knowing why.
+- **Severity:** minor.
+- **Source:** Craft convention: labels sit on their box's optical centre.
+- **Configure or decide:** `checks.centeringTolerance` sets the allowed offset (default 1.5px); decide findings with `idiom decide`.
+
+### `adjacent-gap`
+
+- **Catches:** Neighbouring controls closer than the minimum gap, including a focused field's ring, and bordered shapes that touch inside the same parent.
+- **Why it matters:** Controls jammed together look like one control and are easy to mis-hit.
+- **Severity:** major when they touch or overlap (gap of 0.5px or less); minor otherwise.
+- **Source:** Craft convention: separate controls need visible separation.
+- **Configure or decide:** `checks.minGap` (default 3px) sets the minimum, and `checks.adjacentGap` takes extra flush `regions` and `indicatorMax` (default 16px); decide findings with `idiom decide`.
+
+### `dead-affordance`
+
+- **Catches:** Text that reads or looks like a link or action ("View terms", "Learn more") but is plain text, disabled buttons with navigation copy, and `href="#"` placeholder links.
+- **Why it matters:** An affordance that leads nowhere breaks trust in every other link on the page.
+- **Severity:** major for link-like plain text; minor for disabled link-like buttons and `href="#"` placeholders.
+- **Source:** Craft convention: anything that looks clickable should do something.
+- **Configure or decide:** No settings; accept or dismiss individual instances with `idiom decide`, or override them in `.idiom/rules.json`.
+
+### `dead-control`
+
+- **Catches:** Enabled buttons that change nothing observable when the probe clicks them.
+- **Why it matters:** A button that does nothing looks like a broken product.
+- **Severity:** major.
+- **Source:** Craft convention: every enabled control should have an effect.
+- **Configure or decide:** Needs the interaction probe, on by default (`checks.probe`); exempt controls with `checks.probe.skip` and decide findings with `idiom decide`.
+
+### `duplicate-entry`
+
+- **Catches:** Two or more persistent controls in different places that open the same panel or focus the same field, following one level of menus.
+- **Why it matters:** Duplicate entry points clutter the interface and make people wonder whether they do different things.
+- **Severity:** minor.
+- **Source:** Craft convention: one destination, one entry point.
+- **Configure or decide:** Needs the probe (`checks.probe`, on by default); per-row actions in repeated lists are excluded, and findings are decided with `idiom decide`.
+
+### `component-size`
+
+- **Catches:** Named components rendering outside their declared width or height, or a size stated next to a name in `DESIGN.md`.
+- **Why it matters:** Components that grow or shrink unexpectedly break the layout around them.
+- **Severity:** minor.
+- **Source:** Craft convention: components should render at their declared size.
+- **Configure or decide:** Declare components and tolerances in `checks.components`, or state sizes in `DESIGN.md`; decide findings with `idiom decide`.
+
+### `copy-lint`
+
+- **Catches:** Code identifiers and token paths in copy, stuttered words, sibling labels cased two ways, mixed locale spelling, and glossary, retired or jargon terms.
+- **Why it matters:** Engineering names and inconsistent wording make a product feel unfinished and harder to learn.
+- **Severity:** major for code identifiers, raw token paths and repeated words; minor for casing, spelling and term policy.
+- **Source:** Craft convention: copy is written for people, consistently.
+- **Configure or decide:** `checks.copy` sets `locale`, `retired`, `jargon`, `glossary`, `schemaWords` and `properNouns` (also readable from `.idiom/glossary.json`); decide findings with `idiom decide`.
+
+### `glyph-icon`
+
+- **Catches:** Unicode glyphs (`▾ ◉ ▣ ×`) standing in for icons inside controls.
+- **Why it matters:** Glyphs render inconsistently across fonts and platforms and are often read aloud literally.
+- **Severity:** minor.
+- **Source:** Craft convention: icons come from the icon set, not from text.
+- **Configure or decide:** `checks.glyphAllow` lists glyphs you use on purpose; decide other findings with `idiom decide`.
+
+### `error-text`
+
+- **Catches:** Engineering failures shown on screen, such as "Renderer failed", stack traces, `[object Object]` and raw JSON.
+- **Why it matters:** Internal errors on screen confuse people and expose implementation details.
+- **Severity:** major.
+- **Source:** Craft convention: failures should be explained in human terms.
+- **Configure or decide:** `checks.errorPatterns` adds your own patterns to the built-in ones; decide findings with `idiom decide`.
+
+### `native-control`
+
+- **Catches:** Browser-default selects or checkboxes shown beside the product's own styled versions.
+- **Why it matters:** Mixing native and custom controls makes the interface look stitched together.
+- **Severity:** minor.
+- **Source:** Craft convention: one control style per kind of control.
+- **Configure or decide:** No settings; decide findings with `idiom decide` or a `.idiom/rules.json` override.
+
+### `layout-invariants`
+
+- **Catches:** Violations of the layout assertions a flow declares: dimensions, edge alignment, offsets between edges, and missing protected structure.
+- **Why it matters:** These are the structural promises you made about the layout, so breaking one is a regression by definition.
+- **Severity:** major.
+- **Source:** Project declaration: the `invariants` you write in the flow manifest.
+- **Configure or decide:** Declared in the flow's or state's `invariants` array, not in `checks`; no declaration means no findings, and findings are decided with `idiom decide`.
+
+### `group-invariants`
+
+- **Catches:** Items in a declared list whose attribute or text does not match the list owner's value, such as another project's pages in a page switcher.
+- **Why it matters:** A list that mixes in items from somewhere else shows people the wrong data.
+- **Severity:** major.
+- **Source:** Project declaration: the `group` invariants you write in the flow manifest.
+- **Configure or decide:** Declared as `group` entries in the flow's `invariants` array, not in `checks`; decide findings with `idiom decide`.
+
+### `selected-state`
+
+- **Catches:** Radio groups, tabs, listboxes, segmented controls and swatch grids with no option marked selected, several selected in a single-select group, or a selected option that looks the same as the others.
+- **Why it matters:** People need to see the current choice, and assistive technology needs it exposed.
+- **Severity:** major for several selected or an invisible selection; minor when nothing is marked selected.
+- **Source:** WCAG 2.2 4.1.2 Name, Role, Value for the exposed state; craft convention for the visible difference.
+- **Configure or decide:** `checks.selectedState` sets `minColorDelta` (default 24), how far a colour must move to count as visible; decide findings with `idiom decide`.
+
+### `dialog-shell`
+
+- **Catches:** Open dialogs with a missing or doubled heading, no visible close control, a primary action scrolled out of view without a sticky footer, or a title size the run's other dialogs do not use.
+- **Why it matters:** A dialog people cannot identify, close or complete traps them.
+- **Severity:** major for a missing heading, a missing close control or an off-screen primary action; minor for a doubled heading or an inconsistent title size.
+- **Source:** Craft convention: dialogs share one titled, closable, completable shell.
+- **Configure or decide:** No settings; only dialogs open in a captured state are judged, and findings are decided with `idiom decide`.
+
+### `disguised-control`
+
+- **Catches:** Buttons that read or look like text fields, and readonly or disabled fields drawn as editable with no stated reason.
+- **Why it matters:** People try to type into a button, or try to edit a field that will not accept input.
+- **Severity:** major.
+- **Source:** Craft convention: a control should look like what it is.
+- **Configure or decide:** `checks.disguisedControl` adds `placeholderPatterns` and `ignore` selectors for deliberate field-shaped triggers; decide findings with `idiom decide`.
+
+### `fresh-state`
+
+- **Catches:** On states marked `fresh`, enabled undo or redo controls and visible "unsaved changes" indicators.
+- **Why it matters:** A product that has just opened has nothing to undo or save, so these signals are false.
+- **Severity:** major.
+- **Source:** Craft convention: a first load shows no history and no unsaved work.
+- **Configure or decide:** Runs only on states with `"fresh": true`; `checks.freshState` adds history and unsaved patterns and selectors, and findings are decided with `idiom decide`.
+
+### `mirrored-control`
+
+- **Catches:** Declared mirrored pairs, such as two panel collapse buttons, that differ in size, element kind, type or distance from their panel's edge.
+- **Why it matters:** Mirrored controls that do not match make the layout look lopsided.
+- **Severity:** minor.
+- **Source:** Craft convention: mirrored controls should be mirror images.
+- **Configure or decide:** Opt-in through `checks.mirrored` pairs; decide findings with `idiom decide`.
+
+### `motion`
+
+- **Catches:** Panels, drawers, menus and dialogs that snap open with no transition, observed durations outside the configured scale or maximum, and motion that still runs under reduced motion.
+- **Why it matters:** Snapping surfaces feel abrupt, slow ones feel sluggish, and motion that ignores the reduced-motion preference can make people unwell.
+- **Severity:** major for motion running under reduced motion; minor for snaps and durations.
+- **Source:** WCAG 2.2 2.3.3 Animation from Interactions (AAA) for reduced motion; craft convention for timing.
+- **Configure or decide:** `checks.motion` sets `maxMs` (default 150), `durations` and extra `selectors`, and `capture.reducedMotion` picks the audit; needs the probe or declared web steps, and findings are decided with `idiom decide`.
+
+### `element-overlap`
+
+- **Catches:** Controls or text in the same layer whose boxes intersect, including partly visible elements, with both selectors and the overlap size.
+- **Why it matters:** Overlapping elements hide each other and can make controls unclickable.
+- **Severity:** major when a control is involved or the overlap covers at least a quarter of the smaller element; minor otherwise.
+- **Source:** Craft convention: elements in one layer should not collide.
+- **Configure or decide:** No settings; menus and dialogs are kept apart from content beneath them, and findings are decided with `idiom decide`.
+
+### `clipped-text`
+
+- **Catches:** Single-line or wrapped labels cut off without an ellipsis, including clipped menu items.
+- **Why it matters:** A label missing its end can say the wrong thing or nothing at all.
+- **Severity:** major.
+- **Source:** Craft convention: truncation should be visible and intentional.
+- **Configure or decide:** No settings; intentional ellipses, line clamps and scrollable content are excluded, and findings are decided with `idiom decide`.
+
+### `field-group`
+
+- **Catches:** Label, control and helper text stacks that touch, and too little space between separate field groups.
+- **Why it matters:** Cramped form groups make it unclear which label belongs to which field.
+- **Severity:** major when parts touch (0.5px or less); minor otherwise.
+- **Source:** Craft convention: related form parts sit together, separate groups sit apart.
+- **Configure or decide:** `checks.fieldGroups` sets `inner` (default 4px) and `between` (default 12px); decide findings with `idiom decide`.
+
+### `scale-conformance`
+
+- **Catches:** Spacing, control heights, corner radii and border colours off the declared scale, or, without a scale, sharp outliers from the run's prevailing value; control shadows (outliers only).
+- **Why it matters:** Values off the scale accumulate into a layout that never quite lines up.
+- **Severity:** minor.
+- **Source:** Craft convention: dimensions and colours come from a small, declared scale.
+- **Configure or decide:** `checks.scales` declares spacing, control heights, radii, border colours and role selectors; decide findings with `idiom decide`.
+
+### `control-anatomy`
+
+- **Catches:** A select chevron or an icon in an icon button or segmented control more than 1px off its label's centre, and sibling selects with different inner padding or chevron size.
+- **Why it matters:** Misaligned chevrons and icons make controls look slightly broken.
+- **Severity:** minor.
+- **Source:** Craft convention: a control's parts align on one centre line.
+- **Configure or decide:** No settings; decide findings with `idiom decide` or a `.idiom/rules.json` override.
+
+### `luminance-parity`
+
+- **Catches:** In light and dark captures, a field, card or panel that stays light (or dark) while its container and neighbours flip, and primary-action labels under 4.5:1 contrast in either scheme.
+- **Why it matters:** A surface that does not follow the theme glares in dark mode or disappears in light mode, and a primary action must be readable in both.
+- **Severity:** major.
+- **Source:** WCAG 2.2 1.4.3 Contrast (Minimum) for primary-action labels; craft convention for theme parity.
+- **Configure or decide:** `checks.luminanceParity` adds `primarySelectors` and `ignore` selectors for fixed-colour content; parity needs both colour schemes in one run, and findings are decided with `idiom decide`.
+
+### `frame`
+
+- **Catches:** The configured primary frame with no fill step, visible border or shadow separating it from its surround on any edge.
+- **Why it matters:** A frame that blends into its background loses the boundary of the main working area.
+- **Severity:** major.
+- **Source:** Craft convention: the main frame should be visibly separate from its surround.
+- **Configure or decide:** Opt-in: runs only when `checks.frame` sets a `selector`, with `minLuminanceDelta` defaulting to 0.05; decide findings with `idiom decide`.
+
+### `primary-region`
+
+- **Catches:** The declared primary region narrower than its minimum share of the viewport width.
+- **Why it matters:** When chrome crowds out the main region, the work itself gets too little room.
+- **Severity:** major.
+- **Source:** Craft convention: the primary region gets most of the screen.
+- **Configure or decide:** Opt-in through `checks.primaryRegion` with a `selector` and `minShare`; decide findings with `idiom decide`.
+
+### `alarm-at-rest`
+
+- **Catches:** Warning glyphs, alert-named icons, or red or configured warning colours on icons with no error or warning around them.
+- **Why it matters:** Alarm colours and icons at rest make people think something is wrong when nothing is.
+- **Severity:** minor.
+- **Source:** Craft convention: warning signals are reserved for warnings.
+- **Configure or decide:** `checks.alarm` sets warning `colors`, `brand` colours and `ignore` selectors, and `checks.errorPatterns` adds status text that counts as an error; decide findings with `idiom decide`.
+
+### `cross-surface-naming`
+
+- **Catches:** One `data-node-id` labelled differently across the declared surfaces, such as a tree, breadcrumb, selection chip and toolbar.
+- **Why it matters:** The same object under two names makes people wonder whether they are looking at two things.
+- **Severity:** minor.
+- **Source:** WCAG 2.2 3.2.4 Consistent Identification.
+- **Configure or decide:** Opt-in: declare at least two surfaces in `checks.naming`; decide findings with `idiom decide`.
+
+### `published-budget`
+
+- **Catches:** On published flows, horizontal document overflow, broken images, serious or critical axe violations, and pixel drift beyond the recorded baseline's budget.
+- **Why it matters:** Published pages are what visitors see, so they are held to a hard budget.
+- **Severity:** blocker.
+- **Source:** WCAG 2.2 1.4.10 Reflow and axe-core's serious and critical rules; craft convention for images and pixel drift.
+- **Configure or decide:** Runs only on flows with `"kind": "published"`, with `budget.maxDiffRatio` in the flow; a rejected decision from `idiom decide` still suppresses a finding.
+
+### `empty-state`
+
+- **Catches:** Empty lists, tables, grids and declared canvases with no call to action or explanatory text.
+- **Why it matters:** A blank region with no guidance leaves people unsure whether something failed or what to do next.
+- **Severity:** major for regions you declare; minor for regions found automatically.
+- **Source:** Craft convention: an empty state explains itself and offers a next step.
+- **Configure or decide:** `checks.emptyState` takes declared `regions`, `auto` (default true) and `ignore` selectors; decide findings with `idiom decide`.
+
+### `progress-affordance`
+
+- **Catches:** Web steps marked `longRunning` that show no spinner, progress bar, `aria-busy` or status text change within the configured time.
+- **Why it matters:** Without feedback, people assume a slow action has failed and try again.
+- **Severity:** major.
+- **Source:** Usability heuristic: visibility of system status.
+- **Configure or decide:** Mark steps `longRunning` in the flow; `checks.progressWithinMs` sets the limit (default 1000ms), and findings are decided with `idiom decide`.
+
+### `page-content`
+
+- **Catches:** Lorem ipsum and placeholder copy, a hero or final section with no button-styled call to action, images with no alt text, and, with a brief, statistics the brief does not contain.
+- **Why it matters:** Placeholder copy, missing calls to action and invented numbers make a generated page unready to publish.
+- **Severity:** major; images without alt text follow axe impact (major for serious or critical, minor otherwise).
+- **Source:** WCAG 2.2 1.1.1 Non-text Content for alt text; craft convention for copy and calls to action.
+- **Configure or decide:** Opt-in through `idiom review --page` or `checks.page`, which takes `ctaSelectors`, `placeholderPatterns` and `claimsAllow`; decide findings with `idiom decide`.
+
+### `band-edges`
+
+- **Catches:** Top-level page bands whose content gutters differ from the dominant left or right edge by more than the tolerance, per viewport.
+- **Why it matters:** Sections that do not share edges make a page look misaligned as it scrolls.
+- **Severity:** minor.
+- **Source:** Craft convention: page bands share one content gutter.
+- **Configure or decide:** Opt-in through `checks.bandEdges`, with `tolerance` defaulting to 8px; full-bleed media is exempt, and findings are decided with `idiom decide`.
+
+### `word-break`
+
+- **Catches:** Words in headings and buttons split across rendered lines without a hyphen, per viewport.
+- **Why it matters:** A broken word in a heading or button is hard to read and looks like a layout bug.
+- **Severity:** major.
+- **Source:** Craft convention: words wrap whole or with a visible hyphen.
+- **Configure or decide:** Opt-in through `checks.wordBreak`; decide findings with `idiom decide`.
+
+### `shell-visibility`
+
+- **Catches:** A declared app shell that scrolls or extends beyond the viewport, and declared floating overlays that intersect each other.
+- **Why it matters:** An app shell that scrolls as a whole, or overlays that cover each other, hide the controls people need.
+- **Severity:** major.
+- **Source:** Craft convention: an app shell fits its viewport and its overlays do not collide.
+- **Configure or decide:** Opt-in through a flow's `shell` selector and `checks.shellVisibility` `floatingOverlays`; decide findings with `idiom decide`.
+
+### `compound-control`
+
+- **Catches:** A short token such as a unit shown twice in one field, and adornments that cross an input's border, sit too close to its inner edge, or lie over its content.
+- **Why it matters:** Doubled units and cramped adornments make compound fields hard to read and type into.
+- **Severity:** major when an adornment crosses the border; minor otherwise.
+- **Source:** Craft convention: an adornment sits inside the field's padding and says each thing once.
+- **Configure or decide:** Opt-in through `checks.compoundControls`, with `tokenMax` (default 4) and `minInset` (default 2); decide findings with `idiom decide`.
+
+### `sibling-chrome`
+
+- **Catches:** A named control that every other declared sibling state shows inside a chrome region, but one state lacks.
+- **Why it matters:** Chrome that changes between sibling screens makes people hunt for controls that moved or vanished.
+- **Severity:** major.
+- **Source:** Craft convention: sibling screens share the same chrome.
+- **Configure or decide:** Opt-in through `checks.siblingChrome` `regions` plus sibling groups on the states; decide findings with `idiom decide`.
+
+### `touch-reachability`
+
+- **Catches:** On touch viewports without hover, enabled controls hidden at rest that only CSS hover on their owner reveals.
+- **Why it matters:** Touch screens have no hover, so these controls cannot be reached by touch at all.
+- **Severity:** major.
+- **Source:** Craft convention: every action must be reachable without hover on a touch device.
+- **Configure or decide:** Opt-in through `checks.touchReachability`, which takes `ignore` selectors, on viewports declared with `"touch": true`; decide findings with `idiom decide`.
+
+### `liveness`
+
+- **Catches:** Declared or timer-like text, sampled twice about 1.5 seconds apart, that stays unchanged or shows all zeros.
+- **Why it matters:** A countdown or live counter that never moves looks broken or misleads people about time.
+- **Severity:** major.
+- **Source:** Craft convention: live values should visibly update.
+- **Configure or decide:** Opt-in through `checks.liveness`, with `selectors`, `auto` (default true) and `ignore`; decide findings with `idiom decide`.
+
+### `media-fill`
+
+- **Catches:** Thumbnails in a gallery of three or more repeated cards whose frame shows a solid backdrop band at an edge, letterboxing, or nothing at all.
+- **Why it matters:** Thumbnails that do not fill their frames make a gallery look unfinished.
+- **Severity:** major when at least three frames and half the gallery share the defect; minor otherwise.
+- **Source:** Craft convention: gallery media fills its frame.
+- **Configure or decide:** On by default; `checks.mediaFill` sets `bandThreshold` (0.2), `tolerance` (8), `ignore`, and `auto: false` turns it off; decide findings with `idiom decide`.
+
+### `collection-actions`
+
+- **Catches:** Declared collections of user-created objects whose items do not offer open, rename or delete from the item, its menu or its context menu.
+- **Why it matters:** People expect to manage the things they create where they see them.
+- **Severity:** minor (an advisory heuristic).
+- **Source:** Craft convention: objects people create can be opened, renamed and deleted in place.
+- **Configure or decide:** Opt-in through `checks.collections`, each with a `selector` and optional `actions`; reading menus needs `checks.probe`, and findings are decided with `idiom decide`.
+
+### `font-loading`
+
+- **Catches:** A web font used by visible text that failed or never loaded, or renders in the fallback font, naming the family, the failing URL and the affected selectors.
+- **Why it matters:** A missing web font changes the product's typography and often its layout, without any visible error.
+- **Severity:** major.
+- **Source:** Craft convention: the typeface you ship is the one people see.
+- **Configure or decide:** On by default; `checks.fonts` with `enabled: false` turns it off, and findings are decided with `idiom decide`.
+
+### `broken-link`
+
+- **Catches:** Visible links that answer 4xx or 5xx or fail to resolve; 401, 403, 407 and 429 answers and timeouts are left unchecked and never reported.
+- **Why it matters:** A broken link is a dead end that sends people away from what they came for.
+- **Severity:** major for same-origin links; minor for external links.
+- **Source:** Craft convention: every link should lead somewhere.
+- **Configure or decide:** On by default for same-origin links; `checks.links` sets `enabled`, `external` (default false), `timeoutMs` (5000), `budgetMs` (30000), `concurrency` (4) and `ignore` prefixes, and findings are decided with `idiom decide`.
+
+### `focus-visible`
+
+- **Catches:** A control whose keyboard focus changes no outline, ring, border, background or shadow.
+- **Why it matters:** Keyboard users cannot see where they are without a visible focus indicator.
+- **Severity:** major.
+- **Source:** WCAG 2.2 2.4.7 Focus Visible.
+- **Configure or decide:** On by default and needs the probe pass; `checks.focusVisible` sets `enabled` and `ignore` selectors, `checks.probe.skip` also applies, and findings are decided with `idiom decide`.
+
+### `line-length`
+
+- **Catches:** Body paragraphs running more than the maximum number of characters per line at a viewport.
+- **Why it matters:** Very long lines are tiring to read and make it hard to find the start of the next line.
+- **Severity:** minor.
+- **Source:** WCAG 2.2 1.4.8 Visual Presentation (AAA), which recommends at most 80 characters; the default allows 90.
+- **Configure or decide:** On by default; `checks.lineLength` sets `enabled` and `max` (default 90), and findings are decided with `idiom decide`.
+
+### `orphan-word`
+
+- **Catches:** Headings and button labels whose last line holds a single short word, per viewport.
+- **Why it matters:** A lone word on the last line makes a heading or label look unbalanced.
+- **Severity:** minor.
+- **Source:** Craft convention: typographic orphans weaken short display text.
+- **Configure or decide:** On by default; `checks.orphanWord` sets `enabled` and `maxChars` (default 7), and findings are decided with `idiom decide`.
+
+### `image-distortion`
+
+- **Catches:** Images drawn with `object-fit: fill` more than the tolerance out of their natural aspect ratio; SVG is exempt.
+- **Why it matters:** Stretched or squashed images look broken and distort people and products.
+- **Severity:** major.
+- **Source:** Craft convention: images keep their natural proportions.
+- **Configure or decide:** On by default; `checks.images` sets `enabled` and `distortionTolerance` (default 0.03), shared with `broken-image`, and findings are decided with `idiom decide`.
+
+### `broken-image`
+
+- **Catches:** Visible images that failed to load or decode and render as broken images.
+- **Why it matters:** A broken image leaves a hole in the page and signals neglect.
+- **Severity:** major.
+- **Source:** Craft convention: every image on the page should load.
+- **Configure or decide:** On by default; `checks.images` with `enabled: false` turns it off together with `image-distortion`, and findings are decided with `idiom decide`.
+
+### `layout-shift`
+
+- **Catches:** Cumulative layout shift during load above the maximum, naming the elements that moved.
+- **Why it matters:** Content that jumps after load makes people lose their place or click the wrong thing.
+- **Severity:** minor.
+- **Source:** Core Web Vitals: Cumulative Layout Shift, where 0.1 or less is good.
+- **Configure or decide:** On by default; `checks.layoutShift` sets `enabled` and `max` (default 0.1), and findings are decided with `idiom decide`.
+
+### `design-drift`
+
+- **Catches:** A state whose render departs from its declared intended design. Against an HTML design or a live reference site: size, position, gap, radius, border, typography, colour or text drift on matched elements, and design content missing from or extra in the app. Against a design image (PNG, JPEG, WebP): visibly changed regions after alignment, naming the app elements they cover. Each is shown as labelled design and app crops.
+- **Why it matters:** The screen people get should be the one that was designed, and small drift adds up across a product.
+- **Severity:** minor for measured drift, copy, extras and image regions; major when a declared scale step is crossed, or when controls, headings, main content or its illustrations are missing.
+- **Source:** Craft convention: the built screen matches its intended design.
+- **Configure or decide:** Opt-in per state through `design` (or `idiom design add`); `checks.designDrift` sets `enabled`, the common `tolerance` and per-property overrides, `fontWeight` and `color`, and findings are decided with `idiom decide`.

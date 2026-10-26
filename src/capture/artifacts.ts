@@ -10,6 +10,8 @@ import {
 } from "node:fs/promises";
 import { arch, release, tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
+import { writeDesignArtifacts } from "../design/artifacts.js";
+import type { CapturedDesign, DesignDescriptor } from "../design/types.js";
 import { IdiomError } from "../errors.js";
 import type { Flow, StateCombination, ToggleCap } from "../schemas/flow.js";
 import { IDIOM_VERSION } from "../version.js";
@@ -23,6 +25,10 @@ import type {
 } from "./types.js";
 
 export type ArtifactTuple = {
+  /** Every design reference that applied to this tuple, in declaration order. */
+  designs?: CapturedDesign[] | undefined;
+  /** Why a state's declared references did not apply to this tuple. */
+  designNotApplicable?: string | undefined;
   /** State whose screenshot represents this layout; evidence remains local. */
   layoutRepresentative?: string | undefined;
   flow: Flow;
@@ -114,6 +120,17 @@ function consoleJsonl(result: TupleResult): string {
 function failure(
   tuple: ArtifactTuple,
 ): { stage: string; message: string } | undefined {
+  const designFailure = tuple.designs?.find(
+    (design) => design.failure !== undefined,
+  );
+  if (designFailure?.failure !== undefined)
+    return {
+      stage: "design-reference",
+      message:
+        (tuple.designs?.length ?? 0) > 1 && designFailure.name
+          ? `${designFailure.name}: ${designFailure.failure}`
+          : designFailure.failure,
+    };
   if (tuple.resolutionFailure !== undefined) {
     return { stage: "url-resolution", message: tuple.resolutionFailure };
   }
@@ -125,6 +142,7 @@ function failure(
 
 function passed(tuple: ArtifactTuple): boolean {
   return (
+    (tuple.designs ?? []).every((design) => design.failure === undefined) &&
     tuple.resolutionFailure === undefined &&
     tuple.result?.ok === true &&
     tuple.result.mismatches.length === 0
@@ -142,6 +160,28 @@ export function tupleRelativeDirectory(
     tuple.viewport.name,
     ...(tuple.colorSchemeAxis ? [tuple.colorScheme ?? "light"] : []),
   );
+}
+
+/** The screenshot review will load for this tuple (a collapsed tuple's is its representative's). */
+async function appScreenshot(
+  stagingDirectory: string,
+  tuple: ArtifactTuple,
+): Promise<Buffer | undefined> {
+  if (tuple.layoutRepresentative === undefined) return tuple.result?.screenshot;
+  try {
+    return await readFile(
+      join(
+        stagingDirectory,
+        tupleRelativeDirectory({
+          ...tuple,
+          state: { ...tuple.state, id: tuple.layoutRepresentative },
+        }),
+        "screenshot.png",
+      ),
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 export async function writeTupleArtifacts(options: {
@@ -183,7 +223,44 @@ export async function writeTupleArtifacts(options: {
   const electronTarget =
     tuple.flow.target.kind === "electron" ? tuple.flow.target : undefined;
   const combination = stateCombination(tuple.state);
+  const designs: DesignDescriptor[] = [];
+  const several = (tuple.designs?.length ?? 0) > 1;
+  const screenshot = tuple.designs?.length
+    ? await appScreenshot(options.stagingDirectory, tuple)
+    : undefined;
+  for (const [index, captured] of (tuple.designs ?? []).entries()) {
+    const descriptor = await writeDesignArtifacts({
+      runDirectory: options.stagingDirectory,
+      base: tupleRelativeDirectory(tuple),
+      // One reference keeps the original layout and metadata exactly.
+      design: several ? captured : { ...captured, name: undefined },
+      coordinate: {
+        state: tuple.state.id,
+        viewport: tuple.viewport.name,
+        width: tuple.viewport.width,
+        height: tuple.viewport.height,
+        colorScheme: tuple.colorScheme ?? "light",
+      },
+      app: result?.observations,
+      appScreenshot: screenshot,
+      subdirectory: several
+        ? (captured.name ?? `design-${index + 1}`)
+        : undefined,
+    });
+    designs.push(descriptor);
+    if (descriptor.status === "failed" && tuple.designs)
+      tuple.designs[index] = {
+        ...captured,
+        failure: descriptor.failure ?? "Design capture failed",
+      };
+  }
+  const design = designs[0];
   const metadata = {
+    ...(design === undefined ? {} : { design }),
+    ...(several ? { designs } : {}),
+    ...(tuple.designNotApplicable === undefined
+      ? {}
+      : { designNotApplicable: tuple.designNotApplicable }),
     ...(tuple.layoutRepresentative === undefined
       ? {}
       : { layoutRepresentative: tuple.layoutRepresentative }),
@@ -261,7 +338,11 @@ export async function writeTupleArtifacts(options: {
       passed: passed(tuple),
       mismatches: result?.mismatches ?? [],
     },
-    failure: failure(tuple) ?? null,
+    failure: tuple.resolutionFailure
+      ? { stage: "url-resolution", message: tuple.resolutionFailure }
+      : result?.ok === false
+        ? { stage: result.stage, message: result.message }
+        : null,
     platform: {
       platform: process.platform,
       architecture: arch(),

@@ -1967,3 +1967,59 @@ test("Autobuild templates keep the literal verify command byte-identical and dis
   );
   expect(skill).toContain("idiom-verify-report");
 });
+
+test("full-flow evaluation adds all-severity regressions without changing the standalone gate", () => {
+  const before = tuple(artifactV2("Before"));
+  const small = v2Element({
+    selector: "button.small",
+    tag: "button",
+    path: "html[0]/body[0]/main[0]/button[0]",
+    text: "Tiny",
+  });
+  small.interactive = true;
+  small.enabled = true;
+  small.rect.width = 10;
+  small.rect.height = 10;
+  const after = tuple(artifactV2("After", [small]));
+  const standalone = evaluateVerification({
+    findings: [finding()],
+    baseline: [before],
+    currentA: [after],
+    currentB: [structuredClone(after)],
+  });
+  const full = evaluateVerification({
+    findings: [finding()],
+    baseline: [before],
+    currentA: [after],
+    currentB: [structuredClone(after)],
+    fullFlow: true,
+  });
+  expect(standalone.newFindings).toBeUndefined();
+  expect(full.findings).toEqual(standalone.findings);
+  expect(full.passed).toBe(standalone.passed);
+  expect(
+    full.newFindings?.some(
+      (item) => item.category === "target-size" && item.severity === "minor",
+    ),
+  ).toBe(true);
+  expect(
+    renderVerificationReport({
+      flow: "studio",
+      baselineRunId: "baseline",
+      currentRunA: "A",
+      currentRunB: "B",
+      manifest: createAttachmentManifest([]),
+      evaluation: full,
+    }),
+  ).toContain("New deterministic findings (all severities)");
+  expect(
+    renderVerificationHtmlReport({
+      flow: "studio",
+      baselineRunId: "baseline",
+      currentRunA: "A",
+      currentRunB: "B",
+      manifest: createAttachmentManifest([]),
+      evaluation: full,
+    }),
+  ).toContain("New deterministic findings (all severities)");
+});

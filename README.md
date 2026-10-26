@@ -1,6 +1,6 @@
 # Idiom
 
-Design acceptance for AI-built software: Idiom opens your running app in a real browser, finds the design defects your coding agent left behind, fixes them, and keeps them from coming back.
+Design acceptance for AI-built software: Idiom opens your running app in a real browser, finds the UI and UX defects a careful designer would catch, hands each one to your coding agent as a fix, and keeps them from coming back.
 
 ## Who it's for
 
@@ -8,11 +8,44 @@ Anyone building UI with AI coding agents such as Claude Code, Codex or Cursor. I
 
 ## How it works
 
-1. **Check**: `idiom quick <url>` or `idiom check <flow>` renders every state, viewport and colour scheme, then reports ranked issues.
-2. **Fix**: `idiom fix <flow>` hands the findings to your coding agent, then recaptures to prove each one is fixed.
-3. **Guard**: the first `idiom check` on a committed HEAD records today's findings as a baseline. After that, checks and the GitHub Action fail only on new findings.
+1. **Check**: `idiom check <flow>` renders every state you declare at each viewport and colour scheme (`idiom quick <url>` does the same for the pages you name, with no setup) and runs more than 60 measured checks: contrast, broken links and images, fonts that fail to load, missing focus styles, controls that do nothing, duplicate entry points, spacing, alignment, sizes off your design system and more ([docs/rules.md](docs/rules.md)). Top issues come first, ranked by how noticeable each problem is and how prominent the element is ([ranking](docs/ranking.md)); symptoms that share one cause are grouped into one issue.
+2. **Fix**: every finding names the element, the measurement and when it counts as fixed, with a cropped screenshot. `idiom fix <flow>` hands the top findings to Claude Code or Codex, then recaptures to verify each repair.
+3. **Guard**: the first `idiom check` on a committed HEAD records today's findings as a baseline. After that, checks and the GitHub Action fail only on new findings. Accept and reject decisions are stored in the repo, so a settled finding stays settled.
+
+To find out whether controls work, Idiom probes them within coverage and time budgets, reuses equivalent results across states, and captures states concurrently. Probes restore the state between interactions. Idiom blocks every request that could change data (anything but GET, HEAD and OPTIONS), except the setup steps you declare.
 
 Under the hood the loop is Learn → Render → Critique → Repair → Verify → Remember.
+
+## Compare against your design
+
+Point Idiom at the design you meant and it reports where the build drifts: size, position, spacing, radius, typography, colour, and content that is missing or extra. Against an image it reports the regions that visibly changed.
+
+| Source | How |
+| --- | --- |
+| Figma frame | Frame URL with `node-id`; needs a personal access token in `FIGMA_TOKEN`. Frames are pinned under `.idiom/designs/`. |
+| Claude Design or HTML | An exported HTML file or folder, a public HTML prototype, or an accessible Claude rendered preview |
+| Image | A PNG, JPEG or WebP mockup or screenshot |
+| Live site | A public page, declared with `site` in a flow; quick accepts its URL |
+
+```sh
+idiom design add checkout ./designs/checkout.png
+idiom design add checkout "https://www.figma.com/design/<file>/Checkout?node-id=12-34" --name figma
+idiom check store
+```
+
+For one page with no setup, add `--design <source>` to `idiom quick`.
+
+`idiom design add` takes a Figma frame, HTML or an image. Declare a live site as `{ "site": "<url>" }` in the flow file. When element references disagree, `idiom decide --choose` records the intended reference for that element/property. See the [design comparison guide](docs/design-compare.md).
+
+## Use it from your agent
+
+`idiom mcp` serves eight Idiom tools over MCP stdio, including quick review, flow check, fix plan, decisions and verify. For Claude Code:
+
+```sh
+claude mcp add idiom -- npx -y @mattskilly/idiom mcp
+```
+
+Codex, Cursor and Claude Desktop setup, tool timeouts and the bundled Claude Code plugin are in [docs/mcp.md](docs/mcp.md).
 
 ## Before and after
 
@@ -20,7 +53,7 @@ Under the hood the loop is Learn → Render → Critique → Repair → Verify �
 
 ![After: the same editor with the Layers shortcut help shown, 8px override dots, labelled toolbar buttons and spaced Versions controls](docs/images/benchmark-after.png)
 
-This is the benchmark fixture in `test/fixtures/benchmark/`: an AI-built editor with seven defects that a human found and an earlier Idiom missed. With no configuration beyond the fixture's `DESIGN.md`, Idiom reports all seven on the before page and none on the after page:
+These are Idiom's benchmark fixture pages in `test/fixtures/benchmark/`, a reconstruction of an AI-built editor with seven defects that a human reviewer found and an earlier version of Idiom missed. The test suite checks that, with no configuration beyond the fixture's `DESIGN.md`, Idiom reports all seven on the before page and none on the after page. Results on real apps vary with how much of the app a flow covers.
 
 - a bare "?" beside the Layers heading
 - Page settings reachable three ways
@@ -40,7 +73,7 @@ npm install -g @mattskilly/idiom
 idiom --version
 ```
 
-The version command prints `<version> (<short source commit>)`, for example `0.9.1 (a6439b1)`. To pin a project to an exact release instead, add it as a dev dependency (`bun add -d --exact @mattskilly/idiom@0.9.1`) and run it with `bunx idiom` or `npx idiom`.
+The version command prints `<version> (<short source commit>)`, for example `0.10.0 (a85659a)`. To pin a project to an exact release instead, add it as a dev dependency (`bun add -d --exact @mattskilly/idiom@0.10.0`) and run it with `bunx idiom` or `npx idiom`.
 
 ### Browser setup
 
@@ -48,6 +81,7 @@ Capture also needs the Playwright-managed Chromium binary once per machine. Its 
 
 ```sh
 bunx playwright@1.62.1 install chromium
+# or: npx playwright@1.62.1 install chromium
 ```
 
 In a Linux CI image, install Chromium and its operating-system dependencies with:
@@ -93,6 +127,7 @@ idiom review home         # deterministic + model critique
 
 - [docs/commands.md](docs/commands.md): every command, its flags and its output.
 - [docs/configuration.md](docs/configuration.md): the project file, flows, checks and baselines.
+- [docs/rules.md](docs/rules.md): every rule, why it matters, its severity and source, and how to configure or decide it.
 - [GitHub Action](docs/configuration.md#github-action) and [Autobuild wiring](docs/configuration.md#autobuild) for pull-request and build gates.
 
 ## Update Idiom
@@ -123,6 +158,10 @@ bun link
 | --- | --- |
 | [docs/commands.md](docs/commands.md) | Every command, its flags and its output |
 | [docs/configuration.md](docs/configuration.md) | Project file, flows, checks, baselines, Autobuild and the GitHub Action |
+| [docs/rules.md](docs/rules.md) | Every rule: what it catches, why, severity, source, and how to configure or decide it |
+| [docs/design-compare.md](docs/design-compare.md) | Compare against HTML, Figma, images and live sites; resolve conflicting intent |
+| [docs/mcp.md](docs/mcp.md) | MCP tools and client setup for coding agents |
+| [docs/ranking.md](docs/ranking.md) | How top issues are ranked and grouped |
 | [CHANGELOG.md](CHANGELOG.md) | User-visible changes in every released version |
 | [docs/architecture.md](docs/architecture.md) | Technical architecture and Autobuild seam |
 | [docs/releases.md](docs/releases.md) | Maintainer release checklist |

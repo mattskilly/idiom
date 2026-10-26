@@ -14,7 +14,7 @@ function legacyNormalizeSelectorHint(value: string): string {
     .replace(/\s+/g, " ");
 }
 
-function generatedClass(value: string): boolean {
+export function generatedClass(value: string): boolean {
   return (
     /__[A-Za-z0-9_-]{5,}$/.test(value) ||
     /^(?:css|jsx|sc|emotion|styled)[-_][A-Za-z0-9_-]{5,}$/i.test(value) ||

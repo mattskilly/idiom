@@ -2,6 +2,7 @@ import { appendFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { loadDesignComponents } from "../checks/design-components.js";
 import { loadTokenDeclarations } from "../checks/observe.js";
+import { captureDesigns, figmaFrameLoader } from "../design/capture.js";
 import { IdiomError } from "../errors.js";
 import {
   buildReviewCoverage,
@@ -27,8 +28,15 @@ import {
   writeTupleArtifacts,
 } from "./artifacts.js";
 import { createBrowserLauncher } from "./browser.js";
-import { Deadline, DeadlineExpired } from "./deadline.js";
 import { createElectronLauncher } from "./electron.js";
+import { mergeExplanations } from "./explanations.js";
+import { captureConcurrency, runCaptureLanes } from "./lanes.js";
+import { mergeMotion } from "./motion.js";
+import {
+  type CaptureLifetime,
+  type CaptureOwnership,
+  withCaptureOwnership,
+} from "./ownership.js";
 import {
   bindProjectToPort,
   type PortReservation,
@@ -36,6 +44,12 @@ import {
   requestedPort,
   reservePort,
 } from "./port.js";
+import {
+  createFlowProbeBudget,
+  type ProbeBudgetLease,
+} from "./probe-budget.js";
+import { createProbeLedger } from "./probe-ledger.js";
+import { accumulateProbeRound, mergePlannedProbe } from "./probe-merge.js";
 import {
   type OwnedServer,
   type ProcessDependencies,
@@ -58,11 +72,10 @@ import {
   probeCoordinates,
   resolveCaptureScope,
 } from "./scope.js";
-import { skipped, slowestControls } from "./timings.js";
+import { type ControlTiming, skipped, slowestControls } from "./timings.js";
 import type {
   BrowserLauncher,
   BrowserSession,
-  CaptureActivity,
   CaptureRunResult,
   CaptureTupleSelection,
   ElectronLauncher,
@@ -75,16 +88,27 @@ import type {
 
 import { resolveWebHealth } from "./web-steps.js";
 
-export type CaptureDependencies = {
-  browserLauncher?: BrowserLauncher;
+/** The whole run's wall-clock target the flow probe budget is sized against. */
+export const PROBE_WALL_TARGET_MS = 400_000;
+/** Wall time kept back for merging, artifacts and checks after probing. */
+const PROBE_WALL_RESERVE_MS = 20_000;
+/** Smallest per-lane allowance worth a follow-up probe round. */
+const PROBE_MIN_ROUND_MS = 10_000;
+
+export type CaptureDependencies = CaptureLifetime & {
+  browserLauncher?: BrowserLauncher | undefined;
   onProbeProgress?: ((event: ProbeProgress) => void) | undefined;
   electronLauncher?: ElectronLauncher;
   process?: ProcessDependencies;
   inheritedEnvironment?: NodeJS.ProcessEnv;
-  now?: () => Date;
+  now?: (() => Date) | undefined;
   monotonicNow?: () => number;
+  /** Overrides PROBE_WALL_TARGET_MS. */
+  probeWallTargetMs?: number | undefined;
   snapshotSource?: typeof snapshotSource;
-  createArtifactWorkspace?: typeof createArtifactWorkspace;
+  createArtifactWorkspace?: typeof createArtifactWorkspace | undefined;
+  /** Recorded Figma API responses in tests. */
+  figma?: import("../design/figma/client.js").FigmaDependencies | undefined;
 };
 
 function replaceDerivedValue(
@@ -198,145 +222,19 @@ type CaptureOptions = {
   port?: number | undefined;
   /** Verification needs a separate screenshot at every requested coordinate. */
   deduplicateCombinations?: boolean | undefined;
+  /** Refetch pinned Figma frames instead of reusing the cache. */
+  refreshDesign?: boolean | undefined;
   dependencies?: CaptureDependencies | undefined;
 };
-
-/** Fixed maximum grace after deadline expiry, including all resource teardown. */
-const CLEANUP_GRACE_MS = 5000;
-class CaptureOwnership {
-  private resources = new Map<object, () => Promise<unknown>>();
-  private started = new Map<object, Promise<unknown>>();
-  activity: CaptureActivity = {
-    state: "pending",
-    viewport: "pending",
-    colorScheme: "pending",
-    step: "initialization",
-  };
-  controller = new AbortController();
-  deadline: Deadline;
-  constructor(maxMinutes: number) {
-    this.deadline = new Deadline(
-      "capture",
-      Math.min(Number.MAX_SAFE_INTEGER, maxMinutes * 60000),
-      () => {
-        const a = this.activity;
-        return `state ${a.state}, viewport ${a.viewport}, scheme ${a.colorScheme}, step ${a.step}`;
-      },
-      { signal: this.controller.signal },
-    );
-  }
-  get signal() {
-    return this.deadline.signal;
-  }
-  check = () => this.deadline.check();
-  stage = (step: string) => {
-    this.check();
-    this.activity.step = step;
-  };
-  coordinate(
-    selected: {
-      state: { id: string };
-      viewport: { name: string };
-      colorScheme: string;
-    },
-    step: string,
-  ) {
-    this.check();
-    this.activity = {
-      state: selected.state.id,
-      viewport: selected.viewport.name,
-      colorScheme: selected.colorScheme,
-      step,
-    };
-  }
-  own<T extends object>(value: T, close: (value: T) => Promise<unknown>): T {
-    if (!this.resources.has(value))
-      this.resources.set(value, () => close(value));
-    if (this.signal.aborted) void this.close(value).catch(() => undefined);
-    return value;
-  }
-  async acquire<T extends object>(
-    pending: Promise<T>,
-    close: (value: T) => Promise<unknown>,
-  ): Promise<T> {
-    // A launcher/workspace adapter may resolve after the caller has failed.
-    const registered = pending.then((value) => this.own(value, close));
-    return this.deadline.run(() => registered);
-  }
-  close(value: object): Promise<unknown> {
-    let pending = this.started.get(value);
-    if (!pending) {
-      pending = Promise.resolve().then(() => this.resources.get(value)?.());
-      this.started.set(value, pending);
-      void pending.catch(() => undefined);
-    }
-    return pending;
-  }
-  async cleanup() {
-    await Promise.all(
-      [...this.resources.keys()].map((value) => this.close(value)),
-    );
-  }
-}
 
 export async function runCapture(
   options: CaptureOptions,
 ): Promise<CaptureRunResult> {
-  const owner = new CaptureOwnership(options.project.capture.maxMinutes ?? 30);
-  const sigint = () =>
-    owner.controller.abort(new IdiomError("capture interrupted by SIGINT"));
-  const sigterm = () =>
-    owner.controller.abort(new IdiomError("capture interrupted by SIGTERM"));
-  // A stray rejection from abandoned browser work must end this capture
-  // through the normal path, so the application server is always stopped.
-  const unhandled = (reason: unknown) =>
-    owner.controller.abort(
-      new IdiomError(
-        `capture failed on an unhandled browser error: ${String(reason).split("\n")[0]}`,
-      ),
-    );
-  process.once("SIGINT", sigint);
-  process.once("SIGTERM", sigterm);
-  process.on("unhandledRejection", unhandled);
-  let failure: unknown;
-  let result: CaptureRunResult | undefined;
-  // Start cleanup at expiry, independently of the losing operation's finally.
-  const abort = () => {
-    void owner.cleanup().catch(() => undefined);
-  };
-  owner.signal.addEventListener("abort", abort, { once: true });
-  try {
-    result = await owner.deadline.run(() => captureOwned(options, owner));
-  } catch (error) {
-    failure =
-      error instanceof DeadlineExpired && error.scope === "capture"
-        ? new IdiomError(
-            `Capture exceeded capture.maxMinutes=${options.project.capture.maxMinutes}: ${error.activity}`,
-          )
-        : error;
-  } finally {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        owner.cleanup(),
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, CLEANUP_GRACE_MS);
-        }),
-      ]);
-    } catch (error) {
-      failure ??= error;
-    } finally {
-      clearTimeout(timer);
-      owner.signal.removeEventListener("abort", abort);
-      owner.deadline.dispose();
-      process.off("SIGINT", sigint);
-      process.off("SIGTERM", sigterm);
-      process.off("unhandledRejection", unhandled);
-    }
-  }
-  if (failure !== undefined) throw failure;
-  if (!result) throw new IdiomError("capture ended without a result");
-  return result;
+  return withCaptureOwnership(
+    options.project.capture.maxMinutes ?? 30,
+    options.dependencies,
+    (owner) => captureOwned(options, owner),
+  );
 }
 
 async function captureOwned(
@@ -352,6 +250,7 @@ async function captureOwned(
   );
   const probeKeys = new Set(probePolicy.intended.map(captureTupleKey));
   const clock = options.dependencies?.monotonicNow ?? (() => performance.now());
+  const runStarted = clock();
   const timings: RunRecord["timings"] = {
     build: skipped(),
     start: skipped(),
@@ -710,7 +609,27 @@ async function captureOwned(
         };
       }
       const capturedByKey = new Map<string, ArtifactTuple>();
-      for (const selected of selectedTuples) {
+      const probeLedger = createProbeLedger();
+      let probeBudgets = new Map<string, ProbeBudgetLease>();
+      /** Tuples whose probe already ran once; later rounds accumulate. */
+      const probedOnce = new Set<number>();
+      type LaneResult = {
+        artifact: ArtifactTuple;
+        timing: RunRecord["timings"]["tuples"][number];
+        executed: boolean;
+        controls: ControlTiming[];
+      };
+      const session = browser;
+      // Filled by position, so the run reads as if captured in order.
+      const laneResults: Array<LaneResult | undefined> = [];
+      const captureTuple = async (
+        selected: (typeof selectedTuples)[number],
+        index: number,
+        probePass = false,
+      ) => {
+        const previous = probePass ? laneResults[index] : undefined;
+        let executed = false;
+        let controls: ControlTiming[] = [];
         owner.coordinate(selected, "tuple");
         const resolution = resolutionByState.get(selected.state.id);
         if (resolution === undefined) {
@@ -734,7 +653,7 @@ async function captureOwned(
           if (collapse !== undefined && reuseScreenshot === undefined)
             collapsed.delete(tupleId(selected));
           const captureStarted = clock();
-          const captured = await browser.capture({
+          const captured = await session.capture({
             signal: owner.signal,
             onActivity: owner.stage,
             onProbeProgress: (event) =>
@@ -756,10 +675,68 @@ async function captureOwned(
             health: tupleHealth(selected.state),
             tokens,
             designComponents,
-            ...(probe ? { probe: true } : {}),
+            ...(probe
+              ? {
+                  probe: true,
+                  probeLedger,
+                  enumerateProbe: session.planProbes && !probePass,
+                  probeBudget: probePass
+                    ? probeBudgets.get(tupleId(selected))
+                    : undefined,
+                }
+              : {}),
             ...(isPublishedFlow(options.flow) ? { published: true } : {}),
           });
           owner.check();
+          if (probePass && captured.probeMs === undefined)
+            probeBudgets.get(tupleId(selected))?.finish(0);
+          if (session.planProbes && !probePass) captured.probeMs = undefined;
+          if (previous?.artifact.result?.observations?.version === 2) {
+            // Keep the saved evidence even if the disposable probe context
+            // cannot reach it; every planned control still receives a reason.
+            const round = (captured.observations?.version === 2
+              ? captured.observations.probe
+              : undefined) ?? {
+              status: "partial" as const,
+              results: [],
+              reason: captured.ok
+                ? "probe evidence unavailable"
+                : `probe context failed: ${captured.message}`,
+            };
+            const earlier = probedOnce.has(index)
+              ? previous.artifact.result.observations.probe
+              : undefined;
+            const probe = earlier
+              ? accumulateProbeRound(earlier, round)
+              : round;
+            if (earlier && previous.artifact.result.probeMs !== undefined)
+              captured.probeMs =
+                previous.artifact.result.probeMs + (captured.probeMs ?? 0);
+            probedOnce.add(index);
+            const focusVisible =
+              captured.observations?.version === 2
+                ? captured.observations.focusVisible
+                : undefined;
+            Object.assign(captured, {
+              ...previous.artifact.result,
+              probeMs: captured.probeMs,
+            });
+            captured.observations = {
+              ...previous.artifact.result.observations,
+              probe,
+              focusVisible:
+                focusVisible ??
+                previous.artifact.result.observations.focusVisible,
+              motion: mergeMotion(
+                previous.artifact.result.observations.motion,
+                probe.motion,
+              ),
+              explanations: mergeExplanations(
+                previous.artifact.result.observations.explanations,
+                probe.explanations,
+              ),
+            };
+          }
           const probeTiming =
             captured.probeMs === undefined
               ? {
@@ -769,16 +746,17 @@ async function captureOwned(
                   ms: 0,
                 }
               : { status: "measured" as const, ms: captured.probeMs };
-          if (captured.probeMs !== undefined)
-            probePolicy.executed.push(coordinate(selected));
-          timings.tuples.push({
+          if (captured.probeMs !== undefined) executed = true;
+          const timing = {
             ...coordinate(selected),
             total: {
-              status: "measured",
-              ms: Math.max(0, clock() - captureStarted),
+              status: "measured" as const,
+              ms:
+                (previous?.timing.total.ms ?? 0) +
+                Math.max(0, clock() - captureStarted),
             },
             probe: probeTiming,
-          });
+          };
           const result = canonicalizeOrigin(
             sanitizeDerivedResult(
               captured,
@@ -790,9 +768,10 @@ async function captureOwned(
             configuredOrigin,
           );
           if (result.observations?.version === 2) {
-            const controls = (result.observations.probe?.results ?? []).flatMap(
+            controls = (result.observations.probe?.results ?? []).flatMap(
               (control) =>
-                control.elapsedMs === undefined
+                control.elapsedMs === undefined ||
+                control.status === "not-reached"
                   ? []
                   : [
                       {
@@ -800,15 +779,13 @@ async function captureOwned(
                         selector: control.selector,
                         name: control.name,
                         elapsedMs: control.elapsedMs,
-                        outcome: control.status ?? ("completed" as const),
+                        outcome:
+                          control.status === "timed-out"
+                            ? ("timed-out" as const)
+                            : ("completed" as const),
                       },
                     ],
             );
-            if (controls.length)
-              timings.slowestControls = slowestControls([
-                ...(timings.slowestControls ?? []),
-                ...controls,
-              ]);
           }
           if (!result.ok) collapsed.delete(tupleId(selected));
           const artifact: ArtifactTuple = {
@@ -829,29 +806,189 @@ async function captureOwned(
                   },
             result,
           };
-          tuples.push(artifact);
           capturedByKey.set(tupleId(selected), artifact);
+          laneResults[index] = { artifact, timing, executed, controls };
         } else {
-          timings.tuples.push({
-            ...coordinate(selected),
-            total: { status: "unavailable", ms: 0 },
-            probe: {
-              status: probeKeys.has(tupleId(selected))
-                ? "unavailable"
-                : "skipped",
-              ms: 0,
+          laneResults[index] = {
+            timing: {
+              ...coordinate(selected),
+              total: { status: "unavailable", ms: 0 },
+              probe: {
+                status: probeKeys.has(tupleId(selected))
+                  ? "unavailable"
+                  : "skipped",
+                ms: 0,
+              },
             },
-          });
-          tuples.push({
-            flow: options.flow,
-            state: resolution.state,
-            viewport: selected.viewport,
-            colorScheme: selected.colorScheme,
-            colorSchemeAxis: selected.colorSchemeAxis,
-            resolutionFailure: resolution.message,
-          });
+            artifact: {
+              flow: options.flow,
+              state: resolution.state,
+              viewport: selected.viewport,
+              colorScheme: selected.colorScheme,
+              colorSchemeAxis: selected.colorSchemeAxis,
+              resolutionFailure: resolution.message,
+            },
+            executed: false,
+            controls: [],
+          };
         }
         assertNotInterrupted();
+      };
+      await runCaptureLanes({
+        tuples: selectedTuples,
+        lane: (selected) =>
+          `${selected.viewport.name}\0${selected.colorScheme}`,
+        first: (selected) => probeKeys.has(tupleId(selected)),
+        concurrency: captureConcurrency(project, inherited),
+        owner,
+        work: captureTuple,
+      });
+      if (session.planProbes) {
+        const partitions = new Map<
+          string,
+          Array<{
+            state: string;
+            candidates: import("./probe.js").ProbeCandidate[];
+          }>
+        >();
+        for (const [index, selected] of selectedTuples.entries()) {
+          if (!probeKeys.has(tupleId(selected))) continue;
+          const observation = laneResults[index]?.artifact.result?.observations;
+          const candidates =
+            observation?.version === 2
+              ? observation.probe?.candidates
+              : undefined;
+          if (!candidates) continue;
+          const partition = `${selected.viewport.name}\0${selected.colorScheme}`;
+          const states = partitions.get(partition) ?? [];
+          states.push({ state: selected.state.id, candidates });
+          partitions.set(partition, states);
+        }
+        for (const [partition, states] of partitions)
+          probeLedger.plan(partition, states);
+        const concurrency = captureConcurrency(project, inherited);
+        const stateTimeoutMs = project.checks.probe.stateTimeoutMs;
+        const runnable = new Map<string, Set<string>>();
+        for (const [index, selected] of selectedTuples.entries()) {
+          if (
+            !probeKeys.has(tupleId(selected)) ||
+            !laneResults[index]?.artifact.result?.ok
+          )
+            continue;
+          const partition = `${selected.viewport.name}\0${selected.colorScheme}`;
+          const states = runnable.get(partition) ?? new Set<string>();
+          states.add(selected.state.id);
+          runnable.set(partition, states);
+        }
+        // The flow's probe time is sized from the wall clock: rounds continue
+        // while unfinished work and time before the run's target remain. A
+        // round gives each state at most one state budget, and the first
+        // round never less than one state budget per lane.
+        const wallTarget =
+          options.dependencies?.probeWallTargetMs ?? PROBE_WALL_TARGET_MS;
+        const flowDeadline = runStarted + wallTarget - PROBE_WALL_RESERVE_MS;
+        for (let round = 1; ; round += 1) {
+          const work = selectedTuples.flatMap((selected, index) => {
+            if (
+              !probeKeys.has(tupleId(selected)) ||
+              !laneResults[index]?.artifact.result?.ok
+            )
+              return [];
+            const partition = `${selected.viewport.name}\0${selected.colorScheme}`;
+            const count = probeLedger.assignedCount(
+              partition,
+              selected.state.id,
+            );
+            // The first round runs every state: unassigned glyphs and local
+            // rows still come from its own replay. Shares follow check work.
+            return round === 1 || count > 0
+              ? [
+                  {
+                    id: tupleId(selected),
+                    count: probeLedger.assignedWeight(
+                      partition,
+                      selected.state.id,
+                    ),
+                  },
+                ]
+              : [];
+          });
+          if (work.length === 0) break;
+          const lanes = Math.min(concurrency, work.length);
+          const wallLeft = Math.max(0, flowDeadline - clock());
+          const floor = round === 1 ? stateTimeoutMs * lanes : 0;
+          const totalMs = Math.max(
+            floor,
+            Math.min(stateTimeoutMs * work.length, wallLeft * lanes),
+          );
+          // A follow-up round needs room for at least one control per lane.
+          if (round > 1 && totalMs < PROBE_MIN_ROUND_MS * lanes) break;
+          const budgets = createFlowProbeBudget(totalMs, work, {
+            deadlineAt: Math.max(flowDeadline, clock() + floor / lanes),
+            now: clock,
+          });
+          probeBudgets = budgets;
+          const ids = new Set(work.map((item) => item.id));
+          // Each state probes in its own fresh context on the capture pool;
+          // a round's assignments are fixed, so no two states race for work.
+          await runCaptureLanes({
+            tuples: selectedTuples,
+            lane: (selected) => tupleId(selected),
+            concurrency,
+            owner,
+            work: async (selected, index) => {
+              if (ids.has(tupleId(selected)))
+                await captureTuple(selected, index, true);
+            },
+          });
+          // Work stealing: whatever an assigned state left unprobed goes back
+          // to the flow queue for another state that shows it.
+          let requeued = 0;
+          for (const [partition, states] of runnable)
+            requeued += probeLedger.steal(partition, states);
+          if (requeued === 0) break;
+        }
+        for (const partition of runnable.keys())
+          probeLedger.exhaust(partition, "flow probe time exhausted");
+        // Merge only after every assigned state finishes, regardless of order.
+        for (const [index, selected] of selectedTuples.entries()) {
+          if (!probeKeys.has(tupleId(selected))) continue;
+          const observation = laneResults[index]?.artifact.result?.observations;
+          if (observation?.version !== 2 || !observation.probe) continue;
+          const partition = `${selected.viewport.name}\0${selected.colorScheme}`;
+          const candidates =
+            partitions
+              .get(partition)
+              ?.find((entry) => entry.state === selected.state.id)
+              ?.candidates ?? [];
+          mergePlannedProbe({
+            ledger: probeLedger,
+            partition,
+            state: selected.state.id,
+            candidates,
+            artifact: observation.probe,
+          });
+          observation.explanations = mergeExplanations(
+            observation.explanations,
+            observation.probe.explanations,
+          );
+        }
+      }
+      for (const entry of laneResults) {
+        if (entry === undefined) continue;
+        tuples.push(entry.artifact);
+        timings.tuples.push(entry.timing);
+        if (entry.executed)
+          probePolicy.executed.push({
+            state: entry.timing.state,
+            viewport: entry.timing.viewport,
+            colorScheme: entry.timing.colorScheme,
+          });
+        if (entry.controls.length)
+          timings.slowestControls = slowestControls([
+            ...(timings.slowestControls ?? []),
+            ...entry.controls,
+          ]);
       }
       // Finalise only successfully reused images; failures keep their own artifacts.
       for (const entry of collapsed.values()) {
@@ -923,6 +1060,52 @@ async function captureOwned(
       }
     }
 
+    const figma = figmaFrameLoader({
+      projectDirectory: options.projectDirectory,
+      refresh: options.refreshDesign,
+      deps: options.dependencies?.figma,
+    });
+    for (const tuple of tuples) {
+      if (tuple.state.design === undefined) continue;
+      owner.check();
+      owner.coordinate(
+        {
+          ...tuple,
+          colorScheme: tuple.colorScheme ?? options.project.capture.colorScheme,
+        },
+        "design reference",
+      );
+      const started = clock();
+      const planned = await captureDesigns({
+        state: tuple.state,
+        directory: options.projectDirectory,
+        project: options.project,
+        viewport: tuple.viewport,
+        colorScheme: tuple.colorScheme ?? options.project.capture.colorScheme,
+        browser: async () => {
+          browser ??= await owner.acquire(
+            (options.dependencies?.browserLauncher ?? createBrowserLauncher())({
+              signal: owner.signal,
+              onActivity: owner.stage,
+            }),
+            (value) => value.close(),
+          );
+          return browser;
+        },
+        figma,
+        signal: owner.signal,
+        onActivity: owner.stage,
+      });
+      tuple.designs = planned.designs;
+      tuple.designNotApplicable = planned.notApplicable;
+      const timing = timings.tuples.find(
+        (entry) =>
+          entry.state === tuple.state.id &&
+          entry.viewport === tuple.viewport.name &&
+          entry.colorScheme === tuple.colorScheme,
+      );
+      if (timing) timing.total.ms += Math.max(0, clock() - started);
+    }
     owner.stage("runtime teardown");
     await closeActive();
     owner.stage("artifact writing");

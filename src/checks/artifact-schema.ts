@@ -47,6 +47,10 @@ const stylesSchema = z
   .strict();
 
 const expandedStylesSchema = stylesSchema.extend({
+  borderTopStyle: z.string().optional(),
+  borderRightStyle: z.string().optional(),
+  borderBottomStyle: z.string().optional(),
+  borderLeftStyle: z.string().optional(),
   display: z.string(),
   visibility: z.string(),
   opacity: z.string(),
@@ -520,8 +524,20 @@ const probeSchema = z
           primary: z.boolean().optional(),
           skipped: z.string().optional(),
           elapsedMs: finite.nonnegative().optional(),
-          status: z.enum(["completed", "timed-out"]).optional(),
+          status: z.enum(["completed", "timed-out", "not-reached"]).optional(),
           timeoutScope: z.enum(["control", "state"]).optional(),
+          reusedFrom: z.string().min(1).optional(),
+          replayRequired: z.boolean().optional(),
+          timings: z
+            .object({
+              clickMs: finite.nonnegative(),
+              effectWindowMs: finite.nonnegative(),
+              restoreCheckMs: finite.nonnegative(),
+              escapeMs: finite.nonnegative(),
+              replayMs: finite.nonnegative(),
+            })
+            .strict()
+            .optional(),
         })
         .strict(),
     ),
@@ -547,6 +563,7 @@ const componentSchema = z
         source: z.string().min(1),
         words: z.array(z.string().min(1)).min(1),
         axis: z.enum(["width", "height"]).optional(),
+        matchedBy: z.literal("modifier").optional(),
       })
       .strict()
       .optional(),
@@ -814,7 +831,17 @@ const progressArtifactSchema = z
   })
   .strict();
 
+const styleSourceSchema = z
+  .object({
+    sheet: z.string(),
+    selector: z.string(),
+    tokens: z.array(z.string()).optional(),
+    unresolved: z.array(z.string()).optional(),
+  })
+  .strict();
+
 const elementV2Schema = elementSchema.extend({
+  styleSources: z.record(z.string(), styleSourceSchema).optional(),
   signals: signalsSchema.optional(),
   structuralPath: z.string().min(1),
   legacyRenderedPath: z.string().min(1).optional(),
@@ -949,6 +976,115 @@ const geometryScan = <T extends z.ZodType>(record: T) =>
       })
       .strict(),
   ]);
+const failedRequestSchema = z
+  .object({ url: z.string(), reason: z.string() })
+  .strict();
+const fontObservationSchema = z
+  .object({
+    status: z.enum(["ran", "unavailable"]),
+    reason: z.string().optional(),
+    faces: z.array(
+      z
+        .object({
+          family: z.string(),
+          status: z.enum(["unloaded", "loading", "loaded", "error"]),
+          weight: z.string(),
+          style: z.string(),
+          urls: z.array(z.string()),
+        })
+        .strict(),
+    ),
+    used: z.array(
+      z
+        .object({
+          family: z.string(),
+          selectors: z.array(identifier).max(5),
+          fallback: z.boolean(),
+        })
+        .strict(),
+    ),
+    failedRequests: z.array(failedRequestSchema),
+  })
+  .strict();
+const linkResultSchema = z.discriminatedUnion("status", [
+  z
+    .object({ status: z.literal("ok"), code: z.number().int().nonnegative() })
+    .strict(),
+  z
+    .object({
+      status: z.literal("broken"),
+      code: z.number().int().nonnegative().nullable(),
+      reason: z.string(),
+    })
+    .strict(),
+  z.object({ status: z.literal("unchecked"), reason: z.string() }).strict(),
+]);
+const linkSchema = z
+  .object({
+    selector: identifier,
+    text: z.string().max(80),
+    href: z.string().min(1),
+    sameOrigin: z.boolean(),
+    result: linkResultSchema.optional(),
+  })
+  .strict();
+const focusVisibleSchema = z
+  .object({
+    selector: identifier,
+    name: z.string(),
+    rect: rectSchema,
+    changed: z.array(z.string()),
+    proxy: identifier.optional(),
+  })
+  .strict();
+const lineLengthSchema = z
+  .object({
+    selector: identifier,
+    chars: z.number().nonnegative(),
+    width: z.number().nonnegative(),
+    charWidth: z.number().positive(),
+    lines: z.number().int().nonnegative(),
+    text: z.string().max(160),
+  })
+  .strict();
+const orphanWordSchema = z
+  .object({
+    selector: identifier,
+    word: z.string().min(1),
+    lines: z.number().int().min(2),
+    text: z.string().max(160),
+  })
+  .strict();
+const imageRenderSchema = z
+  .object({
+    selector: identifier,
+    src: z.string().max(200),
+    naturalWidth: z.number().nonnegative(),
+    naturalHeight: z.number().nonnegative(),
+    rendered: rectSchema,
+    objectFit: z.string(),
+    distortion: z.number().nonnegative(),
+    broken: z.boolean(),
+  })
+  .strict();
+const layoutShiftSchema = z
+  .object({
+    status: z.enum(["ran", "unavailable"]),
+    reason: z.string().optional(),
+    score: z.number().nonnegative(),
+    entries: z
+      .array(
+        z
+          .object({
+            value: z.number().nonnegative(),
+            startTime: z.number(),
+            sources: z.array(identifier),
+          })
+          .strict(),
+      )
+      .max(150),
+  })
+  .strict();
 const visibilityGeometrySchema = z
   .object({
     rect: rectSchema,
@@ -1104,6 +1240,13 @@ const observationArtifactV2Schema = z
       .strict()
       .optional(),
     collections: z.array(collectionSchema).optional(),
+    fonts: fontObservationSchema.optional(),
+    links: geometryScan(linkSchema).optional(),
+    focusVisible: geometryScan(focusVisibleSchema).optional(),
+    lineLengths: geometryScan(lineLengthSchema).optional(),
+    orphanWords: geometryScan(orphanWordSchema).optional(),
+    imageRenders: geometryScan(imageRenderSchema).optional(),
+    layoutShift: layoutShiftSchema.optional(),
   })
   .strict();
 

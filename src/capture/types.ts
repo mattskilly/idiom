@@ -113,6 +113,7 @@ export type TupleFailure = {
 export type TupleResult = TupleCapture | TupleFailure;
 
 export type BrowserTuple = CaptureHooks & {
+  designReference?: import("../design/source.js").DesignSource | undefined;
   shell?: string | undefined;
   /** Reuse an equal-layout screenshot while collecting this tuple's own evidence. */
   reuseScreenshot?: Buffer | undefined;
@@ -127,12 +128,21 @@ export type BrowserTuple = CaptureHooks & {
   /** Component sizes inferred from DESIGN.md, resolved to selectors in observe. */
   designComponents?: InferredComponent[] | undefined;
   probe?: boolean | undefined;
+  enumerateProbe?: boolean | undefined;
+  probeBudget?: import("./probe-budget.js").ProbeBudgetLease | undefined;
+  /**
+   * Flow-scoped probe results: a control already probed at an earlier state
+   * is reused instead of clicked again.
+   */
+  probeLedger?: import("./probe-ledger.js").ProbeLedger | undefined;
   /** A published flow's tuple: record images and failed image requests. */
   published?: boolean | undefined;
 };
 
 export interface BrowserSession {
   readonly version: string;
+  /** Supports capture(enumerateProbe): return read-only probe candidates. */
+  readonly planProbes?: boolean;
   capture(tuple: BrowserTuple): Promise<TupleResult>;
   /**
    * Reach a tuple's state in a throwaway page and return a layout signature:

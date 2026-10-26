@@ -14,6 +14,18 @@ test("the distributed Idiom skill has valid manual-invocation front matter", asy
   expect(lines[0]).toBe("---");
   expect(skill).toMatch(/^---\nname: idiom\n/);
   expect(skill).toMatch(/\ndescription: \S[^\n]+\n/);
+  const description = /\ndescription: ([^\n]+)/.exec(skill)?.[1] ?? "";
+  for (const route of [
+    "public pages",
+    "quick",
+    "configured flows",
+    "intended designs",
+    "repairs",
+    "fix-plan",
+    "verify",
+  ]) {
+    expect(description).toContain(route);
+  }
   expect(skill).toContain("disable-model-invocation: true");
   expect(skill.indexOf("\n---\n", 4)).toBeGreaterThan(0);
 });
@@ -206,4 +218,13 @@ test("the interview names no command the CLI does not have", async () => {
   expect(named.length).toBeGreaterThan(0);
   for (const command of new Set(named))
     expect([...registered], command).toContain(command);
+});
+
+test("the skill prefers supported MCP tools without changing human judgment or verification ownership", async () => {
+  const skill = await readIdiomSkillTemplate();
+  expect(skill).toContain("prefer MCP tools");
+  expect(skill).toContain("never silently retry a tool error via CLI");
+  expect(skill).toContain("explicit reason for decisions");
+  expect(skill).toContain("verification only");
+  expect(skill).toContain("model review, explore, init, references, tickets");
 });

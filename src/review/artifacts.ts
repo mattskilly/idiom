@@ -19,6 +19,7 @@ import type {
 } from "../capture/types.js";
 import { observationArtifactSchema } from "../checks/artifact-schema.js";
 import type { CheckTuple } from "../checks/types.js";
+import { loadDesignArtifacts } from "../design/artifacts.js";
 import { IdiomError } from "../errors.js";
 import { type Flow, isPublishedFlow, type WebFlow } from "../schemas/flow.js";
 import type { ColorScheme } from "../schemas/project.js";
@@ -65,6 +66,9 @@ const combinationsReportSchema = z
   .strict();
 
 type StoredMetadata = {
+  design?: unknown;
+  designs?: unknown[];
+  designNotApplicable?: string;
   layoutRepresentative?: string;
   combination?: z.infer<typeof storedCombinationSchema>;
   build?: ProductionBuild;
@@ -667,6 +671,20 @@ export async function loadCaptureRun(options: {
             },
           }),
     });
+    const tuple = tuples.at(-1);
+    if (tuple && Array.isArray(record.designs) && record.designs.length) {
+      tuple.designs = [];
+      for (const raw of record.designs)
+        tuple.designs.push(await loadDesignArtifacts(runDirectory, raw, tuple));
+      tuple.design = tuple.designs[0];
+    } else if (record.design !== undefined && tuple)
+      tuple.design = await loadDesignArtifacts(
+        runDirectory,
+        record.design,
+        tuple,
+      );
+    if (tuple && typeof record.designNotApplicable === "string")
+      tuple.designNotApplicable = record.designNotApplicable;
   }
   const capturedKeys = new Set(
     tuples.map((tuple) =>

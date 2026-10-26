@@ -1,3 +1,4 @@
+import { numericAllowance } from "../design/measure.js";
 import { ran, round, unavailable, verify } from "./shared.js";
 import type { DeterministicCheck, FindingCandidate } from "./types.js";
 
@@ -16,15 +17,10 @@ export const componentSizeCheck: DeterministicCheck = {
         continue;
       const axis = component.inferred?.axis;
       // Mode-less historical captures keep their original larger allowance.
-      const allowance =
-        component.tolerance.mode === "tighter" ? Math.min : Math.max;
-      const allowWidth = allowance(
-        component.width * component.tolerance.ratio,
-        component.tolerance.px,
-      );
-      const allowHeight = allowance(
-        component.height * component.tolerance.ratio,
-        component.tolerance.px,
+      const allowWidth = numericAllowance(component.width, component.tolerance);
+      const allowHeight = numericAllowance(
+        component.height,
+        component.tolerance,
       );
       const off = component.rects.filter(
         (rect) =>

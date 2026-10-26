@@ -11,6 +11,7 @@ export {
   rulingNameRegistrySchema,
 } from "../rulings/names.js";
 export { type Decision, decisionSchema } from "./decision.js";
+export * from "./design.js";
 export {
   type ExplorationCandidate,
   type ExplorationEdit,

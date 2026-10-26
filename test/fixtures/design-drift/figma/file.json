@@ -1,0 +1,13 @@
+{
+  "name": "Design comparison",
+  "lastModified": "2026-10-20T10:00:00Z",
+  "thumbnailUrl": "https://example.test/thumb.png",
+  "version": "4711",
+  "role": "viewer",
+  "editorType": "figma",
+  "document": {
+    "id": "0:0",
+    "name": "Document",
+    "type": "DOCUMENT"
+  }
+}

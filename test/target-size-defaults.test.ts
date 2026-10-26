@@ -139,6 +139,21 @@ test("default desktop minimum is 24 even for the narrowest or only captured view
   });
 });
 
+test("a recorded fine-pointer desktop input applies 24; a 390px viewport applies 44", () => {
+  // The input a real desktop capture records (pointer fine, hover, no touch).
+  const input = { pointer: "fine", hover: "hover", maxTouchPoints: 0 } as const;
+  expect(targets(1440, 23, { input })[0]?.verification.params).toMatchObject({
+    minimum: 24,
+    inputClass: "fine",
+  });
+  expect(targets(1440, 24, { input })).toEqual([]);
+  expect(targets(390, 43, { input })[0]?.verification.params).toMatchObject({
+    minimum: 44,
+    inputClass: "narrow",
+  });
+  expect(targets(390, 44, { input })).toEqual([]);
+});
+
 test("default narrow minimum is 44, with an exclusive 768px breakpoint", () => {
   expect(targets(390)[0]?.explanation).toContain(
     "narrower than 768px, minimum 44",

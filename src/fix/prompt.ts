@@ -4,7 +4,7 @@ import { tupleCoordinateKey } from "../baseline/coordinate.js";
 import { renderInstruction } from "../instructions/render.js";
 import { repairPresentation } from "../repair/presentation.js";
 import type { CatalogFinding } from "../review/catalog.js";
-import type { FixSnapshot } from "./check.js";
+import { type FixSnapshot, selectedCause } from "./check.js";
 
 export async function repairPrompt(
   snapshot: FixSnapshot,
@@ -55,6 +55,21 @@ export async function repairPrompt(
       ),
     ].join("\n\n");
   });
+  const cause = selectedCause(snapshot, selected);
+  const causeSection =
+    cause === undefined
+      ? []
+      : [
+          [
+            `# Root cause ${cause.id}`,
+            `${cause.cause}.`,
+            `Confidence: ${cause.confidence} (${cause.kind} ${cause.key.replaceAll("\0", " ")}). Evidence: ${cause.evidence.join("; ")}.`,
+            ...(cause.fix === undefined
+              ? []
+              : [`Suggested fix: ${cause.fix}.`]),
+            "Make one change to the shared cause; every symptom below must clear.",
+          ].join("\n"),
+        ];
   return [
     "Repair these Idiom findings in the application source.",
     `Selected assignments: ${assignments.join(", ")}.`,
@@ -64,6 +79,7 @@ export async function repairPrompt(
     "Preserve unrelated user edits. Leave all edits uncommitted. Never stage, commit, push, open a PR, reset, stash, or clean.",
     "Change application source only. Do not change Idiom configuration, flows, decisions, rules, design documents, reports, or evidence to hide failures.",
     "Idiom owns rechecking and calibrated verification. Do not run idiom fix recursively. Do not attempt unassigned adjacent work.",
+    ...causeSection,
     ...sections,
     "",
   ].join("\n\n");

@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { type FigmaRef, parseFigmaUrl } from "../design/figma/url.js";
 import { IdiomError } from "../errors.js";
 import { findProjectDirectory, resolveProjectArgument } from "../project.js";
 import { writeHtmlFile } from "../report/html.js";
@@ -25,6 +26,9 @@ export type SystemRunResult = {
 
 export async function runSystem(options: {
   learn?: boolean | undefined;
+  /** `--learn <figma-file-url>`: learn tokens from the file's variables. */
+  learnSource?: string | undefined;
+  refreshDesign?: boolean | undefined;
   yes?: boolean | undefined;
   project?: string | undefined;
   cwd?: string | undefined;
@@ -36,10 +40,19 @@ export async function runSystem(options: {
   const resolvedProject = await findProjectDirectory(
     resolveProjectArgument(options.project, options.cwd),
   );
+  let figma: FigmaRef | undefined;
+  if (options.learnSource !== undefined) {
+    figma = parseFigmaUrl(options.learnSource);
+    if (!figma)
+      throw new IdiomError(
+        `--learn takes a Figma file URL (https://www.figma.com/design/<file>/…); got ${JSON.stringify(options.learnSource)}`,
+      );
+  }
   const learning = options.learn
     ? await runSystemLearning(resolvedProject, {
         yes: options.yes,
         dependencies: options.dependencies,
+        source: { figma, refresh: options.refreshDesign },
       })
     : undefined;
   const model = learning?.model ?? (await collectSystemPage(options));

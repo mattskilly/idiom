@@ -72,6 +72,7 @@ function browserLauncher(captures: BrowserTuple[]): BrowserLauncher {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   await Promise.all(
     temporaryDirectories
@@ -340,4 +341,92 @@ test("quick CLI exposes help, success locations, and validation failures", async
     }),
   ).toBe(1);
   expect(invalidErrors.join("")).toContain("absolute HTTP(S) URL");
+});
+
+test("MCP literal quick bypasses configured guard explicitly, selects presets and avoids same-clock collisions", async () => {
+  const directory = await temporaryDirectory();
+  await mkdir(join(directory, ".idiom"));
+  await writeFile(
+    join(directory, ".idiom/project.json"),
+    "malformed config must not be read",
+  );
+  const captures: BrowserTuple[] = [];
+  const options = {
+    urls: ["https://example.com"],
+    project: directory,
+    literal: true,
+    viewports: ["mobile" as const],
+    dependencies: {
+      browserLauncher: browserLauncher(captures),
+      now: () => new Date("2026-08-20T12:34:56.789Z"),
+    },
+  };
+  const first = await runQuick(options);
+  const second = await runQuick(options);
+  expect(first.runDirectory).not.toBe(second.runDirectory);
+  expect(captures).toHaveLength(4);
+  expect(captures.every((tuple) => tuple.viewport.name === "mobile")).toBe(
+    true,
+  );
+});
+
+test("literal capture uses the overall deadline, bounds cleanup and closes late-acquired resources", async () => {
+  const { captureLiteralPages } = await import("../src/quick/run.js");
+  const { checksConfigFrom } = await import("../src/checks/registry.js");
+  const directory = await temporaryDirectory();
+  const configuration = createQuickConfiguration(["https://example.com"]);
+  configuration.project.capture.maxMinutes = 1;
+  let enter!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  let release!: (browser: Awaited<ReturnType<BrowserLauncher>>) => void;
+  const late = new Promise<Awaited<ReturnType<BrowserLauncher>>>((resolve) => {
+    release = resolve;
+  });
+  const before = process.listenerCount("SIGINT");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  const pending = captureLiteralPages({
+    directory,
+    finalDirectory: join(directory, "literal"),
+    configuration,
+    checks: checksConfigFrom(configuration.project.checks),
+    startedAt: new Date(),
+    label: "test",
+    dependencies: {
+      browserLauncher: async () => {
+        enter();
+        return late;
+      },
+    },
+  });
+  const rejected = expect(pending).rejects.toThrow(
+    /capture.maxMinutes=1.*browser launch/,
+  );
+  await entered;
+  await vi.advanceTimersByTimeAsync(65000);
+  await rejected;
+  const close = vi.fn(async () => {});
+  const capture = vi.fn();
+  release({ version: "late", capture, close });
+  await vi.advanceTimersByTimeAsync(1);
+  vi.useRealTimers();
+  await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+  expect(capture).not.toHaveBeenCalled();
+  expect(process.listenerCount("SIGINT")).toBe(before);
+  await expect(access(join(directory, "literal"))).rejects.toThrow();
+});
+
+test("pre-aborted literal review launches nothing", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("cancel before start"));
+  const launch = vi.fn();
+  await expect(
+    runQuick({
+      urls: ["https://example.com"],
+      project: await temporaryDirectory(),
+      dependencies: { signal: controller.signal, browserLauncher: launch },
+    }),
+  ).rejects.toThrow("cancel before start");
+  expect(launch).not.toHaveBeenCalled();
 });

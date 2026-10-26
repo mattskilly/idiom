@@ -3,6 +3,8 @@ import { a11yLabelCheck } from "./a11y-label.js";
 import { adjacentGapCheck } from "./adjacent-gap.js";
 import { alarmAtRestCheck } from "./alarm-at-rest.js";
 import { bandEdgesCheck } from "./band-edges.js";
+import { brokenImageCheck } from "./broken-image.js";
+import { brokenLinkCheck } from "./broken-link.js";
 import { clippedTextCheck } from "./clipped-text.js";
 import { collectionActionsCheck } from "./collection-actions.js";
 import { componentSizeCheck } from "./component-size.js";
@@ -14,6 +16,7 @@ import { copyLintCheck } from "./copy-lint.js";
 import { crossSurfaceNamingCheck } from "./cross-surface-naming.js";
 import { deadAffordanceCheck } from "./dead-affordance.js";
 import { deadControlCheck } from "./dead-control.js";
+import { designDriftCheck } from "./design-drift.js";
 import { dialogShellCheck } from "./dialog-shell.js";
 import { disguisedControlCheck } from "./disguised-control.js";
 import { duplicateEntryCheck } from "./duplicate-entry.js";
@@ -21,12 +24,17 @@ import { elementOverlapCheck } from "./element-overlap.js";
 import { emptyStateCheck } from "./empty-state.js";
 import { errorTextCheck } from "./error-text.js";
 import { fieldGroupCheck } from "./field-group.js";
+import { focusVisibleCheck } from "./focus-visible.js";
+import { fontLoadingCheck } from "./font-loading.js";
 import { frameCheck } from "./frame.js";
 import { freshStateCheck } from "./fresh-state.js";
 import { glyphIconCheck } from "./glyph-icon.js";
 import { groupInvariantsCheck } from "./group-invariants.js";
 import { headingStructureCheck } from "./heading-structure.js";
+import { imageDistortionCheck } from "./image-distortion.js";
 import { layoutInvariantsCheck } from "./layout-invariants.js";
+import { layoutShiftCheck } from "./layout-shift.js";
+import { lineLengthCheck } from "./line-length.js";
 import { livenessCheck } from "./liveness.js";
 import { luminanceParityCheck } from "./luminance-parity.js";
 import { mediaFillCheck } from "./media-fill.js";
@@ -37,6 +45,7 @@ import {
 } from "./missing-state.js";
 import { motionCheck } from "./motion.js";
 import { nativeControlCheck } from "./native-control.js";
+import { orphanWordCheck } from "./orphan-word.js";
 import { overflowClipCheck } from "./overflow-clip.js";
 import { pageContentCheck } from "./page-content.js";
 import { primaryRegionCheck } from "./primary-region.js";
@@ -122,6 +131,15 @@ export const signalChecks: DeterministicCheck[] = [
   livenessCheck,
   mediaFillCheck,
   collectionActionsCheck,
+  fontLoadingCheck,
+  brokenLinkCheck,
+  focusVisibleCheck,
+  lineLengthCheck,
+  orphanWordCheck,
+  imageDistortionCheck,
+  brokenImageCheck,
+  layoutShiftCheck,
+  designDriftCheck,
 ];
 
 export function checksConfigFrom(
@@ -129,6 +147,17 @@ export function checksConfigFrom(
 ): ChecksConfig {
   const merged = { ...defaultChecksSettings, ...settings };
   return {
+    fonts: { ...merged.fonts },
+    links: { ...merged.links, ignore: [...merged.links.ignore] },
+    focusVisible: {
+      enabled: merged.focusVisible.enabled,
+      ignore: [...merged.focusVisible.ignore],
+    },
+    lineLength: { ...merged.lineLength },
+    orphanWord: { ...merged.orphanWord },
+    images: { ...merged.images },
+    layoutShift: { ...merged.layoutShift },
+    designDrift: merged.designDrift,
     shellVisibility: merged.shellVisibility,
     ...(merged.compoundControls === undefined
       ? {}

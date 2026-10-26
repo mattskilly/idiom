@@ -1,7 +1,10 @@
 import type { DesignToken, TokenKind } from "./schema.js";
 
 export type { DesignToken, TokenKind } from "./schema.js";
-export type Source = { path: string; kind: "tailwind" | "css" | "dtcg" };
+export type Source = {
+  path: string;
+  kind: "tailwind" | "css" | "dtcg" | "figma";
+};
 export type ExtractedToken = DesignToken & {
   cascade?: string | undefined;
   context?: string | undefined;

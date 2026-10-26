@@ -325,7 +325,21 @@ test.each(benchmarkModes)(
       expect(one.findings).toEqual(summary.findings);
       expect(one.groups).toEqual(summary.groups);
       expect(one.issues).toEqual(summary.issues);
+      const persisted = await readFile(
+        join(summary.runDirectory, "findings.json"),
+        "utf8",
+      );
+      const durableGroups = await readFile(
+        join(summary.runDirectory, "groups.json"),
+        "utf8",
+      );
       const text = await invoke("--all");
+      expect(
+        await readFile(join(summary.runDirectory, "findings.json"), "utf8"),
+      ).toBe(persisted);
+      expect(
+        await readFile(join(summary.runDirectory, "groups.json"), "utf8"),
+      ).toBe(durableGroups);
       // The exact selector/problem printed for group examples must still satisfy
       // the original predicates, including both witnesses of #5 and #7.
       expect(
@@ -352,6 +366,26 @@ test.each(benchmarkModes)(
               return finding === undefined ? [] : [finding];
             }),
           );
+      const top7Text =
+        (await invoke("--all", "--top", "7")).split("Also found (")[0] ?? "";
+      for (const issue of issues.slice(0, 7))
+        for (const id of issue.groups)
+          expectRenderedGroup(summary, top7Text, id);
+      expect(
+        defects.filter(
+          (defect) =>
+            !defect.found(
+              findingsIn(issues.slice(0, 7).flatMap((issue) => issue.groups)),
+            ),
+        ),
+      ).toEqual([]);
+      expect(
+        defects.filter((defect) =>
+          defect.found(
+            findingsIn(issues.slice(0, 5).flatMap((issue) => issue.groups)),
+          ),
+        ).length,
+      ).toBeGreaterThanOrEqual(5);
       const rows = defects.map((defect) => {
         const index = issues.findIndex((_, index) =>
           defect.found(
@@ -361,6 +395,7 @@ test.each(benchmarkModes)(
           ),
         );
         expect(index, defect.name).toBeGreaterThanOrEqual(0);
+        expect(index, defect.name).toBeLessThan(7);
         // A conjunctive predicate needs multiple groups. A contributing group
         // loses a witness when removed from the complete defect evidence.
         const contributing = groups.filter((group) => {

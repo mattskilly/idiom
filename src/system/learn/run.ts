@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { chromium } from "playwright";
+import type { FigmaDependencies } from "../../design/figma/client.js";
+import type { FigmaRef } from "../../design/figma/url.js";
 import { IdiomError } from "../../errors.js";
 import type { BrowserLaunch } from "../../learn/target.js";
 import { collectSystemPage, type SystemDependencies } from "../collect.js";
@@ -14,11 +16,14 @@ import {
   type SystemDraft,
 } from "./draft.js";
 import { extractSources } from "./extract.js";
+import { extractFigmaVariables } from "./figma.js";
 import { inlineDeclarations } from "./inline.js";
 import { normalizeCssValues } from "./normalize.js";
 import { tokenIdentity } from "./schema.js";
 
 export type SystemLearningDependencies = SystemDependencies & {
+  /** Recorded Figma API responses in tests. */
+  figma?: FigmaDependencies | undefined;
   confirm?: ((diff: string) => Promise<boolean>) | undefined;
   launchBrowser?: BrowserLaunch | undefined;
   isTTY?: boolean | undefined;
@@ -30,15 +35,27 @@ export type SystemLearningResult = {
   model: SystemPageModel;
   drift: DriftResult;
 };
+export type LearningSource = {
+  /** A Figma file URL: learn tokens from its variables instead of code. */
+  figma?: FigmaRef | undefined;
+  refresh?: boolean | undefined;
+};
 async function prepareLearning(
   projectDirectory: string,
   dependencies: SystemLearningDependencies = {},
+  source: LearningSource = {},
 ) {
   const model = await collectSystemPage({
     project: projectDirectory,
     dependencies,
   });
-  const extraction = await extractSources(projectDirectory);
+  const figma = source.figma
+    ? await extractFigmaVariables(projectDirectory, source.figma, {
+        refresh: source.refresh,
+        deps: dependencies.figma,
+      })
+    : undefined;
+  const extraction = figma ?? (await extractSources(projectDirectory));
   const before = await readFile(
     join(projectDirectory, ".idiom", "project.json"),
     "utf8",
@@ -49,6 +66,7 @@ async function prepareLearning(
     ),
     launch: dependencies.launchBrowser,
   });
+  if (figma) draft.summary.unshift(figma.summary);
   if (model.drift) {
     const proposed = inlineDeclarations(
       JSON.parse(draft.after).design?.tokens ?? [],
@@ -99,9 +117,10 @@ async function prepareLearning(
 export async function prepareSystemLearning(
   projectDirectory: string,
   dependencies: SystemLearningDependencies = {},
+  source: LearningSource = {},
 ) {
   try {
-    return await prepareLearning(projectDirectory, dependencies);
+    return await prepareLearning(projectDirectory, dependencies, source);
   } catch (error) {
     throw error instanceof IdiomError
       ? error
@@ -139,10 +158,15 @@ export async function runSystemLearning(
   options: {
     yes?: boolean | undefined;
     dependencies?: SystemLearningDependencies | undefined;
+    source?: LearningSource | undefined;
   },
 ): Promise<SystemLearningResult> {
   const deps = options.dependencies ?? {};
-  const prepared = await prepareSystemLearning(projectDirectory, deps);
+  const prepared = await prepareSystemLearning(
+    projectDirectory,
+    deps,
+    options.source,
+  );
   const write = deps.write ?? ((message: string) => stdout.write(message));
   printSystemProposal(prepared, write);
   let outcome: SystemLearningResult["outcome"];

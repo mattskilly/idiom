@@ -37,7 +37,17 @@ unchanged and flows need no `surface` field.
 
 The interaction probe is on by default for web flows; `checks.probe.enabled: false` turns it off, and a state's `probe: false` turns it off for that state. It runs once per state at its first selected viewport, preferring that viewport's light coordinate regardless of scheme declaration order. If light is excluded, it uses the first selected scheme without capturing an extra page. Set `checks.probe.everywhere: true` to probe every enabled selected coordinate; this setting alone never enables probes or overrides a state's `probe: false`. Probe evidence belongs only to its executed coordinate. A failed designated capture leaves its probe unavailable; sibling tuples do not retry it. Electron interaction probing remains unavailable.
 
-The probe has hard wall-clock budgets: `checks.probe.controlTimeoutMs` defaults to **5000ms** per attempted control, and `checks.probe.stateTimeoutMs` defaults to **60000ms** per state's entire probe. A control's budget includes restoration/replay, hover/focus explanation sampling, clicking, observation and cleanup; nested menu items and read-only collection sampling are bounded too. A state budget includes initialization and final restoration. Expired controls retain their selector and partial effects with `status: "timed-out"`, `timeoutScope` and a `skipped` reason. Their incomplete evidence cannot establish dead controls or duplicate entries. The expired control is never retried: its disposable page is retired, later controls replay on a replacement, and a state timeout continues to the next selected capture coordinate. Dialogs, print, file choosers, downloads and new windows are suppressed throughout probing, regardless of intent filtering; print/download requests remain classified effects.
+The probe has hard wall-clock budgets. `checks.probe.controlTimeoutMs` defaults to **5000ms** per attempted control, including explanation sampling, the click, its effect window and the cheap restore check. Full replay has its own restore deadline (the larger of the control budget and 15 seconds, bounded by the state's remaining flow share); its expiry is reported as `timed-out: restore` on the control that needed it. The effect window ends after about 150ms with no DOM, URL, focus or network activity, capped by `checks.probe.waitMs` (default 350ms). Tooltip explanation sampling retains its independent hover/focus windows.
+
+`checks.probe.stateTimeoutMs` defaults to **60000ms**. Web capture sizes one aggregate flow allowance from the wall clock. The run aims to finish within 400 seconds, keeping 20 seconds for merging, artifacts and checks. Probing may use the time left before that target on every capture lane, measured when each probe round starts. A round gives each state at most this duration, and the first round always gets at least this duration per lane. Later rounds run while unfinished work and wall time remain. Each round divides its allowance in proportion to assigned control counts, with one unit for a state's enumeration bookkeeping when it has no assigned controls. No state's share runs past the target. A finished state returns unused time to unfinished states, extending running deadlines as well as queued shares. Ordinary nested menu, panel and tab items have an additional cap of a quarter of their state's current share; they still count toward the flow allowance. In a planned flow, nested check candidates (the ranks below) are bounded only by the state deadline. This cap prevents nested work from consuming the whole share. Discovery follows at most three reveal steps and 20 controls per revealed surface. Standalone library probes without a flow allocation retain a per-state deadline. Expired attempts retain their selector and partial effects with `status: "timed-out"`, `timeoutScope` and a `skipped` reason. Their incomplete evidence cannot establish dead controls or duplicate entries. A timed-out page is retired; later assigned controls replay on a replacement. Native dialogs, print, file choosers, downloads and popups are suppressed throughout probing, and the mutation guard covers both the page and its context, including a popup's first request. Only declared state replay may send mutating requests.
+
+Restoring between controls is cheap when it can be. The probe moves the pointer off the page and compares a state fingerprint (URL, scroll, revealed regions, element count, text, state attributes including `class` and `data-*`, form values, and which elements render; hover tooltips excluded) with the baseline. Equal means the next control runs without a reload. Otherwise it tries blur, Escape and a visible close control in a newly revealed region, and gives transient classes another moment to revert. It fully replays the state when the ladder cannot recover the baseline. Navigation, popups and retired pages always require replay. Escape and close clicks keep the mutation guard active.
+
+All designated states are enumerated before probing begins. Within a viewport and colour scheme, controls are identified by role, accessible name, region and selector signature (an authored `id`, otherwise their own and their parent's tag and classes). Each unique control is assigned to exactly one state, preferring states without a blocking modal, then those with the least assigned work. States probe in parallel in fresh contexts at `capture.concurrency`; their results merge afterwards. Other states copy the completed result using their local selector and `reusedFrom: "<assigned state id>"`, which may name a later state. When an assigned state ends with a control unprobed, or with nested items cut off by the nested-menu budget, the control goes back to a flow queue. The next round hands it to another state that shows it. Each state is offered a control at most twice and never again after attempting it. Rounds continue while unfinished work and wall time remain. A control is reported unreached only when no state that shows it can still run it: `not completed in any state that shows it (tried …)`, `flow probe time exhausted` or `timed out at state …`. Per-state dead-control, duplicate-entry and unexplained-control checks still receive every control in their view.
+
+The probe's own check candidates run first, ranked across the flow before any ordinary control. First come controls whose accessible name occurs on another surface (duplicate-entry candidates). Next are glyph and icon-only controls (unexplained-control candidates), together with controls that declare a popup (`aria-haspopup`), whose revealed items are reached only through them. Then text-labelled buttons and menu items without an href that are not form submits (dead-control candidates). Qualifying controls in repeated rows follow the singletons. Within a rank, a state's own controls precede shared ones. Newly revealed controls use the same priorities. Ordinary repeated rows, swatches and specimen groups get their first two controls sampled; the rest are `not-reached: repeated-row sample`. Sampling never removes a check candidate. Distinct navigation and menu actions are preserved, and separate named regions have separate sample groups. `checks.probe.maxControls` counts assigned attempts. Every unattempted candidate has `status: "not-reached"` and a `skipped: "not reached: <reason>"`, including flow budget share, nested-menu budget or limit, repeated-row sample, modal blockage, an incomplete assigned state or `checks.probe.maxControls`.
+
+`capture.concurrency` defaults to **4** (1–8). Evidence collection uses one lane per viewport and colour scheme, with states in flow order within each lane. The later probe pass uses independent state lanes at the same concurrency. Every capture and probe state gets a fresh context, navigation and settle. Results, timings and reports retain the original tuple order. `IDIOM_CAPTURE_CONCURRENCY` overrides the setting for one run, as a diagnostic (for example `1` for sequential execution).
 
 `capture.maxMinutes` defaults to **30** (finite positive fractional minutes are allowed). This single budget covers the complete capture, including setup/build, readiness, launch, measurement, tuples, artifact publication and teardown, with or without probing and for web or Electron. Expiry fails with the state, viewport, scheme and step in progress (`pending` coordinates during setup). Resource cleanup has at most **5 seconds** of additional grace after the deadline. Zero never means unlimited.
 
@@ -390,7 +400,7 @@ Besides the original ten checks, `check` and `review` run additional checks buil
 | --- | --- |
 | `unexplained-control` | icon-only or single-glyph controls (`?`, `⋮`) with no tooltip or meaningful name; disabled ones with no reason |
 | `dead-control` | enabled buttons that change nothing when clicked (needs the interaction probe, on by default) |
-| `duplicate-entry` | two or more persistent controls that open the same panel or focus the same field (needs the probe, on by default; follows one level of menus). Controls are identified by location (selector and nearest landmark or region), so same-name controls in different places are separate entry points; per-row actions in a repeated list are excluded; focus counts only when it is each control's sole effect |
+| `duplicate-entry` | two or more persistent controls that open the same panel or focus the same field (needs the probe, on by default; follows bounded nested menus and panels). Controls are identified by location (selector and nearest landmark or region), so same-name controls in different places are separate entry points; per-row actions in a repeated list are excluded; focus counts only when it is each control's sole effect |
 | `dead-affordance` | "View terms", "Learn more" and similar link-like text that is not a link; `href="#"` placeholders at minor severity |
 | `adjacent-gap` | neighbouring controls closer than `checks.minGap`, including a focused field's ring (with its `outline-offset`), and bordered shapes that close within the same parent group or row; findings name the shared parent |
 | `text-centering` | single-line labels in chips, buttons and badges sitting off their box's vertical centre (painted text only; single glyphs such as + − × use their ink box) |
@@ -430,6 +440,16 @@ Besides the original ten checks, `check` and `review` run additional checks buil
 | `liveness` | opt-in (`checks.liveness`): declared or timer-like text sampled twice ~1.5s apart that stays unchanged or all zero (dogfooding request #68) |
 | `media-fill` | on by default (`checks.mediaFill.auto`): image, iframe, video or canvas thumbnails in a gallery of three or more repeated cards whose frame, sampled from the screenshot, shows a solid backdrop band at an edge, letterboxing or nothing at all (dogfooding request #73) |
 | `collection-actions` | opt-in (`checks.collections`): a minor heuristic when open, rename or delete is not reachable from a declared collection's items, their menu or their context menu (dogfooding request #74) |
+| `font-loading` | on by default (`checks.fonts`): a web font used by visible text that failed or never loaded, or renders in the fallback; names the family, the failing URL and the affected selectors |
+| `broken-link` | on by default (`checks.links`): visible links answering 4xx/5xx or failing DNS; same-origin major, external minor and opt-in (`checks.links.external`) |
+| `focus-visible` | on by default (`checks.focusVisible`, needs the probe): a control whose keyboard focus changes no outline, ring, border, background or shadow |
+| `line-length` | on by default (`checks.lineLength`): body paragraphs running more than 90 characters per line (`max`) |
+| `orphan-word` | on by default (`checks.orphanWord`): headings and button labels whose last line holds one short word, per viewport |
+| `image-distortion` | on by default (`checks.images`): images drawn with `object-fit: fill` more than 3% out of their natural aspect ratio |
+| `broken-image` | on by default (`checks.images`): visible images that failed to load or decode |
+| `layout-shift` | on by default (`checks.layoutShift`): cumulative layout shift during load above 0.1, naming the shifting elements |
+
+Every rule, with why it matters, its severity, its source and how to configure or decide it, is listed in [rules.md](rules.md).
 
 By default, a control whose painted text is a single glyph or symbol (`?`, `i`, `ⓘ`) is a minor `unexplained-control` finding when the probe sampled both hover and focus and neither showed a tooltip, even if it has an `aria-label` or native `title`: neither is visible. Painted `aria-describedby` text or a tooltip on either trigger clears it. Bare icon buttons are not covered by this default, and a control without hover/focus evidence (the probe is off, it was skipped, or the tuple is a sibling coordinate) is not reported. Turn it off with `checks.probe.enabled: false`, or skip specific controls with `checks.probe.skip`.
 
@@ -467,6 +487,31 @@ Both blocks are absent by default, including in `review --page`. Supplying eithe
 `band-edges` compares the first foreground content boxes inside top-level header/navigation, stacked sections and footer, including bands below the fold. It preserves container gutters rather than comparing short logo text. Left and right edges are inferred separately within each state, viewport and scheme: the largest group spanning at most `tolerance` pixels must include at least two bands and a strict majority. Its median is the dominant edge. Ties or insufficient consensus are explained in coverage and produce no finding on that side. Deviations **greater than** the tolerance (default 8px; zero allowed) produce one minor finding per band. Full-bleed foreground media is exempt from voting and reporting; a full-width background behind inset text is still assessed.
 
 `word-break` uses text-node ranges, Unicode word/grapheme boundaries and visible line positions in headings and native/ARIA buttons. It reports one major finding per owner at every affected viewport, including inline-markup continuations. Normal space wrapping, explicit/soft hyphens and scripts with native intra-word wrapping conventions remain quiet. Vertical writing, unresolved automatic hyphenation, clamped candidates and defensive work limits produce explicit incomplete/unavailable coverage; independently confirmed splits still report. Merely enabling CSS hyphenation does not produce a finding.
+
+The font, link, focus, typography, image and layout-shift checks are on by default and configured independently:
+
+```json
+{
+  "checks": {
+    "fonts": { "enabled": true },
+    "links": {
+      "enabled": true,
+      "external": false,
+      "timeoutMs": 5000,
+      "budgetMs": 30000,
+      "concurrency": 4,
+      "ignore": ["/logout"]
+    },
+    "focusVisible": { "enabled": true, "ignore": [".map-canvas"] },
+    "lineLength": { "enabled": true, "max": 90 },
+    "orphanWord": { "enabled": true, "maxChars": 7 },
+    "images": { "enabled": true, "distortionTolerance": 0.03 },
+    "layoutShift": { "enabled": true, "max": 0.1 }
+  }
+}
+```
+
+`"enabled": false` reports the check skipped. Capture still records the in-page evidence (it is cheap and lets you re-enable a check without recapturing), except links, which make no requests when disabled. Links are checked once per run, after observation, through a cookie-less request context (HEAD, with a GET fallback), so a link to `/logout` cannot end the capture session. Same-origin links are checked by default and external ones only with `external: true`. `ignore` takes absolute-URL or path prefixes that are never requested. 401, 403, 407 and 429 answers and timeouts are recorded as unchecked, never broken. `concurrency` and `budgetMs` bound the work; once the budget is spent, the remaining links are unchecked and coverage says so. The focus sweep runs in the probe pass, after the screenshot, and also honours `checks.probe.skip`. Electron captures record fonts, line length, orphan words, images and layout shift, but not links or focus.
 
 Configure the craft checks in `.idiom/project.json` (every field is optional); layout invariants live in the flow as shown below:
 
@@ -735,7 +780,7 @@ Every matched list is judged on its own and `items` is scoped to it; hidden item
 
 ### Probe
 
-The interaction probe is on by default for web flows, and it clicks things. Turn it off with `"checks": { "probe": { "enabled": false } }`, or per state with `"probe": false`. It runs once per state, in a disposable page restored by reloading the state URL, never clicks controls whose names look destructive (delete, publish, sign out, pay, …) or match `probe.skip`, and records each control's observable effect. To probe only some states, set `checks.probe.enabled: false` and give those states `"probe": true`.
+The interaction probe is on by default for web flows, and it clicks things. Turn it off with `"checks": { "probe": { "enabled": false } }`, or per state with `"probe": false`. It runs at each state’s designated coordinate in a disposable context, using the flow assignment and restore ladder described above, never clicks controls whose names look destructive (delete, publish, sign out, pay, …) or match `probe.skip`, and records each control's observable effect. To probe only some states, set `checks.probe.enabled: false` and give those states `"probe": true`.
 
 Set `checks.probe.respectControlIntent` to `true` to skip already-selected options and drag handles (dogfooding request #54). It defaults to `false` and has no effect when probing is off. Omitted or false preserves legacy probe behavior.
 
@@ -820,3 +865,169 @@ The root `action.yml` installs the published `@mattskilly/idiom` CLI and its mat
 One marked bot comment is created or updated on reruns, including clean results. It lists new/fixed/pre-existing counts, finding problems and fixes, crop filenames, and changed-tuple composite filenames with artifact download links. Download the GitHub artifact and open `index.html` to see the actual images. Artifacts require GitHub login and expire after 14 days (or earlier removal/repository policy); artifact URLs are downloads, not inline image hosts. Evidence stays on GitHub. The same report appears in the job summary, including unavailable/one-sided evidence disclosures.
 
 `fail-on` accepts `blocker`, `major` (default), `minor` or `never`. Operational failures still fail with `never`. Upload and comment publication precede the final gate. Fork PR tokens can be read-only: unavailable comments produce a warning while artifacts, the job summary and finding gate remain. Ordinary writable-token publication errors fail the action. Keep this on `pull_request`; do not run untrusted PR setup via `pull_request_target`. Outputs are `baseline-sha`, `new-findings` and `artifact-url`.
+
+
+## Design comparison
+
+See the [design comparison guide](design-compare.md) for source setup, auth,
+matching and a worked example. This section defines the settings contract.
+
+Authored web and Electron states may declare `"design": "designs/checkout.html"`,
+an HTTP(S) HTML URL, a local design image (`"design": "designs/checkout.png"`), a
+live reference site (`"design": { "site": "https://example.com/checkout" }`), or a
+[Figma frame URL](#figma-frames). A declaration may also be an object, or an array
+of either form, to compare several references:
+
+```json
+"design": [
+  { "source": "https://www.figma.com/design/AbC123/Checkout?node-id=12-34", "name": "figma", "viewport": "mobile" },
+  { "source": "designs/checkout.html", "name": "prototype" }
+]
+```
+
+An object has either `source` (any string form above) or `site`, plus the optional
+fields. `name` is a lowercase slug (default `figma` for Figma URLs, `site` for a live
+site, otherwise `design`, de-duplicated as `-2`, `-3`); explicit names must be unique. `viewport` must name a
+project viewport, and `colorScheme` (`light`/`dark`) limits a reference to one
+scheme. With one reference the run layout is unchanged (`design/` beside the
+tuple); with several, each reference is saved under `design/<name>/`. Where two
+element references disagree on a matched element, the check reports a design decision for
+a person to settle with `idiom decide --choose` instead of drift against either;
+image references report their changed regions independently. A state reached `from` another state keeps its own design;
+it does not inherit the ancestor's screen. Toggle expansions retain the base state's
+design. States without a declaration retain their existing behaviour.
+
+`checks.designDrift` is strict and optional; comparison is enabled by default for
+captured declarations. Example:
+
+```json
+{
+  "checks": {
+    "designDrift": {
+      "tolerance": { "ratio": 0.15, "px": 1, "mode": "tighter" },
+      "gap": { "px": 2 },
+      "fontWeight": 100,
+      "color": 2
+    }
+  }
+}
+```
+
+Numeric policies `size`, `position`, `gap`, `radius`, `borderWidth`, `fontSize` and
+`lineHeight` override the common `tolerance`. An omitted or empty override inherits
+the common policy, including its mode. The default is the component-size policy:
+ratio 0.15, px 1, tighter. `tighter` allows `min(abs(design) * ratio, px)`;
+`looser` allows the maximum. All distances and sizes use CSS pixels. Position uses
+the reference child's width/height as the tolerance basis and measures offsets
+from corresponding matched parents, so translating a whole subtree does not create
+child-position drift. Gaps are actual edge-to-edge distances between corresponding
+adjacent matched siblings, rather than only the authored CSS `gap`.
+
+A difference must be strictly greater than its allowance. At radius 8 the default
+allowance is 1px: 9px passes, 9.01px reports. Zero is a real reference value and
+gets a zero allowance under tighter mode. `fontWeight` is an absolute weight-unit
+threshold (default 0); `color` is the maximum per-channel RGBA delta on a 0–255 scale
+(alpha scaled to 255, default 0). Font-family lists ignore quoting/case and text
+ignores whitespace runs. Families, border styles and text compare discretely.
+`normal` line height and unknown colour forms remain literal rather than becoming
+zero/black. `enabled: false` skips comparison and prevents verification of existing
+design findings.
+
+Measured drift is minor unless an explicitly declared scale step is crossed.
+For `checks.scales.radius.card: [4, 8, 12, 16]`, a marked card changing from 8 to
+12 is major, but 8 to 11 is minor. Control heights use `controlHeights`, and
+positions/gaps use declared `spacing` (including `multipleOf`). `full` is the
+reference element's pill/circle radius. No scale is inferred from the screenshot.
+Copy and extras remain minor. Missing controls, headings, main content and its
+illustrations are major; an unmatched subtree may summarize its descendants with
+the highest missing-content severity.
+
+### Image references
+
+A local `.png`, `.jpg`/`.jpeg` or `.webp` file (a screenshot or exported frame) is
+an image reference. The file's leading bytes must match its extension; GIF, SVG and
+remote image URLs are rejected (download the image and reference the file). The
+browser scales the image to the app tuple's viewport width and captures it as tall
+as it scales, so a 2× export compares like a 1× one. Both sides are then reduced to
+one pixel per CSS px, and the design is aligned vertically: the offset search covers
+±240 CSS px beyond the height difference, scores every app row, and prefers the
+smallest offset on ties.
+
+The aligned images are compared on a 4 CSS px cell grid with a perceptual (YIQ)
+colour delta. A cell changes above a normalised delta of 0.012. Faint components
+(mean delta below 0.024) are treated as resampling noise. The rest are grouped by
+the smallest visible app element that contains them, and groups with fewer than
+two changed cells are dropped. Overlapping groups merge, and up to 20 regions are
+kept, largest first. Each region is a **minor** `design-drift` finding with a paired
+Design / App capture crop and the app elements it covers. Regions are evidence for
+judgment, not a pixel-exact gate. Rows with no counterpart on the other side
+(an app taller than the design, say) are reported as uncompared bands, not regions.
+The saved `design/regions.json` is recomputed from the saved screenshots on every
+load, so replay and verification fail closed when it is tampered with or stale.
+
+When a model provider is configured, the critique also receives each aligned
+design image and its regions. It may report `design-drift` findings that name the
+element and describe the visible difference. Such a finding cites the app
+screenshot and the design image label `<state>/<viewport>/design`. Without a model,
+only the region findings are reported. Verification of a region finding requires
+the same design image bytes in the baseline and both current captures.
+
+### Live-site references
+
+`{ "site": "https://example.com/pricing" }` uses a live page as the intended design
+("make staging match production"). The URL is used literally, with no origin or path
+joining. It must be an absolute HTTP(S) URL without credentials. Idiom captures it
+with the same engine, viewport and colour scheme as the app tuple, and waits the
+state's `settleMs`. It then runs the full element comparison described above. A
+response that is not 2xx HTML, or a page that looks like a sign-in or access wall,
+fails the design capture with a remedy instead of being compared.
+
+### Figma frames
+
+A Figma design is a frame URL with `node-id`
+(`https://www.figma.com/design/<file>/<name>?node-id=12-34`; `/file/`, `/proto/`
+and `/branch/<key>/` URLs also work, and `version-id=` pins a version). Idiom
+reads it through the Figma REST API with a personal access token in
+`FIGMA_TOKEN`: in Figma, account menu → Settings → Security → Personal access
+tokens → Generate new token, with the `file_content:read` scope (add
+`file_variables:read` to resolve variable names). The token is sent only as the
+`X-Figma-Token` header and never written to errors, provenance or cache files.
+
+The first fetch stores the node tree, a 2× PNG render, variables (when available)
+and `meta.json` under `.idiom/designs/figma/<file>/<node>/<version>/`, with
+`current.json` naming the version in use. The cache is pinned: later captures
+reuse it with no network and no token until `--refresh-design` refetches. Commit
+`.idiom/designs/` so CI and verify compare against the same frame without a
+token. The file version, frame link and variable status are recorded in the
+design descriptor and shown in reports.
+
+The frame is normalised into the same element model as an HTML capture: bounds
+relative to the frame, auto-layout padding and item spacing (measured as
+positions and gaps, as for HTML), corner radii, solid strokes as borders, solid
+fills, text styles, and bound variable names. A frame or instance holding one
+text layer is compared as one element owning that text (a button and its label).
+Hidden, zero-opacity and zero-area layers, slices, stickies and connectors are
+skipped. Layer names other than Figma's automatic ones (`Frame 12`, `Rectangle 3`)
+match an app element's `data-idiom-name` or accessible name; names containing
+button/btn/cta, link, or input/field/textbox are treated as those controls. An
+app `data-node-id` that looks like a Figma node id (`12:34`) pins the match to
+that node; any other `data-node-id` is the app's own vocabulary and never blocks
+a match. Findings cite the Figma layer path, link to the node and name the bound
+variable.
+
+A Figma reference applies at one viewport: the declared `viewport`, otherwise the
+project viewport nearest the frame's width (the earlier one on a tie), and in the
+declared `colorScheme`, otherwise `capture.colorScheme`. The page roots span the
+viewport and their width and height are not compared (a frame's height is an
+artboard size), though the page background is. Layers keep their frame-relative
+bounds, so a layout centred in a 375px frame shown at a 390px viewport reports
+half the difference as horizontal position drift; declare `viewport` when no
+project viewport is close. Figma's frame fill is compared with the app `body`
+background, so an app that paints its background on `html` instead reports it.
+Strokes compare as borders of the same width whatever their alignment; an
+outside stroke's geometry difference appears as size drift. Font families
+compare Figma's single family with the first family in the app's stack.
+
+Variable names come from Figma's variables endpoint, which only Enterprise plans
+expose. Elsewhere the comparison still runs and provenance records
+`variables: "unavailable: …"`.

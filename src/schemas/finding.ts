@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const artifactPathSchema = z
+export const artifactPathSchema = z
   .string()
   .min(1)
   .refine(
@@ -11,6 +11,119 @@ const artifactPathSchema = z
       !path.split("/").includes(".."),
     "must be a report-relative artifact path",
   );
+
+const regionRectSchema = z
+  .object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    width: z.number().finite().nonnegative(),
+    height: z.number().finite().nonnegative(),
+  })
+  .strict();
+const cropLabel = /^(?:Design(?:: [^()]+)?|App capture)(?: \(absent\))?$/;
+
+/** Several references disagree on one matched element; a person chooses. */
+export const designDecisionEvidenceSchema = z
+  .object({
+    version: z.literal(1),
+    decisionKey: z.string().min(1),
+    property: z.string().min(1),
+    appSelector: z.string().min(1),
+    appValue: z.union([z.string(), z.number(), z.null()]),
+    references: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1),
+            source: z.string().min(1),
+            value: z.union([z.string(), z.number(), z.null()]),
+            allowance: z.number().finite().nonnegative().optional(),
+            matchesBuild: z.boolean(),
+            layerPath: z.string().min(1).optional(),
+            link: z.string().min(1).optional(),
+            pairId: z.string().min(1),
+            designSelector: z.string().min(1),
+          })
+          .strict(),
+      )
+      .min(2),
+  })
+  .strict();
+export type DesignDecisionEvidence = z.infer<
+  typeof designDecisionEvidenceSchema
+>;
+
+export const designDriftEvidenceSchema = z
+  .object({
+    version: z.literal(1),
+    pairId: z.string().min(1),
+    method: z.enum([
+      "root",
+      "data-node-id",
+      "data-idiom-name",
+      "role-name",
+      "text",
+      "descendants",
+      "parent-position",
+      "unmatched",
+      "region",
+    ]),
+    property: z.string().min(1),
+    designValue: z.union([z.string(), z.number(), z.null()]),
+    appValue: z.union([z.string(), z.number(), z.null()]),
+    designNormalized: z.union([z.string(), z.number(), z.null()]).optional(),
+    appNormalized: z.union([z.string(), z.number(), z.null()]).optional(),
+    allowance: z.number().finite().nonnegative().optional(),
+    designSelector: z.string().nullable(),
+    appSelector: z.string().nullable(),
+    designContext: z.string().optional(),
+    appContext: z.string().optional(),
+    region: z
+      .object({
+        id: z.string().min(1),
+        rect: regionRectSchema,
+        designRect: regionRectSchema,
+        offset: z.number().int(),
+        owner: z.string().nullable(),
+        elements: z.array(z.string()),
+        /** Share of the region's cells that changed, 0–1. */
+        changedArea: z.number().min(0).max(1),
+      })
+      .strict()
+      .optional(),
+    neighbour: z
+      .object({
+        pairId: z.string(),
+        designSelector: z.string(),
+        appSelector: z.string(),
+      })
+      .strict()
+      .optional(),
+    /** Figma provenance: layer names from the frame down, node link, bound variable. */
+    designLayerPath: z.string().min(1).optional(),
+    designLink: z.string().min(1).optional(),
+    designVariable: z.string().min(1).optional(),
+    /** Other design references that agree with this one on the property. */
+    alsoReferences: z.array(z.string().min(1)).optional(),
+    /** The design reference this finding is against, when not the first. */
+    reference: z.string().min(1).optional(),
+    /** The reference a person chose where references disagreed. */
+    chosenReference: z.string().min(1).optional(),
+    /** Set when several design references disagree on this property. */
+    designDecision: designDecisionEvidenceSchema.optional(),
+    crops: z
+      .array(
+        z
+          .object({
+            label: z.string().regex(cropLabel),
+            path: artifactPathSchema,
+          })
+          .strict(),
+      )
+      .optional(),
+  })
+  .strict();
+export type DesignDriftEvidence = z.infer<typeof designDriftEvidenceSchema>;
 
 const locusNodeSchema = z
   .object({ selector: z.string().min(1), signature: z.string().min(1) })
@@ -78,6 +191,15 @@ export const findingCategories = [
   "liveness",
   "media-fill",
   "collection-actions",
+  "font-loading",
+  "broken-link",
+  "focus-visible",
+  "line-length",
+  "orphan-word",
+  "image-distortion",
+  "broken-image",
+  "layout-shift",
+  "design-drift",
   "hierarchy",
   "density",
   "brand-alignment",
@@ -135,6 +257,7 @@ export const findingSchema = z
     evidence: z
       .object({
         screenshots: z.array(z.string()),
+        designDrift: designDriftEvidenceSchema.optional(),
         references: z.array(z.string().trim().min(1)).optional(),
         artifacts: z.array(artifactPathSchema).optional(),
         domSnippet: z.string().optional(),

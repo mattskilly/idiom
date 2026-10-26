@@ -1,12 +1,12 @@
 ---
 name: idiom
-description: Run Idiom's conversational design acceptance and verification loop.
+description: Review public pages with Idiom quick, check configured flows against intended designs, and hand off requested repairs through fix-plan and verify.
 disable-model-invocation: true
 ---
 
 # /idiom $ARGUMENTS
 
-Drive Idiom through its CLI. Ask only for design judgment; report CLI errors.
+Ask only for design judgment; report execution errors. When available, prefer MCP tools for quick/check/context/flows/fix-plan/verify/decide. Keep human judgment and an explicit reason for decisions. Use CLI for absent tools or unsupported workflows (model review, explore, init, references, tickets and spec-based verify); never silently retry a tool error via CLI. Verify mode owns verification only; fix-plan hands repairs to the caller only when requested. Figma: when Figma's own MCP server is connected, use it to read the frame for intent and context, then pass the frame URL (with `node-id`) to Idiom (`idiom design add <state> <frame-url>` or `review --page <url> --design <frame-url>`) for the measured comparison; never transcribe Figma values by hand. The first fetch needs `FIGMA_TOKEN` (a personal access token with `file_content:read`). When references disagree, a finding is a design decision: ask the human which reference is intended and record `idiom decide --finding <id> --choose <name> --reason <reason>`.
 
 ## Verify mode
 

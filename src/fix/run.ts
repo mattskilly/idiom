@@ -18,6 +18,7 @@ import {
   eligibleRecords,
   type FixSnapshot,
   refreshEligibility,
+  selectedCause,
   selectTargets,
   takeFixSnapshot,
 } from "./check.js";
@@ -156,6 +157,14 @@ export async function runFix(options: FixOptions): Promise<FixResult> {
         verifiedFixed: [],
         errors: [],
       };
+      const cause = selectedCause(current, selected);
+      if (cause !== undefined)
+        round.cause = {
+          id: cause.id,
+          cause: cause.cause,
+          findings: round.selected,
+          verified: false,
+        };
       summary.rounds.push(round);
       await writeFile(round.promptPath, prompt);
       await writeFile(
@@ -266,6 +275,10 @@ export async function runFix(options: FixOptions): Promise<FixResult> {
           round.errors.push(`verification failed: ${safeDiagnostic(error)}`);
         }
       }
+      if (round.cause !== undefined)
+        round.cause.verified = round.cause.findings.every((id) =>
+          round?.verifiedFixed.includes(id),
+        );
       if (regression) summary.reason = "regression: newly introduced findings";
       else if (round.errors.length) summary.reason = "repair attempt failed";
       else if (!round.verifiedFixed.length)

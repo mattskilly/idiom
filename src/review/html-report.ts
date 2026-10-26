@@ -1,5 +1,7 @@
 import type { ProductionBuild } from "../capture/types.js";
 import type { CheckCoverage, CheckTuple } from "../checks/types.js";
+import { tupleDesigns } from "../design/evidence.js";
+import type { LoadedDesign } from "../design/types.js";
 import { type ReportCoverage, renderCoverageHtml } from "../report/coverage.js";
 import {
   badge,
@@ -10,13 +12,14 @@ import {
   renderHtmlDocument,
   reportRelativeHref,
 } from "../report/html.js";
-import type { Finding } from "../schemas/finding.js";
+import type { DesignDriftEvidence, Finding } from "../schemas/finding.js";
 import type { RuleOverride } from "../schemas/rules.js";
 import type { UnruledDecision } from "../schemas/ruling.js";
 import type { AdvisoryReview } from "./advisory.js";
 import type { SuppressedFinding } from "./findings.js";
 import { describeSpread, type FindingGroup, isRepeated } from "./groups.js";
 import {
+  designSourceTitle,
   groupCrop,
   type PageReviewScope,
   pageFindingEvidence,
@@ -56,6 +59,7 @@ function findingCard(
   finding: Finding,
   severityOverrides: ReviewHtmlOptions["severityOverrides"],
   page?: PageReviewScope | undefined,
+  screenshots?: ReadonlyMap<string, string>,
 ): string {
   const pageEvidence = pageFindingEvidence(finding, page);
   const severityOverride = severityOverrides?.find(
@@ -77,6 +81,7 @@ function findingCard(
     ${finding.rule === undefined ? "" : `<p><strong>Guidance:</strong> ${escapeHtml(finding.rule)}</p>`}
     ${(finding.evidence.references?.length ?? 0) === 0 ? "" : `<p><strong>References:</strong> ${(finding.evidence.references ?? []).map((label) => escapeHtml(label)).join(" · ")}</p>`}
     <p>${escapeHtml(finding.explanation)}</p>
+    ${finding.evidence.designDrift ? `<p>${driftHtml(finding.evidence.designDrift)}</p>${designDriftHtml(finding.evidence.designDrift)}<div class="comparison-pair">${(finding.evidence.designDrift.crops ?? []).map((crop) => `<figure><figcaption>${escapeHtml(crop.label)}</figcaption>${screenshots?.get(crop.path) ? `<img src="${escapeHtmlAttribute(screenshots.get(crop.path) as string)}" alt="${escapeHtmlAttribute(crop.label)}">` : ""}${evidenceLink(crop.path, crop.label)}</figure>`).join("")}</div>` : ""}
     ${pageEvidence.section === undefined ? "" : `<p><strong>Section:</strong> ${escapeHtml(pageEvidence.section)}</p>`}
     ${pageEvidence.citations.map((citation) => `<p>${escapeHtml(citation)}</p>`).join("")}
     ${pageEvidence.fix === undefined ? "" : `<p><strong>Fix:</strong> ${escapeHtml(pageEvidence.fix)}</p>`}
@@ -256,9 +261,9 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
                 (tuple.colorSchemeAxis ? tuple.colorScheme : undefined),
           );
           return `<section class="panel"><h3>${escapeHtml(tuple.viewport)}${axisAware ? ` / ${escapeHtml(tuple.colorScheme ?? "light")}` : ""} (${tuple.width}×${tuple.height})${tuple.combination === undefined ? "" : ` [${escapeHtml(tuple.combination)}]`}</h3>
-          ${screenshot === undefined ? "" : `<img class="screenshot" src="${escapeHtmlAttribute(screenshot)}" alt="${escapeHtmlAttribute(`${state} at ${tuple.viewport}${axisAware ? ` in ${tuple.colorScheme}` : ""}`)}">`}
+          ${tuple.design ? designTupleHtml(tuple, screenshot, options.screenshots) : screenshot === undefined ? "" : `<img class="screenshot" src="${escapeHtmlAttribute(screenshot)}" alt="${escapeHtmlAttribute(`${state} at ${tuple.viewport}${axisAware ? ` in ${tuple.colorScheme}` : ""}`)}">`}
           ${tuple.failure === undefined ? "" : `<p><strong>Capture failure:</strong> ${escapeHtml(tuple.failure.message)} (${evidenceLink(tuple.metadataPath, "metadata")})</p>`}
-          ${findings.length === 0 ? "<p>No findings.</p>" : findings.map((finding) => findingCard(finding, options.severityOverrides, options.page)).join("")}
+          ${findings.length === 0 ? "<p>No findings.</p>" : findings.map((finding) => findingCard(finding, options.severityOverrides, options.page, options.screenshots)).join("")}
           </section>`;
         })
         .join("")}</section>`;
@@ -273,6 +278,13 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
             const severityOverride = options.severityOverrides?.find(
               (item) => item.fingerprint === finding.fingerprint,
             );
+            if (finding.evidence.designDrift)
+              return findingCard(
+                finding,
+                options.severityOverrides,
+                options.page,
+                options.screenshots,
+              );
             return `<li><strong>${escapeHtml(finding.id)}</strong> (${escapeHtml(finding.severity)}, ${escapeHtml(finding.layer)}) — ${escapeHtml(finding.flow)} / ${escapeHtml(finding.state)} / ${escapeHtml(finding.viewport)}${finding.colorScheme === undefined ? "" : ` / ${escapeHtml(finding.colorScheme)}`}${finding.combination === undefined ? "" : ` [${escapeHtml(finding.combination)}]`} — ${escapeHtml(finding.explanation)}${severityOverride === undefined ? "" : ` — Severity override: ${escapeHtml(severityOverride.original)} → ${escapeHtml(severityOverride.effective)} by rule ${escapeHtml(severityOverride.override.id)} (${escapeHtml(severityOverride.override.reason)})`}</li>`;
           })
           .join("")}</ul>`
@@ -290,4 +302,60 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
     body: `<header><h1>${escapeHtml(heading)} review: ${escapeHtml(options.flow)}</h1><p class="meta">${options.outcome.kind === "quick" ? "Source commit" : "Captured commit"}: ${escapeHtml(options.commit)}${options.outcome.kind === "quick" ? " (live URL capture; no Git source identity)" : ""}</p>${options.build === undefined ? "" : `<p class="meta">Production build: ${escapeHtml(options.build.id)}</p>`}<div class="summary">${badge(`${options.findings.length} actionable finding${options.findings.length === 1 ? "" : "s"}`)}${options.outcome.kind === "quick" || options.page !== undefined ? "" : ` ${badge(`${options.unruledDecisions?.length ?? 0} unruled decision${(options.unruledDecisions?.length ?? 0) === 1 ? "" : "s"}`)}`} ${badge(options.outcome.kind, options.outcome.kind === "full" ? "good" : "neutral")}</div><p>${escapeHtml(outcome)}</p><p class="muted">${options.outcome.kind === "quick" || options.page !== undefined ? "Each finding is reported independently." : "Findings and unruled decisions are independent. Findings are decided through idiom decide; rulings are recorded only through idiom ruling."}</p></header>${repeatedSection(options)}${options.reportCoverage === undefined ? "" : renderCoverageHtml(options.reportCoverage)}${pageScope}${unruledSection(options)}${stateSections}${suppressedSection(options.suppressed ?? [])}${deferredSection}${coverageTable(options)}${advisorySection(options.advisory)}${quickLimits}`,
     printable: true,
   });
+}
+
+function driftHtml(drift: DesignDriftEvidence): string {
+  if (drift.region)
+    return `<strong>Region:</strong> ${escapeHtml(drift.region.id)} · <strong>Covers:</strong> ${drift.region.elements.length ? drift.region.elements.map((selector) => `<code>${escapeHtml(selector)}</code>`).join(", ") : "no single element"} · <strong>Offset:</strong> ${escapeHtml(String(drift.region.offset))}px`;
+  return `<strong>Match:</strong> ${escapeHtml(drift.method)} · <strong>Property:</strong> ${escapeHtml(drift.property)} · Design ${escapeHtml(JSON.stringify(drift.designValue))} / App capture ${escapeHtml(JSON.stringify(drift.appValue))}`;
+}
+
+/** Each design reference beside the app capture, with Figma provenance. */
+function designTupleHtml(
+  tuple: CheckTuple,
+  screenshot: string | undefined,
+  screenshots: ReadonlyMap<string, string>,
+): string {
+  const designs = tupleDesigns(tuple);
+  const several = designs.length > 1;
+  const label = (design: LoadedDesign) =>
+    several ? `Design: ${design.descriptor.name ?? "design"}` : "Design";
+  const sources = designs
+    .map((design) => {
+      const figma = design.descriptor.figma;
+      return `<p>${escapeHtml(designSourceTitle(design.descriptor))}${several ? ` (${escapeHtml(design.descriptor.name ?? "design")})` : ""}: ${escapeHtml(design.descriptor.source)}${figma ? ` · Figma file version ${escapeHtml(figma.version)} · <a href="${escapeHtmlAttribute(figma.link)}">frame</a> · variables: ${escapeHtml(figma.variables)}` : ""}</p>${design.regions?.uncompared.length ? `<p>Not compared${several ? ` (${escapeHtml(design.descriptor.name ?? "design")})` : ""}: ${escapeHtml(design.regions.uncompared.map((band) => `${band.side} rows ${band.top}–${band.top + band.height} px`).join("; "))}</p>` : ""}${design.unavailable ? `<p><strong>Design unavailable${several ? ` (${escapeHtml(design.descriptor.name ?? "design")})` : ""}:</strong> ${escapeHtml(design.unavailable)}</p>` : ""}`;
+    })
+    .join("");
+  const figures = designs
+    .filter((design) => !design.unavailable)
+    .map(
+      (design) =>
+        `<figure><figcaption>${escapeHtml(label(design))}</figcaption>${design.screenshotPath && screenshots.get(design.screenshotPath) ? `<img src="${escapeHtmlAttribute(screenshots.get(design.screenshotPath) as string)}" alt="${escapeHtmlAttribute(label(design))}">${evidenceLink(design.screenshotPath, "Full design")}` : ""}</figure>`,
+    );
+  if (!figures.length) return sources;
+  return `${sources}<div class="comparison-pair">${figures.join("")}<figure><figcaption>App capture</figcaption>${screenshot ? `<img src="${escapeHtmlAttribute(screenshot)}" alt="App capture">` : ""}${tuple.screenshotPath ? evidenceLink(tuple.screenshotPath, "Full app capture") : ""}</figure></div>`;
+}
+
+/** Figma layer link and, for a design decision, each reference beside the build. */
+function designDriftHtml(
+  drift: NonNullable<Finding["evidence"]["designDrift"]>,
+): string {
+  const layer = drift.designLayerPath
+    ? `<p><strong>Figma layer:</strong> ${drift.designLink ? `<a href="${escapeHtmlAttribute(drift.designLink)}">${escapeHtml(drift.designLayerPath)}</a>` : escapeHtml(drift.designLayerPath)}${drift.designVariable ? ` · variable <code>${escapeHtml(drift.designVariable)}</code>` : ""}</p>`
+    : "";
+  const decision = drift.designDecision;
+  const table = decision
+    ? `<table><thead><tr><th>Reference</th><th>Value</th><th>Matches build</th></tr></thead><tbody>${decision.references
+        .map(
+          (reference) =>
+            `<tr><td>${reference.link ? `<a href="${escapeHtmlAttribute(reference.link)}">${escapeHtml(reference.name)}</a>` : escapeHtml(reference.name)}</td><td>${escapeHtml(JSON.stringify(reference.value))}</td><td>${reference.matchesBuild ? "yes" : "no"}</td></tr>`,
+        )
+        .join(
+          "",
+        )}<tr><td>App (build)</td><td>${escapeHtml(JSON.stringify(decision.appValue))}</td><td>—</td></tr></tbody></table>`
+    : "";
+  const chosen = drift.chosenReference
+    ? `<p><strong>Chosen reference:</strong> ${escapeHtml(drift.chosenReference)}</p>`
+    : "";
+  return `${layer}${table}${chosen}`;
 }

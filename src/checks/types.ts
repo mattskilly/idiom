@@ -1,4 +1,7 @@
 import type { ConsoleRecord, ExpectationMismatch } from "../capture/types.js";
+import type { LoadedDesign } from "../design/types.js";
+import type { DesignDriftConfig } from "../schemas/design.js";
+import type { DesignDriftEvidence } from "../schemas/finding.js";
 import type { EffectiveInvariant } from "../schemas/invariant.js";
 import type { ColorScheme } from "../schemas/project.js";
 import type {
@@ -59,6 +62,15 @@ export const deterministicCheckIds = [
   "liveness",
   "media-fill",
   "collection-actions",
+  "font-loading",
+  "broken-link",
+  "focus-visible",
+  "line-length",
+  "orphan-word",
+  "image-distortion",
+  "broken-image",
+  "layout-shift",
+  "design-drift",
 ] as const;
 
 export type DeterministicCheckId = (typeof deterministicCheckIds)[number];
@@ -99,6 +111,10 @@ export type ObservedStyles = {
 };
 
 export type ExpandedObservedStyles = ObservedStyles & {
+  borderTopStyle?: string | undefined;
+  borderRightStyle?: string | undefined;
+  borderBottomStyle?: string | undefined;
+  borderLeftStyle?: string | undefined;
   display: string;
   visibility: string;
   opacity: string;
@@ -378,10 +394,30 @@ export type ProbeEffect =
   | "print"
   | "download";
 
+export type ProbeAttemptTimings = {
+  clickMs: number;
+  effectWindowMs: number;
+  restoreCheckMs: number;
+  escapeMs: number;
+  replayMs: number;
+};
+
 export type ProbeResult = {
+  timings?: ProbeAttemptTimings | undefined;
+  /** This attempt left a persistent change that requires the next replay. */
+  replayRequired?: boolean | undefined;
   elapsedMs?: number | undefined;
-  status?: "completed" | "timed-out" | undefined;
+  /**
+   * `not-reached`: the probe never attempted this control (maxControls,
+   * state budget, or the nested-menu budget); `skipped` names why.
+   */
+  status?: "completed" | "timed-out" | "not-reached" | undefined;
   timeoutScope?: "control" | "state" | undefined;
+  /**
+   * The same control (by role, name, region and selector signature) was
+   * probed at this earlier state of the flow; its result is reused here.
+   */
+  reusedFrom?: string | undefined;
   selector: string;
   name: string;
   effects: ProbeEffect[];
@@ -497,6 +533,8 @@ export type ProbeCollection = {
 };
 
 export type ProbeArtifact = {
+  /** Read-only enumeration used to allocate this flow before any clicks. */
+  candidates?: import("../capture/probe.js").ProbeCandidate[] | undefined;
   selector?: string | undefined;
   step?: string | undefined;
   explanations?: ExplanationArtifact | undefined;
@@ -528,6 +566,11 @@ export type ComponentObservation = {
         source: string;
         words: string[];
         axis?: "width" | "height" | undefined;
+        /**
+         * The full word run matched nothing, so a textless element matched
+         * the modifier words alone (`override` for "override dot").
+         */
+        matchedBy?: "modifier" | undefined;
       }
     | undefined;
   /** No class or aria-label words matched; recorded so coverage can say so. */
@@ -775,7 +818,20 @@ export type ProgressArtifact = {
   steps: ProgressStep[];
 };
 
+/** Where a measured property's winning declaration was authored. */
+export type StyleSource = {
+  /** Stylesheet path, `<style>[n]`, or `inline`. */
+  sheet: string;
+  selector: string;
+  /** Custom properties the declaration references. */
+  tokens?: string[] | undefined;
+  /** Referenced custom properties with no value on the element. */
+  unresolved?: string[] | undefined;
+};
+
 export type ObservedElementV2 = ObservedElement & {
+  /** Keyed by camelCase property; absent in older captures. */
+  styleSources?: Record<string, StyleSource> | undefined;
   signals?: ElementSignals | undefined;
   structuralPath: string;
   legacyRenderedPath?: string | undefined;
@@ -800,6 +856,85 @@ export type ImageObservation = {
 
 /** An image request that failed outright or answered 400 or above. */
 export type FailedImageRequest = { url: string; reason: string };
+/** A subresource request that failed outright or answered 400 or above. */
+export type FailedRequest = FailedImageRequest;
+
+/** Declared web fonts, the families visible text uses, and failed font requests. */
+export type FontObservation = {
+  status: "ran" | "unavailable";
+  reason?: string | undefined;
+  faces: Array<{
+    family: string;
+    status: "unloaded" | "loading" | "loaded" | "error";
+    weight: string;
+    style: string;
+    urls: string[];
+  }>;
+  used: Array<{ family: string; selectors: string[]; fallback: boolean }>;
+  failedRequests: FailedRequest[];
+};
+
+export type LinkCheckResult =
+  | { status: "ok"; code: number }
+  | { status: "broken"; code: number | null; reason: string }
+  | { status: "unchecked"; reason: string };
+
+export type LinkObservation = {
+  selector: string;
+  text: string;
+  /** Absolute URL, fragment stripped. */
+  href: string;
+  sameOrigin: boolean;
+  result?: LinkCheckResult | undefined;
+};
+
+export type FocusVisibleObservation = {
+  selector: string;
+  name: string;
+  rect: Rect;
+  /** `node.property` keys that changed on focus; [] means focus is invisible. */
+  changed: string[];
+  /** The visible stand-in when the focused element itself is visually hidden. */
+  proxy?: string | undefined;
+};
+
+export type LineLengthObservation = {
+  selector: string;
+  /** Widest rendered line, in average characters. */
+  chars: number;
+  width: number;
+  charWidth: number;
+  lines: number;
+  text: string;
+};
+
+export type OrphanWordObservation = {
+  selector: string;
+  word: string;
+  lines: number;
+  text: string;
+};
+
+export type ImageRenderObservation = {
+  selector: string;
+  src: string;
+  naturalWidth: number;
+  naturalHeight: number;
+  /** Content box. */
+  rendered: Rect;
+  objectFit: string;
+  /** |renderedRatio / naturalRatio − 1|; 0 when not measured. */
+  distortion: number;
+  broken: boolean;
+};
+
+export type LayoutShiftObservation = {
+  status: "ran" | "unavailable";
+  reason?: string | undefined;
+  /** Largest session window (Core Web Vitals CLS). */
+  score: number;
+  entries: Array<{ value: number; startTime: number; sources: string[] }>;
+};
 
 export type GeometryScan<T> =
   | { status: "ran"; records: T[] }
@@ -913,6 +1048,13 @@ export type ObservationArtifactV2 = Omit<
   /** Measurement parameters used when sampling mediaFrames. */
   mediaFill?: { tolerance: number } | undefined;
   collections?: CollectionObservation[] | undefined;
+  fonts?: FontObservation | undefined;
+  links?: GeometryScan<LinkObservation> | undefined;
+  focusVisible?: GeometryScan<FocusVisibleObservation> | undefined;
+  lineLengths?: GeometryScan<LineLengthObservation> | undefined;
+  orphanWords?: GeometryScan<OrphanWordObservation> | undefined;
+  imageRenders?: GeometryScan<ImageRenderObservation> | undefined;
+  layoutShift?: LayoutShiftObservation | undefined;
 };
 
 export type ObservationArtifact = ObservationArtifactV1 | ObservationArtifactV2;
@@ -926,6 +1068,8 @@ export type CheckCoverage = {
 };
 
 export type FindingCandidate = {
+  fix?: string | undefined;
+  designDrift?: DesignDriftEvidence | undefined;
   category: DeterministicCheckId;
   severity: "blocker" | "major" | "minor";
   rule: string;
@@ -945,6 +1089,11 @@ export type FindingCandidate = {
 };
 
 export type CheckTuple = {
+  /** The first design reference; `designs` holds every one when several apply. */
+  design?: LoadedDesign | undefined;
+  designs?: LoadedDesign[] | undefined;
+  /** Why the state's declared references did not apply to this tuple. */
+  designNotApplicable?: string | undefined;
   layoutRepresentative?: string | undefined;
   combination?: string | undefined;
   flow: string;
@@ -1009,7 +1158,27 @@ export type CheckResult = {
   candidates: FindingCandidate[];
 };
 
+export type LinksConfig = {
+  enabled: boolean;
+  external: boolean;
+  timeoutMs: number;
+  budgetMs: number;
+  concurrency: number;
+  ignore: string[];
+};
+
 export type ChecksConfig = {
+  /** The craft checks below read their defaults when a setting is absent. */
+  fonts?: { enabled: boolean } | undefined;
+  links?: LinksConfig | undefined;
+  focusVisible?: { enabled: boolean; ignore: string[] } | undefined;
+  lineLength?: { enabled: boolean; max: number } | undefined;
+  orphanWord?: { enabled: boolean; maxChars: number } | undefined;
+  images?: { enabled: boolean; distortionTolerance: number } | undefined;
+  layoutShift?: { enabled: boolean; max: number } | undefined;
+  designDrift?: DesignDriftConfig | undefined;
+  /** Recorded `decide --choose` answers, applied where design references disagree. */
+  designChoices?: import("../design/decide.js").DesignChoice[] | undefined;
   bandEdges?: { enabled: boolean; tolerance: number } | undefined;
   wordBreak?: { enabled: boolean } | undefined;
   touchReachability?: { ignore: string[] } | undefined;

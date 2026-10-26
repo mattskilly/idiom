@@ -65,7 +65,7 @@ export function renderVerificationHtmlReport(
           )
           .join(
             "",
-          )}</section><section><h2>New deterministic blockers</h2>${evaluation.newBlockers.length === 0 ? "<p>None.</p>" : `<ul>${evaluation.newBlockers.map((blocker) => `<li>${escapeHtml(blocker)}</li>`).join("")}</ul>`}</section>`;
+          )}</section><section><h2>New deterministic blockers</h2>${evaluation.newBlockers.length === 0 ? "<p>None.</p>" : `<ul>${evaluation.newBlockers.map((blocker) => `<li>${escapeHtml(blocker)}</li>`).join("")}</ul>`}</section>${evaluation.newFindings === undefined ? "" : `<section><h2>New deterministic findings (all severities)</h2>${evaluation.newFindings.length ? `<ul>${evaluation.newFindings.map((finding) => `<li>${escapeHtml(`${finding.severity}: ${finding.category} ${finding.rule ?? ""} at ${finding.key} (${finding.selector ?? "document"})`)}</li>`).join("")}</ul>` : "<p>None.</p>"}</section>`}`;
   const calibrations =
     evaluation === undefined
       ? ""

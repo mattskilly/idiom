@@ -2,11 +2,13 @@ import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ProductionBuild } from "../capture/types.js";
 import type { CheckCoverage, CheckTuple } from "../checks/types.js";
+import { tupleDesigns } from "../design/evidence.js";
+import type { DesignDescriptor } from "../design/types.js";
 import {
   type ReportCoverage,
   renderCoverageMarkdown,
 } from "../report/coverage.js";
-import type { Finding } from "../schemas/finding.js";
+import type { DesignDriftEvidence, Finding } from "../schemas/finding.js";
 import type { RuleOverride } from "../schemas/rules.js";
 import type { UnruledDecision } from "../schemas/ruling.js";
 import type { AdvisoryReview } from "./advisory.js";
@@ -357,6 +359,37 @@ export function renderReport(options: {
         `### ${tuple.viewport}${axisAware ? ` / ${tuple.colorScheme}` : ""} (${tuple.width}×${tuple.height})${tuple.combination === undefined ? "" : ` [${text(tuple.combination)}]`}`,
         "",
       );
+      const designs = tupleDesigns(tuple);
+      for (const design of designs) {
+        const name =
+          designs.length > 1
+            ? ` (${text(design.descriptor.name ?? "design")})`
+            : "";
+        lines.push(
+          `${designSourceTitle(design.descriptor)}${name}: ${text(design.descriptor.source)}`,
+          "",
+          ...(design.regions?.uncompared.length
+            ? [
+                `Not compared: ${design.regions.uncompared.map((band) => `${band.side} rows ${band.top}–${band.top + band.height} px`).join("; ")}`,
+                "",
+              ]
+            : []),
+        );
+        const figma = design.descriptor.figma;
+        if (figma)
+          lines.push(
+            `Figma file version ${text(figma.version)} · [frame](${figma.link}) · variables: ${text(figma.variables)}`,
+            "",
+          );
+        if (design.unavailable)
+          lines.push(`Design unavailable: ${text(design.unavailable)}`, "");
+        else if (design.screenshotPath)
+          lines.push(`![Design${name}](${design.screenshotPath})`, "");
+      }
+      if (
+        designs.some((design) => !design.unavailable && design.screenshotPath)
+      )
+        lines.push("App capture:", "");
       if (tuple.screenshotPath !== undefined)
         lines.push(
           `![${state} at ${tuple.viewport}${axisAware ? ` in ${tuple.colorScheme}` : ""}](${tuple.screenshotPath})`,
@@ -385,6 +418,19 @@ export function renderReport(options: {
         lines.push(
           `#### ${finding.id}: ${finding.category} (${finding.severity})`,
           "",
+          ...(finding.evidence.designDrift
+            ? [
+                driftLine(finding.evidence.designDrift),
+                "",
+                ...designDriftMarkdown(finding.evidence.designDrift),
+                ...(finding.evidence.designDrift.crops ?? []).map(
+                  (crop) => `[${crop.label}](${crop.path})`,
+                ),
+                "",
+                `Fix: ${text(finding.fix ?? "")}`,
+                "",
+              ]
+            : []),
           `Layer: ${finding.layer}${finding.layer === "model" ? ` · Confidence: ${finding.confidence}` : ""}`,
           "",
           ...(severityOverride === undefined
@@ -507,6 +553,16 @@ export function renderReport(options: {
       lines.push(
         `- ${finding.id} (${finding.severity}) — Layer: ${finding.layer}${finding.layer === "model" ? ` · Confidence: ${finding.confidence}` : ""} — ${text(finding.flow)} / ${text(finding.state)} / ${text(finding.viewport)}${finding.colorScheme === undefined ? "" : ` / ${finding.colorScheme}`}${finding.combination === undefined ? "" : ` [${text(finding.combination)}]`} — ${text(finding.explanation)}${severityOverride === undefined ? "" : ` — Severity override: ${severityOverride.original} -> ${severityOverride.effective} by rule ${text(severityOverride.override.id)} (${text(severityOverride.override.reason)})`}`,
       );
+      if (finding.evidence.designDrift)
+        lines.push(
+          "",
+          `Fix: ${text(finding.fix ?? "")}`,
+          "",
+          ...(finding.evidence.designDrift.crops ?? []).map(
+            (crop) => `[${crop.label}](${crop.path})`,
+          ),
+          "",
+        );
     }
     lines.push("");
   }
@@ -565,4 +621,44 @@ export async function writeReport(
   await writeFile(temporary, report);
   await rename(temporary, path);
   return path;
+}
+
+/** The finding line for a design-drift comparison: a region or a property. */
+export function driftLine(drift: DesignDriftEvidence): string {
+  if (drift.region)
+    return `Region ${drift.region.id} · covers: ${drift.region.elements.length ? drift.region.elements.map((selector) => `\`${text(selector)}\``).join(", ") : "no single element"} · offset ${drift.region.offset}px`;
+  return `Match: ${text(drift.method)} · Property: ${text(drift.property)}`;
+}
+export function designSourceTitle(descriptor: DesignDescriptor): string {
+  return descriptor.resolved?.kind === "image"
+    ? "Design image"
+    : descriptor.resolved?.kind === "site"
+      ? "Reference site"
+      : "Design source";
+}
+/** Figma layer links and design-decision tables for a drift finding. */
+function designDriftMarkdown(
+  drift: NonNullable<Finding["evidence"]["designDrift"]>,
+): string[] {
+  const lines: string[] = [];
+  if (drift.designLayerPath)
+    lines.push(
+      `Figma layer: ${drift.designLink ? `[${text(drift.designLayerPath)}](${drift.designLink})` : text(drift.designLayerPath)}${drift.designVariable ? ` · variable ${text(drift.designVariable)}` : ""}`,
+      "",
+    );
+  const decision = drift.designDecision;
+  if (decision)
+    lines.push(
+      "| Reference | Value | Matches build |",
+      "| --- | --- | --- |",
+      ...decision.references.map(
+        (reference) =>
+          `| ${reference.link ? `[${text(reference.name)}](${reference.link})` : text(reference.name)} | ${text(JSON.stringify(reference.value))} | ${reference.matchesBuild ? "yes" : "no"} |`,
+      ),
+      `| App (build) | ${text(JSON.stringify(decision.appValue))} | — |`,
+      "",
+    );
+  if (drift.chosenReference)
+    lines.push(`Chosen reference: ${text(drift.chosenReference)}`, "");
+  return lines;
 }

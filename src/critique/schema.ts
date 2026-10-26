@@ -12,6 +12,7 @@ import {
 import {
   type CritiqueResult,
   critiqueResult,
+  type DesignImageRef,
   type ModelFindingCandidate,
   type PageCritiqueContext,
   type ReferenceRef,
@@ -27,6 +28,7 @@ export const modelFindingSchema = z
       "generic-pattern",
       "reference-mismatch",
       "spec-mismatch",
+      "design-drift",
       "direction-drift",
       "offer-change",
       "unsupported-claim",
@@ -202,9 +204,11 @@ function findingIssues(
   references: ReferenceRef[],
   specAvailable: boolean,
   page?: PageCritiqueContext | undefined,
+  designImages: DesignImageRef[] = [],
 ): string[] {
   const known = new Map(screenshots.map((item) => [item.label, item]));
   const knownReferences = new Set(references.map((item) => item.label));
+  const designLabels = new Set(designImages.map((item) => item.label));
   const issues: string[] = [];
   const axisAware = screenshots.some(
     (screenshot) => screenshot.colorScheme !== undefined,
@@ -249,10 +253,33 @@ function findingIssues(
         );
     }
     for (const label of finding.references)
-      if (!knownReferences.has(label))
+      if (
+        !knownReferences.has(label) &&
+        !(finding.category === "design-drift" && designLabels.has(label))
+      )
         issues.push(
           `findings.${index}.references: unknown label ${JSON.stringify(label)}`,
         );
+    if (finding.category === "design-drift") {
+      const design = designImages.find(
+        (item) =>
+          item.state === finding.state &&
+          item.viewport === finding.viewport &&
+          item.colorScheme === finding.colorScheme,
+      );
+      if (design === undefined)
+        issues.push(
+          `findings.${index}.category: design-drift requires an intended design image for its state/viewport`,
+        );
+      else if (!finding.references.includes(design.label))
+        issues.push(
+          `findings.${index}.references: design-drift must cite the design image ${JSON.stringify(design.label)}`,
+        );
+      if (/^(?:html|body)$/i.test(finding.selectorHint.trim()))
+        issues.push(
+          `findings.${index}.selectorHint: design-drift must name the departing element, not the page`,
+        );
+    }
     if (
       finding.category === "reference-mismatch" &&
       finding.references.length === 0
@@ -343,6 +370,7 @@ export function parseModelResponse(
   designMd = "",
   specAvailable = false,
   page?: PageCritiqueContext | undefined,
+  designImages: DesignImageRef[] = [],
 ): CritiqueResult {
   const trimmed = source.trim();
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}"))
@@ -370,6 +398,7 @@ export function parseModelResponse(
     references,
     specAvailable,
     page,
+    designImages,
   );
   if (issues.length > 0) throw new MalformedCritiqueError(issues);
   const observationResult = parseObservations({
@@ -392,6 +421,7 @@ export function validateCritiqueResult(options: {
   designMd: string;
   specAvailable?: boolean | undefined;
   page?: PageCritiqueContext | undefined;
+  designImages?: DesignImageRef[] | undefined;
 }): CritiqueResult {
   let upstreamDiscarded = 0;
   if (Array.isArray(options.result)) {
@@ -407,6 +437,7 @@ export function validateCritiqueResult(options: {
       options.designMd,
       options.specAvailable === true,
       options.page,
+      options.designImages,
     );
     upstreamDiscarded = value.discardedDecisionObservations ?? 0;
     return critiqueResult({
@@ -437,6 +468,7 @@ export function validateCritiqueResult(options: {
     options.designMd,
     options.specAvailable === true,
     options.page,
+    options.designImages,
   );
   return critiqueResult({
     findings: parsed.findings,

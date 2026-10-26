@@ -1,0 +1,899 @@
+{
+  "version": 1,
+  "flow": "site",
+  "source": {
+    "commit": "35cfa7fbe0b897306d27670d3819e55d5205f3dd",
+    "dirty": true
+  },
+  "declared": [
+    {
+      "state": "route-root",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-root",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-about",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-about",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-archives",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-archives",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-archives-utils-getpostsbygroupcondition",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-archives-utils-getpostsbygroupcondition",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-og-png",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-og-png",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-2",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-2",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-adding-new-posts-in-astropaper-theme",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-adding-new-posts-in-astropaper-theme",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-2",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-2",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-v3",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-v3",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-v4",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-v4",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-v5",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-v5",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-v6",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-v6",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-customizing-astropaper-theme-color-schemes",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-customizing-astropaper-theme-color-schemes",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-dynamic-og-image-generation-in-astropaper-blog-posts",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-dynamic-og-image-generation-in-astropaper-blog-posts",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-examples-how-do-i-develop-my-portfolio-and-blog",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-examples-how-do-i-develop-my-portfolio-and-blog",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-examples-how-do-i-develop-my-terminal-portfolio-website-with-react",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-examples-how-do-i-develop-my-terminal-portfolio-website-with-react",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-examples-tailwind-typography",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-examples-tailwind-typography",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-how-to-add-latex-equations-in-blog-posts",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-how-to-add-latex-equations-in-blog-posts",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-how-to-configure-astropaper-theme",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-how-to-configure-astropaper-theme",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-how-to-integrate-giscus-comments",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-how-to-integrate-giscus-comments",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-how-to-update-dependencies",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-how-to-update-dependencies",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-predefined-color-schemes",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-predefined-color-schemes",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-setting-dates-via-git-hooks",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-setting-dates-via-git-hooks",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-robots-txt",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-robots-txt",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-rss-xml",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-rss-xml",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-search",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-search",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags-astro",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags-astro",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags-blog",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags-blog",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags-color-schemes",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags-color-schemes",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags-configuration",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags-configuration",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags-docs",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags-docs",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags-release",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-tags-release",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    }
+  ],
+  "selected": [
+    {
+      "state": "route-root",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-root",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-about",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-about",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-archives",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-archives",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-archives-utils-getpostsbygroupcondition",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-archives-utils-getpostsbygroupcondition",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-og-png",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-og-png",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-2",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-2",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-adding-new-posts-in-astropaper-theme",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-adding-new-posts-in-astropaper-theme",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-2",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-2",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-v3",
+      "viewport": "desktop",
+      "colorScheme": "light"
+    },
+    {
+      "state": "route-posts-astro-paper-v3",
+      "viewport": "mobile",
+      "colorScheme": "light"
+    }
+  ],
+  "viewports": [
+    {
+      "name": "desktop",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "name": "mobile",
+      "width": 390,
+      "height": 844
+    }
+  ],
+  "probe": {
+    "policy": "once-per-state",
+    "fallback": false,
+    "intended": [
+      {
+        "state": "route-root",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-about",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-archives",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-archives-utils-getpostsbygroupcondition",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-og-png",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-posts",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-posts-2",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-posts-adding-new-posts-in-astropaper-theme",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-posts-astro-paper-2",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-posts-astro-paper-v3",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      }
+    ],
+    "executed": [
+      {
+        "state": "route-root",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-about",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-archives",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-archives-utils-getpostsbygroupcondition",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-og-png",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-posts",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-posts-2",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-posts-adding-new-posts-in-astropaper-theme",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-posts-astro-paper-2",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      },
+      {
+        "state": "route-posts-astro-paper-v3",
+        "viewport": "desktop",
+        "colorScheme": "light"
+      }
+    ]
+  },
+  "timings": {
+    "slowestControls": [
+      {
+        "state": "route-posts-adding-new-posts-in-astropaper-theme",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "selector": "html > body:nth-of-type(1) > main:nth-of-type(1) > article:nth-of-type(1) > div:nth-of-type(19) > pre:nth-of-type(1) > button:nth-of-type(1)",
+        "name": "Copy",
+        "elapsedMs": 2674.592000000004,
+        "outcome": "completed"
+      },
+      {
+        "state": "route-posts-adding-new-posts-in-astropaper-theme",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "selector": "html > body:nth-of-type(1) > main:nth-of-type(1) > article:nth-of-type(1) > div:nth-of-type(16) > pre:nth-of-type(1) > button:nth-of-type(1)",
+        "name": "Copy",
+        "elapsedMs": 2667.594333000001,
+        "outcome": "completed"
+      },
+      {
+        "state": "route-posts-astro-paper-v3",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "selector": "html > body:nth-of-type(1) > main:nth-of-type(1) > article:nth-of-type(1) > div:nth-of-type(2) > pre:nth-of-type(1) > button:nth-of-type(1)",
+        "name": "Copy",
+        "elapsedMs": 2621.2614579999936,
+        "outcome": "completed"
+      },
+      {
+        "state": "route-posts-adding-new-posts-in-astropaper-theme",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "selector": "html > body:nth-of-type(1) > main:nth-of-type(1) > article:nth-of-type(1) > div:nth-of-type(21) > pre:nth-of-type(1) > button:nth-of-type(1)",
+        "name": "Copy",
+        "elapsedMs": 2550.9606249999997,
+        "outcome": "completed"
+      },
+      {
+        "state": "route-posts-astro-paper-v3",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "selector": "html > body:nth-of-type(1) > main:nth-of-type(1) > article:nth-of-type(1) > div:nth-of-type(3) > pre:nth-of-type(1) > button:nth-of-type(1)",
+        "name": "Copy",
+        "elapsedMs": 2520.075749999989,
+        "outcome": "completed"
+      }
+    ],
+    "build": {
+      "status": "measured",
+      "ms": 2728.737708
+    },
+    "start": {
+      "status": "measured",
+      "ms": 838.5132079999998
+    },
+    "tuples": [
+      {
+        "state": "route-root",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 2454.1061250000002
+        },
+        "probe": {
+          "status": "measured",
+          "ms": 1175.1790410000003
+        }
+      },
+      {
+        "state": "route-root",
+        "viewport": "mobile",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 1100.0642079999998
+        },
+        "probe": {
+          "status": "skipped",
+          "ms": 0
+        }
+      },
+      {
+        "state": "route-about",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 2125.034917
+        },
+        "probe": {
+          "status": "measured",
+          "ms": 1029.315708
+        }
+      },
+      {
+        "state": "route-about",
+        "viewport": "mobile",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 961.5142500000002
+        },
+        "probe": {
+          "status": "skipped",
+          "ms": 0
+        }
+      },
+      {
+        "state": "route-archives",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 3185.4739580000005
+        },
+        "probe": {
+          "status": "measured",
+          "ms": 1573.814042
+        }
+      },
+      {
+        "state": "route-archives",
+        "viewport": "mobile",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 1463.3245420000003
+        },
+        "probe": {
+          "status": "skipped",
+          "ms": 0
+        }
+      },
+      {
+        "state": "route-archives-utils-getpostsbygroupcondition",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 1800.7907500000001
+        },
+        "probe": {
+          "status": "measured",
+          "ms": 942.0398330000025
+        }
+      },
+      {
+        "state": "route-archives-utils-getpostsbygroupcondition",
+        "viewport": "mobile",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 786.2293339999997
+        },
+        "probe": {
+          "status": "skipped",
+          "ms": 0
+        }
+      },
+      {
+        "state": "route-og-png",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 682.8529579999995
+        },
+        "probe": {
+          "status": "measured",
+          "ms": 17.111541000002035
+        }
+      },
+      {
+        "state": "route-og-png",
+        "viewport": "mobile",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 631.8255830000016
+        },
+        "probe": {
+          "status": "skipped",
+          "ms": 0
+        }
+      },
+      {
+        "state": "route-posts",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 1947.5947080000005
+        },
+        "probe": {
+          "status": "measured",
+          "ms": 1010.1121669999993
+        }
+      },
+      {
+        "state": "route-posts",
+        "viewport": "mobile",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 885.2322080000013
+        },
+        "probe": {
+          "status": "skipped",
+          "ms": 0
+        }
+      },
+      {
+        "state": "route-posts-2",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 1973.1983330000003
+        },
+        "probe": {
+          "status": "measured",
+          "ms": 1035.2926250000019
+        }
+      },
+      {
+        "state": "route-posts-2",
+        "viewport": "mobile",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 921.568041999999
+        },
+        "probe": {
+          "status": "skipped",
+          "ms": 0
+        }
+      },
+      {
+        "state": "route-posts-adding-new-posts-in-astropaper-theme",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 33057.898
+        },
+        "probe": {
+          "status": "measured",
+          "ms": 29574.909041999996
+        }
+      },
+      {
+        "state": "route-posts-adding-new-posts-in-astropaper-theme",
+        "viewport": "mobile",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 3157.8081659999953
+        },
+        "probe": {
+          "status": "skipped",
+          "ms": 0
+        }
+      },
+      {
+        "state": "route-posts-astro-paper-2",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 10257.549874999997
+        },
+        "probe": {
+          "status": "measured",
+          "ms": 8317.136917000003
+        }
+      },
+      {
+        "state": "route-posts-astro-paper-2",
+        "viewport": "mobile",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 1816.9529579999944
+        },
+        "probe": {
+          "status": "skipped",
+          "ms": 0
+        }
+      },
+      {
+        "state": "route-posts-astro-paper-v3",
+        "viewport": "desktop",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 15076.422707999998
+        },
+        "probe": {
+          "status": "measured",
+          "ms": 11872.01675000001
+        }
+      },
+      {
+        "state": "route-posts-astro-paper-v3",
+        "viewport": "mobile",
+        "colorScheme": "light",
+        "total": {
+          "status": "measured",
+          "ms": 2710.7435410000035
+        },
+        "probe": {
+          "status": "skipped",
+          "ms": 0
+        }
+      }
+    ],
+    "probe": {
+      "status": "measured",
+      "ms": 56546.92766600002
+    },
+    "checks": {
+      "status": "skipped",
+      "ms": 0
+    }
+  }
+}

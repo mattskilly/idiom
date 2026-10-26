@@ -1,6 +1,7 @@
 import type {
   CritiqueInput,
   CropRef,
+  DesignImageRef,
   PageCritiqueContext,
   PatternCritiqueContext,
   ReferenceRef,
@@ -153,6 +154,17 @@ function patternSections(
   ];
 }
 
+/** The design images whose app screenshot travels in this request. */
+export function batchDesignImages(
+  input: CritiqueInput,
+  screenshots: ScreenshotRef[],
+): DesignImageRef[] {
+  const labels = new Set(screenshots.map((item) => item.label));
+  return (input.designImages ?? []).filter((item) =>
+    labels.has(item.designFor),
+  );
+}
+
 function section(label: string, value: unknown): string {
   return `## ${label}\n${typeof value === "string" ? value : JSON.stringify(value, null, 2)}`;
 }
@@ -165,6 +177,7 @@ export function critiquePrompt(
       reference.kind === "image",
   ),
   crops: CropRef[] = input.crops ?? [],
+  designImages: DesignImageRef[] = batchDesignImages(input, screenshots),
 ): string {
   const textReferences = input.references
     .filter((reference) => reference.kind === "text")
@@ -196,6 +209,11 @@ export function critiquePrompt(
             viewport: reference.viewport,
           }),
     })),
+    ...designImages.map((item) => ({
+      label: item.label,
+      kind: "intended-design-image",
+      designFor: item.designFor,
+    })),
     ...crops.map((crop) => ({
       label: crop.label,
       kind: "zoomed-crop",
@@ -215,6 +233,19 @@ export function critiquePrompt(
     ...(input.spec === undefined
       ? []
       : [section(`Design spec (${input.spec.file})`, input.spec.content)]),
+    ...(designImages.length === 0
+      ? []
+      : [
+          section(
+            "Intended design image comparison (CSS px in the app screenshot; design y = app y + offset)",
+            designImages.map((item) => ({
+              design: item.label,
+              app: item.designFor,
+              offset: item.offset,
+              regions: item.regions,
+            })),
+          ),
+        ]),
   ];
   const sweepInstructions = [
     ...(crops.length === 0
@@ -232,10 +263,16 @@ export function critiquePrompt(
       : [
           "spec-mismatch findings must quote the spec requirement in rule and state the measured or observed value in explanation.",
         ]),
+    ...(designImages.length === 0
+      ? []
+      : [
+          "design-drift findings compare the app screenshot with its intended design image: name the element in selectorHint, describe the visible difference in explanation, cite the app screenshot in screenshots and the design label in references. Treat the listed regions as leads, not proof.",
+        ]),
   ];
   const categories = [
     ...flowCategories,
     ...(input.spec === undefined ? [] : ["spec-mismatch"]),
+    ...(designImages.length === 0 ? [] : ["design-drift"]),
     ...(input.page === undefined || input.page.pattern !== undefined
       ? []
       : pageCategories),

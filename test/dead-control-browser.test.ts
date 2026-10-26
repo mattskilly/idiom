@@ -410,7 +410,7 @@ test("failed clicks remove the chooser listener and picker wrappers", async () =
 test("observation exceptions still dismiss native pickers and clean up instrumentation", async () => {
   const page = await browser.newPage();
   await page.setContent(
-    '<input id="color" type="color" hidden><button onclick="document.getElementById(\'color\').click()">Choose color</button>',
+    '<input id="color" type="color" hidden><button onclick="window.pickerClicked=true;document.getElementById(\'color\').click()">Choose color</button>',
   );
   await page.evaluate(() => {
     Object.assign(window, {
@@ -422,7 +422,16 @@ test("observation exceptions still dismiss native pickers and clean up instrumen
   const spy = vi
     .spyOn(page, "waitForTimeout")
     .mockImplementation(async (ms) => {
-      if (ms === 37) throw new Error("observation interrupted");
+      // Fail inside the active observation window, whose quiescence polling
+      // replaces the old single fixed 37ms wait.
+      if (
+        ms <= 37 &&
+        (await page.evaluate(
+          () =>
+            (window as unknown as { pickerClicked?: boolean }).pickerClicked,
+        ))
+      )
+        throw new Error("observation interrupted");
       await wait(ms);
     });
   const press = vi.spyOn(page.keyboard, "press");
@@ -477,11 +486,16 @@ test("classification reads restored state and skipped candidates retain coverage
       status: "partial",
       reason: "probed 2 of 3 controls (checks.probe.maxControls)",
     });
-    expect(artifact.results).toHaveLength(2);
+    expect(artifact.results).toHaveLength(3);
     expect(artifact.results[1]).toMatchObject({
       selector: "#choice",
       effects: [],
       skipped: "already selected: aria-pressed",
+    });
+    expect(artifact.results[2]).toMatchObject({
+      selector: "#last",
+      status: "not-reached",
+      skipped: "not reached: checks.probe.maxControls",
     });
   } finally {
     await page.close();

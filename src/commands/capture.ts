@@ -13,6 +13,8 @@ export async function captureCommand(options: {
   scope?: CaptureScope | undefined;
   /** Serve the application on this port instead of a free one. */
   port?: number | undefined;
+  /** Refetch pinned Figma frames. */
+  refreshDesign?: boolean | undefined;
   dependencies?: CaptureDependencies | undefined;
 }): Promise<CaptureRunResult> {
   const validated = await validateProject({
@@ -34,6 +36,7 @@ export async function captureCommand(options: {
     prod: options.prod,
     scope: options.scope,
     port: options.port,
+    refreshDesign: options.refreshDesign,
     dependencies: options.dependencies,
   });
 }

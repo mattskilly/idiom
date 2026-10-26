@@ -83,6 +83,14 @@ export function spacingFindings(
         property: "spacing",
         value,
         scale,
+        targets: [
+          ...new Map(
+            members.map(({ selector, property }) => [
+              `${selector}\0${property}`,
+              { selector, property },
+            ]),
+          ).values(),
+        ],
       }),
       evidenceTuples: [...new Set(members.map((m) => m.tuple))],
     };

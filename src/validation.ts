@@ -204,6 +204,21 @@ async function loadFlows(
     }
     const flowViewports = new Set(parsed.viewports ?? availableViewports);
     for (const [stateIndex, state] of parsed.states.entries()) {
+      const design = state.design;
+      for (const [index, entry] of (Array.isArray(design)
+        ? design
+        : design === undefined
+          ? []
+          : [design]
+      ).entries())
+        if (
+          typeof entry !== "string" &&
+          entry.viewport !== undefined &&
+          !knownViewports.has(entry.viewport)
+        )
+          throw new IdiomError(
+            `${relative(context.projectDirectory, file)}: states[${stateIndex}].design${Array.isArray(design) ? `[${index}]` : ""}.viewport: unknown project viewport ${JSON.stringify(entry.viewport)}`,
+          );
       for (const [index, viewport] of (state.viewports ?? []).entries()) {
         if (!flowViewports.has(viewport)) {
           throw new IdiomError(

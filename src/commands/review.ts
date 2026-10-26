@@ -47,6 +47,7 @@ export async function reviewCommand(options: {
   flow: string;
   project?: string | undefined;
   cwd?: string | undefined;
+  refreshDesign?: boolean | undefined;
   from?: string | undefined;
   latest?: boolean | undefined;
   deterministicOnly?: boolean | undefined;

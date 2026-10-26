@@ -480,6 +480,53 @@ test("undeclared scales report only sharp outliers against a supported prevailin
   expect(heights([32, 32, 32, 32, 36])).toEqual([]);
 });
 
+test("control shadows: a sharp minority is an outlier; unauthored and focused shadows stay quiet", () => {
+  const raised = "rgba(0, 0, 0, 0.2) 0px 1px 2px 0px";
+  const flat = "rgba(0, 0, 0, 0.6) 0px 0px 0px 3px";
+  const button = (
+    shadow: string,
+    options: { authored?: boolean; focused?: boolean } = {},
+  ) =>
+    element({
+      styles: { boxShadow: shadow },
+      ...(options.authored === false
+        ? {}
+        : { authoredProperties: ["boxShadow"] }),
+      signals: { focused: options.focused === true },
+    });
+  const shadows = (elements: ObservedElementV2[]) =>
+    scale([tupleOf(elements)])
+      .flatMap(({ candidates }) => candidates)
+      .filter(
+        (candidate) =>
+          (candidate.verification.params as { property: string }).property ===
+          "shadow",
+      );
+  const prevailing = [raised, raised, raised, raised].map((shadow) =>
+    button(shadow),
+  );
+  const outlier = button(flat);
+  const [finding, ...rest] = shadows([...prevailing, outlier]);
+  expect(rest).toEqual([]);
+  expect(finding).toMatchObject({
+    rule: "idiom:scale-outlier",
+    verification: {
+      params: {
+        property: "shadow",
+        role: "control",
+        value: flat,
+        prevailing: raised,
+        targets: [{ selector: outlier.selector, property: "boxShadow" }],
+      },
+    },
+  });
+  expect(finding?.explanation).toContain(`1 control shadow at shadow ${flat}`);
+  expect(shadows([...prevailing, button(flat, { authored: false })])).toEqual(
+    [],
+  );
+  expect(shadows([...prevailing, button(flat, { focused: true })])).toEqual([]);
+});
+
 test("v1 and signal-less artifacts leave both checks unavailable", () => {
   const v1: CheckTuple = {
     ...tupleOf([]),

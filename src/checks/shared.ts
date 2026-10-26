@@ -338,3 +338,40 @@ export function hsl({ r, g, b }: Rgb): { h: number; s: number; l: number } {
         : (red - green) / d + 4;
   return { h: h * 60, s, l };
 }
+
+/** Coverage for a check whose `checks.<key>.enabled` is false. */
+export function skipped(check: DeterministicCheckId, key: string): CheckResult {
+  return {
+    coverage: {
+      check,
+      status: "skipped",
+      reason: `checks.${key} is not enabled`,
+    },
+    candidates: [],
+  };
+}
+
+/**
+ * A partial or unavailable scan still emits what it found, but coverage says
+ * the scan was incomplete so a clean result is not read as a pass.
+ */
+export function scanResult(
+  check: DeterministicCheckId,
+  candidates: FindingCandidate[],
+  scan: { status: string; reason?: string | undefined },
+): CheckResult {
+  const result = ran(check, candidates);
+  if (scan.status !== "ran")
+    result.coverage = {
+      check,
+      status: "unavailable",
+      reason: scan.reason ?? "the scan was incomplete",
+    };
+  return result;
+}
+
+/** v2 observation evidence for a check, or undefined (older capture). */
+export function v2Observations(tuple: CheckTuple) {
+  const observation = tuple.observations;
+  return observation?.version === 2 ? observation : undefined;
+}

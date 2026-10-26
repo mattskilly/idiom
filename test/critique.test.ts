@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import type { CheckTuple } from "../src/checks/types.js";
 import {
   AnthropicCritiqueAdapter,
   AnthropicCritiqueError,
@@ -14,7 +15,10 @@ import {
   type ClaudeCodeRunner,
   type ClaudeCodeRunRequest,
 } from "../src/critique/claude-code.js";
-import { buildCritiqueContext } from "../src/critique/context.js";
+import {
+  buildCritiqueContext,
+  tupleDesignImages,
+} from "../src/critique/context.js";
 import { critiquePrompt } from "../src/critique/prompt.js";
 import {
   MalformedCritiqueError,
@@ -24,6 +28,7 @@ import {
 import type {
   CritiqueInput,
   CropRef,
+  DesignImageRef,
   ModelFindingCandidate,
   ScreenshotRef,
 } from "../src/critique/types.js";
@@ -1032,5 +1037,184 @@ describe("sweep inputs", () => {
         true,
       ).findings,
     ).toEqual([finding]);
+  });
+});
+
+describe("intended design image critique", () => {
+  async function withDesign(count = 2): Promise<CritiqueInput> {
+    const base = await input(count);
+    const designImages: DesignImageRef[] = [];
+    for (const screenshot of base.screenshots.slice(0, 1)) {
+      const readPath = `${screenshot.readPath}.design.png`;
+      await writeFile(readPath, Buffer.from(`design-${screenshot.label}`));
+      designImages.push({
+        label: `${screenshot.label}/design`,
+        designFor: screenshot.label,
+        path: `${screenshot.state}/${screenshot.viewport}/design/screenshot.png`,
+        readPath,
+        state: screenshot.state,
+        viewport: screenshot.viewport,
+        offset: 0,
+        regions: [
+          {
+            id: "region-1",
+            rect: { x: 40, y: 160, width: 360, height: 160 },
+            elements: ["div.card"],
+          },
+        ],
+      });
+    }
+    return { ...base, designImages };
+  }
+  const drift: ModelFindingCandidate = {
+    ...candidate,
+    category: "design-drift",
+    selectorHint: "div.card",
+    references: ["state-0/desktop/design"],
+    explanation: "The card has square corners; the design rounds them.",
+  };
+
+  test("tuples carry design images only for usable image designs", () => {
+    const tuple = (kind: "image" | "file") =>
+      ({
+        flow: "f",
+        state: "home",
+        viewport: "desktop",
+        width: 400,
+        height: 400,
+        metadataPath: "home/desktop/metadata.json",
+        screenshotPath: "home/desktop/screenshot.png",
+        artifactPaths: [],
+        commit: "c",
+        createdAt: "2026-10-25T00:00:00.000Z",
+        observations: {
+          version: 2,
+          viewport: { width: 400, height: 400 },
+          elements: [],
+        },
+        console: [],
+        mismatches: [],
+        design: {
+          descriptor: {
+            resolved: { kind },
+            status: "captured",
+            coordinate: {},
+          },
+          screenshotPath: "home/desktop/design/screenshot.png",
+          regions: {
+            version: 1,
+            offset: 3,
+            compared: { top: 0, height: 400 },
+            uncompared: [],
+            regions: [],
+            omitted: 0,
+          },
+        },
+      }) as unknown as CheckTuple;
+    const images = tupleDesignImages([tuple("image"), tuple("file")], "/run");
+    expect(images).toHaveLength(1);
+    expect(images[0]).toMatchObject({
+      label: "home/desktop/design",
+      designFor: "home/desktop",
+      readPath: "/run/home/desktop/design/screenshot.png",
+      offset: 3,
+    });
+  });
+
+  test("the prompt offers design-drift only when design images exist", async () => {
+    const plain = await input(2);
+    expect(critiquePrompt(plain, plain.screenshots)).not.toContain(
+      "design-drift",
+    );
+    const designed = await withDesign();
+    const prompt = critiquePrompt(designed, designed.screenshots);
+    expect(prompt).toContain('"kind": "intended-design-image"');
+    expect(prompt).toContain('"designFor": "state-0/desktop"');
+    expect(prompt).toContain("## Intended design image comparison");
+    expect(prompt).toContain('"div.card"');
+    expect(prompt).toContain("or design-drift");
+    expect(prompt).toContain("Treat the listed regions as leads, not proof.");
+  });
+
+  test("design-drift findings must cite the design image and name an element", async () => {
+    const { screenshots, designImages } = await withDesign();
+    const parse = (finding: ModelFindingCandidate, images = designImages) =>
+      parseModelResponse(
+        JSON.stringify({ findings: [finding] }),
+        screenshots,
+        [],
+        screenshots,
+        "",
+        false,
+        undefined,
+        images,
+      );
+    expect(parse(drift).findings).toEqual([drift]);
+    expect(() => parse({ ...drift, references: [] })).toThrow(
+      /must cite the design image/,
+    );
+    expect(() => parse(drift, [])).toThrow(/requires an intended design image/);
+    expect(() => parse({ ...drift, selectorHint: "body" })).toThrow(
+      /name the departing element/,
+    );
+    expect(() =>
+      parse({
+        ...drift,
+        state: "state-0",
+        viewport: "mobile",
+        screenshots: ["state-0/mobile"],
+      }),
+    ).toThrow(/requires an intended design image/);
+    // Design labels are citable only by design-drift findings.
+    expect(() =>
+      parse({ ...candidate, references: ["state-0/desktop/design"] }),
+    ).toThrow(/unknown label/);
+  });
+
+  test("the Anthropic adapter sends a design image beside its screenshot", async () => {
+    const requests: AnthropicRequest[] = [];
+    const adapter = new AnthropicCritiqueAdapter({
+      model: "claude-sonnet-4-5-20250929",
+      client: client(async (request) => {
+        requests.push(request);
+        return response([drift]);
+      }),
+    });
+    const result = await adapter.critique(await withDesign());
+    expect(result.findings).toEqual([drift]);
+    const content = requests[0]?.messages[0]?.content;
+    const labels = Array.isArray(content)
+      ? content.flatMap((block) =>
+          block.type === "text" && block.text.startsWith("Image ")
+            ? [block.text.replace(/^Image \d+ — /, "")]
+            : [],
+        )
+      : [];
+    expect(labels).toEqual([
+      "state-0/desktop",
+      "state-0/mobile",
+      "state-0/desktop/design",
+    ]);
+  });
+
+  test("the Claude Code manifest lists design image paths", async () => {
+    const critiqueInput = await withDesign();
+    const prompts: string[] = [];
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "sonnet",
+      projectDirectory: dirname(critiqueInput.screenshots[0]?.readPath ?? ""),
+      runner: async (request) => {
+        prompts.push(request.stdin);
+        return cliResult({ findings: [drift] });
+      },
+    });
+    expect((await adapter.critique(critiqueInput)).findings).toEqual([drift]);
+    const manifest = prompts[0]?.split(
+      "## Readable image path manifest\n\n",
+    )[1];
+    expect(manifest).toContain('"kind": "intended-design-image"');
+    expect(manifest).toContain(
+      critiqueInput.designImages?.[0]?.readPath ?? "missing",
+    );
   });
 });

@@ -4,6 +4,43 @@ User-visible changes to Idiom are recorded here, newest first.
 
 ## [Unreleased]
 
+## [v0.10.0] - 2026-10-26
+
+Idiom now works inside your coding agent and compares what you built against what you designed.
+
+- **Use Idiom from your coding agent.** `idiom mcp` runs a local MCP server over stdio with eight tools: `idiom_quick`, `idiom_check`, `idiom_issue`, `idiom_fix_plan`, `idiom_verify`, `idiom_context`, `idiom_flows` and `idiom_decide`. It needs no HTTP service or model credentials. Claude Code: `claude mcp add idiom -- npx -y @mattskilly/idiom mcp`. Setup for Codex, Cursor and Claude Desktop is in [docs/mcp.md](docs/mcp.md). The package also bundles a Claude Code plugin manifest.
+- **Top issues are ranked by salience × prominence.** Salience is how noticeable the kind of problem is. Prominence is how much of the viewport the element covers, whether it is in view, whether it is a primary action or in the primary region, and how many states and places it affects. Severity breaks ties. `--top N` limits what is shown; `--json` always has the full ranked list. Detection, fingerprints, decisions, baselines and `--fail-on` are unchanged. See [docs/ranking.md](docs/ranking.md).
+- **One root cause, one issue.** Symptoms that share a source (a design token or CSS custom property, a component, an authored style rule or a page region) collapse into one issue. It states the cause, the evidence and its symptoms with counts, for example an unresolved `--r-md` producing radius, spacing and shadow drift on nine controls. `scale-conformance` now also measures authored `box-shadow` on controls.
+- **The interaction probe covers real apps within its budget.** A control that appears in several states is probed once and its result reused (`reusedFrom`). Controls an unfinished state leaves behind go to another state that shows them. Duplicate-entry, icon-only, popup and dead-control candidates are probed first across the whole flow. States probe in parallel (`capture.concurrency`, default 4). Restores try settling and Escape before a full replay. Every control that was not probed is listed as `not-reached` with the reason, so coverage never hides skipped work.
+- Design-size inference reads sizes written in parentheses and falls back to modifier names for round shapes, recording `inferred.matchedBy`.
+- Added [docs/design-compare.md](docs/design-compare.md): choosing a source (HTML or Claude Design export, Figma frame, image, live site), attaching references, how matches and measurements work, tolerances, conflicting references, and a worked example.
+
+- Compare against a design image or a live site. A state's `design` (and `idiom quick <url> --design <src>`) now accepts a local PNG, JPEG or WebP export: Idiom scales it to the viewport width, aligns it vertically, and reports each visibly changed region as a minor `design-drift` finding with paired crops and the app elements it covers. When a model is configured, the critique also sees the design image and can name the element and the difference. `{ "site": "https://…" }` uses a live page as the reference and runs the full element comparison at the same viewports. `idiom quick` takes `--design` for a one-off comparison of one page without a project. See [design comparison](docs/configuration.md#design-comparison).
+- Compare states against Figma frames. `idiom design add <state> <figma-frame-url>`
+  (or a `design` declaration) reads the frame through the Figma REST API with
+  `FIGMA_TOKEN`, pins the node tree and render under `.idiom/designs/` by file
+  version (`--refresh-design` refetches), and normalises it into the same
+  comparison as HTML references. Findings say what Figma specifies and what the
+  app renders, element by element, cite the Figma layer path, link to the node and
+  name bound variables. The frame width picks the nearest viewport unless one is
+  declared.
+- A state can declare several design references (for example a Figma frame and a
+  prototype). Where they disagree with each other on a matched element, Idiom
+  reports a design decision showing each value beside the build;
+  `idiom decide --finding <id> --choose <name>` records the intended reference and
+  later runs measure that element against it alone.
+- `idiom system --learn <figma-file-url>` proposes tokens from the file's colour
+  and number variables through the same confirmed diff (Figma Enterprise).
+
+- Added eight craft rules, on by default: `font-loading` (a web font failed or renders in the fallback), `broken-link` (visible links answering 4xx/5xx or failing DNS; same-origin by default, external opt-in with `checks.links.external`), `focus-visible` (keyboard focus that changes nothing visible, found by a Tab sweep in the probe pass), `line-length` (body text over 90 characters per line), `orphan-word` (a heading or button label ending with one stranded short word), `image-distortion` and `broken-image` (stretched or squashed images, images that fail to load), and `layout-shift` (cumulative layout shift during load above 0.1, naming what moved). Each is configured under its own `checks.*` key and recorded in `observations.json`, so replay stays offline. Links are checked once per run through a cookie-less request context, bounded by concurrency and a time budget.
+- Added [docs/rules.md](docs/rules.md): every rule Idiom has, what it catches, why it matters, its severity, its source (WCAG criterion, platform guideline or craft convention) and how to configure or decide it. A test keeps it in sync with the check registry.
+- Compare each state or `review --page` with an intended HTML file, export directory,
+  or accessible prototype/Claude share URL. `idiom design add` attaches a reference;
+  the deterministic `design-drift` check reports property values, missing/extra
+  content, matching methods, fixes, and labelled design/app crops. Saved references
+  support offline replay, and verification refuses to call a drift fixed when its
+  reference is removed, unavailable, or changed.
+
 ## [v0.9.1] - 2026-10-25
 
 A safety release for the interaction probe, which v0.9.0 turned on by default. Please upgrade.

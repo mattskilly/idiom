@@ -146,3 +146,24 @@ export function referenceImageLimitIssue(
     return `base64 size ${encodedBytes} bytes exceeds ${MAX_REFERENCE_ENCODED_BYTES} bytes`;
   return undefined;
 }
+
+/** The media type the leading bytes declare, regardless of file name. */
+export function sniffImageMediaType(
+  source: Buffer,
+): ReferenceImageMediaType | "image/svg+xml" | undefined {
+  if (source.subarray(0, 8).equals(PNG_SIGNATURE)) return "image/png";
+  if (source[0] === 0xff && source[1] === 0xd8 && source[2] === 0xff)
+    return "image/jpeg";
+  if (
+    source.toString("ascii", 0, 4) === "RIFF" &&
+    source.toString("ascii", 8, 12) === "WEBP"
+  )
+    return "image/webp";
+  const header = source.toString("ascii", 0, 6);
+  if (header === "GIF87a" || header === "GIF89a") return "image/gif";
+  if (
+    /^\s*(?:<\?xml[^>]*>\s*)?<svg[\s>]/i.test(source.toString("utf8", 0, 512))
+  )
+    return "image/svg+xml";
+  return undefined;
+}

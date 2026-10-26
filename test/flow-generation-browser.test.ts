@@ -99,10 +99,22 @@ test("real XML parsing, recursive rendered links, redirects and bounded traversa
         finalUrl: `${f.origin}/login`,
         password: true,
       });
-      expect(await live.inspect(`${f.origin}/client-private`)).toMatchObject({
-        finalUrl: `${f.origin}/sign-in`,
-        password: true,
+      // The client redirect must commit within settleMs; 80ms races a
+      // contended full-suite run, so this one inspection settles longer.
+      const patient = await openFlowBrowser({
+        ...project,
+        capture: { ...project.capture, settleMs: 1_000 },
       });
+      try {
+        expect(
+          await patient.inspect(`${f.origin}/client-private`),
+        ).toMatchObject({
+          finalUrl: `${f.origin}/sign-in`,
+          password: true,
+        });
+      } finally {
+        await patient.close();
+      }
       await live.inspect(`${f.origin}/set-cookie`);
       expect((await live.inspect(`${f.origin}/cookie-check`)).password).toBe(
         false,

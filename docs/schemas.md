@@ -40,6 +40,7 @@ const Project = z.object({
     fullPage: z.boolean().default(true),
     settleMs: z.number().default(250),
     maxMinutes: z.number().finite().positive().default(30),
+    concurrency: z.number().int().min(1).max(8).default(4), // capture lanes at once
   }),
   design: z.object({
     tokensFile: z.string().optional(),   // "packages/design/src/theme.css"
@@ -77,6 +78,7 @@ Notes:
 - `checks.scales.spacing` — defaults to `[]`; entries are nonnegative finite CSS-pixel numbers or strict `{multipleOf: positiveFiniteNumber}` base steps (v4 `--spacing`). Declared values check visible V2 elements' authored computed padding, margin magnitudes and gap axes with 0.5px tolerance; zero/default/auto/normal and unsupported percentages are excluded. Historical observations without authorship facts disclose missing coverage. This does not change geometric `spacing-rhythm` inference.
 - Confirmed imports union values into existing control heights, role radii and border lists. Theme variants retain their context in tokens; numeric scales contain the union. Rem conversions use recorded root sizes, or an explicitly disclosed 16px assumption without evidence; incompatible root conversions are omitted from numeric scales. Source dimension purpose mappings are inferred from spacing/space/gap/padding/margin, radius/radii and explicit control/button/input height names, never guessed from DTCG value shape.
 - V2 `observations.json` optionally records positive finite `rootFontSize`, literal `theme`, and configured tokens' `typedValues` (`kind`, normalized `value`, optional `name`/`theme`). Old artifacts remain valid, with historical untyped token behavior and explicit missing rem coverage. Spacing-only inline tokens are valid. Recapture to enforce newly learned token rules. The system page's drift is value coverage within one selected run, not proof of variable references or project-wide unused code.
+- V2 `observations.json` optionally records craft-rule evidence: `fonts` (declared faces with status and stylesheet URLs, the families visible text uses with up to five selectors and a fallback flag, and failed font requests), `links` (visible http(s) links with absolute href, same-origin flag and the run's check result: `ok`, `broken` with code or DNS reason, or `unchecked` with a reason), `focusVisible` (each keyboard focus stop with the `node.property` keys that changed and an optional visible `proxy`), `lineLengths` (paragraphs over 45 rendered characters per line), `orphanWords` (headings and button labels whose last line holds one word), `imageRenders` (broken images and `fill` images rendered off their natural ratio) and `layoutShift` (largest session-window score and up to 150 entries with source selectors). Scans use the `{status, reason?, records}` shape; older artifacts without these fields stay valid and the checks report unavailable coverage.
 - `baselines.directory` — optional project-relative or absolute local directory for compact finding baselines; defaults to `.idiom/baselines`. This location is not part of the checks hash.
 - `model.provider` — `claude-code` is the scaffold default and uses the authenticated local CLI without an API key. `anthropic` is the explicit direct-API path and requires `ANTHROPIC_API_KEY`. Existing files are not migrated or reinterpreted.
 - `model.maxFindings` — an integer from 1 through 5 and the material-findings cap across both evaluation layers. There is no overall score field anywhere, by design.
@@ -648,10 +650,17 @@ like a `deferred` row, its text has no standalone Decide command.
 
 Probe budgets are positive integer milliseconds: `checks.probe.controlTimeoutMs`
 defaults to `5000`, and `checks.probe.stateTimeoutMs` to `60000`, including when
-`probe` or either field is omitted. The control budget spans restoration/replay,
-explanation hover/focus, actions, observation and cleanup; the state budget also
-spans initialization, nested menus, collection sampling and final restoration.
-Zero never disables a budget. Placement defaults are unchanged.
+`probe` or either field is omitted. The control budget spans explanation
+hover/focus, actions, the effect window and cheap restoration. Full replay has a
+separate deadline. Web captures size one flow allowance from the wall clock.
+Each round gets the time left before a 400s run target (less a 20s reserve) on
+every capture lane, at most stateTimeoutMs per state; the first round gets at
+least stateTimeoutMs per lane. Rounds
+divide it by assigned work and refund unused shares. Later rounds probe controls
+that an assigned state left unfinished, in another state that shows them. Each
+state's nested cap is one quarter of its current share, within that allowance;
+in a planned flow, nested check candidates are bounded only by the state deadline. Standalone library probes retain the per-state
+budget. Zero never disables a budget. Placement defaults are unchanged.
 
 `checks.probe.enabled` defaults to `true` (it was `false` through v0.8.0), so
 web flows probe once per state at the first selected viewport unless it is set
@@ -660,10 +669,13 @@ stay unprobed unless their base sets `probe: true`.
 
 Component observations (`observations.components[]`) gain two optional fields
 for sizes inferred from the design file. `inferred` is
-`{ source, words, axis? }`: `source` is `"<designFile>:<line>"`, `words` the
+`{ source, words, axis?, matchedBy? }`: `source` is `"<designFile>:<line>"`, `words` the
 lowercased singular name words the selector was resolved from, and `axis`
 (`width` or `height`) marks a one-axis statement, which is judged on that axis
 only; the other stored dimension is the first match's measured size.
+`matchedBy: "modifier"` marks a shape name (`… dot`, `circle`, `indicator`, …)
+whose full word run matched nothing, resolved instead by its modifier words on
+textless, non-interactive elements (`layers-override` for "override dot").
 `unresolved: true` records an inferred component no class or aria-label words
 matched; it has `rects: []` and an empty `selector`, which is allowed only then.
 Older observations without these fields remain valid.
@@ -676,8 +688,18 @@ viewport, scheme and step; coordinates are `pending` before tuple work. Owned
 resources receive at most five seconds of additional cleanup grace.
 
 V2 observations remain compatible with old probe artifacts. Optional result
-fields are `elapsedMs` (finite, nonnegative), `status` (`completed` or `timed-out`)
-and `timeoutScope` (`control` or `state`). Timed-out results retain identity,
+fields are `elapsedMs` (finite, nonnegative), `status` (`completed`, `timed-out`
+or `not-reached`), `timeoutScope` (`control` or `state`) and `reusedFrom` (the
+assigned state whose result for the same control was reused; it may appear
+later in tuple order, and reused rows have no attempt `elapsedMs` or `timings`).
+Optional `timings` records finite nonnegative `clickMs`, `effectWindowMs`,
+`restoreCheckMs`, `escapeMs` and `replayMs` for an attempt. `replayRequired`
+marks an attempt that left a persistent change requiring replay before the next
+control. A no-replay distribution excludes that flag and attempts with positive
+`replayMs`. `not-reached` results were never attempted (`maxControls`, the
+flow budget share, repeated-row sample, modal blockage, no state that shows the
+control able to finish it, flow probe time exhausted, or the nested-menu budget or
+limit) and carry `skipped: "not reached: <reason>"`. Timed-out results retain identity,
 partial effects and a `skipped: "timed-out: …"` marker, with no duplicate-entry
 signature. The probe's status also accepts `timed-out`, with optional `selector`
 and `step` for state expiry. Controls are never retried after timeout; partial
@@ -692,3 +714,84 @@ time descending with stable coordinate/selector/name ties. Entries contain
 `state`, `viewport`, `colorScheme`, `selector`, `name`, `elapsedMs` and `outcome`
 (`completed` or `timed-out`). Stored reviews replay those historical timings;
 old records omit the list. Timings never participate in finding identity.
+
+
+## Design comparison evidence
+
+State `design` is optional. It is a nonblank string (a local HTML
+file/directory, a local PNG/JPEG/WebP image, an absolute HTTP(S) HTML URL, or a
+Figma frame URL with `node-id`); a `{ source, name?, viewport?, colorScheme? }` or
+`{ site, name?, viewport?, colorScheme? }` object, where `site` is an absolute
+HTTP(S) URL without credentials for a live reference site; or a non-empty array of
+either (explicit names unique). Filesystem entry-point checks, image content
+sniffing and HTTP media/status/access checks happen at capture. URL credentials,
+unsupported schemes and remote image inputs are rejected. Both web and Electron
+authored state schemas accept the field.
+
+An opted-in app tuple's metadata contains a version-1 `design` descriptor: declared
+source, resolved source provenance, exact state/viewport/dimensions/scheme,
+reference runtime version, captured/failed status, failure reason, and contained
+report-relative paths. Reference files live beneath `<state>/<viewport>[/<scheme>]/design/`:
+
+- `observations.json`: the same V2 schema as the app, with optional border-side styles.
+- `screenshot.png`, `dom.html`, `console.jsonl`, `axe.json`: captured reference evidence.
+- `source.json`: source descriptor and provenance; deliberately not `metadata.json`.
+- `matches.json`: version-1 one-to-one pairs with stable IDs, actual match tiers,
+  matched-parent IDs, and unmatched selector sets on both sides.
+
+`resolved.kind` is `file`, `url`, `inline`, `site`, `image` or `figma`. A site reference
+writes the same seven files as an HTML design. An image reference instead records
+`resolved.mediaType` and `resolved.sha256` (of the original bytes) and writes:
+
+- `screenshot.png`: the image scaled to the tuple's viewport width, full height.
+- `reference.<png|jpg|webp>`: the original image bytes.
+- `console.jsonl`, `source.json`: as above.
+- `regions.json`: version 1, `offset` (CSS px; design y = app y + offset),
+  `compared` (the app band that overlapped), `uncompared` bands with their `side`,
+  up to 20 `regions` (`region-N` id, app `rect`, `designRect`, `owner` selector or
+  null, covered `elements`, `changedCells`, `cells`, `meanDelta`) and `omitted`.
+
+The descriptor schema requires exactly the artifact set for its kind. On load,
+image regions are recomputed from both screenshots and the app observations and
+must equal `regions.json`; the original bytes must match `sha256`.
+
+A Figma reference has no `dom.html`, `console.jsonl` or `axe.json` (those
+descriptor paths are optional); it writes `figma.json`, the frame's node tree, in
+their place. Its descriptor has `resolved.kind: "figma"` and a `figma` object:
+`fileKey`, `nodeId`, `version`, `lastModified`, frame `width`/`height`,
+`variables` (`"resolved"` or `"unavailable: <why>"`), the node `link`, and the
+project-relative `cache` directory. With several references, each descriptor
+carries its `name`, files live under `design/<name>/`, metadata `design` is the
+first descriptor and `designs` lists all of them. When a state's references did
+not apply to a tuple (another viewport or scheme), metadata records
+`designNotApplicable` and the check's coverage reason says where they apply.
+
+Declared failures keep `source.json` and available evidence. The loader validates
+schemas, path containment (including symlinks), coordinates and match agreement.
+Missing required reference files yield unavailable comparison coverage. Historical
+metadata without a descriptor remains undeclared even if today's manifest adds one.
+
+`Finding.evidence.designDrift` is versioned and contains pair ID/method, property,
+design/app raw and normalized values, applied numeric allowance, distinct counterpart
+selectors, matched-parent contexts, optional sibling identity for gaps, and labelled
+report-relative crop paths. Absent-side values/selectors are null. Image region
+findings use method `region`, property `visual`, null values, and an extra `region`
+object: `id`, `rect`, `designRect`, `offset`, `owner`, `elements` and
+`changedArea` (the 0–1 share of the region's cells that changed). `Finding.fix`
+proposes a concrete correction or normal decision-based acceptance. Pair/property
+identity does not include measured values, copy, source ports or crop paths.
+
+Figma-backed drift adds `designLayerPath` (layer names from the frame down),
+`designLink` (the node URL) and `designVariable` (the bound variable, when
+resolved). With several references, a finding against a reference other than the
+first names it in `reference`, agreeing references are listed in
+`alsoReferences`, and a finding kept after `decide --choose` carries
+`chosenReference`. Crop labels are `Design`, `Design: <name>` or `App capture`,
+optionally suffixed ` (absent)`.
+
+A disagreement between references is a finding with rule `idiom:design-decision`
+whose `designDrift.designDecision` holds `version`, `decisionKey`, `property`,
+`appSelector`, `appValue` and `references[]` (`name`, `source`, `value`,
+`allowance`, `matchesBuild`, `layerPath`, `link`, `pairId`, `designSelector`).
+A decision-log record written by `decide --choose` adds `designChoice: { flow,
+state, colorScheme?, decisionKey, reference }`; the last choice per key applies.

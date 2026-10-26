@@ -70,51 +70,105 @@ test("40 siblings collapse by rule with unioned places and summed members", () =
   ).toHaveLength(2);
 });
 
-test("ranking uses worst severity, places union, primary action and stable input order", () => {
+test("score precedes severity, severity breaks score ties, then original bucket order", () => {
   const groups = [
-    ...rows(),
-    group("broad", {
-      coordinates: Array.from({ length: 12 }, (_, i) => `state${i}/desktop`),
+    group("hygiene", {
+      severity: "blocker",
+      coordinates: Array.from({ length: 100 }, (_, i) => `state${i}/desktop`),
     }),
-    group("primary", { coordinates: ["a", "b", "c", "d"] }),
-    group("major", { severity: "major" }),
+    group("broken", { category: "dead-control" }),
+    group("equal-first", { category: "error-text" }),
+    group("equal-major", { category: "clipped-text", severity: "major" }),
   ];
-  expect(
-    collapseIssues(groups, new Set(["#primary"])).map((issue) => issue.id),
-  ).toEqual(["major", "broad", "primary", "row-0"]);
-  // Do not erase digits in classes: these two unrelated controls stay separate.
-  const ties = [
-    group("first", { selector: ".a1" }),
-    group("second", { selector: ".a2" }),
-  ];
-  expect(collapseIssues(ties, new Set()).map((issue) => issue.id)).toEqual([
-    "first",
-    "second",
+  expect(collapseIssues(groups, new Set()).map((issue) => issue.id)).toEqual([
+    "equal-major",
+    "broken",
+    "equal-first",
+    "hygiene",
   ]);
-  expect(
-    collapseIssues(
-      [
-        group("worse", { selector: "li:nth-child(1)", severity: "major" }),
-        group("other", { selector: "li:nth-child(2)" }),
-      ],
-      new Set(),
-    )[0]?.severity,
-  ).toBe("major");
 });
 
-test("equal severity, places and primary action preserve order regardless of sibling count", () => {
+test("unrelated selectors share an exact rule family; categories and rules stay separate", () => {
+  const groups = [
+    group("one", { selector: ".a1" }),
+    group("two", { selector: ".a2" }),
+    group("other", { rule: "other" }),
+    group("category", { category: "control-anatomy" }),
+  ];
+  const issues = collapseIssues(groups, new Set());
+  expect(issues.map((issue) => issue.groups)).toEqual([
+    ["one", "two"],
+    ["other"],
+    ["category"],
+  ]);
+  expect(issues.flatMap((issue) => issue.groups).sort()).toEqual(
+    groups.map((g) => g.id).sort(),
+  );
+});
+
+test("two explicit cross-rule families aggregate without claiming one exact rule", () => {
+  const groups = [
+    group("touch", {
+      category: "adjacent-gap",
+      rule: "idiom:adjacent-elements-touch",
+    }),
+    group("focus", {
+      category: "adjacent-gap",
+      rule: "idiom:focus-ring-collision",
+    }),
+    group("input", {
+      category: "overflow-clip",
+      rule: "idiom:input-value-truncated",
+    }),
+    group("content", {
+      category: "overflow-clip",
+      rule: "idiom:element-content-clipped",
+    }),
+    group("document", {
+      category: "overflow-clip",
+      rule: "idiom:document-overflow",
+    }),
+  ];
+  const issues = collapseIssues(groups, new Set());
+  expect(issues.map((issue) => issue.groups)).toEqual([
+    ["input", "content"],
+    ["touch", "focus"],
+    ["document"],
+  ]);
+  expect(issues[0]?.rule).toBeUndefined();
+  expect(issues[0]?.rules).toEqual([
+    "idiom:input-value-truncated",
+    "idiom:element-content-clipped",
+  ]);
+});
+
+test("sibling count cannot inflate area or counts and unknown/missing-rule fallback stays separate", () => {
   const singleton = group("singleton", {
     coordinates: rows()[0]?.coordinates ?? [],
+    rule: "other",
   });
-  for (const groups of [
-    [singleton, ...rows()],
-    [...rows(), singleton],
-  ]) {
-    expect(collapseIssues(groups, new Set()).map((issue) => issue.id)).toEqual(
-      groups[0]?.id === "singleton"
-        ? ["singleton", "row-0"]
-        : ["row-0", "singleton"],
-    );
+  const issues = collapseIssues([singleton, ...rows()], new Set());
+  expect(issues.map((issue) => issue.id)).toEqual(["singleton", "row-0"]);
+  expect(issues[0]?.score).toBe(issues[1]?.score);
+  for (const overrides of [{ category: "unknown" }, { rule: undefined }]) {
+    expect(
+      collapseIssues(
+        [
+          group("one", { selector: ".a1", ...overrides }),
+          group("two", { selector: ".a2", ...overrides }),
+        ],
+        new Set(),
+      ),
+    ).toHaveLength(2);
+    expect(
+      collapseIssues(
+        [
+          group("one", { selector: "#a1", ...overrides }),
+          group("two", { selector: "#a2", ...overrides }),
+        ],
+        new Set(),
+      ),
+    ).toHaveLength(1);
   }
 });
 
@@ -152,5 +206,85 @@ test("category counts sum every member and sort by finding count then category",
     { category: "target-size", issues: 1, findings: 80 },
     { category: "alpha", issues: 1, findings: 1 },
     { category: "beta", issues: 1, findings: 1 },
+  ]);
+});
+
+test("most prominent group becomes the example without losing metadata or leaking a primary signal", () => {
+  const groups = [
+    group("small", { deferred: true }),
+    group("large", { deferred: true }),
+    group("middle"),
+  ];
+  const elements = groups.map((g, i) => ({
+    selector: g.selector ?? "",
+    tag: "button",
+    visible: true,
+    rect: { x: 0, y: 0, width: [10, 100, 50][i] ?? 0, height: 100 },
+    ancestorSelectors: [],
+  }));
+  const context = new Map([
+    [
+      "editor/desktop",
+      {
+        state: "editor",
+        viewport: { width: 100, height: 100 },
+        elements: new Map(elements.map((e) => [e.selector, e])),
+        primaryRegions: new Set<string>(),
+      },
+    ],
+  ]);
+  const [issue] = collapseIssues(groups, new Set(["#small"]), context);
+  expect(issue).toMatchObject({
+    id: "large",
+    groups: ["large", "small", "middle"],
+    prominence: 2.5,
+    salience: 1,
+    score: 2.5,
+    primaryAction: false,
+  });
+  expect(issue?.deferred).toBeUndefined();
+  expect(groups[0]?.deferred).toBe(true);
+});
+
+test("different saliences never borrow each other's geometry or combine rule families", () => {
+  const groups = [
+    group("broken", {
+      category: "dead-affordance",
+      rule: "idiom:disabled-link-button",
+    }),
+    group("placeholder", {
+      category: "dead-affordance",
+      rule: "idiom:placeholder-link",
+    }),
+  ];
+  const element = {
+    selector: "#placeholder",
+    tag: "button",
+    visible: true,
+    rect: { x: 0, y: 0, width: 100, height: 100 },
+    ancestorSelectors: [],
+  };
+  const context = new Map([
+    [
+      "editor/desktop",
+      {
+        state: "editor",
+        viewport: { width: 100, height: 100 },
+        elements: new Map([[element.selector, element]]),
+        primaryRegions: new Set<string>(),
+      },
+    ],
+  ]);
+  const issues = collapseIssues(groups, new Set(), context);
+  expect(
+    issues.map((issue) => [
+      issue.id,
+      issue.salience,
+      issue.prominence,
+      issue.score,
+    ]),
+  ).toEqual([
+    ["placeholder", 4, 2.5, 10],
+    ["broken", 9, 1, 9],
   ]);
 });

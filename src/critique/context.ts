@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { CheckTuple } from "../checks/types.js";
+import { designEvidenceProblem } from "../design/evidence.js";
 import { IdiomError } from "../errors.js";
 import {
   listManagedReferences,
@@ -15,6 +16,7 @@ import type { Project } from "../schemas/project.js";
 import type { RuleOverride } from "../schemas/rules.js";
 import type {
   CritiqueInput,
+  DesignImageRef,
   DomExcerpt,
   ReferenceRef,
   ScreenshotRef,
@@ -117,6 +119,42 @@ export async function tupleCritiqueMaterial(
   return { screenshots, domExcerpts };
 }
 
+/** Intended design images for tuples whose image comparison is usable. */
+export function tupleDesignImages(
+  tuples: CheckTuple[],
+  runDirectory: string,
+): DesignImageRef[] {
+  return tuples.flatMap((tuple): DesignImageRef[] => {
+    const design = tuple.design;
+    if (
+      design?.descriptor.resolved?.kind !== "image" ||
+      !design.regions ||
+      !design.screenshotPath ||
+      tuple.screenshotPath === undefined ||
+      designEvidenceProblem(tuple)
+    )
+      return [];
+    const label = tupleLabel(tuple);
+    return [
+      {
+        label: `${label}/design`,
+        designFor: label,
+        path: design.screenshotPath,
+        readPath: resolve(runDirectory, design.screenshotPath),
+        state: tuple.state,
+        viewport: tuple.viewport,
+        ...(tuple.colorSchemeAxis ? { colorScheme: tuple.colorScheme } : {}),
+        offset: design.regions.offset,
+        regions: design.regions.regions.map((region) => ({
+          id: region.id,
+          rect: region.rect,
+          elements: region.elements,
+        })),
+      },
+    ];
+  });
+}
+
 export async function buildCritiqueContext(options: {
   projectDirectory: string;
   runDirectory: string;
@@ -138,6 +176,7 @@ export async function buildCritiqueContext(options: {
     "design guidance",
   );
   const parsedLaw = parseRulingBlocks(designMd);
+  const designImages = tupleDesignImages(options.tuples, options.runDirectory);
   return {
     flow: options.flow.id,
     ...(options.flow.surface === undefined
@@ -160,5 +199,6 @@ export async function buildCritiqueContext(options: {
       MAX_UNRULED_DECISIONS *
       new Set(screenshots.map((screenshot) => screenshot.state)).size,
     rulingResolutions: parsedLaw.resolutions,
+    ...(designImages.length ? { designImages } : {}),
   };
 }

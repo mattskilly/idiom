@@ -151,6 +151,14 @@ function pathManifest(input: CritiqueInput, projectDirectory: string) {
       viewport: crop.viewport,
       path: resolve(projectDirectory, crop.readPath),
     })),
+    ...(input.designImages ?? []).map((design) => ({
+      label: design.label,
+      kind: "intended-design-image",
+      designFor: design.designFor,
+      state: design.state,
+      viewport: design.viewport,
+      path: resolve(projectDirectory, design.readPath),
+    })),
   ];
 }
 
@@ -267,6 +275,7 @@ export class ClaudeCodeCritiqueAdapter implements CritiqueAdapter {
         input.designMd,
         input.spec !== undefined,
         input.page,
+        input.designImages,
       );
     } catch (error) {
       if (!(error instanceof MalformedCritiqueError)) throw error;
@@ -287,6 +296,7 @@ export class ClaudeCodeCritiqueAdapter implements CritiqueAdapter {
         input.designMd,
         input.spec !== undefined,
         input.page,
+        input.designImages,
       );
     }
   }

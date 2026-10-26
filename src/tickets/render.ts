@@ -127,12 +127,35 @@ export function renderClusterTicket(options: {
   availableImages: Map<string, string[]>;
 }): { id: string; title: string; body: string } {
   const { cluster, id, ticketDirectory } = options;
-  const title = `Resolve ${cluster.members[0]?.record.finding.category ?? "findings"} in ${cluster.component}`;
+  const cause = cluster.cause;
+  const causeTitle =
+    cause === undefined ? undefined : `Resolve root cause: ${cause.cause}`;
+  const title =
+    causeTitle === undefined
+      ? `Resolve ${cluster.members[0]?.record.finding.category ?? "findings"} in ${cluster.component}`
+      : causeTitle.length > 120
+        ? `${causeTitle.slice(0, 119)}…`
+        : causeTitle;
   const criteria = [
     ...new Set(
       cluster.members.flatMap((member) => member.record.finding.acceptance),
     ),
   ];
+  const causeLead =
+    cause === undefined
+      ? []
+      : [
+          `${cause.cause}.`,
+          "",
+          `Confidence: ${cause.confidence} (${cause.kind} ${JSON.stringify(cause.key.replaceAll("\0", " "))}).`,
+          ...cause.evidence.map((line) => `- ${line}`),
+          ...(cause.fix === undefined
+            ? []
+            : ["", `Suggested fix: ${cause.fix}.`]),
+          "",
+          "Every finding below is a symptom of this one cause.",
+          "",
+        ];
   const lines = [
     "+++",
     `id = ${JSON.stringify(id)}`,
@@ -142,8 +165,12 @@ export function renderClusterTicket(options: {
     "",
     "## What and why",
     "",
-    `Resolve the observed ${cluster.members[0]?.record.finding.category} problems in component ${JSON.stringify(cluster.component)} of flow ${JSON.stringify(cluster.members[0]?.record.finding.flow)}.`,
-    "",
+    ...(cause === undefined
+      ? [
+          `Resolve the observed ${cluster.members[0]?.record.finding.category} problems in component ${JSON.stringify(cluster.component)} of flow ${JSON.stringify(cluster.members[0]?.record.finding.flow)}.`,
+          "",
+        ]
+      : causeLead),
     ...[
       ...new Set(
         cluster.members.map((member) => member.record.finding.explanation),
@@ -151,16 +178,25 @@ export function renderClusterTicket(options: {
     ].flatMap((text) => [text, ""]),
     "## Acceptance criteria",
     "",
+    ...(cause === undefined
+      ? []
+      : [
+          `- [ ] All ${cluster.members.length} symptoms below clear on recheck (one fix for the shared cause)`,
+        ]),
     ...criteria.map((text) => `- [ ] ${text}`),
     "",
     "## Out of scope",
     "",
-    "- Other components and finding categories; ticket promotion, dispatch, and implementation of adjacent work.",
+    cause === undefined
+      ? "- Other components and finding categories; ticket promotion, dispatch, and implementation of adjacent work."
+      : "- Findings outside this root cause; ticket promotion, dispatch, and implementation of adjacent work.",
     "- Scope is the union of the member coordinates below and any additional coverage explicitly required by their acceptance criteria. Other coordinates remain out of scope.",
     "",
     "## Evidence",
     "",
-    `Component key: ${JSON.stringify(cluster.component)}`,
+    cause === undefined
+      ? `Component key: ${JSON.stringify(cluster.component)}`
+      : `Root cause key: ${JSON.stringify(`${cause.kind}:${cause.key.replaceAll("\0", " ")}`)} (${cause.id})`,
     "",
   ];
   for (const member of cluster.members) {

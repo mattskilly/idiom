@@ -147,10 +147,18 @@ function deterministicFinding(options: {
             evidenceTuples.flatMap((evidence) =>
               evidence.screenshotPath === undefined
                 ? []
-                : [evidence.screenshotPath],
+                : [
+                    evidence.screenshotPath,
+                    ...(evidence.design?.screenshotPath
+                      ? [evidence.design.screenshotPath]
+                      : []),
+                  ],
             ),
           ),
         ],
+        ...(candidate.designDrift === undefined
+          ? {}
+          : { designDrift: candidate.designDrift }),
         artifacts: [
           ...new Set(
             evidenceTuples.flatMap((evidence) => evidence.artifactPaths),
@@ -166,6 +174,7 @@ function deterministicFinding(options: {
           ? {}
           : { axeNodes: candidate.axeNodes }),
       },
+      ...(candidate.fix === undefined ? {} : { fix: candidate.fix }),
       explanation: candidate.explanation,
       acceptance: candidate.acceptance,
       verification: {

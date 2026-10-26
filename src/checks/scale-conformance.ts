@@ -26,13 +26,14 @@ import type {
   ScaleRole,
 } from "./types.js";
 
-type Property = "height" | "radius" | "border";
+type Property = "height" | "radius" | "border" | "shadow";
 
 /** A measured value: a px number, a full (pill/circle) radius, a percentage ellipse, or a colour. */
 type Value =
   | { kind: "px"; px: number }
   | { kind: "full"; px?: number }
   | { kind: "ellipse"; percent: number }
+  | { kind: "shadow"; value: string }
   | {
       kind: "color";
       color: string;
@@ -293,6 +294,8 @@ function label(property: Property, value: Value): string {
       return `${value.percent}% (ellipse)`;
     case "color":
       return value.color;
+    case "shadow":
+      return value.value;
   }
   return property;
 }
@@ -328,6 +331,8 @@ function sharp(value: Value, prevailing: Value): boolean {
   if (value.kind === "full" && prevailing.kind === "full") return false;
   if (value.kind === "ellipse" && prevailing.kind === "ellipse")
     return value.percent !== prevailing.percent;
+  if (value.kind === "shadow" && prevailing.kind === "shadow")
+    return value.value !== prevailing.value;
   return true;
 }
 
@@ -337,6 +342,7 @@ function declaredScale(
   role: ScaleRole,
 ): Array<number | string> {
   const scales = config.scales;
+  if (property === "shadow") return [];
   if (property === "height")
     return role === "control" ? scales.controlHeights : [];
   if (property === "radius")
@@ -444,6 +450,18 @@ export function scaleMeasurements(
       const radius = radiusOf(element);
       if (radius !== undefined) push("radius", radius);
     }
+    // Shadows have no declared scale: sharp outliers against the run's
+    // prevailing control shadow only. Focus rings are a state, not the system.
+    if (
+      role === "control" &&
+      element.authoredProperties?.includes("boxShadow") &&
+      !element.signals.focused &&
+      element.styles.boxShadow !== "none"
+    )
+      push("shadow", {
+        kind: "shadow",
+        value: element.styles.boxShadow.replace(/\s+/g, " ").trim(),
+      });
     if (role === "divider" || role === "control") {
       const color = borderOf(element, role);
       const canonical = color === undefined ? undefined : canonicalColor(color);
@@ -601,6 +619,7 @@ const plural = (count: number, singular: string, many = `${singular}s`) =>
   count === 1 ? singular : many;
 
 function noun(group: Group, count: number): string {
+  if (group.property === "shadow") return plural(count, "control shadow");
   if (group.property === "border")
     return group.role === "divider"
       ? plural(count, "divider")
@@ -618,6 +637,7 @@ function noun(group: Group, count: number): string {
 }
 
 function roleNoun(group: Group): string {
+  if (group.property === "shadow") return "control shadows";
   if (group.property === "border")
     return group.role === "divider" ? "dividers" : "control borders";
   return `${group.role}s`;
@@ -625,6 +645,7 @@ function roleNoun(group: Group): string {
 
 function measured(group: Group, value: string): string {
   if (group.property === "radius") return `radius ${value}`;
+  if (group.property === "shadow") return `shadow ${value}`;
   return value;
 }
 
@@ -642,6 +663,16 @@ function candidateFor(group: Group): FindingCandidate {
   ];
   const examples = `${selectors.slice(0, 3).join(", ")}${selectors.length > 3 ? ", …" : ""}`;
   const first = selectors[0] ?? "document";
+  const longhand = {
+    radius: "borderTopLeftRadius",
+    height: "height",
+    border: "borderTopColor",
+    shadow: "boxShadow",
+  }[group.property];
+  const targets = selectors.map((selector) => ({
+    selector,
+    property: longhand,
+  }));
   const what = `${count} ${noun(group, count)} at ${measured(group, group.label)}`;
   const rule =
     group.mode === "undeclared"
@@ -679,6 +710,7 @@ function candidateFor(group: Group): FindingCandidate {
       role: group.role,
       value: group.label,
       ...reference,
+      targets,
     }),
     evidenceTuples: [
       ...new Set(

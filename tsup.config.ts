@@ -23,6 +23,8 @@ try {
 export default defineConfig({
   entry: ["src/cli.ts"],
   format: ["esm"],
+  // One self-contained file: releases commit only dist/cli.js, so dynamic imports must not split into chunks.
+  splitting: false,
   clean: true,
   define: {
     __IDIOM_BUILD_COMMIT__: JSON.stringify(buildCommit),

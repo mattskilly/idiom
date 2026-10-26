@@ -21,6 +21,25 @@ export type ScreenshotRef = {
 };
 
 /**
+ * An intended design image, captured at its app tuple's viewport width, with
+ * the regions where it visibly differs from that tuple's screenshot.
+ */
+export type DesignImageRef = {
+  /** `<tuple label>/design`; findings cite it in `references`. */
+  label: string;
+  /** The app screenshot label this design image is intended for. */
+  designFor: string;
+  path: string;
+  readPath: string;
+  state: string;
+  viewport: string;
+  colorScheme?: "light" | "dark" | undefined;
+  /** CSS px; design y = app y + offset. */
+  offset: number;
+  regions: Array<{ id: string; rect: Rect; elements: string[] }>;
+};
+
+/**
  * A magnified cut-out of a captured screenshot. Crops are viewing aids, not
  * citation coordinates: findings still cite the parent screenshot label.
  */
@@ -156,6 +175,8 @@ export type CritiqueInput = {
   crops?: CropRef[] | undefined;
   /** Sweep only: measured geometry per screenshot. */
   geometry?: SurfaceGeometry[] | undefined;
+  /** Tuples whose intended design is an image; HTML and site designs are not sent. */
+  designImages?: DesignImageRef[] | undefined;
   /** Sweep only: the configured design spec (`design.specFile`). */
   spec?: { file: string; content: string } | undefined;
 };
@@ -170,7 +191,8 @@ export type ModelFindingCandidate = {
     | "direction-drift"
     | "offer-change"
     | "unsupported-claim"
-    | "spec-mismatch";
+    | "spec-mismatch"
+    | "design-drift";
   severity: "blocker" | "major" | "minor";
   confidence: number;
   rule: string;

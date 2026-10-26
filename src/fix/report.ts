@@ -18,6 +18,8 @@ export type FixRound = {
   untouched?: Occurrence[];
   verification?: VerifyRunResult;
   verifiedFixed: string[];
+  /** Set when the round attempted one root cause whole. */
+  cause?: { id: string; cause: string; findings: string[]; verified: boolean };
   errors: string[];
   reason?: string;
 };
@@ -51,6 +53,11 @@ export function renderFixSummary(summary: FixSummary): string {
         : []),
       ...(round.verification
         ? [`  Verification: ${round.verification.reportPath}`]
+        : []),
+      ...(round.cause
+        ? [
+            `  Root cause ${round.cause.id}: ${round.cause.verified ? "verified" : "partial"} (${round.cause.findings.filter((id) => round.verifiedFixed.includes(id)).length}/${round.cause.findings.length}${round.cause.verified ? " symptoms cleared" : ""})`,
+          ]
         : []),
       ...round.errors.map((error) => `  ${error}`),
     ]),

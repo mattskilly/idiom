@@ -414,6 +414,7 @@ export function createElectronLauncher(
             explanation: tuple.project.checks.explanation,
             explanationWaitMs: tuple.project.checks.probe.waitMs,
             observe: {
+              designComparison: tuple.state.design !== undefined,
               touchReachability: tuple.project.checks.touchReachability,
               liveness: tuple.project.checks.liveness,
               mediaFill: tuple.project.checks.mediaFill,
@@ -433,6 +434,11 @@ export function createElectronLauncher(
               emptyState: tuple.project.checks.emptyState,
               bandEdges: tuple.project.checks.bandEdges?.enabled === true,
               wordBreak: tuple.project.checks.wordBreak?.enabled === true,
+              fonts: true,
+              lineLength: true,
+              orphanWord: true,
+              imageRenders: true,
+              layoutShift: true,
             },
           });
           return { result, version };

@@ -10,6 +10,17 @@ export const decisionSchema = z
     scope: z.enum(["instance", "rule"]).default("instance"),
     reason: z.string().optional(),
     actor: z.string().default("human"),
+    /** `decide --choose`: the reference a person chose where several disagreed. */
+    designChoice: z
+      .object({
+        flow: z.string().min(1),
+        state: z.string().min(1),
+        colorScheme: z.enum(["light", "dark"]).optional(),
+        decisionKey: z.string().min(1),
+        reference: z.string().min(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

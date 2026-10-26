@@ -28,7 +28,7 @@ export function displayPath(base: string, absolute: string): string {
 }
 export function summarizeFinding(
   finding: Finding,
-  result: ReviewRunResult,
+  result: Pick<ReviewRunResult, "runDirectory">,
   base: string,
 ): SummaryFinding {
   const params = finding.verification.params ?? {};

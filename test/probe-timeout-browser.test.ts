@@ -103,7 +103,9 @@ test("a hung restore retires its page, keeps earlier evidence, and never resumes
       maxControls: 10,
       waitMs: 0,
       controlTimeoutMs: 700,
-      stateTimeoutMs: 5000,
+      // The independent replay budget is 15s. Leave room for its expiry
+      // and a replacement attempt, rather than expiring the whole state first.
+      stateTimeoutMs: 25000,
       restore: async (active) => {
         calls += 1;
         if (calls === 1) {
@@ -135,7 +137,7 @@ test("a hung restore retires its page, keeps earlier evidence, and never resumes
     release?.();
     await context.close();
   }
-}, 10000);
+}, 30000);
 
 test("waitMs is part of the control budget and timeouts do not retry", async () => {
   const context = await browser.newContext();
@@ -152,9 +154,21 @@ test("waitMs is part of the control budget and timeouts do not retry", async () 
       controlTimeoutMs: 500,
       stateTimeoutMs: 2500,
     });
-    expect(result.results).toHaveLength(2);
+    // Every control past maxControls is reported, never silently dropped.
+    const attempted = result.results.filter(
+      (control) => control.status !== "not-reached",
+    );
+    expect(attempted).toHaveLength(2);
     expect(
-      result.results.every(
+      result.results
+        .filter((control) => control.status === "not-reached")
+        .every(
+          (control) =>
+            control.skipped === "not reached: checks.probe.maxControls",
+        ),
+    ).toBe(true);
+    expect(
+      attempted.every(
         (control) => control.status === "timed-out" && !control.signature,
       ),
     ).toBe(true);
@@ -201,6 +215,16 @@ test("state budget wins inside a control and preserves its selector", async () =
   try {
     const page = await context.newPage();
     await restore(page);
+    // Keep the first action active so the state deadline, rather than the
+    // quiet-window shortcut, ends its observation. Native print is suppressed.
+    await page.locator("#print").evaluate((button) => {
+      button.addEventListener("click", () => {
+        let tick = 0;
+        setInterval(() => {
+          button.setAttribute("data-tick", String(++tick));
+        }, 25);
+      });
+    });
     const result = await probeControls({
       page,
       restore,
@@ -211,12 +235,33 @@ test("state budget wins inside a control and preserves its selector", async () =
       stateTimeoutMs: 600,
     });
     expect(result).toMatchObject({ status: "timed-out", selector: "#print" });
-    expect(result.results).toHaveLength(1);
-    expect(result.results[0]).toMatchObject({
+    const attempted = result.results.filter(
+      (control) => control.status !== "not-reached",
+    );
+    expect(attempted).toHaveLength(1);
+    expect(attempted[0]).toMatchObject({
       selector: "#print",
       status: "timed-out",
       timeoutScope: "state",
     });
+    // The rest of the queue is reported as unreached, not dropped.
+    expect(result.results.length).toBeGreaterThan(1);
+    expect(
+      result.results
+        .slice(1)
+        .every(
+          (control) =>
+            control.status === "not-reached" &&
+            /^not reached: (?:state budget|checks\.probe\.maxControls)$/.test(
+              control.skipped ?? "",
+            ),
+        ),
+    ).toBe(true);
+    expect(
+      result.results.some(
+        (control) => control.skipped === "not reached: state budget",
+      ),
+    ).toBe(true);
   } finally {
     await context.close();
   }
@@ -261,7 +306,9 @@ test("visible explanation timeout shares the click budget and never clicks that 
   try {
     const page = await context.newPage();
     const html =
-      '<button id="glyph" aria-label="Help" onclick="window.recordClick(\'glyph\')">?</button><button id="last" onclick="window.recordClick(\'last\');this.textContent=\'worked\'">Last</button>';
+      // Hovering the glyph persists a change, so its focus sample needs the
+      // (hung) full replay rather than the cheap restore ladder.
+      '<button id="glyph" aria-label="Help" onmouseenter="document.body.dataset.visited=\'yes\'" onclick="window.recordClick(\'glyph\')">?</button><button id="last" onclick="window.recordClick(\'last\');this.textContent=\'worked\'">Last</button>';
     await page.setContent(html);
     let restores = 0;
     const result = await probeControls({

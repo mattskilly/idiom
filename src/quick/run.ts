@@ -1,5 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { summarizeFinding } from "../baseline/summary.js";
 import {
   type ArtifactTuple,
   cleanupWorkspace,
@@ -11,16 +13,28 @@ import {
 } from "../capture/artifacts.js";
 import { createBrowserLauncher } from "../capture/browser.js";
 import {
+  type CaptureLifetime,
+  type CaptureOwnership,
+  withCaptureOwnership,
+} from "../capture/ownership.js";
+import {
   expectedCaptureTupleKeys,
   expectedStatusByState,
   selectCaptureTuples,
 } from "../capture/resolve.js";
-import type { BrowserLauncher, CaptureCounts } from "../capture/types.js";
+import type {
+  BrowserLauncher,
+  CaptureCounts,
+  ProbeProgress,
+} from "../capture/types.js";
 import {
   checksConfigFrom,
   runDeterministicChecks,
 } from "../checks/registry.js";
 import type { ChecksConfig } from "../checks/types.js";
+import { captureDesigns, figmaFrameLoader } from "../design/capture.js";
+import { tupleDesigns } from "../design/evidence.js";
+import { claudeWrapper, isFigmaHost } from "../design/source.js";
 import { IdiomError } from "../errors.js";
 import {
   findOptionalProjectDirectory,
@@ -29,20 +43,37 @@ import {
 import { buildReviewCoverage } from "../report/coverage.js";
 import { pngDataUri, writeHtmlReport } from "../report/html.js";
 import { loadCaptureRun } from "../review/artifacts.js";
+import { attachCrops } from "../review/crops.js";
 import {
   buildDeterministicDrafts,
   finalizeFindingSelection,
   writeFindings,
 } from "../review/findings.js";
+import {
+  coordinateIndex,
+  type FindingGroup,
+  groupRepeatedFindings,
+  writeGroups,
+} from "../review/groups.js";
 import { renderReviewHtmlReport } from "../review/html-report.js";
+import type { CheckIssue } from "../review/issues.js";
 import { renderReport, writeReport } from "../review/report.js";
+import { projectIssueSummary } from "../review/summary.js";
+import {
+  type DesignLocation,
+  designLocationSchema,
+} from "../schemas/design.js";
+import type { Finding } from "../schemas/finding.js";
 import { createQuickConfiguration, type QuickConfiguration } from "./config.js";
 
-export type QuickDependencies = {
+export type QuickDependencies = CaptureLifetime & {
+  onProbeProgress?: ((event: ProbeProgress) => void) | undefined;
   browserLauncher?: BrowserLauncher | undefined;
   now?: (() => Date) | undefined;
   createArtifactWorkspace?: typeof createArtifactWorkspace | undefined;
   environment?: NodeJS.ProcessEnv | undefined;
+  /** Recorded Figma API responses in tests. */
+  figma?: import("../design/figma/client.js").FigmaDependencies | undefined;
 };
 
 export type QuickRunResult = {
@@ -52,6 +83,9 @@ export type QuickRunResult = {
   htmlReportPath: string;
   findingCount: number;
   counts: CaptureCounts;
+  findings?: Finding[];
+  groups?: FindingGroup[];
+  issues?: CheckIssue[];
 };
 
 function defaultRunName(now: Date): string {
@@ -71,7 +105,7 @@ export type LiteralCapture = {
  * `configuration.project.checks`, so capture-time selector marks and
  * review-time config agree.
  */
-export async function captureLiteralPages(options: {
+type LiteralOptions = {
   directory: string;
   finalDirectory: string;
   configuration: QuickConfiguration;
@@ -79,54 +113,63 @@ export async function captureLiteralPages(options: {
   startedAt: Date;
   /** Names the run in interruption and failure messages. */
   label: string;
+  /** Refetch pinned Figma frames instead of reusing the cache. */
+  refreshDesign?: boolean | undefined;
   dependencies?: QuickDependencies | undefined;
-}): Promise<LiteralCapture> {
+};
+
+export async function captureLiteralPages(
+  options: LiteralOptions,
+): Promise<LiteralCapture> {
+  return withCaptureOwnership(
+    options.configuration.project.capture.maxMinutes ?? 30,
+    options.dependencies,
+    (owner) => captureLiteralOwned(options, owner),
+  );
+}
+
+async function captureLiteralOwned(
+  options: LiteralOptions,
+  owner: CaptureOwnership,
+): Promise<LiteralCapture> {
   const { configuration, startedAt, label } = options;
-  const workspace = await (
-    options.dependencies?.createArtifactWorkspace ?? createArtifactWorkspace
-  )({
-    projectDirectory: options.directory,
-    out: options.finalDirectory,
-    now: startedAt,
-  });
-  let browser: Awaited<ReturnType<BrowserLauncher>> | undefined;
-  let interrupted: NodeJS.Signals | undefined;
-  let cleanupPromise: Promise<void> | undefined;
-
-  const closeBrowser = async () => {
-    cleanupPromise = (cleanupPromise ?? Promise.resolve()).then(async () => {
-      const active = browser;
-      browser = undefined;
-      await active?.close().catch(() => undefined);
-    });
-    return cleanupPromise;
-  };
-  const onSignal = (signal: NodeJS.Signals) => {
-    interrupted = signal;
-    void closeBrowser().catch(() => undefined);
-  };
-  const sigint = () => onSignal("SIGINT");
-  const sigterm = () => onSignal("SIGTERM");
-  const assertNotInterrupted = () => {
-    if (interrupted !== undefined)
-      throw new IdiomError(`${label} interrupted by ${interrupted}`);
-  };
-  process.once("SIGINT", sigint);
-  process.once("SIGTERM", sigterm);
-
+  owner.stage("workspace initialization");
+  const workspace = await owner.acquire(
+    (options.dependencies?.createArtifactWorkspace ?? createArtifactWorkspace)({
+      projectDirectory: options.directory,
+      out: options.finalDirectory,
+      now: startedAt,
+    }),
+    cleanupWorkspace,
+  );
   try {
-    browser = await (
-      options.dependencies?.browserLauncher ?? createBrowserLauncher()
-    )();
+    owner.stage("browser launch");
+    const browser = await owner.acquire(
+      (options.dependencies?.browserLauncher ?? createBrowserLauncher())({
+        signal: owner.signal,
+        onActivity: owner.stage,
+      }),
+      (value) => value.close(),
+    );
     const browserVersion = browser.version;
-    assertNotInterrupted();
+    owner.check();
     const tuples: ArtifactTuple[] = [];
     for (const selected of selectCaptureTuples({
       project: configuration.project,
       flow: configuration.flow,
     })) {
+      owner.coordinate(selected, "tuple capture");
       const url = selected.state.url as string;
       const result = await browser.capture({
+        signal: owner.signal,
+        onActivity: owner.stage,
+        onProbeProgress: (event) =>
+          options.dependencies?.onProbeProgress?.({
+            ...event,
+            state: selected.state.id,
+            viewport: selected.viewport.name,
+            colorScheme: selected.colorScheme,
+          }),
         project: configuration.project,
         state: selected.state,
         viewport: selected.viewport,
@@ -147,11 +190,35 @@ export async function captureLiteralPages(options: {
         },
         result,
       });
-      assertNotInterrupted();
+      owner.check();
     }
-    await closeBrowser();
+    owner.stage("design capture");
+    const figma = figmaFrameLoader({
+      projectDirectory: options.directory,
+      refresh: options.refreshDesign,
+      deps: options.dependencies?.figma,
+    });
+    for (const tuple of tuples) {
+      if (tuple.state.design === undefined) continue;
+      const planned = await captureDesigns({
+        state: tuple.state,
+        directory: options.directory,
+        project: configuration.project,
+        viewport: tuple.viewport,
+        colorScheme:
+          tuple.colorScheme ?? configuration.project.capture.colorScheme,
+        browser: async () => browser,
+        figma,
+      });
+      tuple.designs = planned.designs;
+      tuple.designNotApplicable = planned.notApplicable;
+      owner.check();
+    }
+    owner.stage("runtime teardown");
+    await owner.close(browser);
     const fallbackTimestamp = startedAt.toISOString();
     for (const tuple of tuples) {
+      owner.check();
       await writeTupleArtifacts({
         stagingDirectory: workspace.stagingDirectory,
         tuple,
@@ -168,7 +235,9 @@ export async function captureLiteralPages(options: {
     await scanForSecrets(workspace.stagingDirectory, [
       options.dependencies?.environment ?? process.env,
     ]);
-    await publishArtifacts(workspace);
+    owner.stage("artifact publication");
+    await publishArtifacts(workspace, owner.signal);
+    owner.check();
 
     const loaded = await loadCaptureRun({
       runDirectory: workspace.finalDirectory,
@@ -202,10 +271,7 @@ export async function captureLiteralPages(options: {
       `${label} failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   } finally {
-    process.off("SIGINT", sigint);
-    process.off("SIGTERM", sigterm);
-    await closeBrowser().catch(() => undefined);
-    await cleanupWorkspace(workspace);
+    await owner.close(workspace);
   }
 }
 
@@ -215,11 +281,20 @@ export async function writeReviewReports(
   reportOptions: Parameters<typeof renderReport>[0],
 ): Promise<{ reportPath: string; htmlReportPath: string }> {
   const screenshotPaths = [
-    ...new Set(
-      reportOptions.tuples.flatMap((tuple) =>
-        tuple.screenshotPath === undefined ? [] : [tuple.screenshotPath],
+    ...new Set([
+      ...reportOptions.tuples.flatMap((tuple) =>
+        [
+          tuple.screenshotPath,
+          ...tupleDesigns(tuple).map((design) => design.screenshotPath),
+        ].filter((p): p is string => p !== undefined),
       ),
-    ),
+      ...[reportOptions.findings, reportOptions.deferred ?? []]
+        .flat()
+        .flatMap(
+          (finding) =>
+            finding.evidence.designDrift?.crops?.map((crop) => crop.path) ?? [],
+        ),
+    ]),
   ];
   const screenshots = new Map(
     await Promise.all(
@@ -239,26 +314,72 @@ export async function writeReviewReports(
   return { reportPath, htmlReportPath };
 }
 
+/**
+ * What `quick --design <value>` compares against: a Figma frame or Claude
+ * share URL passes through as a design string, any other HTTP(S) URL is a
+ * live reference site, and anything else is a local path (HTML or image).
+ */
+export function quickDesignReference(
+  value: string,
+  cwd: string,
+): DesignLocation {
+  const trimmed = value.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    if (isFigmaHost(trimmed) || claudeWrapper(trimmed)) return trimmed;
+    return { site: trimmed };
+  }
+  return resolve(cwd, trimmed);
+}
+
 export async function runQuick(options: {
   urls: string[];
+  design?: string | undefined;
+  viewports?: Array<"desktop" | "mobile"> | undefined;
+  literal?: boolean | undefined;
+  materializeAllDeterministic?: boolean | undefined;
   project?: string | undefined;
   cwd?: string | undefined;
   out?: string | undefined;
   dependencies?: QuickDependencies | undefined;
 }): Promise<QuickRunResult> {
   const directory = resolveProjectArgument(options.project, options.cwd);
-  const configured = await findOptionalProjectDirectory(directory);
+  const configured =
+    options.literal === true
+      ? undefined
+      : await findOptionalProjectDirectory(directory);
   if (configured !== undefined) {
     throw new IdiomError(
       `quick review is unavailable inside configured Idiom project ${configured}; run \`idiom validate\` and then \`idiom review <flow>\` so declared states and project guidance are not bypassed`,
     );
   }
-  const configuration = createQuickConfiguration(options.urls);
+  let design: DesignLocation | undefined;
+  if (options.design !== undefined) {
+    if (options.urls.length !== 1)
+      throw new IdiomError("--design compares one page; pass a single URL");
+    const parsed = designLocationSchema.safeParse(
+      quickDesignReference(options.design, directory),
+    );
+    if (!parsed.success)
+      throw new IdiomError(
+        `invalid --design: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`,
+      );
+    design = parsed.data;
+  }
+  const configuration = createQuickConfiguration(options.urls, {
+    viewports: options.viewports,
+    design,
+  });
   const now = options.dependencies?.now ?? (() => new Date());
   const startedAt = now();
   const finalDirectory =
     options.out === undefined
-      ? join(directory, "idiom-quick-reports", defaultRunName(startedAt))
+      ? join(
+          directory,
+          "idiom-quick-reports",
+          options.literal
+            ? `${defaultRunName(startedAt)}-${randomUUID().slice(0, 8)}`
+            : defaultRunName(startedAt),
+        )
       : resolve(directory, options.out);
   const { runDirectory, loaded, reviewed, counts } = await captureLiteralPages({
     directory,
@@ -270,17 +391,55 @@ export async function runQuick(options: {
     dependencies: options.dependencies,
   });
   try {
+    options.dependencies?.signal?.throwIfAborted();
+    const drafts = buildDeterministicDrafts({
+      runId: loaded.runId,
+      entries: reviewed.candidates,
+      legacyColorScheme: configuration.project.capture.colorScheme,
+    });
     const selection = finalizeFindingSelection({
       runId: loaded.runId,
-      drafts: buildDeterministicDrafts({
-        runId: loaded.runId,
-        entries: reviewed.candidates,
-        legacyColorScheme: configuration.project.capture.colorScheme,
-      }),
-      maxFindings: 5,
+      drafts,
+      maxFindings: options.materializeAllDeterministic
+        ? Number.POSITIVE_INFINITY
+        : 5,
     });
-    const findings = selection.material;
+    const findings = options.materializeAllDeterministic
+      ? await attachCrops(runDirectory, selection.material, loaded.tuples)
+      : selection.material;
+    const groups = groupRepeatedFindings(
+      [...findings, ...selection.deferred],
+      coordinateIndex(drafts),
+      new Set(selection.deferred.map((finding) => finding.id)),
+    );
+    const primaryActionSelectors = loaded.tuples.flatMap((tuple) =>
+      tuple.observations?.version === 2
+        ? tuple.observations.elements
+            .filter((element) => element.signals?.paint?.primaryAction === true)
+            .map((element) => element.selector)
+        : [],
+    );
+    const summaries = new Map(
+      findings.map((finding) => [
+        finding.id,
+        summarizeFinding(finding, { runDirectory }, directory),
+      ]),
+    );
+    const { issues } = projectIssueSummary({
+      findings,
+      groups,
+      summaries,
+      primaryActionSelectors,
+    });
+    options.dependencies?.signal?.throwIfAborted();
     const findingsPath = await writeFindings(runDirectory, findings);
+    if (options.materializeAllDeterministic) {
+      await writeGroups(runDirectory, groups);
+      await writeFile(
+        join(runDirectory, "mcp-detail.json"),
+        JSON.stringify({ version: 1, issues }),
+      );
+    }
     const outcome = {
       kind: "quick" as const,
       targets: configuration.urls,
@@ -309,6 +468,10 @@ export async function runQuick(options: {
       runDirectory,
       reportOptions,
     );
+    await scanForSecrets(runDirectory, [
+      options.dependencies?.environment ?? process.env,
+    ]);
+    options.dependencies?.signal?.throwIfAborted();
     return {
       runDirectory,
       findingsPath,
@@ -316,6 +479,9 @@ export async function runQuick(options: {
       htmlReportPath,
       findingCount: findings.length,
       counts,
+      ...(options.materializeAllDeterministic
+        ? { findings, groups, issues }
+        : {}),
     };
   } catch (error) {
     if (error instanceof IdiomError) throw error;

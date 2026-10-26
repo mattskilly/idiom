@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { resolveRunBaseline } from "../baseline/compare.js";
-import { tupleCoordinateKey } from "../baseline/coordinate.js";
 import { recordBaseline } from "../baseline/record.js";
 import { renderBaselineComparison } from "../baseline/render.js";
 import {
@@ -13,20 +12,19 @@ import {
 } from "../baseline/summary.js";
 import type { CaptureScope } from "../capture/scope.js";
 import type { ProductionBuild } from "../capture/types.js";
-import { checksConfigFrom } from "../checks/registry.js";
+import { projectChecksConfig } from "../checks/project-config.js";
 import { IdiomError } from "../errors.js";
 import { loadRunTuples, resolveStoredRun } from "../review/artifacts.js";
-import {
-  describeSpread,
-  groupRepeatedFindings,
-  isRepeated,
-  memberCoordinates,
-} from "../review/groups.js";
+import { describeSpread, isRepeated } from "../review/groups.js";
 import {
   type CheckIssue,
   categoryCounts,
   collapseIssues,
 } from "../review/issues.js";
+import { type CheckGroup, projectIssueSummary } from "../review/summary.js";
+
+export type { CheckGroup } from "../review/summary.js";
+
 import type { ReviewOutcome } from "../review/report.js";
 import {
   type ReviewDependencies,
@@ -34,6 +32,7 @@ import {
   runReview,
 } from "../review/run.js";
 import type { Finding } from "../schemas/finding.js";
+import type { ClusterCause } from "../tickets/cluster.js";
 import {
   type ClusterTicketsResult,
   emitClusterTickets,
@@ -41,34 +40,6 @@ import {
 } from "../tickets/emit.js";
 import { validateProject } from "../validation.js";
 import { deterministicFingerprintSet } from "../verify/evaluate.js";
-
-/** One element failing one rule, wherever it repeats (#52). */
-export type CheckGroup = {
-  id: string;
-  severity: Finding["severity"];
-  category: Finding["category"];
-  rule?: string | undefined;
-  where: string;
-  selector?: string | undefined;
-  problem: string;
-  fix: string[];
-  screenshot?: string | undefined;
-  /** Every member is past the review's attention cap. */
-  deferred?: true | undefined;
-  members: Array<{
-    id: string;
-    severity: Finding["severity"];
-    where: string;
-    deferred?: true | undefined;
-    /** tupleCoordinateKey strings: state/viewport[/scheme][#combination]. */
-    coordinates: string[];
-  }>;
-  coordinates: string[];
-  states: string[];
-  viewports: string[];
-  colorSchemes: string[];
-  combinations?: string[] | undefined;
-};
 
 export type CheckSummary = {
   scope?: import("../capture/run-record.js").RunRecord | undefined;
@@ -130,6 +101,8 @@ export type CheckOptions = {
   scope?: CaptureScope | undefined;
   /** Serve the application on this port instead of a free one. */
   port?: number | undefined;
+  /** Refetch pinned Figma frames. */
+  refreshDesign?: boolean | undefined;
   from?: string | undefined;
   latest?: boolean | undefined;
   /** Report only findings this stored run did not already have. */
@@ -153,6 +126,8 @@ export async function checkCommand(
 export async function checkWithReview(
   options: CheckOptions & {
     materializeAllDeterministic?: boolean;
+    /** Adapters need tuple diagnostics before an automatic baseline can fail. */
+    captureFailureIsError?: boolean;
   },
 ): Promise<{ summary: CheckSummary; review: ReviewRunResult }> {
   const {
@@ -163,6 +138,7 @@ export async function checkWithReview(
     emitTickets,
     advisory,
     materializeAllDeterministic,
+    captureFailureIsError,
     ...reviewOptions
   } = options;
   const selectors = [
@@ -198,6 +174,7 @@ export async function checkWithReview(
   const result = await runReview({
     ...reviewOptions,
     deterministicOnly: true,
+    includeIssueRankingContext: !recordedMode,
     ...(advisory === true ? { advisory: true } : {}),
     ...(materializeAllDeterministic === true
       ? { materializeAllDeterministic: true }
@@ -206,6 +183,23 @@ export async function checkWithReview(
       ? { includeDeterministicOccurrences: true }
       : {}),
   });
+  options.dependencies?.capture?.signal?.throwIfAborted();
+  if (captureFailureIsError) {
+    const validated = await validateProject(options);
+    const flow = validated.flows[0]?.flow;
+    if (flow) {
+      const loaded = await loadRunTuples(validated, flow, result.runDirectory);
+      const failures = loaded.tuples.flatMap((tuple) =>
+        tuple.failure
+          ? [`${tuple.failure.stage}: ${tuple.failure.message}`]
+          : [],
+      );
+      if (failures.length)
+        throw new IdiomError(
+          `Capture failed: ${failures.join("; ")}. Reports: ${result.reportPath}, ${result.htmlReportPath}`,
+        );
+    }
+  }
   const baselineRecorded =
     bootstrap === undefined
       ? undefined
@@ -230,7 +224,7 @@ export async function checkWithReview(
       known = deterministicFingerprintSet(
         loaded.tuples,
         validated.project.capture.colorScheme,
-        checksConfigFrom(validated.project.checks),
+        await projectChecksConfig(validated),
       );
     }
   }
@@ -274,46 +268,13 @@ export async function checkWithReview(
         },
       ]),
     );
-    const groups = groupRepeatedFindings(
-      live,
-      memberCoordinates(result.groups),
+    const { groups, issues } = projectIssueSummary({
+      findings: live,
+      groups: result.groups,
+      summaries,
       deferredIds,
-    ).map((group): CheckGroup => {
-      const representative = summaries.get(
-        group.representative,
-      ) as SummaryFinding;
-      return {
-        id: group.id,
-        severity: group.severity,
-        category: representative.category,
-        ...(group.rule === undefined ? {} : { rule: group.rule }),
-        where: representative.where,
-        ...(representative.selector === undefined
-          ? {}
-          : { selector: representative.selector }),
-        problem: representative.problem,
-        fix: representative.fix,
-        ...(representative.screenshot === undefined
-          ? {}
-          : { screenshot: representative.screenshot }),
-        ...(group.members.every((member) => member.deferred === true)
-          ? { deferred: true }
-          : {}),
-        members: group.members.map((member) => ({
-          id: member.id,
-          severity: member.severity,
-          where: summaries.get(member.id)?.where ?? member.state,
-          ...(member.deferred === true ? { deferred: true } : {}),
-          coordinates: member.coordinates.map(tupleCoordinateKey),
-        })),
-        coordinates: group.coordinates.map(tupleCoordinateKey),
-        states: group.states,
-        viewports: group.viewports,
-        colorSchemes: group.colorSchemes,
-        ...(group.combinations === undefined
-          ? {}
-          : { combinations: group.combinations }),
-      };
+      primaryActionSelectors: result.primaryActionSelectors,
+      rankingContext: result.issueRankingContext,
     });
     summary = {
       flow: options.flow,
@@ -324,10 +285,7 @@ export async function checkWithReview(
         (finding) => summaries.get(finding.id) as SummaryFinding,
       ),
       groups,
-      issues: collapseIssues(
-        groups,
-        new Set(result.primaryActionSelectors ?? []),
-      ),
+      issues,
       blocking: live.filter((finding) => finding.severity !== "minor").length,
       ...(known === undefined
         ? {}
@@ -389,13 +347,24 @@ export async function checkWithReview(
         runDirectory: result.runDirectory,
         findingsPath: result.findingsPath,
       }));
+    const rootCauses = new Map<string, ClusterCause>();
+    for (const issue of summary.issues ?? []) {
+      const cause = issue.rootCause;
+      if (cause === undefined) continue;
+      const { symptoms, counts: _counts, ...rest } = cause;
+      for (const symptom of symptoms)
+        for (const finding of symptom.findings)
+          rootCauses.set(finding.id, { ...rest, symptoms: symptoms.length });
+    }
     summary.tickets = await emitClusterTickets({
       project: options.project,
       cwd: options.cwd,
       out: emitTickets,
+      rootCauses,
       selection: { policy: "current-run", records },
     });
   }
+  options.dependencies?.capture?.signal?.throwIfAborted();
   return { summary, review: result };
 }
 
@@ -608,17 +577,50 @@ function renderCheckIssues(
     `Top issues (${top} of ${issues.length}), fix these first:`,
     "",
   ];
+  const renderRootCause = (
+    issue: CheckIssue,
+    cause: NonNullable<CheckIssue["rootCause"]>,
+    index: number,
+  ) => {
+    lines.push(
+      `${index + 1}. [${issue.severity}] root cause — ${cause.cause}`,
+      `   Confidence: ${cause.confidence} (${cause.kind} ${cause.key.replaceAll("\0", " ")})`,
+      `   Evidence: ${cause.evidence.join("; ")}`,
+      ...(cause.fix === undefined ? [] : [`   Suggested fix: ${cause.fix}`]),
+      `   Symptoms (${cause.counts.symptoms}; ${cause.counts.findings} findings):`,
+      ...cause.symptoms.map(
+        (symptom) =>
+          `   - ${symptom.category} ${symptom.rule ?? "unspecified"} — ${symptom.selector ?? "document"} — ${symptom.measurement} (${symptom.group})`,
+      ),
+      "   Done when: every symptom above clears on recheck.",
+      `   Decide symptoms individually: idiom decide --group|--finding … (idiom check ${summary.flow} --all lists each)`,
+      "",
+    );
+    if (options.all === true)
+      for (const symptom of cause.symptoms) {
+        const group = byId.get(symptom.group) as CheckGroup;
+        const item = renderGroupItem(group, index);
+        item.splice(1, 0, `   Rule: ${group.rule ?? "unspecified"}`);
+        item[0] = `   Symptom: [${group.severity}] ${group.category} — ${group.selector ?? group.where} (${group.id})`;
+        lines.push(...item);
+      }
+  };
   const renderIssue = (issue: CheckIssue, index: number) => {
+    if (issue.rootCause !== undefined)
+      return renderRootCause(issue, issue.rootCause, index);
     const example = byId.get(issue.id) as CheckGroup;
     const item = renderGroupItem(
-      example,
+      { ...example, severity: issue.severity },
       index,
       issue.elements > 1
         ? [
-            `   Repeated on ${issue.elements} similar elements (${issue.findings} findings in ${issue.places} places); example below.`,
+            `   ${issue.category} family: ${issue.elements} occurrences (${issue.findings} findings in ${issue.places} places); example below.`,
           ]
         : [],
     );
+    item.splice(1, 0, `   Rules: ${issue.rules.join(", ") || "unspecified"}`);
+    if (issue.rules.length > 1)
+      item.splice(2, 0, `   Example rule: ${example.rule ?? "unspecified"}`);
     if (issue.elements > 1 && options.all !== true)
       item.splice(
         -1,
@@ -626,12 +628,13 @@ function renderCheckIssues(
         `   Other groups: idiom check ${summary.flow} --all lists them.`,
       );
     lines.push(...item);
-    // --all exposes every sibling's evidence and per-element decide command.
+    // --all exposes each original occurrence and its own decision target.
     if (options.all === true)
       for (const id of issue.groups.slice(1)) {
         const group = byId.get(id) as CheckGroup;
         const sibling = renderGroupItem(group, index);
-        sibling[0] = `   Similar element: ${group.selector ?? group.where} (${group.id})`;
+        sibling.splice(1, 0, `   Rule: ${group.rule ?? "unspecified"}`);
+        sibling[0] = `   Occurrence: [${group.severity}] ${group.category} — ${group.selector ?? group.where} (${group.id})`;
         lines.push(...sibling);
       }
   };

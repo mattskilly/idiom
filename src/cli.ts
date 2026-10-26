@@ -27,6 +27,7 @@ import {
 } from "./commands/context.js";
 import { coverageCommand, renderCoverage } from "./commands/coverage.js";
 import { type DecideDependencies, decideCommand } from "./commands/decide.js";
+import { addDesignCommand } from "./commands/design.js";
 import {
   type ExploreDependencies,
   exploreCommand,
@@ -240,15 +241,35 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
     });
 
   program
+    .command("mcp")
+    .description("serve Idiom tools over MCP stdio")
+    .action(async (_options, command: Command) => {
+      const { mcpCommand } = await import("./commands/mcp.js");
+      await mcpCommand({
+        project: command.optsWithGlobals<SharedOptions>().project,
+        cwd: dependencies.cwd,
+      });
+    });
+
+  program
     .command("quick")
     .description("review explicit public URLs without Idiom configuration")
     .argument("<url...>", "one or more HTTP(S) URLs from the same origin")
     .option("--out <dir>", "exact output directory (must not exist)")
+    .option(
+      "--design <source>",
+      "intended design image, HTML file/directory, site URL or Figma frame URL",
+    )
     .action(
-      async (urls: string[], options: { out?: string }, command: Command) => {
+      async (
+        urls: string[],
+        options: { out?: string; design?: string },
+        command: Command,
+      ) => {
         const shared = command.optsWithGlobals<SharedOptions>();
         const result = await quickCommand({
           urls,
+          design: options.design,
           project: shared.project,
           cwd: dependencies.cwd,
           out: options.out,
@@ -283,11 +304,16 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       parsePortOption,
     )
     .option("--out <dir>", "exact output directory (must not exist)")
+    .option(
+      "--refresh-design",
+      "refetch pinned Figma frames instead of reusing .idiom/designs",
+    )
     .action(
       async (
         flow: string,
         options: {
           out?: string;
+          refreshDesign?: boolean;
           prod?: boolean;
           port?: number;
           states?: string;
@@ -308,6 +334,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           },
           prod: options.prod,
           port: options.port,
+          refreshDesign: options.refreshDesign,
           cwd: dependencies.cwd,
           dependencies: captureDependencies(),
         });
@@ -400,6 +427,45 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       },
     );
 
+  program
+    .command("design")
+    .description("Configure intended designs (HTML, images or Figma frames)")
+    .command("add <state> <source>")
+    .description(
+      "Attach an intended design (a local HTML file/directory, prototype URL, PNG/JPEG/WebP image, or Figma frame URL) to an authored state",
+    )
+    .option("--flow <id>", "disambiguate the state across flow manifests")
+    .option(
+      "--name <name>",
+      "add or replace a named reference, keeping the state's other references",
+    )
+    .option(
+      "--viewport <name>",
+      "compare this reference only at this project viewport",
+    )
+    .action(
+      async (
+        state: string,
+        source: string,
+        options: { flow?: string; name?: string; viewport?: string },
+        command: Command,
+      ) => {
+        const shared = command.optsWithGlobals<SharedOptions>();
+        const result = await addDesignCommand({
+          state,
+          source,
+          name: options.name,
+          viewport: options.viewport,
+          flow: options.flow,
+          project: shared.project,
+          cwd: dependencies.cwd,
+        });
+        writeOut(
+          `${result.changed ? "Set" : "Kept"} design for ${state}: ${result.source}`,
+        );
+      },
+    );
+
   const baselineCommand = program
     .command("baseline")
     .description("record compact deterministic finding baselines");
@@ -481,6 +547,10 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         .choices(["blocker", "major", "minor", "never"])
         .default("major"),
     )
+    .option(
+      "--design <source>",
+      "with --page, intended HTML file/directory or prototype URL",
+    )
     .option("--page <url>", "review one rendered page without a flow")
     .option(
       "--brief <file>",
@@ -513,10 +583,15 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       "--max-findings <n>",
       "with --page, material findings to report (default 10)",
     )
+    .option(
+      "--refresh-design",
+      "refetch pinned Figma frames instead of reusing .idiom/designs",
+    )
     .action(
       async (
         flow: string | undefined,
         options: {
+          refreshDesign?: boolean;
           from?: string;
           latest?: boolean;
           deterministicOnly?: boolean;
@@ -524,6 +599,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           json?: boolean;
           failOn: "blocker" | "major" | "minor" | "never";
           page?: string;
+          design?: string;
           brief?: string;
           direction?: string;
           focus?: string[];
@@ -560,6 +636,8 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           const shared = command.optsWithGlobals<SharedOptions>();
           const result = await pageReviewCommand({
             url: options.page,
+            design: options.design,
+            refreshDesign: options.refreshDesign,
             brief: options.brief,
             direction: options.direction,
             focus: parseFocus(options.focus),
@@ -590,6 +668,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         }
         const pageOnly = (
           [
+            ["--design", options.design],
             ["--brief", options.brief],
             ["--direction", options.direction],
             ["--focus", options.focus],
@@ -611,6 +690,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           latest: options.latest,
           deterministicOnly: options.deterministicOnly,
           sinceBaseline: options.sinceBaseline,
+          refreshDesign: options.refreshDesign,
           dependencies: reviewDependencies,
         });
         writeOut(
@@ -672,7 +752,12 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         .default("claude"),
     )
     .option("--max-rounds <n>", "maximum repair attempts", parsePositiveInt, 3)
-    .option("--top <n>", "findings per repair attempt", parsePositiveInt, 5)
+    .option(
+      "--top <n>",
+      "findings per repair attempt (a root cause is always attempted whole)",
+      parsePositiveInt,
+      5,
+    )
     .option("--dry-run", "capture and print the repair prompt only")
     .action(async (flow: string, _options, command: Command) => {
       const options = command.optsWithGlobals<
@@ -780,10 +865,15 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         .choices(["blocker", "major", "minor", "never"])
         .default("major"),
     )
+    .option(
+      "--refresh-design",
+      "refetch pinned Figma frames instead of reusing .idiom/designs",
+    )
     .action(
       async (
         flow: string,
         options: {
+          refreshDesign?: boolean;
           from?: string;
           latest?: boolean;
           prod?: boolean;
@@ -817,6 +907,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           sinceBaseline: options.sinceBaseline,
           prod: options.prod,
           port: options.port,
+          refreshDesign: options.refreshDesign,
           emitTickets: options.emitTickets,
           advisory: options.advisory,
           scope: {
@@ -1078,10 +1169,19 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       "baseline capture run or directory",
     )
     .option("--out <dir>", "exact replaceable verify output directory")
+    .option(
+      "--refresh-design",
+      "refetch pinned Figma frames instead of reusing .idiom/designs",
+    )
     .action(
       async (
         flow: string,
-        options: { spec: string; against?: string; out?: string },
+        options: {
+          spec: string;
+          against?: string;
+          out?: string;
+          refreshDesign?: boolean;
+        },
         command: Command,
       ) => {
         const shared = command.optsWithGlobals<SharedOptions>();
@@ -1092,6 +1192,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           cwd: dependencies.cwd,
           against: options.against,
           out: options.out,
+          refreshDesign: options.refreshDesign,
           dependencies:
             dependencies.verify ??
             (dependencies.capture === undefined
@@ -1172,6 +1273,10 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
     )
     .option("--accept", "accept the selected finding")
     .option("--reject", "reject the selected finding")
+    .option(
+      "--choose <reference>",
+      "for a design decision, the design reference that is intended",
+    )
     .addOption(
       new Option("--scope <scope>", "rejection scope").choices([
         "instance",
@@ -1186,6 +1291,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           group?: string;
           accept?: boolean;
           reject?: boolean;
+          choose?: string;
           scope?: "instance" | "rule";
           reason?: string;
           list?: boolean;
@@ -1200,6 +1306,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           group: options.group,
           accept: options.accept,
           reject: options.reject,
+          choose: options.choose,
           scope: options.scope,
           reason: options.reason,
           list: options.list,
@@ -1422,13 +1529,28 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
   program
     .command("system")
     .description("render and open the evidence-derived design system")
-    .option("--learn", "propose design rules from code")
+    .option(
+      "--learn [figma-file-url]",
+      "propose design rules from code, or tokens from a Figma file's variables",
+    )
     .option("--yes", "apply the displayed learning without prompting")
+    .option(
+      "--refresh-design",
+      "refetch pinned Figma frames instead of reusing .idiom/designs",
+    )
     .action(async (_options, command: Command) => {
       const shared = command.optsWithGlobals<SharedOptions>();
-      const local = command.opts<{ learn?: boolean; yes?: boolean }>();
+      const local = command.opts<{
+        learn?: boolean | string;
+        yes?: boolean;
+        refreshDesign?: boolean;
+      }>();
       const result = await systemCommand({
-        learn: local.learn,
+        learn: local.learn !== undefined && local.learn !== false,
+        ...(typeof local.learn === "string"
+          ? { learnSource: local.learn }
+          : {}),
+        refreshDesign: local.refreshDesign,
         yes: local.yes,
         project: shared.project,
         cwd: dependencies.cwd,

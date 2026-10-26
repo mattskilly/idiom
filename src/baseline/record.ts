@@ -9,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { captureTupleKey } from "../capture/resolve.js";
-import { checksConfigFrom } from "../checks/registry.js";
+import { projectChecksConfig } from "../checks/project-config.js";
 import type { CheckTuple } from "../checks/types.js";
 import { IdiomError } from "../errors.js";
 import { loadRunTuples } from "../review/artifacts.js";
@@ -117,7 +117,7 @@ export async function recordBaseline(options: {
     tuples: loaded.tuples,
     expectedTupleKeys: loaded.expectedTupleKeys,
     legacyColorScheme: validated.project.capture.colorScheme,
-    config: checksConfigFrom(validated.project.checks),
+    config: await projectChecksConfig(validated),
   });
   const tuples = new Map<string, BaselineTuple>(
     loaded.tuples.map((tuple) => {

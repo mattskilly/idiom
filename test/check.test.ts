@@ -534,7 +534,15 @@ test("text selection keeps full-finding gating even with hidden blocking finding
       (g) => g.severity === "major" || g.severity === "blocker",
     ),
   ).toBe(true);
-  for (const selection of [[], ["--top", "1"], ["--all"]]) {
+  const persistedBefore = await readFile(
+    join(summary.runDirectory, "findings.json"),
+    "utf8",
+  );
+  const groupsBefore = await readFile(
+    join(summary.runDirectory, "groups.json"),
+    "utf8",
+  );
+  for (const selection of [[], ["--top", "1"], ["--top", "7"], ["--all"]]) {
     for (const failOn of ["major", "never"]) {
       const stdout: string[] = [];
       const stderr: string[] = [];
@@ -559,6 +567,12 @@ test("text selection keeps full-finding gating even with hidden blocking finding
         },
       );
       expect(code).toBe(failOn === "major" ? 1 : 0);
+      expect(
+        await readFile(join(summary.runDirectory, "findings.json"), "utf8"),
+      ).toBe(persistedBefore);
+      expect(
+        await readFile(join(summary.runDirectory, "groups.json"), "utf8"),
+      ).toBe(groupsBefore);
       expect(stdout.join("\n")).toContain(
         `${summary.blocking} blocking (blocker/major)`,
       );

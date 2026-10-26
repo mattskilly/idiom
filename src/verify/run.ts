@@ -2,13 +2,15 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
+  captureTupleKey,
   expectedCaptureTupleKeys,
   expectedStatusByState,
+  selectCaptureTuples,
   selectColorSchemes,
 } from "../capture/resolve.js";
 import type { CaptureDependencies } from "../capture/run.js";
 import { runCapture } from "../capture/run.js";
-import { checksConfigFrom } from "../checks/registry.js";
+import { projectChecksConfig } from "../checks/project-config.js";
 import { IdiomError } from "../errors.js";
 import { buildVerificationCoverage } from "../report/coverage.js";
 import { pngDataUri, writeHtmlReport } from "../report/html.js";
@@ -52,6 +54,8 @@ export type VerifyRunResult = {
   /** Available only after calibrated evaluation and report publication. */
   verdicts?: VerificationEvaluation["findings"] | undefined;
   newBlockers?: VerificationEvaluation["newBlockers"] | undefined;
+  newFindings?: VerificationEvaluation["newFindings"] | undefined;
+  coverage?: import("../report/coverage.js").ReportCoverage | undefined;
 };
 
 function defaultOutput(projectDirectory: string, now: Date): string {
@@ -67,11 +71,17 @@ export async function runVerify(options: {
   flow: string;
   spec: string;
   project?: string | undefined;
+  /** Refetch pinned Figma frames before the first recapture; the second reuses them. */
+  refreshDesign?: boolean | undefined;
   cwd?: string | undefined;
   against?: string | undefined;
   out?: string | undefined;
+  fullFlow?: boolean | undefined;
   dependencies?: VerifyDependencies | undefined;
 }): Promise<VerifyRunResult> {
+  const checkCancelled = () =>
+    options.dependencies?.capture?.signal?.throwIfAborted();
+  checkCancelled();
   const validated = await validateProject({
     project: options.project,
     flow: options.flow,
@@ -84,11 +94,20 @@ export async function runVerify(options: {
     ? options.spec
     : resolve(validated.projectDirectory, options.spec);
   const findings = await readVerificationSpec(specPath);
-  const tuples = selectFindingTuples({
+  const findingTuples = selectFindingTuples({
     findings,
     flow,
     project: validated.project,
   });
+  const tuples = options.fullFlow
+    ? selectCaptureTuples({ project: validated.project, flow }).map(
+        (tuple) => ({
+          state: tuple.state.id,
+          viewport: tuple.viewport.name,
+          colorScheme: tuple.colorScheme,
+        }),
+      )
+    : findingTuples;
   const now = options.dependencies?.now?.() ?? new Date();
   const outputDirectory =
     options.out === undefined
@@ -146,6 +165,7 @@ export async function runVerify(options: {
         verifyOutputOwner.text,
       );
       await validateAttachmentManifest({ outputDirectory: staging, manifest });
+      checkCancelled();
       await publish(staging, outputDirectory, verifyOutputOwner);
       published = true;
       return {
@@ -168,15 +188,18 @@ export async function runVerify(options: {
       gitTopology: options.dependencies?.gitTopology,
     });
     capturesRoot = await mkdtemp(join(tmpdir(), "idiom-verify-captures-"));
+    checkCancelled();
     const runA = await runCapture({
       projectDirectory: validated.projectDirectory,
       project: validated.project,
       flow,
       out: join(capturesRoot, "current-a"),
       deduplicateCombinations: false,
+      refreshDesign: options.refreshDesign,
       tuples,
       dependencies: options.dependencies?.capture,
     });
+    checkCancelled();
     const runB = await runCapture({
       projectDirectory: validated.projectDirectory,
       project: validated.project,
@@ -186,6 +209,7 @@ export async function runVerify(options: {
       tuples,
       dependencies: options.dependencies?.capture,
     });
+    checkCancelled();
     const stateOrder = flow.states.map(({ id }) => id);
     const viewportOrder =
       flow.viewports ?? validated.project.viewports.map(({ name }) => name);
@@ -326,13 +350,46 @@ export async function runVerify(options: {
     let evaluation: VerificationEvaluation | undefined;
     let diagnostic: string | undefined;
     try {
+      checkCancelled();
+      if (options.fullFlow) {
+        const expected = expectedCaptureTupleKeys({
+          project: validated.project,
+          flow,
+        });
+        for (const [label, loaded] of [
+          ["baseline", baselineLoaded],
+          ["A", loadedA],
+          ["B", loadedB],
+        ] as const) {
+          const actual = loaded.tuples.map((tuple) =>
+            captureTupleKey({
+              ...tuple,
+              colorScheme:
+                tuple.colorScheme ?? validated.project.capture.colorScheme,
+            }),
+          );
+          if (
+            expected.some((key) => !actual.includes(key)) ||
+            actual.some((key) => !expected.includes(key)) ||
+            new Set(actual).size !== actual.length ||
+            loaded.tuples.some(
+              (tuple) =>
+                tuple.failure || tuple.mismatches.length || !tuple.observations,
+            )
+          )
+            throw new IdiomError(
+              `${label} requires complete successful full-flow coverage; obtain a full idiom_check or idiom_fix_plan first`,
+            );
+        }
+      }
       evaluation = evaluateVerification({
+        fullFlow: options.fullFlow,
         findings,
         baseline: baselineTuples,
         currentA: loadedA.tuples,
         currentB: loadedB.tuples,
         legacyColorScheme: validated.project.capture.colorScheme,
-        checksConfig: checksConfigFrom(validated.project.checks),
+        checksConfig: await projectChecksConfig(validated),
         expectedTupleKeys: expectedCaptureTupleKeys({
           collapsed: loadedB.collapsedTupleKeys,
           project: validated.project,
@@ -340,6 +397,7 @@ export async function runVerify(options: {
         }),
       });
     } catch (error) {
+      checkCancelled();
       diagnostic = error instanceof Error ? error.message : String(error);
     }
     const currentCommit =
@@ -390,6 +448,7 @@ export async function runVerify(options: {
       verifyOutputOwner.text,
     );
     await validateAttachmentManifest({ outputDirectory: staging, manifest });
+    checkCancelled();
     await publish(staging, outputDirectory, verifyOutputOwner);
     published = true;
     const causes =
@@ -407,6 +466,7 @@ export async function runVerify(options: {
       outputDirectory,
       outcome: evaluation?.passed === true ? "fixed" : "failed",
       passed: evaluation?.passed === true,
+      coverage: reportCoverage,
       findingCount: findings.length,
       causes,
       ...(evaluation === undefined
@@ -414,6 +474,9 @@ export async function runVerify(options: {
         : {
             verdicts: evaluation.findings,
             newBlockers: evaluation.newBlockers,
+            ...(evaluation.newFindings === undefined
+              ? {}
+              : { newFindings: evaluation.newFindings }),
           }),
     };
   } finally {

@@ -1,0 +1,341 @@
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/client";
+import {
+  type CallToolResult,
+  InMemoryTransport,
+} from "@modelcontextprotocol/server";
+import { afterEach, expect, test, vi } from "vitest";
+import type { BrowserSession } from "../src/capture/types.js";
+import { initProject } from "../src/commands/init.js";
+import { evidencePath } from "../src/mcp/evidence.js";
+import { createIdiomMcpServer } from "../src/mcp/server.js";
+import { mcpClient, toolData } from "./mcp-support.js";
+
+const cleanups: Array<() => Promise<unknown>> = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+});
+async function root() {
+  const path = await mkdtemp(join(tmpdir(), "idiom mcp "));
+  cleanups.push(() => rm(path, { recursive: true, force: true }));
+  return path;
+}
+async function connect(options: Parameters<typeof createIdiomMcpServer>[0]) {
+  const session = await mcpClient(options);
+  cleanups.push(session.close);
+  return session.client;
+}
+const call = (
+  client: Client,
+  name: string,
+  args: Record<string, unknown> = {},
+) => client.callTool({ name, arguments: args }) as Promise<CallToolResult>;
+
+test("uninitialized server advertises exactly eight described strict schemas and survives tool errors", async () => {
+  const directory = await root();
+  const client = await connect({ project: directory });
+  const { tools } = await client.listTools();
+  expect(tools.map((tool) => tool.name).sort()).toEqual([
+    "idiom_check",
+    "idiom_context",
+    "idiom_decide",
+    "idiom_fix_plan",
+    "idiom_flows",
+    "idiom_issue",
+    "idiom_quick",
+    "idiom_verify",
+  ]);
+  for (const tool of tools) {
+    expect(tool.description?.length).toBeGreaterThan(70);
+    expect(tool.inputSchema.type).toBe("object");
+    expect(tool.inputSchema.additionalProperties).toBe(false);
+  }
+  const quick = tools.find((tool) => tool.name === "idiom_quick");
+  expect(quick?.inputSchema.required).toEqual(["url"]);
+  for (const route of [
+    "public page",
+    "zero configuration",
+    "idiom_check",
+    "idiom_fix_plan",
+    "idiom_verify",
+  ]) {
+    expect(quick?.description).toContain(route);
+  }
+  expect(quick?.inputSchema.properties).not.toHaveProperty("design");
+  const check = tools.find((tool) => tool.name === "idiom_check");
+  for (const route of [
+    "configured flow",
+    "intended designs",
+    "idiom design add",
+    "idiom decide --choose",
+    "idiom_fix_plan",
+    "idiom_verify",
+  ]) {
+    expect(check?.description).toContain(route);
+  }
+  expect(quick?.inputSchema.properties).toMatchObject({
+    viewports: {
+      type: "array",
+      minItems: 1,
+      items: { enum: ["desktop", "mobile"] },
+    },
+  });
+  expect(
+    tools.find((tool) => tool.name === "idiom_verify")?.inputSchema.properties,
+  ).toMatchObject({
+    findings: {
+      type: "array",
+      minItems: 1,
+      items: { required: ["id", "runId"] },
+    },
+  });
+  expect(
+    tools.find((tool) => tool.name === "idiom_decide")?.inputSchema.properties,
+  ).toMatchObject({ decision: { enum: ["accept", "reject"] } });
+  for (const name of ["idiom_context", "idiom_flows", "idiom_check"]) {
+    const error = await call(
+      client,
+      name,
+      name === "idiom_check" ? { flow: "checkout" } : {},
+    );
+    expect(error.isError).toBe(true);
+    expect(error.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "text",
+          text: expect.stringContaining("idiom init"),
+        }),
+      ]),
+    );
+  }
+  await initProject({ project: directory, yes: true });
+  expect(
+    toolData<{ brief: string }>(await call(client, "idiom_context")).brief,
+  ).toContain("Design");
+});
+
+test("invalid inputs are tool errors; missing/empty flows differ from malformed manifests", async () => {
+  const directory = await root();
+  await initProject({ project: directory, yes: true });
+  const client = await connect({
+    cwd: join(directory, "sub directory"),
+    project: "..",
+  });
+  for (const [name, args] of [
+    ["idiom_quick", {}],
+    ["idiom_quick", { url: "file:///etc/passwd" }],
+    ["idiom_quick", { url: "https://example.com", viewports: [] }],
+    [
+      "idiom_quick",
+      { url: "https://example.com", viewports: ["mobile", "mobile"] },
+    ],
+    ["idiom_check", { flow: "../escape" }],
+    ["idiom_check", { flow: "checkout", states: ["cart", "cart"] }],
+    ["idiom_context", { project: directory }],
+    ["idiom_fix_plan", { flow: "checkout", top: 0 }],
+    ["idiom_decide", { id: "finding-1", decision: "accept", reason: "  " }],
+    [
+      "idiom_verify",
+      { flow: "checkout", findings: [{ id: "finding-1", runId: "../x" }] },
+    ],
+  ] as const)
+    expect(
+      (await call(client, name, args)).isError,
+      `${name} ${JSON.stringify(args)}`,
+    ).toBe(true);
+  const flows = join(directory, ".idiom/flows");
+  await rm(flows, { recursive: true });
+  expect(toolData(await call(client, "idiom_flows"))).toEqual({
+    flows: [],
+    guidance: "Run idiom init --flows",
+  });
+  const { mkdir } = await import("node:fs/promises");
+  await mkdir(flows);
+  expect(toolData(await call(client, "idiom_flows"))).toMatchObject({
+    flows: [],
+  });
+  await writeFile(join(flows, "broken.json"), "{");
+  const malformed = await call(client, "idiom_flows");
+  expect(malformed.isError).toBe(true);
+  expect(JSON.stringify(malformed)).toContain("malformed JSON");
+  expect((await call(client, "idiom_context")).isError).not.toBe(true);
+});
+
+test.each([
+  "Executable doesn't exist: browser. Run playwright install",
+  "EADDRINUSE: configured port pinned",
+])(
+  "capture failure has recovery and does not kill protocol: %s",
+  async (message) => {
+    const client = await connect({
+      project: await root(),
+      dependencies: {
+        quick: {
+          browserLauncher: async () => {
+            throw new Error(message);
+          },
+        },
+      },
+    });
+    const error = await call(client, "idiom_quick", {
+      url: "https://example.com",
+    });
+    expect(error.isError).toBe(true);
+    expect(JSON.stringify(error.content)).toContain(
+      message.startsWith("Executable")
+        ? "npx playwright install chromium"
+        : "Free the configured port",
+    );
+    expect((await client.listTools()).tools).toHaveLength(8);
+  },
+);
+
+test("evidence refuses traversal and symlink escapes", async () => {
+  const directory = await root();
+  const other = await root();
+  await writeFile(join(other, "private.png"), "private");
+  await symlink(join(other, "private.png"), join(directory, "crop.png"));
+  await expect(evidencePath(directory, "../escape")).rejects.toThrow("escapes");
+  await expect(evidencePath(directory, "crop.png")).rejects.toThrow(
+    "symlink escapes",
+  );
+});
+
+test("a persistent SDK session cancels active and queued work, closes late launchers, and serves the next call", async () => {
+  const directory = await root();
+  let enter!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  let release!: (browser: BrowserSession) => void;
+  const pending = new Promise<BrowserSession>((resolve) => {
+    release = resolve;
+  });
+  const launcher = vi.fn(async () => {
+    enter();
+    return pending;
+  });
+  const server = createIdiomMcpServer({
+    project: directory,
+    dependencies: { quick: { browserLauncher: launcher } },
+  });
+  const client = new Client(
+    { name: "cancellation-test", version: "1" },
+    { supportedProtocolVersions: ["2025-11-25"] },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  cleanups.push(async () => {
+    await client.close();
+    await server.close();
+  });
+  const activeAbort = new AbortController();
+  const queuedAbort = new AbortController();
+  const progress: number[] = [];
+  const active = client.callTool(
+    { name: "idiom_quick", arguments: { url: "https://example.com" } },
+    {
+      signal: activeAbort.signal,
+      onprogress: (event) => progress.push(event.progress),
+    },
+  );
+  const activeRejected = expect(active).rejects.toThrow();
+  await entered;
+  const queued = client.callTool(
+    { name: "idiom_quick", arguments: { url: "https://example.com" } },
+    { signal: queuedAbort.signal },
+  );
+  const queuedRejected = expect(queued).rejects.toThrow();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  queuedAbort.abort();
+  activeAbort.abort();
+  await Promise.all([activeRejected, queuedRejected]);
+  const close = vi.fn(async () => {});
+  release({ version: "late", capture: vi.fn(), close });
+  await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+  expect(launcher).toHaveBeenCalledOnce();
+  expect(progress.length).toBeGreaterThan(0);
+  expect(
+    progress.every(
+      (value, index) => index === 0 || value > (progress[index - 1] ?? 0),
+    ),
+  ).toBe(true);
+  const error = await call(client, "idiom_flows");
+  expect(error.isError).toBe(true);
+  expect((await client.listTools()).tools).toHaveLength(8);
+  expect(
+    await readFile(join(directory, "missing"), "utf8").catch(() => "absent"),
+  ).toBe("absent");
+});
+
+test("context projects configured tokens, rules, craft checks and design law through MCP", async () => {
+  const directory = await root();
+  await initProject({ project: directory, yes: true });
+  const configPath = join(directory, ".idiom/project.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.design.tokensFile = "tokens.css";
+  await writeFile(configPath, JSON.stringify(config));
+  await writeFile(
+    join(directory, "tokens.css"),
+    ":root{--space-unit:8px;--brand:#123456}",
+  );
+  await writeFile(
+    join(directory, "DESIGN.md"),
+    "# Design law\nUse the 8px spacing scale.\n",
+  );
+  await writeFile(
+    join(directory, ".idiom/rules.json"),
+    JSON.stringify({
+      version: 1,
+      overrides: [
+        {
+          id: "brand",
+          match: { category: "contrast" },
+          action: "severity",
+          severity: "minor",
+          reason: "Brand palette",
+        },
+      ],
+    }),
+  );
+  const client = await connect({ project: directory });
+  const brief = toolData<{ brief: string }>(
+    await call(client, "idiom_context"),
+  ).brief;
+  expect(brief).toContain("--space-unit: 8px");
+  expect(brief).toContain("8px spacing scale");
+  expect(brief).toContain("Brand palette");
+  expect(brief).toContain("Craft checks");
+});
+
+test("activity without an MCP progress token emits no progress notifications", async () => {
+  const server = createIdiomMcpServer({
+    project: await root(),
+    dependencies: {
+      quick: {
+        browserLauncher: async () => {
+          throw new Error("expected launch failure");
+        },
+      },
+    },
+  });
+  const client = new Client({ name: "no-progress", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  cleanups.push(async () => {
+    await client.close();
+    await server.close();
+  });
+  const notified = vi.fn();
+  client.setNotificationHandler("notifications/progress", notified);
+  expect(
+    (await call(client, "idiom_quick", { url: "https://example.com" })).isError,
+  ).toBe(true);
+  expect(notified).not.toHaveBeenCalled();
+});

@@ -1,0 +1,632 @@
+{
+  "flow": "site",
+  "runDirectory": "/tmp/project/.idiom/reports/run",
+  "issues": [
+    {
+      "id": "group-b1c1fb4a5507",
+      "severity": "major",
+      "category": "unexplained-control",
+      "rule": "idiom:unexplained-control",
+      "rules": ["idiom:unexplained-control"],
+      "family": "idiom:unexplained-control",
+      "salience": 7,
+      "prominence": 2.234355672060905,
+      "score": 15.640489704426335,
+      "explanation": {
+        "selector": "body > main > article > h2:nth-of-type(1) > a",
+        "coordinate": "route-posts-adding-new-posts-in-astropaper-theme/mobile",
+        "areaRatio": 0.0013130012759752095,
+        "aboveFold": true,
+        "primaryRegion": true,
+        "primaryAction": false,
+        "states": 3,
+        "places": 3,
+        "geometryAvailable": true
+      },
+      "groups": [
+        "group-b1c1fb4a5507",
+        "group-8e669285b46e",
+        "group-3ca2feb4114d",
+        "group-245326aeaf21",
+        "group-af2e18425190",
+        "group-efdb42a46172",
+        "group-3c4bec38ca8e",
+        "group-c2d3f88196dc",
+        "group-acba202b2bbc",
+        "group-cdfb2864cf49",
+        "group-8c9069a6b3b9",
+        "group-263a0072b4f3",
+        "group-fea7616b2c99",
+        "group-0abd2463fead",
+        "group-913000903eb2",
+        "group-da5290e03e9d",
+        "group-4e71cedab473",
+        "group-ae8156c88004"
+      ],
+      "elements": 18,
+      "places": 3,
+      "findings": 42,
+      "primaryAction": false
+    },
+    {
+      "id": "group-e393cef783e8",
+      "severity": "minor",
+      "category": "orphan-word",
+      "rule": "idiom:orphan-word",
+      "rules": ["idiom:orphan-word"],
+      "family": "idiom:orphan-word",
+      "salience": 4,
+      "prominence": 2.579179187689432,
+      "score": 10.316716750757728,
+      "explanation": {
+        "selector": "body > main > ul > li:nth-of-type(1) > a > h2",
+        "coordinate": "route-posts/mobile",
+        "areaRatio": 0.060906550006076074,
+        "aboveFold": true,
+        "primaryRegion": true,
+        "primaryAction": false,
+        "states": 6,
+        "places": 7,
+        "geometryAvailable": true
+      },
+      "groups": [
+        "group-e393cef783e8",
+        "group-1543d6ecab3a",
+        "group-db453a365656",
+        "group-673f9e618c17",
+        "group-746395800519",
+        "group-46a53847d61a",
+        "group-6b0d0eeeca89",
+        "group-87ea467a7c4b",
+        "group-28fd2a9b4c4c"
+      ],
+      "elements": 9,
+      "places": 7,
+      "findings": 9,
+      "primaryAction": false,
+      "deferred": true
+    },
+    {
+      "id": "group-1b5e1cf5b6a0",
+      "severity": "minor",
+      "category": "heading-structure",
+      "rule": "axe:page-has-heading-one",
+      "rules": ["axe:page-has-heading-one"],
+      "family": "axe:page-has-heading-one",
+      "salience": 4,
+      "prominence": 2.5416666666666665,
+      "score": 10.166666666666666,
+      "explanation": {
+        "selector": "html",
+        "coordinate": "route-og-png/desktop",
+        "areaRatio": 1,
+        "aboveFold": true,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": true
+      },
+      "groups": ["group-1b5e1cf5b6a0"],
+      "elements": 1,
+      "places": 2,
+      "findings": 1,
+      "primaryAction": false,
+      "deferred": true
+    },
+    {
+      "id": "group-9ee5dc08257a",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "rules": ["idiom:elements-overlap"],
+      "family": "idiom:elements-overlap",
+      "salience": 9,
+      "prominence": 1.125,
+      "score": 10.125,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 2,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["group-9ee5dc08257a"],
+      "elements": 1,
+      "places": 2,
+      "findings": 2,
+      "primaryAction": false,
+      "deferred": true
+    },
+    {
+      "id": "group-bb14befa2c23",
+      "severity": "blocker",
+      "category": "missing-state",
+      "rule": "idiom:expectation-status",
+      "rules": ["idiom:expectation-status"],
+      "family": "idiom:expectation-status",
+      "salience": 9,
+      "prominence": 1.0416666666666667,
+      "score": 9.375,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["group-bb14befa2c23"],
+      "elements": 1,
+      "places": 2,
+      "findings": 1,
+      "primaryAction": false
+    },
+    {
+      "id": "group-ba54aff7e1c7",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "rules": ["idiom:elements-overlap"],
+      "family": "idiom:elements-overlap",
+      "salience": 9,
+      "prominence": 1.0416666666666667,
+      "score": 9.375,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["group-ba54aff7e1c7"],
+      "elements": 1,
+      "places": 2,
+      "findings": 1,
+      "primaryAction": false,
+      "deferred": true
+    },
+    {
+      "id": "group-215d4913fe8c",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "rules": ["idiom:elements-overlap"],
+      "family": "idiom:elements-overlap",
+      "salience": 9,
+      "prominence": 1.0416666666666667,
+      "score": 9.375,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["group-215d4913fe8c"],
+      "elements": 1,
+      "places": 2,
+      "findings": 1,
+      "primaryAction": false,
+      "deferred": true
+    },
+    {
+      "id": "group-e65fe60213e8",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "rules": ["idiom:elements-overlap"],
+      "family": "idiom:elements-overlap",
+      "salience": 9,
+      "prominence": 1.0416666666666667,
+      "score": 9.375,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["group-e65fe60213e8"],
+      "elements": 1,
+      "places": 2,
+      "findings": 1,
+      "primaryAction": false,
+      "deferred": true
+    },
+    {
+      "id": "group-169ca968f02e",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "rules": ["idiom:elements-overlap"],
+      "family": "idiom:elements-overlap",
+      "salience": 9,
+      "prominence": 1.0416666666666667,
+      "score": 9.375,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["group-169ca968f02e"],
+      "elements": 1,
+      "places": 2,
+      "findings": 1,
+      "primaryAction": false,
+      "deferred": true
+    },
+    {
+      "id": "group-187674c9a7dd",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "rules": ["idiom:elements-overlap"],
+      "family": "idiom:elements-overlap",
+      "salience": 9,
+      "prominence": 1.0416666666666667,
+      "score": 9.375,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["group-187674c9a7dd"],
+      "elements": 1,
+      "places": 2,
+      "findings": 1,
+      "primaryAction": false,
+      "deferred": true
+    },
+    {
+      "id": "group-e53b434aa0d5",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "rules": ["idiom:elements-overlap"],
+      "family": "idiom:elements-overlap",
+      "salience": 9,
+      "prominence": 1.0416666666666667,
+      "score": 9.375,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 2,
+        "geometryAvailable": false
+      },
+      "groups": ["group-e53b434aa0d5"],
+      "elements": 1,
+      "places": 2,
+      "findings": 1,
+      "primaryAction": false,
+      "deferred": true
+    },
+    {
+      "id": "group-f5142961380e",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "rules": ["idiom:elements-overlap"],
+      "family": "idiom:elements-overlap",
+      "salience": 9,
+      "prominence": 1,
+      "score": 9,
+      "explanation": {
+        "areaRatio": 0,
+        "aboveFold": false,
+        "primaryRegion": false,
+        "primaryAction": false,
+        "states": 1,
+        "places": 1,
+        "geometryAvailable": false
+      },
+      "groups": ["group-f5142961380e"],
+      "elements": 1,
+      "places": 1,
+      "findings": 1,
+      "primaryAction": false,
+      "deferred": true
+    }
+  ],
+  "groups": [
+    {
+      "id": "group-bb14befa2c23",
+      "severity": "blocker",
+      "category": "missing-state",
+      "rule": "idiom:expectation-status",
+      "where": "route-archives-utils-getpostsbygroupcondition/desktop",
+      "problem": "The status expectation was 200, but the capture recorded 404.",
+      "fix": ["The declared status expectation 200 passes."],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-archives-utils-getpostsbygroupcondition/desktop/screenshot.png",
+      "coordinates": [
+        "route-archives-utils-getpostsbygroupcondition/desktop",
+        "route-archives-utils-getpostsbygroupcondition/mobile"
+      ],
+      "states": ["route-archives-utils-getpostsbygroupcondition"],
+      "viewports": ["desktop", "mobile"],
+      "colorSchemes": []
+    },
+    {
+      "id": "group-b1c1fb4a5507",
+      "severity": "major",
+      "category": "unexplained-control",
+      "rule": "idiom:unexplained-control",
+      "where": "route-posts-adding-new-posts-in-astropaper-theme/mobile",
+      "selector": "body > main > article > h2:nth-of-type(1) > a",
+      "problem": "body > main > article > h2:nth-of-type(1) > a is a control labelled only \"#\" whose accessible name is just \"#\", and nothing (tooltip, description, visible copy) says what it does.",
+      "fix": [
+        "body > main > article > h2:nth-of-type(1) > a has a visible tooltip on hover and focus, or visible text, that names what it does.",
+        "body > main > article > h2:nth-of-type(1) > a has an accessible name describing its action."
+      ],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-posts-adding-new-posts-in-astropaper-theme/mobile/crops/8cfc01edcb65def5.png",
+      "deferred": true,
+      "coordinates": [
+        "route-posts-adding-new-posts-in-astropaper-theme/mobile",
+        "route-posts-astro-paper-2/mobile",
+        "route-posts-astro-paper-v3/mobile"
+      ],
+      "states": [
+        "route-posts-adding-new-posts-in-astropaper-theme",
+        "route-posts-astro-paper-2",
+        "route-posts-astro-paper-v3"
+      ],
+      "viewports": ["mobile"],
+      "colorSchemes": []
+    },
+    {
+      "id": "group-ba54aff7e1c7",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "where": "route-posts-adding-new-posts-in-astropaper-theme/desktop",
+      "problem": "#creating-a-blog-post overlaps body > main > article > details:nth-of-type(1) > ul > li:nth-of-type(2) > a by 105.6×14px at 1440px (below the fold, geometry only).",
+      "fix": [
+        "#creating-a-blog-post and body > main > article > details:nth-of-type(1) > ul > li:nth-of-type(2) > a do not overlap at 1440px."
+      ],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-posts-adding-new-posts-in-astropaper-theme/desktop/screenshot.png",
+      "deferred": true,
+      "coordinates": [
+        "route-posts-adding-new-posts-in-astropaper-theme/desktop",
+        "route-posts-adding-new-posts-in-astropaper-theme/mobile"
+      ],
+      "states": ["route-posts-adding-new-posts-in-astropaper-theme"],
+      "viewports": ["desktop", "mobile"],
+      "colorSchemes": []
+    },
+    {
+      "id": "group-215d4913fe8c",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "where": "route-posts-adding-new-posts-in-astropaper-theme/desktop",
+      "problem": "body > main > article > details:nth-of-type(1) > ul > li:nth-of-type(2) > ul > li:nth-of-type(1) > a overlaps body > main > article > p:nth-of-type(4) by 57.6×4px at 1440px (below the fold, geometry only).",
+      "fix": [
+        "body > main > article > details:nth-of-type(1) > ul > li:nth-of-type(2) > ul > li:nth-of-type(1) > a and body > main > article > p:nth-of-type(4) do not overlap at 1440px."
+      ],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-posts-adding-new-posts-in-astropaper-theme/desktop/screenshot.png",
+      "deferred": true,
+      "coordinates": [
+        "route-posts-adding-new-posts-in-astropaper-theme/desktop",
+        "route-posts-adding-new-posts-in-astropaper-theme/mobile"
+      ],
+      "states": ["route-posts-adding-new-posts-in-astropaper-theme"],
+      "viewports": ["desktop", "mobile"],
+      "colorSchemes": []
+    },
+    {
+      "id": "group-e65fe60213e8",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "where": "route-posts-adding-new-posts-in-astropaper-theme/desktop",
+      "problem": "body > main > article > details:nth-of-type(1) > ul > li:nth-of-type(3) > a overlaps body > main > article > p:nth-of-type(5) by 76.8×4px at 1440px (below the fold, geometry only).",
+      "fix": [
+        "body > main > article > details:nth-of-type(1) > ul > li:nth-of-type(3) > a and body > main > article > p:nth-of-type(5) do not overlap at 1440px."
+      ],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-posts-adding-new-posts-in-astropaper-theme/desktop/screenshot.png",
+      "deferred": true,
+      "coordinates": [
+        "route-posts-adding-new-posts-in-astropaper-theme/desktop",
+        "route-posts-adding-new-posts-in-astropaper-theme/mobile"
+      ],
+      "states": ["route-posts-adding-new-posts-in-astropaper-theme"],
+      "viewports": ["desktop", "mobile"],
+      "colorSchemes": []
+    },
+    {
+      "id": "group-169ca968f02e",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "where": "route-posts-adding-new-posts-in-astropaper-theme/desktop",
+      "problem": "body > main > article > details:nth-of-type(1) > ul > li:nth-of-type(7) > a overlaps body > main > article > div:nth-of-type(1) > pre by 172.8×20px at 1440px (below the fold, geometry only).",
+      "fix": [
+        "body > main > article > details:nth-of-type(1) > ul > li:nth-of-type(7) > a and body > main > article > div:nth-of-type(1) > pre do not overlap at 1440px."
+      ],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-posts-adding-new-posts-in-astropaper-theme/desktop/screenshot.png",
+      "deferred": true,
+      "coordinates": [
+        "route-posts-adding-new-posts-in-astropaper-theme/desktop",
+        "route-posts-adding-new-posts-in-astropaper-theme/mobile"
+      ],
+      "states": ["route-posts-adding-new-posts-in-astropaper-theme"],
+      "viewports": ["desktop", "mobile"],
+      "colorSchemes": []
+    },
+    {
+      "id": "group-9ee5dc08257a",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "where": "route-posts-astro-paper-2/desktop",
+      "problem": "#features--changes overlaps body > main > article > details > ul > li:nth-of-type(1) > ul > li:nth-of-type(1) > a by 86.4×14px at 1440px (below the fold, geometry only).",
+      "fix": [
+        "#features--changes and body > main > article > details > ul > li:nth-of-type(1) > ul > li:nth-of-type(1) > a do not overlap at 1440px."
+      ],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-posts-astro-paper-2/desktop/screenshot.png",
+      "deferred": true,
+      "coordinates": [
+        "route-posts-astro-paper-2/desktop",
+        "route-posts-astro-paper-v3/desktop"
+      ],
+      "states": ["route-posts-astro-paper-2", "route-posts-astro-paper-v3"],
+      "viewports": ["desktop"],
+      "colorSchemes": []
+    },
+    {
+      "id": "group-187674c9a7dd",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "where": "route-posts-astro-paper-2/desktop",
+      "problem": "#type-safe-frontmatters-and-redefined-blog-schema overlaps body > main > article > details > ul > li:nth-of-type(1) > ul > li:nth-of-type(1) > a by 134.4×11px at 1440px (below the fold, geometry only).",
+      "fix": [
+        "#type-safe-frontmatters-and-redefined-blog-schema and body > main > article > details > ul > li:nth-of-type(1) > ul > li:nth-of-type(1) > a do not overlap at 1440px."
+      ],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-posts-astro-paper-2/desktop/screenshot.png",
+      "deferred": true,
+      "coordinates": [
+        "route-posts-astro-paper-2/desktop",
+        "route-posts-astro-paper-2/mobile"
+      ],
+      "states": ["route-posts-astro-paper-2"],
+      "viewports": ["desktop", "mobile"],
+      "colorSchemes": []
+    },
+    {
+      "id": "group-e53b434aa0d5",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "where": "route-posts-astro-paper-2/desktop",
+      "problem": "body > main > article > details > ul > li:nth-of-type(1) > ul > li:nth-of-type(2) > a overlaps body > main > article > p:nth-of-type(5) by 163.2×12px at 1440px (below the fold, geometry only).",
+      "fix": [
+        "body > main > article > details > ul > li:nth-of-type(1) > ul > li:nth-of-type(2) > a and body > main > article > p:nth-of-type(5) do not overlap at 1440px."
+      ],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-posts-astro-paper-2/desktop/screenshot.png",
+      "deferred": true,
+      "coordinates": [
+        "route-posts-astro-paper-2/desktop",
+        "route-posts-astro-paper-2/mobile"
+      ],
+      "states": ["route-posts-astro-paper-2"],
+      "viewports": ["desktop", "mobile"],
+      "colorSchemes": []
+    },
+    {
+      "id": "group-f5142961380e",
+      "severity": "major",
+      "category": "element-overlap",
+      "rule": "idiom:elements-overlap",
+      "where": "route-posts-adding-new-posts-in-astropaper-theme/desktop",
+      "problem": "#frontmatter overlaps body > main > article > details:nth-of-type(1) > ul > li:nth-of-type(8) > a by 48×4.4px at 1440px (below the fold, geometry only).",
+      "fix": [
+        "#frontmatter and body > main > article > details:nth-of-type(1) > ul > li:nth-of-type(8) > a do not overlap at 1440px."
+      ],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-posts-adding-new-posts-in-astropaper-theme/desktop/screenshot.png",
+      "deferred": true,
+      "coordinates": [
+        "route-posts-adding-new-posts-in-astropaper-theme/desktop"
+      ],
+      "states": ["route-posts-adding-new-posts-in-astropaper-theme"],
+      "viewports": ["desktop"],
+      "colorSchemes": []
+    },
+    {
+      "id": "group-1b5e1cf5b6a0",
+      "severity": "minor",
+      "category": "heading-structure",
+      "rule": "axe:page-has-heading-one",
+      "where": "route-og-png/desktop",
+      "selector": "html",
+      "problem": "html violates the rendered heading structure (page-has-heading-one).",
+      "fix": ["The page has one visible level-one heading."],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-og-png/desktop/crops/268e88722b56271b.png",
+      "deferred": true,
+      "coordinates": ["route-og-png/desktop", "route-og-png/mobile"],
+      "states": ["route-og-png"],
+      "viewports": ["desktop", "mobile"],
+      "colorSchemes": []
+    },
+    {
+      "id": "group-e393cef783e8",
+      "severity": "minor",
+      "category": "orphan-word",
+      "rule": "idiom:orphan-word",
+      "where": "route-posts/mobile",
+      "selector": "body > main > ul > li:nth-of-type(1) > a > h2",
+      "problem": "body > main > ul > li:nth-of-type(1) > a > h2 leaves “theme” alone on its last line (2 lines) at 390px.",
+      "fix": [
+        "The last line of body > main > ul > li:nth-of-type(1) > a > h2 holds more than one word at 390px (for example text-wrap: balance or pretty, or a non-breaking space)."
+      ],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-posts/mobile/crops/fc4ce8bbc5e6aa51.png",
+      "deferred": true,
+      "coordinates": ["route-posts/mobile"],
+      "states": ["route-posts"],
+      "viewports": ["mobile"],
+      "colorSchemes": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "finding-45",
+      "severity": "blocker",
+      "category": "missing-state",
+      "rule": "idiom:expectation-status",
+      "groupKey": "bb14befa2c23b9d1d96349f1359f43d28a539c24e60c4e29b03dc960723d6470",
+      "where": "route-archives-utils-getpostsbygroupcondition/desktop",
+      "problem": "The status expectation was 200, but the capture recorded 404.",
+      "fix": ["The declared status expectation 200 passes."],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-archives-utils-getpostsbygroupcondition/desktop/screenshot.png"
+    },
+    {
+      "deferred": true,
+      "id": "finding-44",
+      "severity": "major",
+      "category": "console-error",
+      "rule": "idiom:console-error",
+      "groupKey": "984cfa6bf443532f3c4cfae6b46f20e6fcbccd50cb619bbf4a2d1fbed5339b79",
+      "where": "route-archives-utils-getpostsbygroupcondition/desktop",
+      "problem": "console.error occurred during capture: Failed to load resource: the server responded with a status of 404 (Not Found) (recorded 2 times)",
+      "fix": [
+        "The state renders without this error being recorded during capture."
+      ],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-archives-utils-getpostsbygroupcondition/desktop/screenshot.png"
+    },
+    {
+      "deferred": true,
+      "id": "finding-100",
+      "severity": "major",
+      "category": "contrast",
+      "rule": "axe:color-contrast",
+      "groupKey": "0e7890a86e2723296cbbb8e450c0ec51b90144922e29d4b3e0e8eaf8a7b300a9",
+      "where": "route-posts-adding-new-posts-in-astropaper-theme/desktop",
+      "selector": "div:nth-child(11) > pre[data-language=\"bash\"] > code > .line:nth-child(1) > span",
+      "problem": "div:nth-child(11) > pre[data-language=\"bash\"] > code > .line:nth-child(1) > span fails axe's rendered color-contrast rule.",
+      "fix": [
+        "div:nth-child(11) > pre[data-language=\"bash\"] > code > .line:nth-child(1) > span meets the applicable WCAG text contrast threshold."
+      ],
+      "screenshot": ".idiom/reports/2026-10-25T21-27-00-022Z/route-posts-adding-new-posts-in-astropaper-theme/desktop/screenshot.png"
+    }
+  ]
+}

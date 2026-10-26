@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Studio</title>
+    <style>
+      :root {
+        --r-md: 8px;
+        --space-2: 8px;
+        --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.2);
+      }
+      body {
+        color: #182030;
+        background: #fff;
+        font: 16px sans-serif;
+        margin: 24px;
+      }
+      header,
+      footer {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .row {
+        display: flex;
+        gap: 16px;
+        margin: 24px 0;
+      }
+      .btn,
+      .field {
+        box-sizing: border-box;
+        height: 40px;
+        width: 200px;
+        border: 1px solid #6b7280;
+        background: #fff;
+        color: #182030;
+        font: 16px sans-serif;
+      }
+      .btn {
+        border-radius: var(--r-md);
+        padding: var(--space-2) 16px;
+        box-shadow: var(--shadow-control);
+      }
+      /* The broken token: --control-scale is never defined. */
+      .field {
+        border-radius: var(--control-scale, 4px);
+        padding: var(--control-scale, 6px);
+        box-shadow: var(--control-scale, 0 0 0 3px rgba(0, 0, 0, 0.6));
+      }
+      .help {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        font-size: 10px;
+        line-height: 12px;
+        color: #182030;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Studio</h1>
+      <a class="help" href="/help" aria-label="Help" title="Help">?</a>
+    </header>
+    <main>
+      <p id="required">Required content</p>
+      <section class="row" aria-label="Actions">
+        <button class="btn" type="button">Save</button>
+        <button class="btn" type="button">Share</button>
+        <button class="btn" type="button">Export</button>
+      </section>
+      <section class="row" aria-label="More actions">
+        <button class="btn" type="button">Copy</button>
+        <button class="btn" type="button">Move</button>
+        <button class="btn" type="button">Archive</button>
+      </section>
+      <form class="row" aria-label="Details">
+        <input class="field" aria-label="Name" value="Ada" />
+        <input class="field" aria-label="Email" value="ada@example.test" />
+        <input class="field" aria-label="Phone" value="555 0100" />
+      </form>
+    </main>
+    <footer>
+      <p>Read the <a href="#">terms</a> before sharing.</p>
+    </footer>
+  </body>
+</html>

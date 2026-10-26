@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { checksConfigFrom } from "../checks/registry.js";
+import { projectChecksConfig } from "../checks/project-config.js";
 import { IdiomError } from "../errors.js";
 import { loadRunTuples } from "../review/artifacts.js";
 import type { Finding } from "../schemas/finding.js";
@@ -144,7 +144,7 @@ export async function compareRunToBaseline(options: {
       tuples: loaded.tuples,
       expectedTupleKeys: loaded.expectedTupleKeys,
       legacyColorScheme: validated.project.capture.colorScheme,
-      config: checksConfigFrom(validated.project.checks),
+      config: await projectChecksConfig(validated),
     }),
     currentTupleKeys: new Set(
       loaded.tuples

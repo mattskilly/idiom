@@ -112,7 +112,7 @@ test("multi-state check JSON stays parseable while live progress precedes the re
       states: ["editor", "later"].map((id) => ({
         id,
         description: id,
-        url: "/",
+        url: "/continuous-effect",
         expect: {},
       })),
     };

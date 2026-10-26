@@ -13,6 +13,7 @@ import {
 } from "../review/catalog.js";
 import { lineageDecision } from "../review/lifecycle.js";
 import {
+  type ClusterCause,
   type ClusterMember,
   clusterTicketId,
   componentFor,
@@ -40,6 +41,8 @@ export type ClusterTicketsOptions = {
   cwd?: string | undefined;
   findingIds?: string[] | undefined;
   out?: string | undefined;
+  /** Root cause per source finding id (before lineage canonicalisation). */
+  rootCauses?: ReadonlyMap<string, ClusterCause> | undefined;
 };
 
 export async function emitClusterTickets(
@@ -137,6 +140,7 @@ export async function emitClusterTickets(
       result.ineligible.push(id);
       continue;
     }
+    const cause = options.rootCauses?.get(record.finding.id);
     const observations = await loadObservations(record);
     const presented = repairPresentation(catalog, record).target;
     // Presentation supplies canonical IDs/aliases; clustered evidence retains this occurrence's fingerprint.
@@ -151,6 +155,7 @@ export async function emitClusterTickets(
       id,
       record: canonical,
       component: componentFor(record, id, observations),
+      ...(cause === undefined ? {} : { cause }),
     });
     const images: string[] = [];
     for (const image of record.finding.evidence.screenshots) {

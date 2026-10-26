@@ -397,3 +397,54 @@ test("cancelled Electron uses a bounded force-close fallback if app.quit never s
   expect(kill).toHaveBeenCalledWith("SIGKILL");
   expect(process.listenerCount("SIGINT")).toBe(0);
 });
+
+test("external cancellation during startup closes a late browser and removes its parent listener", async () => {
+  const path = await directory();
+  const entered = deferred<void>();
+  const release = deferred<BrowserSession>();
+  const controller = new AbortController();
+  const remove = vi.spyOn(controller.signal, "removeEventListener");
+  const close = vi.fn(async () => {});
+  const pending = runCapture({
+    projectDirectory: path,
+    project,
+    flow,
+    dependencies: {
+      ...dependencies(),
+      signal: controller.signal,
+      browserLauncher: async () => {
+        entered.resolve();
+        return release.promise;
+      },
+    },
+  });
+  const rejected = expect(pending).rejects.toThrow("requested cancellation");
+  await entered.promise;
+  controller.abort(new Error("requested cancellation"));
+  await rejected;
+  release.resolve({ version: "late", capture: vi.fn(), close });
+  await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+  expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+  remove.mockRestore();
+});
+
+test("pre-aborted external capture cannot snapshot or acquire resources", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("already cancelled"));
+  const snapshot = vi.fn();
+  const launch = vi.fn();
+  await expect(
+    runCapture({
+      projectDirectory: await directory(),
+      project,
+      flow,
+      dependencies: {
+        signal: controller.signal,
+        snapshotSource: snapshot,
+        browserLauncher: launch,
+      },
+    }),
+  ).rejects.toThrow("already cancelled");
+  expect(snapshot).not.toHaveBeenCalled();
+  expect(launch).not.toHaveBeenCalled();
+});

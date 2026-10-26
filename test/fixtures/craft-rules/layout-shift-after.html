@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Craft rules</title>
+<style>
+  body { margin: 0; padding: 32px; font: 16px/1.5 system-ui, sans-serif; color: #1f2933; background: #fff; }
+  main { max-width: 640px; }
+  p { max-width: 60ch; }
+  #banner-slot { min-height: 300px; }
+  main { max-width: none; }
+  .banner { height: 300px; background: #fef3c7; }
+  .content { height: 600px; background: #f1f5f9; }
+</style>
+</head>
+<body>
+<main>
+<div id="banner-slot"></div>
+<h1>Dashboard</h1>
+<p>Your bookings for this week.</p>
+<section class="content"></section>
+<script>
+  setTimeout(() => {
+    const banner = document.createElement("div");
+    banner.className = "banner";
+    banner.textContent = "Scheduled maintenance on Sunday";
+    document.getElementById("banner-slot").append(banner);
+  }, 150);
+</script>
+</main>
+</body>
+</html>

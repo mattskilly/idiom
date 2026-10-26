@@ -11,7 +11,7 @@ function summary(): CheckSummary {
   const groups: CheckGroup[] = Array.from({ length: 8 }, (_, index) => ({
     id: `group-${index}`,
     category: index < 6 ? "target-size" : "control-anatomy",
-    rule: "size",
+    rule: `size-${index}`,
     severity: "minor",
     selector: `.element-${index}`,
     where: "editor/mobile",
@@ -75,12 +75,14 @@ test("--top limits the first section and --all numbers every issue", () => {
 
 test("collapsed issue shows one example and --all exposes each sibling's decision", () => {
   const result = summary();
-  for (const [index, group] of (result.groups ?? []).entries())
+  for (const [index, group] of (result.groups ?? []).entries()) {
     group.selector = `li:nth-child(${index + 1}) > button`;
+    group.rule = "size";
+  }
   result.issues = collapseIssues(result.groups ?? [], new Set());
   const text = renderCheckSummary(result);
   expect(text).toContain(
-    "Repeated on 6 similar elements (6 findings in 1 places)",
+    "target-size family: 6 occurrences (6 findings in 1 places)",
   );
   expect(text.match(/ {3}Problem:/g)).toHaveLength(2);
   expect(text).toContain("Other groups: idiom check example --all lists them.");
@@ -123,3 +125,53 @@ test.each(["0", "x", "-1", "1.5", "Infinity"])(
     expect(stderr.join("\n")).toContain("positive integer");
   },
 );
+
+test("family heading uses worst severity while all occurrences keep their own rules", () => {
+  const result = summary();
+  const groups = (result.groups ?? []).slice(0, 2);
+  const [first, second] = groups;
+  if (!first || !second) throw new Error("two groups required");
+  first.category = second.category = "adjacent-gap";
+  first.rule = "idiom:adjacent-elements-touch";
+  second.rule = "idiom:focus-ring-collision";
+  second.severity = "major";
+  // The minor occurrence wins on area while the family heading remains major.
+  const context = new Map([
+    [
+      "editor/mobile",
+      {
+        state: "editor",
+        viewport: { width: 100, height: 100 },
+        elements: new Map([
+          [
+            first.selector ?? "",
+            {
+              selector: first.selector ?? "",
+              tag: "button",
+              visible: true,
+              rect: { x: 0, y: 0, width: 100, height: 100 },
+              ancestorSelectors: [],
+            },
+          ],
+        ]),
+        primaryRegions: new Set<string>(),
+      },
+    ],
+  ]);
+  result.groups = groups;
+  result.issues = collapseIssues(groups, new Set(), context);
+  expect(result.issues[0]).toMatchObject({
+    id: first.id,
+    severity: "major",
+    rules: [first.rule, second.rule],
+  });
+  expect(result.issues[0]?.rule).toBeUndefined();
+  const text = renderCheckSummary(result, { all: true });
+  expect(text).toContain("1. [major] adjacent-gap");
+  expect(text).toContain("adjacent-gap family: 2 occurrences");
+  for (const g of groups) {
+    expect(text).toContain(g.rule);
+    expect(text).toContain(g.problem);
+    expect(text).toContain(`--finding ${g.members[0]?.id}`);
+  }
+});

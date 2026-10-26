@@ -289,3 +289,55 @@ test("inferred selectors prefer the most-used token, fall back to aria-label, an
   );
   expect(sizeFindings(fine.findings)).toEqual([]);
 }, 60_000);
+
+test("a shape name matched only by its modifier resolves textless elements, never textful controls", async () => {
+  const html = `<!doctype html><style>.layer-override{display:inline-block;width:12px;height:12px;border-radius:50%;background:#36c}
+    .layer-override-menu{width:80px;height:24px}</style><main>
+    <span class="layer-override" role="img" aria-label="Has tablet overrides"></span>
+    <span class="layer-override" role="img" aria-label="Has mobile overrides"></span>
+    <button class="layer-override-menu">Overrides</button></main>`;
+  const { findings, tuples } = await reviewStates(
+    browser,
+    [{ state: "dots", html }],
+    { design: "Override dots are small (about 8px).\n" },
+  );
+  expect(
+    inferredComponents(tuples).map(({ name, selector, rects, inferred }) => ({
+      name,
+      selector,
+      rects: rects.map((rect) => [rect.width, rect.height]),
+      inferred,
+    })),
+  ).toEqual([
+    {
+      name: "override dot",
+      selector: ".layer-override",
+      rects: [
+        [12, 12],
+        [12, 12],
+      ],
+      inferred: {
+        source: "DESIGN.md:1",
+        words: ["override", "dot"],
+        matchedBy: "modifier",
+      },
+    },
+  ]);
+  expect(sizeFindings(findings).map(({ explanation }) => explanation)).toEqual([
+    '2 of 2 "override dot" elements render at 12×12px; the design specifies 8×8px (±1×1px) (inferred from DESIGN.md:1).',
+  ]);
+  // Only a textful control carries the modifier: nothing is selected.
+  const textful = await reviewStates(
+    browser,
+    [
+      {
+        state: "menu",
+        html: html.replace(/<span class="layer-override"[^>]*><\/span>/g, ""),
+      },
+    ],
+    { design: "Override dots are small (about 8px).\n" },
+  );
+  expect(inferredComponents(textful.tuples)).toMatchObject([
+    { name: "override dot", selector: "", rects: [], unresolved: true },
+  ]);
+}, 60_000);

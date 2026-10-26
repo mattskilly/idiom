@@ -845,6 +845,21 @@ test("spacing groups authored gap axes and negative margins once per value acros
     );
     expect(spacing).toHaveLength(2);
     expect(spacing.every((c) => c.evidenceTuples?.length === 2)).toBe(true);
+    const elevenTargets = spacing.find((c) => c.explanation.includes("11px"))
+      ?.verification.params?.targets as Array<{
+      selector: string;
+      property: string;
+    }>;
+    expect(elevenTargets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ property: "paddingTop" }),
+        expect.objectContaining({ property: "marginLeft" }),
+        expect.objectContaining({ property: "rowGap" }),
+      ]),
+    );
+    expect(
+      new Set(elevenTargets.map((t) => `${t.selector}\0${t.property}`)).size,
+    ).toBe(elevenTargets.length);
     expect(spacing.map((c) => c.explanation).join("\n")).not.toContain(
       "12.4px",
     );

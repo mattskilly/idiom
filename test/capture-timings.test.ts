@@ -59,6 +59,8 @@ test("monotonic capture measurements retain failed designated probes without ret
     const project = projectSchema.parse({
       ...f.project,
       colorSchemes: ["dark", "light"],
+      // The fake clock ticks per call: concurrent lanes would interleave it.
+      capture: { ...f.project.capture, concurrency: 1 },
       checks: { probe: { enabled: true } },
     });
     const flow = flowSchema.parse({

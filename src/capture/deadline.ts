@@ -56,6 +56,13 @@ export class Deadline {
       Math.max(1, Math.min(2_147_483_647, this.end - this.now())),
     );
   }
+  /** A live flow-budget refund extends an unfinished state. */
+  extend(ms: number) {
+    if (this.signal.aborted || !Number.isFinite(ms) || ms <= 0) return;
+    this.end += ms;
+    clearTimeout(this.timer);
+    this.arm();
+  }
   check() {
     if (this.parent?.aborted) this.onParent();
     if (!this.signal.aborted && this.now() >= this.end) this.expire();

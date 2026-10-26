@@ -13,8 +13,12 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { initProject } from "../src/commands/init.js";
 import { findingSchema } from "../src/schemas/finding.js";
+import { commit, git } from "./baseline-support.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = join(import.meta.dirname, "..");
@@ -120,6 +124,13 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await rm(temporaryDirectory, { recursive: true, force: true });
+});
+
+test("the runtime entry is one self-contained file", async () => {
+  // Releases commit only dist/cli.js, so a code-split bundle would import
+  // chunks that a Git install never receives.
+  const entry = await readFile(runtimeEntry, "utf8");
+  expect(entry).not.toMatch(/(?:from|import\()\s*["']\.\.?\//);
 });
 
 test("minimal packed payload excludes repository-development inputs", async () => {
@@ -428,3 +439,194 @@ test("packed CLI completes the zero-configuration quick path outside Git", async
     await exited;
   }
 }, 30_000);
+
+test.each(["legacy", "auto"] as const)(
+  "packed Node MCP serves %s negotiation with runtime dependencies only",
+  async (mode) => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [runtimeEntry, "mcp", "--project", runtimeRoot],
+      cwd: temporaryDirectory,
+      stderr: "pipe",
+    });
+    const client = new Client(
+      { name: "packed-test", version: "1" },
+      { versionNegotiation: { mode } },
+    );
+    try {
+      await client.connect(transport);
+      expect((await client.listTools()).tools).toHaveLength(8);
+      const response = await client.callTool({
+        name: "idiom_flows",
+        arguments: {},
+      });
+      expect(response).toMatchObject({ isError: true });
+      expect(JSON.stringify(response)).toContain("idiom init");
+    } finally {
+      await client.close();
+    }
+  },
+  30000,
+);
+
+test("packed plugin resolves the existing skill and adjacent init guide and validates with Claude", async () => {
+  expect(packedFiles).toContain(".claude-plugin/plugin.json");
+  const manifest = JSON.parse(
+    await readFile(join(runtimeRoot, ".claude-plugin/plugin.json"), "utf8"),
+  );
+  expect(manifest.mcpServers.idiom).toEqual({
+    command: "npx",
+    args: ["-y", "@mattskilly/idiom", "mcp"],
+  });
+  expect(manifest.skills).toEqual(["./templates/idiom"]);
+  for (const directory of manifest.skills) {
+    expect(
+      await readFile(join(runtimeRoot, directory, "SKILL.md"), "utf8"),
+    ).toContain("prefer MCP tools");
+    expect(
+      await readFile(join(runtimeRoot, directory, "init.md"), "utf8"),
+    ).toContain("idiom init");
+  }
+  const validation = await execFileAsync(
+    "claude",
+    ["plugin", "validate", runtimeRoot],
+    { timeout: 45000 },
+  );
+  expect(validation.stdout).toContain("Validation passed");
+}, 60000);
+
+test("built stdio keeps setup stdout off the wire and cleans children after cancellation and EOF", async () => {
+  const project = join(temporaryDirectory, "stdio project with spaces");
+  await initProject({ project, yes: true });
+  const flow = {
+    id: "slow",
+    title: "Slow",
+    intent: [],
+    setup: [{ run: "node setup.mjs", env: {} }],
+    states: [{ id: "page", description: "Page", url: "/", expect: {} }],
+  };
+  await writeFile(
+    join(project, ".idiom/flows/slow.json"),
+    JSON.stringify(flow),
+  );
+  await writeFile(
+    join(project, "setup.mjs"),
+    "import {writeFileSync} from 'node:fs'; console.log('setup output must be captured'); writeFileSync('setup.pid',String(process.pid)); setInterval(()=>{},1000);",
+  );
+  await git(project, "init", "-q", "-b", "main");
+  await commit(project, "stdio fixture");
+  const child = spawn(
+    process.execPath,
+    [runtimeEntry, "mcp", "--project", project],
+    { cwd: temporaryDirectory, stdio: ["pipe", "pipe", "pipe"] },
+  );
+  const lines: string[] = [];
+  let buffer = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    buffer += chunk;
+    const parts = buffer.split("\n");
+    buffer = parts.pop() ?? "";
+    lines.push(...parts.filter(Boolean));
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  const exited = new Promise<number | null>((resolve) =>
+    child.on("exit", resolve),
+  );
+  const send = (value: object) =>
+    child.stdin.write(`${JSON.stringify(value)}\n`);
+  const response = (id: number) =>
+    vi.waitFor(
+      () => {
+        const line = lines
+          .map((line) => JSON.parse(line) as { id?: number; result?: unknown })
+          .find((line) => line.id === id);
+        expect(line, stderr).toBeDefined();
+        return line;
+      },
+      { timeout: 10000 },
+    );
+  const runningPid = async () => {
+    let pid = 0;
+    await vi.waitFor(
+      async () => {
+        pid = Number(await readFile(join(project, "setup.pid"), "utf8"));
+        expect(pid).toBeGreaterThan(0);
+      },
+      { timeout: 10000 },
+    );
+    return pid;
+  };
+  const gone = async (pid: number) =>
+    vi.waitFor(
+      () => {
+        expect(() => process.kill(pid, 0)).toThrow();
+      },
+      { timeout: 7000 },
+    );
+  try {
+    send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "wire-test", version: "1" },
+      },
+    });
+    await response(1);
+    send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    send({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "idiom_check",
+        arguments: { flow: "slow", all: true },
+        _meta: { progressToken: "capture" },
+      },
+    });
+    const firstPid = await runningPid();
+    send({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: 2, reason: "cancel test" },
+    });
+    await gone(firstPid);
+    send({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} });
+    await response(3);
+    await rm(join(project, "setup.pid"));
+    send({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "idiom_check", arguments: { flow: "slow", all: true } },
+    });
+    const secondPid = await runningPid();
+    child.stdin.end();
+    await expect(
+      Promise.race([
+        exited,
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("stdio did not exit")),
+            8000,
+          ).unref(),
+        ),
+      ]),
+    ).resolves.toBe(0);
+    await gone(secondPid);
+    expect(buffer).toBe("");
+    expect(lines.length).toBeGreaterThan(3);
+    for (const line of lines)
+      expect(JSON.parse(line)).toMatchObject({ jsonrpc: "2.0" });
+    expect(lines.join("\n")).not.toContain("setup output must be captured");
+  } finally {
+    child.kill("SIGTERM");
+    child.stdin.destroy();
+  }
+}, 40000);

@@ -11,6 +11,8 @@ export async function verifyCommand(options: {
   cwd?: string | undefined;
   against?: string | undefined;
   out?: string | undefined;
+  refreshDesign?: boolean | undefined;
+  fullFlow?: boolean | undefined;
   dependencies?: VerifyDependencies | undefined;
 }): Promise<VerifyRunResult> {
   return runVerify(options);

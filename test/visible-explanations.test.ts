@@ -295,9 +295,15 @@ test("a tooltip-only control stays dead after explanation sampling", async () =>
 test("replay failure preserves completed tooltip samples, stops clicks and cleans listeners", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
-  const html = `<!doctype html><style>[role=tooltip]{display:none}button:is(:hover,:focus)+[role=tooltip]{display:block}</style><button id="first" aria-label="Help">?</button><span role="tooltip">First help</span><button id="second" aria-label="Help">?</button><span role="tooltip">Second help</span>`;
+  let clicks = 0;
+  await context.exposeFunction("recordProbeClick", () => {
+    clicks += 1;
+  });
+  const html = `<!doctype html><style>[role=tooltip]{display:none}button:is(:hover,:focus)+[role=tooltip]{display:block}</style><button id="first" aria-label="Help" onclick="recordProbeClick()" onfocus="document.body.dataset.seen='yes'">?</button><span role="tooltip">First help</span><button id="second" aria-label="Help" onclick="recordProbeClick()">?</button><span role="tooltip">Second help</span>`;
   try {
     await page.setContent(html);
+    // Focusing #first persists a change, so the first full replay is the
+    // one that fails; the restore ladder covers the samples before it.
     let restores = 0;
     const probe = await probeControls({
       page,
@@ -307,12 +313,23 @@ test("replay failure preserves completed tooltip samples, stops clicks and clean
       waitMs: 0,
       restore: async () => {
         restores += 1;
-        if (restores >= 3) throw new Error("replay unavailable");
+        if (restores >= 1) throw new Error("replay unavailable");
         await page.setContent(html);
       },
     });
     expect(probe.status).toBe("partial");
-    expect(probe.results).toEqual([]);
+    expect(clicks).toBe(0);
+    expect(probe.results).toHaveLength(2);
+    expect(probe.results[0]).toMatchObject({
+      selector: "#first",
+      status: "completed",
+      skipped: expect.stringContaining("replay unavailable"),
+    });
+    expect(probe.results[1]).toMatchObject({
+      selector: "#second",
+      status: "not-reached",
+      skipped: expect.stringContaining("replay unavailable"),
+    });
     expect(
       probe.explanations?.records
         .filter((r) => r.selector === "#first" && r.status === "observed")

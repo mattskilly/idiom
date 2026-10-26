@@ -7,10 +7,8 @@ import type { RunRecord } from "../capture/run-record.js";
 import type { CaptureScope } from "../capture/scope.js";
 import type { RunTimings } from "../capture/timings.js";
 import type { ProductionBuild } from "../capture/types.js";
-import {
-  checksConfigFrom,
-  runDeterministicChecks,
-} from "../checks/registry.js";
+import { projectChecksConfig } from "../checks/project-config.js";
+import { runDeterministicChecks } from "../checks/registry.js";
 import { AnthropicCritiqueAdapter } from "../critique/anthropic.js";
 import {
   ClaudeCodeCritiqueAdapter,
@@ -27,6 +25,7 @@ import type {
   ModelFindingCandidate,
 } from "../critique/types.js";
 import { decisionViews, readDecisionLog } from "../decisions/log.js";
+import { tupleDesigns } from "../design/evidence.js";
 import { IdiomError } from "../errors.js";
 import type { ReportCoverage } from "../report/coverage.js";
 import { buildReviewCoverage } from "../report/coverage.js";
@@ -85,6 +84,10 @@ import {
 } from "./groups.js";
 import { renderReviewHtmlReport } from "./html-report.js";
 import { FindingNamingSession } from "./names.js";
+import {
+  buildIssueRankingContext,
+  type IssueRankingContext,
+} from "./ranking.js";
 import { type ReviewOutcome, renderReport, writeReport } from "./report.js";
 
 type ReviewCritiqueAdapter =
@@ -127,8 +130,9 @@ export type ReviewRunResult = {
   deterministicOccurrences?: Finding[];
   /** Material and deferred findings grouped by element and rule (#52). */
   groups: FindingGroup[];
-  /** Run-wide primary-action signal, used only to rank check issues. */
+  /** Legacy run-wide primary-action signal; scoring uses tuple context. */
   primaryActionSelectors?: string[];
+  issueRankingContext?: IssueRankingContext;
   unruledDecisionCount: number;
   discardedDecisionObservations: number;
   outcome: ReviewOutcome;
@@ -237,10 +241,14 @@ export async function runReview(options: {
   scope?: CaptureScope | undefined;
   /** Serve the application on this port instead of a free one. */
   port?: number | undefined;
+  /** Refetch pinned Figma frames when this review captures. */
+  refreshDesign?: boolean | undefined;
   from?: string | undefined;
   latest?: boolean | undefined;
   deterministicOnly?: boolean | undefined;
   includeDeterministicOccurrences?: boolean | undefined;
+  /** In-memory presentation inputs requested only by check. */
+  includeIssueRankingContext?: boolean | undefined;
   materializeAllDeterministic?: boolean | undefined;
   /**
    * "sweep" critiques one surface at a time with zoomed crops, measured
@@ -264,6 +272,9 @@ export async function runReview(options: {
     throw new IdiomError(
       "a sweep always runs the model critique; it cannot be deterministic-only",
     );
+  const checkCancelled = () =>
+    options.dependencies?.capture?.signal?.throwIfAborted();
+  checkCancelled();
   const validated = await validateProject({
     project: options.project,
     flow: options.flow,
@@ -329,6 +340,7 @@ export async function runReview(options: {
       prod: options.prod,
       scope: options.scope,
       port: options.port,
+      refreshDesign: options.refreshDesign,
       dependencies: options.dependencies?.capture,
     });
     runDirectory = capture.runDirectory;
@@ -336,7 +348,18 @@ export async function runReview(options: {
     runDirectory = resolveStoredRun(validated.projectDirectory, options.from);
   }
 
+  checkCancelled();
+  options.dependencies?.capture?.onActivity?.({
+    state: "review",
+    viewport: "all",
+    colorScheme: "all",
+    step: "deterministic review",
+  });
   const loaded = await loadRunTuples(validated, record.flow, runDirectory);
+  const issueRankingContext =
+    options.includeIssueRankingContext === true
+      ? buildIssueRankingContext(loaded.tuples)
+      : undefined;
   const primaryActionSelectors = [
     ...new Set(
       loaded.tuples.flatMap((tuple) =>
@@ -355,7 +378,7 @@ export async function runReview(options: {
   const reviewed = runDeterministicChecks(
     loaded.tuples,
     loaded.expectedTupleKeys,
-    checksConfigFrom(validated.project.checks),
+    await projectChecksConfig(validated),
   );
   const checksTiming = {
     status: "measured" as const,
@@ -553,6 +576,7 @@ export async function runReview(options: {
         screenshots: context.screenshots,
         references: context.references,
         designMd: context.designMd,
+        designImages: context.designImages,
       });
       const candidates = critique.findings;
       discardedDecisionObservations = critique.discardedDecisionObservations;
@@ -637,6 +661,7 @@ export async function runReview(options: {
     await persistRulingNames(rulingNames);
   }
 
+  checkCancelled();
   const selection = finalizeFindingSelection({
     runId: loaded.runId,
     drafts: allDrafts,
@@ -675,6 +700,7 @@ export async function runReview(options: {
   );
   // The registry is the durable reservation boundary and must be published
   // before any report artifact cites a name from it.
+  checkCancelled();
   await persistCatalogFindingNames(catalog);
   const findingsPath = await writeFindings(runDirectory, findings);
   await writeGroups(runDirectory, groups);
@@ -724,11 +750,20 @@ export async function runReview(options: {
     ),
   };
   const screenshotPaths = [
-    ...new Set(
-      loaded.tuples.flatMap((tuple) =>
-        tuple.screenshotPath === undefined ? [] : [tuple.screenshotPath],
+    ...new Set([
+      ...reportOptions.tuples.flatMap((tuple) =>
+        [
+          tuple.screenshotPath,
+          ...tupleDesigns(tuple).map((design) => design.screenshotPath),
+        ].filter((p): p is string => p !== undefined),
       ),
-    ),
+      ...[reportOptions.findings, reportOptions.deferred ?? []]
+        .flat()
+        .flatMap(
+          (finding) =>
+            finding.evidence.designDrift?.crops?.map((crop) => crop.path) ?? [],
+        ),
+    ]),
   ];
   const screenshots = new Map(
     await Promise.all(
@@ -738,6 +773,7 @@ export async function runReview(options: {
       ),
     ),
   );
+  checkCancelled();
   const [reportPath, htmlReportPath] = await Promise.all([
     writeReport(runDirectory, renderReport(reportOptions)),
     writeHtmlReport(
@@ -765,7 +801,9 @@ export async function runReview(options: {
     );
     sweep = { path, surfaces };
   }
+  checkCancelled();
   return {
+    ...(issueRankingContext === undefined ? {} : { issueRankingContext }),
     scope: loaded.record,
     timings,
     reportCoverage: reportOptions.reportCoverage,

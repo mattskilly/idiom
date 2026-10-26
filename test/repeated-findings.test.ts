@@ -101,7 +101,7 @@ test("one undersized control across 2 states x 2 viewports x 2 schemes is one gr
   );
 
   const text = renderCheckSummary(summary);
-  expect(text.match(/target-size/g)).toHaveLength(1);
+  expect(text.match(/^\d+\. \[minor\] target-size/gm)).toHaveLength(1);
   expect(text).toMatch(
     /seen in 2 states; viewports: mobile, mobile-short; schemes: (light, dark|dark, light) \(8 coordinates\)/,
   );

@@ -138,6 +138,19 @@ async function snapshot(
         places: 1,
         findings: 1,
         primaryAction: false,
+        rules: [],
+        salience: 4,
+        prominence: 1,
+        score: 4,
+        explanation: {
+          areaRatio: 0,
+          aboveFold: false,
+          primaryRegion: false,
+          primaryAction: false,
+          states: 1,
+          places: 1,
+          geometryAvailable: false,
+        },
       })),
       blocking: 0,
     },
@@ -573,3 +586,109 @@ for (const status of [
     if (!open) expect(prompt).not.toContain("finding-1");
   });
 }
+/** Fold the issues of `ids` into one root-cause issue at the first one's rank. */
+function withCause(snap: FixSnapshot, ids: number[]): FixSnapshot {
+  const issues = snap.summary.issues ?? [];
+  const members = ids.map((id) => `group-finding-${id}`);
+  const at = issues.findIndex((issue) =>
+    members.includes(issue.groups[0] ?? ""),
+  );
+  const first = issues[at];
+  if (first === undefined) throw new Error("no issue to fold");
+  const cause = {
+    ...first,
+    groups: members,
+    rootCause: {
+      id: "cause-000000000001",
+      kind: "token" as const,
+      key: "--control-scale",
+      cause: "`--control-scale` is not applied: 3 controls render 4px",
+      confidence: 0.9,
+      evidence: ["3 of 3 measured values come from `var(--control-scale)`"],
+      fix: "Define `--control-scale` where these elements inherit it",
+      symptoms: ids.map((id) => ({
+        group: `group-finding-${id}`,
+        category: "target-size",
+        measurement: "m",
+        findings: [
+          {
+            id: `finding-${id}`,
+            fingerprint: `fp-${id}`,
+            status: "open" as const,
+          },
+        ],
+      })),
+      counts: { symptoms: ids.length, findings: ids.length },
+    },
+  };
+  const rest = issues.filter(
+    (issue) => !members.includes(issue.groups[0] ?? ""),
+  );
+  rest.splice(at, 0, cause);
+  return { ...snap, summary: { ...snap.summary, issues: rest } };
+}
+test("a root cause is selected whole past --top and never split after plain findings", async () => {
+  const project = await fixture();
+  const leading = withCause(await snapshot(project, [1, 2, 3, 4]), [1, 2, 3]);
+  const ids = (selected: CatalogFinding[]) =>
+    selected.map(({ finding }) => finding.id);
+  expect(ids(selectTargets(leading, leading.records, 2))).toEqual([
+    "finding-1",
+    "finding-2",
+    "finding-3",
+  ]);
+  const trailing = withCause(await snapshot(project, [1, 2, 3, 4]), [2, 3]);
+  // finding-1 fills first; the cause is never split, so it waits.
+  expect(ids(selectTargets(trailing, trailing.records, 5))).toEqual([
+    "finding-1",
+  ]);
+  const prompt = await repairPrompt(
+    leading,
+    selectTargets(leading, leading.records, 2),
+    leading.records,
+  );
+  expect(prompt).toContain("# Root cause cause-000000000001");
+  expect(prompt).toContain(
+    "Make one change to the shared cause; every symptom below must clear.",
+  );
+  expect(prompt.indexOf("# Root cause")).toBeLessThan(
+    prompt.indexOf("# Finding finding-1"),
+  );
+  expect(
+    await repairPrompt(
+      trailing,
+      selectTargets(trailing, trailing.records, 5),
+      trailing.records,
+    ),
+  ).not.toContain("# Root cause");
+});
+test("a root-cause round is verified only when every symptom is proven fixed", async () => {
+  const project = await fixture();
+  const before = withCause(await snapshot(project, [1, 2]), [1, 2]);
+  const partial = withCause(await snapshot(project, [2], "second"), [2]);
+  const { summary } = await executeSnapshots(
+    project,
+    [before, partial],
+    [1],
+    {},
+    1,
+  );
+  expect(summary.rounds[0]?.cause).toEqual({
+    id: "cause-000000000001",
+    cause: "`--control-scale` is not applied: 3 controls render 4px",
+    findings: ["finding-1", "finding-2"],
+    verified: false,
+  });
+  const project2 = await fixture();
+  const all = withCause(await snapshot(project2, [1, 2]), [1, 2]);
+  const clean = await snapshot(project2, [], "final");
+  const done = await executeSnapshots(project2, [all, clean], [1, 2], {}, 1);
+  expect(done.summary.rounds[0]?.cause?.verified).toBe(true);
+  const { renderFixSummary } = await import("../src/fix/report.js");
+  expect(renderFixSummary(done.summary)).toContain(
+    "Root cause cause-000000000001: verified (2/2 symptoms cleared)",
+  );
+  expect(renderFixSummary(summary)).toContain(
+    "Root cause cause-000000000001: partial (1/2)",
+  );
+});

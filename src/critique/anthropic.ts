@@ -12,6 +12,7 @@ import type {
   CritiqueInput,
   CritiqueResult,
   CropRef,
+  DesignImageRef,
   ModelFindingCandidate,
   ReferenceRef,
   ScreenshotRef,
@@ -50,6 +51,7 @@ type LoadedImage = {
   label: string;
   screenshot?: ScreenshotRef;
   crop?: CropRef;
+  design?: DesignImageRef;
   reference?: Extract<ReferenceRef, { kind: "image" }>;
   block: ImageBlock;
   encodedBytes: number;
@@ -141,6 +143,20 @@ async function loadImages(input: CritiqueInput): Promise<LoadedImage[]> {
       },
     });
   }
+  for (const design of input.designImages ?? []) {
+    const source = await readFile(design.readPath);
+    assertImageBudget(source, "image/png", design.label);
+    const data = source.toString("base64");
+    loaded.push({
+      label: design.label,
+      design,
+      encodedBytes: Buffer.byteLength(data),
+      block: {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data },
+      },
+    });
+  }
   for (const reference of input.references) {
     if (reference.kind !== "image") continue;
     const source = await readFile(reference.readPath);
@@ -162,17 +178,19 @@ async function loadImages(input: CritiqueInput): Promise<LoadedImage[]> {
 function batches(images: LoadedImage[]): LoadedImage[][] {
   const anchor = images.find((image) => image.screenshot !== undefined);
   if (anchor === undefined) return [];
-  // A state's screenshots and its zoomed crops travel together, so the model
-  // sees each magnified region beside the capture it comes from.
+  // A state's screenshots, zoomed crops and intended design images travel
+  // together, so the model sees each beside the capture it comes from.
   const stateOf = (image: LoadedImage) =>
-    (image.screenshot ?? image.crop)?.state;
+    (image.screenshot ?? image.crop ?? image.design)?.state;
   const screenshotUnits: LoadedImage[][] = [];
   for (const image of images.filter(
     (candidate) =>
-      candidate.screenshot !== undefined || candidate.crop !== undefined,
+      candidate.screenshot !== undefined ||
+      candidate.crop !== undefined ||
+      candidate.design !== undefined,
   )) {
     const previous =
-      image.crop === undefined
+      image.crop === undefined && image.design === undefined
         ? screenshotUnits.at(-1)
         : [...screenshotUnits]
             .reverse()
@@ -309,6 +327,12 @@ export class AnthropicCritiqueAdapter implements CritiqueAdapter {
       const cropRefs = batch.flatMap((image) =>
         image.crop === undefined ? [] : [image.crop],
       );
+      const designRefs = batch.flatMap((image) =>
+        image.design !== undefined &&
+        screenshotRefs.some((ref) => ref.label === image.design?.designFor)
+          ? [image.design]
+          : [],
+      );
       const availableReferences = [
         ...referenceRefs,
         ...input.references.filter((reference) => reference.kind === "text"),
@@ -324,7 +348,13 @@ export class AnthropicCritiqueAdapter implements CritiqueAdapter {
         ]),
         {
           type: "text",
-          text: critiquePrompt(input, screenshotRefs, referenceRefs, cropRefs),
+          text: critiquePrompt(
+            input,
+            screenshotRefs,
+            referenceRefs,
+            cropRefs,
+            designRefs,
+          ),
         },
       ];
       let raw: string;
@@ -346,6 +376,7 @@ export class AnthropicCritiqueAdapter implements CritiqueAdapter {
           input.designMd,
           input.spec !== undefined,
           input.page,
+          designRefs,
         );
         output.push(...parsed.findings);
         observations.push(...parsed.decisionObservations);
@@ -381,6 +412,7 @@ export class AnthropicCritiqueAdapter implements CritiqueAdapter {
           input.designMd,
           input.spec !== undefined,
           input.page,
+          designRefs,
         );
         output.push(...parsed.findings);
         observations.push(...parsed.decisionObservations);

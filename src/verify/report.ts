@@ -135,6 +135,18 @@ export function renderVerificationReport(options: {
       ? ["None."]
       : evaluation.newBlockers.map((blocker) => `- ${blocker}`)),
     "",
+    ...(evaluation.newFindings === undefined
+      ? []
+      : [
+          "## New deterministic findings (all severities)",
+          "",
+          ...evaluation.newFindings.map(
+            (finding) =>
+              `- ${finding.severity}: ${finding.category} ${finding.rule ?? ""} at ${finding.key} (${finding.selector ?? "document"})`,
+          ),
+          ...(evaluation.newFindings.length ? [] : ["None."]),
+          "",
+        ]),
     "## Evidence attachments",
     "",
     axisAware

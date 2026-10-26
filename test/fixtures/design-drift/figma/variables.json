@@ -1,0 +1,209 @@
+{
+  "status": 200,
+  "error": false,
+  "meta": {
+    "variableCollections": {
+      "VariableCollectionId:1:0": {
+        "id": "VariableCollectionId:1:0",
+        "name": "Colors",
+        "key": "c1",
+        "modes": [
+          {
+            "modeId": "1:0",
+            "name": "Light"
+          },
+          {
+            "modeId": "1:1",
+            "name": "Dark"
+          }
+        ],
+        "defaultModeId": "1:0",
+        "remote": false,
+        "hiddenFromPublishing": false,
+        "variableIds": [
+          "VariableID:1:1",
+          "VariableID:1:2",
+          "VariableID:1:5",
+          "VariableID:1:6"
+        ]
+      },
+      "VariableCollectionId:2:0": {
+        "id": "VariableCollectionId:2:0",
+        "name": "Layout",
+        "key": "c2",
+        "modes": [
+          {
+            "modeId": "2:0",
+            "name": "Default"
+          }
+        ],
+        "defaultModeId": "2:0",
+        "remote": false,
+        "hiddenFromPublishing": false,
+        "variableIds": [
+          "VariableID:1:3",
+          "VariableID:1:4",
+          "VariableID:1:7",
+          "VariableID:1:8",
+          "VariableID:1:9"
+        ]
+      }
+    },
+    "variables": {
+      "VariableID:1:1": {
+        "id": "VariableID:1:1",
+        "name": "color/surface",
+        "key": "v1",
+        "variableCollectionId": "VariableCollectionId:1:0",
+        "resolvedType": "COLOR",
+        "valuesByMode": {
+          "1:0": {
+            "r": 0.9411764705882353,
+            "g": 0.9411764705882353,
+            "b": 0.9411764705882353,
+            "a": 1
+          },
+          "1:1": {
+            "r": 0.11764705882352941,
+            "g": 0.11764705882352941,
+            "b": 0.11764705882352941,
+            "a": 1
+          }
+        },
+        "remote": false,
+        "scopes": ["ALL_SCOPES"]
+      },
+      "VariableID:1:2": {
+        "id": "VariableID:1:2",
+        "name": "color/primary",
+        "key": "v2",
+        "variableCollectionId": "VariableCollectionId:1:0",
+        "resolvedType": "COLOR",
+        "valuesByMode": {
+          "1:0": {
+            "r": 0.0784313725490196,
+            "g": 0.23529411764705882,
+            "b": 0.47058823529411764,
+            "a": 1
+          },
+          "1:1": {
+            "r": 0.47058823529411764,
+            "g": 0.6274509803921569,
+            "b": 0.8627450980392157,
+            "a": 1
+          }
+        },
+        "remote": false,
+        "scopes": ["ALL_SCOPES"]
+      },
+      "VariableID:1:5": {
+        "id": "VariableID:1:5",
+        "name": "color/accent",
+        "key": "v5",
+        "variableCollectionId": "VariableCollectionId:1:0",
+        "resolvedType": "COLOR",
+        "valuesByMode": {
+          "1:0": {
+            "type": "VARIABLE_ALIAS",
+            "id": "VariableID:1:2"
+          },
+          "1:1": {
+            "type": "VARIABLE_ALIAS",
+            "id": "VariableID:1:2"
+          }
+        },
+        "remote": false,
+        "scopes": ["ALL_SCOPES"]
+      },
+      "VariableID:1:6": {
+        "id": "VariableID:1:6",
+        "name": "color/scrim",
+        "key": "v6",
+        "variableCollectionId": "VariableCollectionId:1:0",
+        "resolvedType": "COLOR",
+        "valuesByMode": {
+          "1:0": {
+            "color": {
+              "r": 0,
+              "g": 0,
+              "b": 0,
+              "a": 1
+            },
+            "opacity": 0.5
+          },
+          "1:1": {
+            "color": {
+              "r": 0,
+              "g": 0,
+              "b": 0,
+              "a": 0.8
+            },
+            "opacity": 1
+          }
+        },
+        "remote": false,
+        "scopes": ["ALL_SCOPES"]
+      },
+      "VariableID:1:3": {
+        "id": "VariableID:1:3",
+        "name": "radius/card",
+        "key": "v3",
+        "variableCollectionId": "VariableCollectionId:2:0",
+        "resolvedType": "FLOAT",
+        "valuesByMode": {
+          "2:0": 8
+        },
+        "remote": false,
+        "scopes": ["CORNER_RADIUS"]
+      },
+      "VariableID:1:4": {
+        "id": "VariableID:1:4",
+        "name": "space/row",
+        "key": "v4",
+        "variableCollectionId": "VariableCollectionId:2:0",
+        "resolvedType": "FLOAT",
+        "valuesByMode": {
+          "2:0": 16
+        },
+        "remote": false,
+        "scopes": ["GAP"]
+      },
+      "VariableID:1:7": {
+        "id": "VariableID:1:7",
+        "name": "size/icon",
+        "key": "v7",
+        "variableCollectionId": "VariableCollectionId:2:0",
+        "resolvedType": "FLOAT",
+        "valuesByMode": {
+          "2:0": 20
+        },
+        "remote": false,
+        "scopes": ["WIDTH_HEIGHT"]
+      },
+      "VariableID:1:8": {
+        "id": "VariableID:1:8",
+        "name": "flag/beta",
+        "key": "v8",
+        "variableCollectionId": "VariableCollectionId:2:0",
+        "resolvedType": "BOOLEAN",
+        "valuesByMode": {
+          "2:0": true
+        },
+        "remote": false,
+        "scopes": ["ALL_SCOPES"]
+      },
+      "VariableID:1:9": {
+        "id": "VariableID:1:9",
+        "name": "remote/thing",
+        "key": "v9",
+        "variableCollectionId": "VariableCollectionId:2:0",
+        "resolvedType": "FLOAT",
+        "valuesByMode": {
+          "2:0": 4
+        },
+        "remote": true,
+        "scopes": ["GAP"]
+      }
+    }
+  }
+}

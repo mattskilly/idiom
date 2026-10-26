@@ -1,5 +1,6 @@
 import { posix, win32 } from "node:path";
 import { z } from "zod";
+import { designDeclarationSchema } from "./design.js";
 import { invariantSchema } from "./invariant.js";
 import { colorSchemeSchema } from "./project.js";
 import { referenceNameSchema } from "./reference.js";
@@ -226,6 +227,7 @@ function siblingIssue(
 
 const webStateSchema = z
   .object({
+    design: designDeclarationSchema.optional(),
     id: z.string(),
     description: z.string(),
     url: z.string().optional(),
@@ -403,6 +405,7 @@ const electronStepSchema = z.discriminatedUnion("action", [
 
 const electronStateSchema = z
   .object({
+    design: designDeclarationSchema.optional(),
     id: z.string(),
     description: z.string(),
     steps: z.array(electronStepSchema).default([]),

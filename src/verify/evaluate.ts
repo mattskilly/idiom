@@ -1,8 +1,10 @@
 import { tupleCoordinate, tupleCoordinateKey } from "../baseline/coordinate.js";
 import { runDeterministicChecks } from "../checks/registry.js";
 import type { ChecksConfig, CheckTuple } from "../checks/types.js";
+import { designIdentity } from "../design/identity.js";
 import { IdiomError } from "../errors.js";
 import { findingFingerprintIdentity } from "../review/fingerprint.js";
+import { compareOccurrences } from "../review/occurrences.js";
 import type { Finding } from "../schemas/finding.js";
 import { compareFindingLocus, type LocusComparison } from "./locus.js";
 import {
@@ -36,6 +38,7 @@ export type VerificationEvaluation = {
   calibrations: CalibrationResult[];
   findings: FindingVerdict[];
   newBlockers: string[];
+  newFindings?: DeterministicCandidateRecord[] | undefined;
   passed: boolean;
 };
 
@@ -235,6 +238,7 @@ export function evaluateVerification(options: {
   legacyColorScheme?: "light" | "dark" | undefined;
   expectedTupleKeys?: readonly string[] | undefined;
   checksConfig?: ChecksConfig | undefined;
+  fullFlow?: boolean | undefined;
 }): VerificationEvaluation {
   const legacyColorScheme = options.legacyColorScheme ?? "light";
   const axisAware = options.currentB.some((tuple) => tuple.colorSchemeAxis);
@@ -380,6 +384,31 @@ export function evaluateVerification(options: {
   const findings = options.findings.map((finding): FindingVerdict => {
     if (finding.verification.kind === "deterministic-check") {
       const coordinate = `${finding.state}\0${finding.viewport}\0${finding.colorScheme ?? legacyColorScheme}`;
+      if (finding.category === "design-drift") {
+        const identities = [
+          options.baseline,
+          options.currentA,
+          options.currentB,
+        ].map((tuples) => {
+          const tuple = tuples.find(
+            (t) =>
+              `${t.state}\0${t.viewport}\0${t.colorScheme ?? legacyColorScheme}` ===
+              coordinate,
+          );
+          return tuple ? designIdentity(tuple) : undefined;
+        });
+        if (
+          options.checksConfig?.designDrift?.enabled === false ||
+          identities.some((id) => id === undefined) ||
+          new Set(identities).size !== 1
+        )
+          return {
+            finding,
+            status: "unverifiable",
+            reason:
+              "Design comparison requires usable, unchanged intended reference evidence in baseline and both current captures.",
+          };
+      }
       const reproduced = [...currentCandidates.entries()].some(
         ([key, candidate]) =>
           key.startsWith(`${coordinate}\0`) &&
@@ -444,6 +473,24 @@ export function evaluateVerification(options: {
     calibrations,
     findings,
     newBlockers,
+    ...(options.fullFlow
+      ? {
+          newFindings: compareOccurrences(
+            deterministicCandidateRecords({
+              tuples: options.baseline,
+              legacyColorScheme,
+              expectedTupleKeys: options.expectedTupleKeys ?? [],
+              config: options.checksConfig,
+            }),
+            deterministicCandidateRecords({
+              tuples: options.currentB,
+              legacyColorScheme,
+              expectedTupleKeys: options.expectedTupleKeys ?? [],
+              config: options.checksConfig,
+            }),
+          ).introduced,
+        }
+      : {}),
     passed:
       findings.every(({ status }) => status === "fixed") &&
       newBlockers.length === 0,

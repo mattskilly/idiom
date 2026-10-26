@@ -983,3 +983,60 @@ test("tuple metadata prevents combination and scheme evidence from crossing comp
   record.finding.colorScheme = "dark";
   expect(await observationLoader()(record)).toBeUndefined();
 });
+
+test("members sharing a root cause form one cluster across categories, rendered as one cause ticket", async () => {
+  const { records, observations } = await recordsFixture();
+  const [first, second, third] = records;
+  if (!first || !second || !third) throw new Error("three records required");
+  const other = {
+    ...second,
+    finding: { ...second.finding, category: "scale-conformance" as const },
+  };
+  const cause = {
+    id: "cause-0123456789ab",
+    kind: "token" as const,
+    key: "--control-scale",
+    cause:
+      "`--control-scale` is not applied: 2 controls render 4px against 8px",
+    confidence: 0.9,
+    evidence: ["2 of 2 measured values come from `var(--control-scale)`"],
+    fix: "Define `--control-scale` where these elements inherit it (or fix the reference)",
+    symptoms: 2,
+  };
+  const clusters = groupFindings(
+    [first, other, third].map((record, index) => ({
+      id: record.finding.id,
+      record,
+      component: componentFor(record, record.finding.id, observations),
+      ...(index < 2 ? { cause } : {}),
+    })),
+  );
+  const caused = clusters.filter((cluster) => cluster.cause !== undefined);
+  expect(caused).toHaveLength(1);
+  expect(caused[0]?.members.map((member) => member.id).sort()).toEqual(
+    [first.finding.id, other.finding.id].sort(),
+  );
+  // Members without a cause keep component clustering.
+  expect(
+    clusters.find((cluster) => cluster.cause === undefined)?.members,
+  ).toHaveLength(1);
+  const { renderClusterTicket } = await import("../src/tickets/render.js");
+  const cluster = caused[0];
+  if (cluster === undefined) throw new Error("cause cluster required");
+  const rendered = renderClusterTicket({
+    cluster,
+    id: clusterTicketId(cluster),
+    ticketDirectory: tmpdir(),
+    availableImages: new Map(),
+  });
+  expect(rendered.title).toBe(`Resolve root cause: ${cause.cause}`);
+  expect(rendered.body).toContain(`${cause.cause}.`);
+  expect(rendered.body).toContain(
+    "- [ ] All 2 symptoms below clear on recheck (one fix for the shared cause)",
+  );
+  expect(rendered.body).toContain(
+    'Root cause key: "token:--control-scale" (cause-0123456789ab)',
+  );
+  expect(parseFindingBlocks(rendered.body)).toHaveLength(2);
+  expect(() => parse(rendered.body.split("+++")[1] ?? "")).not.toThrow();
+});

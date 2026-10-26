@@ -209,6 +209,10 @@ create the blank aggregation page used by the normal partial-run path. That
 keeps analysis on the renderer but excludes cross-origin frames; axe's
 `frame-tested` rule reports the boundary. Web retains the normal axe factory.
 
+**Capture lanes.** Web tuples run in lanes, one per viewport and colour scheme, up to `capture.concurrency` at once (`src/capture/lanes.ts`). A lane is sequential in flow order; every tuple keeps its own fresh context, so only scheduling changes. Results are stored by original position and published in sequential order; the first failure stops each lane before its next tuple and is rethrown once in-flight tuples settle, and a capture deadline names every coordinate in flight.
+
+**Interaction probe.** `src/capture/probe.ts` clicks a state's controls on a disposable page. A flow-scoped ledger (`src/capture/probe-ledger.ts`, in memory, partitioned by viewport and scheme) keys finished results by control identity (role, name, region, selector signature), so shared chrome is probed once and reused (`reusedFrom`) at later states, and a state's own controls run first. Between attempts a restore ladder compares a DOM state fingerprint with the baseline, tries Escape and a revealed close control, and only then replays the state on its own budget. Nested menu items share a per-state budget; unattempted controls are `not-reached`. The mutation guard blocks non-GET requests from every probe click, ladder steps included; only declared state replays may mutate.
+
 **Masks are applied at diff time, not capture time.** Screenshots always record the truth; volatile regions (rendered dates and times) are excluded when comparing, so evidence stays honest while diffs stay stable.
 
 ## Deterministic check layer
@@ -414,3 +418,82 @@ result and cumulative initial-to-final summary. No decisions or ticket lifecycle
 checkpoints are invented. The controller reads HEAD around each subprocess and
 performs no Git mutation or rollback. Dry-run returns its initial real prompt
 before creating session artifacts or requiring an agent.
+
+
+## Intended design comparison
+
+`src/design/source.ts` owns local export serving and browser preview discovery;
+`capture.ts` renders a neutral reference with a fresh deterministic browser context.
+Normal and literal-page capture attach references before runtime teardown, lazily
+launching Chromium for Electron references. Locale, timezone, scheme, viewport,
+scale factor, reduced motion and full-page settings match the app; opted-in captures
+wait for fonts and requested images before measurements. App steps, seeds, focus,
+probes and invariants are not replayed against the design. Owned source servers and
+browser contexts close with capture cleanup and interrupts.
+
+`match.ts` is pure: rendered content trees use stable node IDs, idiom names,
+role/accessible-name, owned text, then compatible sibling position between anchors.
+Stronger evidence is exhausted before positional matching. Duplicates require scoped
+or unambiguous evidence; explicit identity conflicts cannot fall back positionally.
+Extra wrappers remain visible in unmatched evidence. `measure.ts` compares matched
+geometry/styles/copy, using matched-parent boxes rather than the stable-island
+`relativeRect`. The registry appends `design-drift` after existing signal checks.
+
+`artifacts.ts` persists and reloads reference evidence with the app tuple. Review is
+fully offline: no current manifest declaration, source file or URL is consulted.
+Reference failure is unavailable coverage and prevents an entirely passing baseline.
+A live-site reference (`{ "site": url }`) takes the same element path. An image
+reference has no DOM: `image-diff.ts` aligns it to the app screenshot and groups
+perceptual cell differences into `regions.json`, which the loader recomputes, and
+each region becomes a minor finding (with the design image sent to the critique).
+Paired crops use separate selectors on each side; missing/extra elements show the
+matched parent on the absent side. Reports embed stored PNGs under the existing CSP,
+escape values and labels, and never embed live reference HTML or remote frames.
+Existing decisions, finding caps, grouping and repair prompts apply normally.
+
+`identity.ts` normalizes the intended observation independently of timestamps,
+transient source URLs and probe data. Verification requires usable matching design
+identity in baseline/current A/current B before a vanished fingerprint can mean
+fixed. Changed, removed, failed or disabled reference comparison is unverifiable.
+
+### Figma normaliser seam
+
+A Figma frame never goes through a browser. `src/design/figma/` parses frame URLs
+(`url.ts`), fetches the node tree, a 2× render and best-effort variables through
+the REST API into a pinned, version-keyed cache (`client.ts`, `cache.ts`), and
+`normalize.ts` turns the node tree into a synthesized V2 observation: a
+transparent viewport-wide `html`, the frame as `body`, and one element per
+visible layer with frame-relative bounds and CSS-shaped styles. Figma facts the
+comparison needs ride on element attributes (`data-idiom-source="figma"`,
+`data-figma-id`, `-name`, `-path`, `-link`, `-variables`, `-frame-width`), so
+matching, measuring, saved matches, crops, verification and reports keep one
+code path. `figma/capture.ts` composites the render onto a viewport-wide canvas
+so crop rectangles in CSS pixels land as they do on the app screenshot.
+
+The matcher reads those attributes generically and stays a pure function of the
+two observations, so saved-match revalidation still holds. A Figma id is a
+positive match key only: it pins an app element whose `data-node-id` is that
+Figma id, and never conflicts with an app's own `data-node-id` vocabulary.
+Layer names meet `data-idiom-name` and accessible names; kind and interactivity
+checks relax for Figma layers, except that a layer named as a control needs an
+interactive counterpart. With no Figma element on either side, every rule
+reduces to the HTML behaviour.
+
+### Several references and design decisions
+
+`references.ts` resolves a state's declaration into named references and picks
+each Figma frame's viewport. `measure.ts` exposes `measureComparisons`: every
+compared property per pair, within tolerance or not, keyed by app element,
+property and app neighbour. With several references, `decide.ts` reconciles them
+per key: agreeing references yield the first one's drift (naming the others),
+and disagreeing references yield one `idiom:design-decision` candidate instead
+of drift against either. `checks/project-config.ts` loads recorded
+`decide --choose` answers into `ChecksConfig.designChoices` for every validated
+run path, so a choice is applied inside the check: the review baseline and both
+verify recaptures emit the same candidates. A choice of the reference the build
+matches emits nothing; a choice of another reference emits that reference's
+ordinary drift candidate with its single-reference fingerprint, which reproduces
+until the app matches. A review recorded before the choice shows its decision
+finding as fixed once the choice exists, and the converted drift as new on the
+next review; this is the existing semantics for any finding whose identity
+changes.

@@ -5,6 +5,12 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { beforeAll, expect, test } from "vitest";
 import { createProgram } from "../src/cli.js";
+import {
+  designDeclarationSchema,
+  designDriftConfigSchema,
+} from "../src/schemas/design.js";
+import { flowSchema } from "../src/schemas/flow.js";
+import { projectSchema } from "../src/schemas/project.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = join(import.meta.dirname, "..");
@@ -20,11 +26,14 @@ type PackageMetadata = {
   version: string;
   description: string;
   dependencies: Record<string, string>;
+  bin: { idiom: string };
 };
 
 let readme: string;
 let commandsDoc: string;
 let configurationDoc: string;
+let designGuide: string;
+let mcpGuide: string;
 let changelog: string;
 let releaseGuide: string;
 let packageMetadata: PackageMetadata;
@@ -34,6 +43,8 @@ beforeAll(async () => {
     readme,
     commandsDoc,
     configurationDoc,
+    designGuide,
+    mcpGuide,
     changelog,
     releaseGuide,
     packageMetadata,
@@ -41,6 +52,8 @@ beforeAll(async () => {
     readFile(join(repositoryRoot, "README.md"), "utf8"),
     readFile(join(repositoryRoot, "docs", "commands.md"), "utf8"),
     readFile(join(repositoryRoot, "docs", "configuration.md"), "utf8"),
+    readFile(join(repositoryRoot, "docs", "design-compare.md"), "utf8"),
+    readFile(join(repositoryRoot, "docs", "mcp.md"), "utf8"),
     readFile(join(repositoryRoot, "CHANGELOG.md"), "utf8"),
     readFile(join(repositoryRoot, "docs", "releases.md"), "utf8"),
     readFile(join(repositoryRoot, "package.json"), "utf8").then(
@@ -121,6 +134,8 @@ test("README opens with the one-breath explanation, then install and quick", asy
   const headings = [
     "## Who it's for",
     "## How it works",
+    "## Compare against your design",
+    "## Use it from your agent",
     "## Before and after",
     "## Install",
     "## Try Idiom in two minutes",
@@ -163,10 +178,94 @@ test("README opens with the one-breath explanation, then install and quick", asy
   expect(readme).not.toContain("git+ssh://");
 });
 
-test("README stays within 250 lines", () => {
+test("README stays below 200 lines", () => {
   const lines = readme.split(/\r?\n/);
   if (lines.at(-1) === "") lines.pop();
-  expect(lines.length).toBeLessThanOrEqual(250);
+  expect(lines.length).toBeLessThan(200);
+});
+
+test("README exposes design and agent entry points", () => {
+  const design = readmeSection("## Compare against your design");
+  for (const fragment of [
+    "Figma",
+    "FIGMA_TOKEN",
+    "HTML",
+    "Claude",
+    "PNG",
+    "JPEG",
+    "WebP",
+    "Live site",
+    '"site"',
+    "idiom design add",
+    "idiom check",
+    "--design <source>",
+    "idiom quick",
+    "idiom decide --choose",
+    "element/property",
+    "](docs/design-compare.md)",
+  ])
+    expect(design).toContain(fragment);
+  const agent = readmeSection("## Use it from your agent");
+  for (const fragment of [
+    "eight",
+    "stdio",
+    "claude mcp add idiom -- npx -y @mattskilly/idiom mcp",
+    "](docs/mcp.md)",
+  ])
+    expect(agent).toContain(fragment);
+  expect(readmeSection("## Documentation")).toContain(
+    "](docs/design-compare.md)",
+  );
+  for (const doc of [commandsDoc, configurationDoc, mcpGuide]) {
+    expect(doc).toContain("](design-compare.md)");
+  }
+  for (const target of [
+    "commands.md",
+    "configuration.md#design-comparison",
+    "rules.md#design-drift",
+    "mcp.md",
+  ]) {
+    expect(designGuide).toContain(`](${target}`);
+  }
+});
+
+function guideJson(label: string): unknown {
+  const marker = `**${label}**`;
+  const start = designGuide.indexOf(marker);
+  expect(start, `missing guide label ${label}`).toBeGreaterThan(-1);
+  const snippet = /```json\n([\s\S]*?)\n```/.exec(designGuide.slice(start));
+  if (!snippet?.[1]) throw new Error(`missing JSON after ${label}`);
+  return JSON.parse(snippet[1]);
+}
+
+test("the guide's actual worked flow, server and tolerance examples satisfy shipped schemas", async () => {
+  const flow = flowSchema.parse(guideJson("worked flow"));
+  expect(flow.id).toBe("store");
+  expect(flow.target.kind).toBe("web");
+  expect(flow.states).toHaveLength(1);
+  expect(flow.states[0]?.id).toBe("checkout");
+  expect(designDeclarationSchema.parse(flow.states[0]?.design)).toMatchObject({
+    source: "designs/card.html",
+    name: "approved",
+  });
+  const settings = designDriftConfigSchema.parse(
+    guideJson("designDrift settings"),
+  );
+  expect(settings.tolerance).toEqual({ ratio: 0.15, px: 1, mode: "tighter" });
+  expect(settings.gap).toEqual({ px: 2 });
+  expect(
+    projectSchema.parse({
+      ...JSON.parse(
+        await readFile(join(repositoryRoot, "templates/project.json"), "utf8"),
+      ),
+      server: guideJson("server settings"),
+    }).server,
+  ).toMatchObject({
+    build: "true",
+    start: "python3 -m http.server 3000 --bind 127.0.0.1 --directory app",
+    readyUrl: "http://127.0.0.1:3000/",
+    port: 3000,
+  });
 });
 
 test("README links the command and configuration references", async () => {
@@ -177,6 +276,8 @@ test("README links the command and configuration references", async () => {
     ["README.md", readme],
     ["docs/commands.md", commandsDoc],
     ["docs/configuration.md", configurationDoc],
+    ["docs/design-compare.md", designGuide],
+    ["docs/mcp.md", mcpGuide],
   ];
   const targets: string[] = [];
   for (const [path, contents] of documents) {
@@ -231,9 +332,13 @@ test("every documented command exists", () => {
         : new Set<string>(),
     ]),
   );
-  const invocations = [readme, commandsDoc, configurationDoc].flatMap(
-    documentedInvocations,
-  );
+  const invocations = [
+    readme,
+    commandsDoc,
+    configurationDoc,
+    designGuide,
+    mcpGuide,
+  ].flatMap(documentedInvocations);
   expect(invocations.length).toBeGreaterThan(0);
   for (const [name, subcommand] of invocations) {
     const subcommands = commands.get(name as string);
@@ -282,6 +387,7 @@ test("changelog order drives the current and preceding release literals", () => 
 test("README distribution commands stay aligned with package metadata", () => {
   const version = packageMetadata.version;
   expect(packageMetadata.name).toBe("@mattskilly/idiom");
+  expect(packageMetadata.bin.idiom).toBe("dist/cli.js");
   expect(readme).toContain("npm install -g @mattskilly/idiom");
   expect(readme).toContain(`@mattskilly/idiom@${version}`);
   expect(readme).toContain("<version> (<short source commit>)");
@@ -327,4 +433,50 @@ test("release publication uses the tested changelog extractor in order", async (
     expect(extracted.trim()).not.toBe("");
     expect(extracted).toBe(parsedReleaseBody(version));
   }
+});
+
+test("MCP setup snippets parse to the documented launchers and preserve fixed desktop roots", async () => {
+  const { parse } = await import("smol-toml");
+  const source = await readFile(join(repositoryRoot, "docs/mcp.md"), "utf8");
+  expect(source).toContain(
+    "claude mcp add idiom -- npx -y @mattskilly/idiom mcp",
+  );
+  const snippets = [...source.matchAll(/```json\n([\s\S]*?)\n```/g)];
+  expect(snippets).toHaveLength(2);
+  for (const snippet of snippets) {
+    const settings = JSON.parse(snippet[1] ?? "");
+    expect(settings.mcpServers.idiom).toEqual({
+      command: "npx",
+      args: [
+        "-y",
+        "@mattskilly/idiom",
+        "mcp",
+        "--project",
+        "/absolute/path/to/project",
+      ],
+    });
+  }
+  const toml = /```toml\n([\s\S]*?)\n```/.exec(source)?.[1];
+  const configuration = parse(toml ?? "");
+  expect(configuration).toMatchObject({
+    mcp_servers: {
+      idiom: {
+        command: "npx",
+        args: [
+          "-y",
+          "@mattskilly/idiom",
+          "mcp",
+          "--project",
+          "/absolute/path/to/project",
+        ],
+        tool_timeout_sec: 3900,
+      },
+    },
+  });
+  expect(source).toContain("/idiom:idiom");
+  expect(source).toContain("60 seconds");
+  expect(source).toContain(
+    "Progress notifications do not extend every client's timeout",
+  );
+  expect(readme).toContain("](docs/mcp.md)");
 });

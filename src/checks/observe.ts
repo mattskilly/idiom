@@ -19,6 +19,7 @@ import {
   type ExplanationDomWindow,
   ensureExplanationDom,
 } from "./explanation-dom.js";
+import { type LayoutShiftEntry, layoutShiftScore } from "./layout-shift.js";
 import { sampleLiveness } from "./liveness-dom.js";
 import type {
   BandEdgeObservation,
@@ -280,6 +281,7 @@ export async function normalizeTokenDeclarations(
 }
 
 export type ObserveOptions = {
+  designComparison?: boolean | undefined;
   /** Gallery frames are recorded for screenshot band sampling when auto. */
   mediaFill?:
     | { auto: boolean; ignore: string[]; tolerance?: number | undefined }
@@ -288,6 +290,18 @@ export type ObserveOptions = {
   collections?: Array<{ selector: string }> | undefined;
   bandEdges?: boolean | undefined;
   wordBreak?: boolean | undefined;
+  /** Declared web fonts and the families visible text uses. */
+  fonts?: boolean | undefined;
+  /** Visible same-document-excluded http(s) links (web captures only). */
+  links?: boolean | undefined;
+  /** Rendered characters per line of body paragraphs. */
+  lineLength?: boolean | undefined;
+  /** Headings and button labels whose last line holds one word. */
+  orphanWord?: boolean | undefined;
+  /** Rendered versus natural aspect ratio, and broken images. */
+  imageRenders?: boolean | undefined;
+  /** Layout-shift entries recorded during load. */
+  layoutShift?: boolean | undefined;
   touchReachability?: ChecksConfig["touchReachability"];
   liveness?: ChecksConfig["liveness"];
   shell?: string | undefined;
@@ -354,6 +368,7 @@ export async function observePage(
       emptyInput,
       bandEdgesInput,
       wordBreakInput,
+      craftInput,
       shellInput,
       overlayInput,
       mediaInput,
@@ -468,8 +483,14 @@ export async function observePage(
       const authoredRules: Array<{
         selector: string;
         style: CSSStyleDeclaration;
+        sheet: string;
+        order: number;
       }> = [];
-      const collectRules = (rules: CSSRuleList, parentSelector?: string) => {
+      const collectRules = (
+        rules: CSSRuleList,
+        sheet: string,
+        parentSelector?: string,
+      ) => {
         for (const rule of rules) {
           let nestedParent = parentSelector;
           if (rule instanceof CSSStyleRule) {
@@ -477,14 +498,24 @@ export async function observePage(
               parentSelector === undefined
                 ? rule.selectorText
                 : resolveNestedSelector(parentSelector, rule.selectorText);
-            authoredRules.push({ selector: nestedParent, style: rule.style });
+            authoredRules.push({
+              selector: nestedParent,
+              style: rule.style,
+              sheet,
+              order: authoredRules.length,
+            });
           }
           if (
             parentSelector !== undefined &&
             typeof CSSNestedDeclarations !== "undefined" &&
             rule instanceof CSSNestedDeclarations
           ) {
-            authoredRules.push({ selector: parentSelector, style: rule.style });
+            authoredRules.push({
+              selector: parentSelector,
+              style: rule.style,
+              sheet,
+              order: authoredRules.length,
+            });
           }
           const canDescend =
             rule instanceof CSSStyleRule ||
@@ -496,16 +527,28 @@ export async function observePage(
               CSS.supports(rule.conditionText));
           if (canDescend) {
             try {
-              collectRules(rule.cssRules, nestedParent);
+              collectRules(rule.cssRules, sheet, nestedParent);
             } catch {
               // Cross-origin and unsupported rule lists are not observable.
             }
           }
         }
       };
-      for (const sheet of document.styleSheets) {
+      for (const [index, sheet] of [...document.styleSheets].entries()) {
+        let label = `<style>[${index}]`;
+        if (sheet.href) {
+          try {
+            const url = new URL(sheet.href);
+            label =
+              url.origin === location.origin
+                ? url.pathname.replace(/^\//, "")
+                : sheet.href;
+          } catch {
+            label = sheet.href;
+          }
+        }
         try {
-          collectRules(sheet.cssRules);
+          collectRules(sheet.cssRules, label);
         } catch {
           // Cross-origin stylesheets cannot be inspected safely.
         }
@@ -514,6 +557,108 @@ export async function observePage(
         property.replace(/-([a-z])/g, (_match, letter: string) =>
           letter.toUpperCase(),
         );
+      // Where the measured properties' winning declarations were authored,
+      // for root-cause grouping. Specificity + order approximates the
+      // cascade; layers and shadow scopes are ignored.
+      const styleSourceShorthands: Record<string, string[]> = {
+        color: [],
+        backgroundColor: ["background"],
+        borderTopColor: ["border-color", "border-top", "border"],
+        borderRightColor: ["border-color", "border-right", "border"],
+        borderBottomColor: ["border-color", "border-bottom", "border"],
+        borderLeftColor: ["border-color", "border-left", "border"],
+        borderTopLeftRadius: ["border-radius"],
+        borderTopRightRadius: ["border-radius"],
+        borderBottomRightRadius: ["border-radius"],
+        borderBottomLeftRadius: ["border-radius"],
+        paddingTop: ["padding"],
+        paddingRight: ["padding"],
+        paddingBottom: ["padding"],
+        paddingLeft: ["padding"],
+        marginTop: ["margin"],
+        marginRight: ["margin"],
+        marginBottom: ["margin"],
+        marginLeft: ["margin"],
+        rowGap: ["gap"],
+        columnGap: ["gap"],
+        boxShadow: [],
+        height: [],
+        minHeight: [],
+      };
+      const kebabCase = (property: string) =>
+        property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+      type Specificity = [number, number, number];
+      const compareSpecificity = (left: Specificity, right: Specificity) =>
+        left[0] - right[0] || left[1] - right[1] || left[2] - right[2];
+      const specificityCache = new Map<string, Specificity>();
+      const specificityOf = (selector: string): Specificity => {
+        const cached = specificityCache.get(selector);
+        if (cached !== undefined) return cached;
+        let ids = 0;
+        let classes = 0;
+        let types = 0;
+        const addMost = (list: string) => {
+          const most = splitSelectorList(list)
+            .map(specificityOf)
+            .sort((left, right) => compareSpecificity(right, left))[0];
+          if (most === undefined) return;
+          ids += most[0];
+          classes += most[1];
+          types += most[2];
+        };
+        let rest = "";
+        for (let index = 0; index < selector.length; index += 1) {
+          const match =
+            /^:(where|is|not|has|matches|-webkit-any|nth-child|nth-last-child)\(/.exec(
+              selector.slice(index),
+            );
+          if (match === null) {
+            rest += selector[index];
+            continue;
+          }
+          let depth = 1;
+          let end = index + match[0].length;
+          while (end < selector.length && depth > 0) {
+            if (selector[end] === "(") depth += 1;
+            else if (selector[end] === ")") depth -= 1;
+            end += 1;
+          }
+          const argument = selector.slice(index + match[0].length, end - 1);
+          const name = match[1] ?? "";
+          if (name.startsWith("nth-")) {
+            classes += 1;
+            const of = /\bof\s+(.+)$/.exec(argument)?.[1];
+            if (of !== undefined) addMost(of);
+          } else if (name !== "where") addMost(argument);
+          rest += " ";
+          index = end - 1;
+        }
+        const stripped = rest
+          .replace(/\[(?:\\.|[^\]\\])*\]/g, () => {
+            classes += 1;
+            return " ";
+          })
+          .replace(/::[\w-]+(?:\([^)]*\))?/g, () => {
+            types += 1;
+            return " ";
+          })
+          .replace(/:[\w-]+(?:\([^)]*\))?/g, () => {
+            classes += 1;
+            return " ";
+          })
+          .replace(/#(?:\\.|[\w-])+/g, () => {
+            ids += 1;
+            return " ";
+          })
+          .replace(/\.(?:\\.|[\w-])+/g, () => {
+            classes += 1;
+            return " ";
+          });
+        types += [...stripped.matchAll(/(?:^|[\s>+~])[A-Za-z][\w-]*/g)].length;
+        const score: Specificity = [ids, classes, types];
+        specificityCache.set(selector, score);
+        return score;
+      };
       const isInteractive = (element: Element) => {
         const tag = element.tagName.toLowerCase();
         const html = element as HTMLElement;
@@ -2281,14 +2426,124 @@ export async function observePage(
         const authoredProperties = new Set<string>();
         for (const property of html.style)
           authoredProperties.add(camelCase(property));
+        const matchedRules: typeof authoredRules = [];
         for (const rule of authoredRules) {
           try {
             if (!element.matches(rule.selector)) continue;
+            matchedRules.push(rule);
             for (const property of rule.style)
               authoredProperties.add(camelCase(property));
           } catch {
             // Invalid vendor selectors are ignored by the observation probe.
           }
+        }
+        const styleSources: Record<
+          string,
+          {
+            sheet: string;
+            selector: string;
+            tokens?: string[];
+            unresolved?: string[];
+          }
+        > = {};
+        for (const [property, shorthands] of Object.entries(
+          styleSourceShorthands,
+        )) {
+          if (!authoredProperties.has(property)) continue;
+          const kebab = kebabCase(property);
+          const declared = (style: CSSStyleDeclaration) => {
+            const own = style.getPropertyValue(kebab).trim();
+            const listed = Array.prototype.includes.call(style, kebab);
+            if (own !== "")
+              return {
+                text: own,
+                important: style.getPropertyPriority(kebab) === "important",
+              };
+            if (!listed) return undefined;
+            for (const shorthand of shorthands) {
+              const text = style.getPropertyValue(shorthand).trim();
+              if (text !== "")
+                return {
+                  text,
+                  important:
+                    style.getPropertyPriority(shorthand) === "important" ||
+                    style.getPropertyPriority(kebab) === "important",
+                };
+            }
+            return {
+              text: "",
+              important: style.getPropertyPriority(kebab) === "important",
+            };
+          };
+          let winner:
+            | {
+                sheet: string;
+                selector: string;
+                text: string;
+                important: boolean;
+                specificity: Specificity;
+                order: number;
+              }
+            | undefined;
+          for (const rule of matchedRules) {
+            const declaration = declared(rule.style);
+            if (declaration === undefined) continue;
+            let specificity: Specificity = [0, 0, 0];
+            for (const alternative of splitSelectorList(rule.selector)) {
+              try {
+                if (!element.matches(alternative)) continue;
+              } catch {
+                continue;
+              }
+              const candidate = specificityOf(alternative);
+              if (compareSpecificity(candidate, specificity) > 0)
+                specificity = candidate;
+            }
+            if (
+              winner === undefined ||
+              Number(declaration.important) - Number(winner.important) > 0 ||
+              (declaration.important === winner.important &&
+                (compareSpecificity(specificity, winner.specificity) > 0 ||
+                  (compareSpecificity(specificity, winner.specificity) === 0 &&
+                    rule.order > winner.order)))
+            )
+              winner = {
+                sheet: rule.sheet,
+                selector: rule.selector,
+                ...declaration,
+                specificity,
+                order: rule.order,
+              };
+          }
+          const inline = declared(html.style);
+          if (
+            inline !== undefined &&
+            (winner === undefined || inline.important || !winner.important)
+          )
+            winner = {
+              sheet: "inline",
+              selector: "[style]",
+              ...inline,
+              specificity: [1, 0, 0],
+              order: Number.MAX_SAFE_INTEGER,
+            };
+          if (winner === undefined) continue;
+          const tokens = [
+            ...new Set(
+              [...winner.text.matchAll(/var\(\s*(--[\w-]+)/g)].map(
+                (match) => match[1] ?? "",
+              ),
+            ),
+          ].filter(Boolean);
+          const unresolved = tokens.filter(
+            (name) => styles.getPropertyValue(name).trim() === "",
+          );
+          styleSources[property] = {
+            sheet: winner.sheet.slice(0, 200),
+            selector: winner.selector.slice(0, 200),
+            ...(tokens.length ? { tokens } : {}),
+            ...(unresolved.length ? { unresolved } : {}),
+          };
         }
         for (const property of ["fill", "stroke"])
           if (element.hasAttribute(property)) authoredProperties.add(property);
@@ -2367,6 +2622,7 @@ export async function observePage(
               ].every((padding) => Number.parseFloat(padding) === 0),
             ancestorSelectors: ancestors,
             authoredProperties: [...authoredProperties].sort(),
+            ...(Object.keys(styleSources).length === 0 ? {} : { styleSources }),
             structuralPath,
             ...(legacyRenderedPath === undefined ? {} : { legacyRenderedPath }),
             directText,
@@ -3965,40 +4221,76 @@ export async function observePage(
             height: rect.height,
           };
         });
-      for (const spec of inferredInput) {
+      // Shape head nouns (mirrors design-components' roundHeads): a "dot"
+      // may be styled only by its modifier, `layers-override`.
+      const shapeHeads = new Set([
+        "dot",
+        "circle",
+        "avatar",
+        "swatch",
+        "indicator",
+        "icon",
+      ]);
+      const interactiveSelector =
+        "a[href], button, input, select, textarea, summary, [role=button], [role=link], [role=menuitem], [role=checkbox], [role=switch], [role=tab]";
+      const textless = (element: Element) =>
+        (element.textContent ?? "").trim() === "" &&
+        !element.matches(interactiveSelector) &&
+        element.querySelector(interactiveSelector) === null;
+      const resolve = (pool: Element[], words: string[]) => {
         const counts = new Map<string, number>();
-        for (const element of rendered)
+        for (const element of pool)
           for (const token of element.classList)
-            if (containsRun(wordsOf(token), spec.words))
+            if (containsRun(wordsOf(token), words))
               counts.set(token, (counts.get(token) ?? 0) + 1);
         const token = [...counts].sort(
           ([left, a], [right, b]) =>
             b - a || left.length - right.length || left.localeCompare(right),
         )[0]?.[0];
-        let selector = "";
-        let matches: Element[] = [];
-        if (token !== undefined) {
-          selector = `.${CSS.escape(token)}`;
-          matches = rendered.filter((element) =>
-            element.classList.contains(token),
-          );
-        } else {
-          const labels = [
-            ...new Set(
-              rendered.flatMap((element) => {
-                const label = element.getAttribute("aria-label");
-                return label !== null && containsRun(wordsOf(label), spec.words)
-                  ? [label]
-                  : [];
-              }),
+        if (token !== undefined)
+          return {
+            selector: `.${CSS.escape(token)}`,
+            matches: pool.filter((element) =>
+              element.classList.contains(token),
             ),
-          ].slice(0, 5);
-          selector = labels
+          };
+        const labels = [
+          ...new Set(
+            pool.flatMap((element) => {
+              const label = element.getAttribute("aria-label");
+              return label !== null && containsRun(wordsOf(label), words)
+                ? [label]
+                : [];
+            }),
+          ),
+        ].slice(0, 5);
+        return {
+          selector: labels
             .map((label) => `[aria-label=${JSON.stringify(label)}]`)
-            .join(", ");
-          matches = rendered.filter((element) =>
+            .join(", "),
+          matches: pool.filter((element) =>
             labels.includes(element.getAttribute("aria-label") ?? ""),
+          ),
+        };
+      };
+      for (const spec of inferredInput) {
+        let { selector, matches } = resolve(rendered, spec.words);
+        let matchedBy: "modifier" | undefined;
+        if (
+          matches.length === 0 &&
+          spec.words.length > 1 &&
+          shapeHeads.has(spec.words.at(-1) ?? "")
+        ) {
+          // The full run matched nothing: retry with the modifier words on
+          // textless, non-interactive elements only.
+          const looser = resolve(
+            rendered.filter(textless),
+            spec.words.slice(0, -1),
           );
+          if (looser.matches.length > 0) {
+            ({ selector, matches } = looser);
+            matchedBy = "modifier";
+          }
         }
         if (explicitSelectors.has(selector)) continue;
         const rects = rectsOf(matches);
@@ -4020,6 +4312,7 @@ export async function observePage(
             source: spec.source,
             words: spec.words,
             ...(axis === undefined ? {} : { axis }),
+            ...(matchedBy === undefined ? {} : { matchedBy }),
           },
           ...(rects.length === 0 ? { unresolved: true as const } : {}),
         });
@@ -5878,6 +6171,596 @@ export async function observePage(
             })()
           : undefined;
 
+      // Craft evidence: fonts, links, line length, orphan words, image
+      // renders and layout shift. Each is opt-in and recorded as facts only.
+      const craftVisible = (element: Element) => {
+        try {
+          return isVisibleContent(element);
+        } catch {
+          return false;
+        }
+      };
+      const clipText = (value: string, max: number) =>
+        value.replace(/\s+/g, " ").trim().slice(0, max);
+      const layoutShift:
+        | import("./types.js").LayoutShiftObservation
+        | undefined = craftInput.layoutShift
+        ? await (async () => {
+            if (
+              typeof PerformanceObserver === "undefined" ||
+              !PerformanceObserver.supportedEntryTypes?.includes("layout-shift")
+            )
+              return {
+                status: "unavailable" as const,
+                reason: "layout-shift entries are not supported",
+                score: 0,
+                entries: [],
+              };
+            type ShiftEntry = PerformanceEntry & {
+              value: number;
+              hadRecentInput: boolean;
+              sources?: Array<{ node?: Node | null }>;
+            };
+            const collected: ShiftEntry[] = [];
+            await new Promise<void>((resolve) => {
+              const observer = new PerformanceObserver((list) => {
+                collected.push(...(list.getEntries() as ShiftEntry[]));
+                finish();
+              });
+              const timer = setTimeout(() => finish(), 100);
+              let done = false;
+              const finish = () => {
+                if (done) return;
+                done = true;
+                clearTimeout(timer);
+                collected.push(...(observer.takeRecords() as ShiftEntry[]));
+                observer.disconnect();
+                resolve();
+              };
+              observer.observe({ type: "layout-shift", buffered: true });
+            });
+            const unique = [...new Set(collected)];
+            return {
+              status: "ran" as const,
+              score: 0,
+              entries: unique.slice(0, 150).map((entry) => ({
+                value: entry.value,
+                startTime: entry.startTime,
+                ...(entry.hadRecentInput ? { hadRecentInput: true } : {}),
+                sources: [
+                  ...new Set(
+                    (entry.sources ?? []).flatMap((source) =>
+                      source.node instanceof Element && source.node.isConnected
+                        ? [geometrySelector(source.node)]
+                        : [],
+                    ),
+                  ),
+                ],
+              })),
+            };
+          })()
+        : undefined;
+
+      const fonts: import("./types.js").FontObservation | undefined =
+        craftInput.fonts
+          ? await (async () => {
+              if (!("fonts" in document))
+                return {
+                  status: "unavailable" as const,
+                  reason: "document.fonts is unavailable",
+                  faces: [],
+                  used: [],
+                  failedRequests: [],
+                };
+              await Promise.race([
+                document.fonts.ready,
+                new Promise((resolve) => setTimeout(resolve, 3000)),
+              ]);
+              const unquote = (value: string) =>
+                value
+                  .trim()
+                  .replace(/^["']|["']$/g, "")
+                  .trim()
+                  .toLowerCase();
+              const urlsByFamily = new Map<string, Set<string>>();
+              const visitRules = (rules: CSSRuleList, base: string) => {
+                for (const rule of rules) {
+                  if (rule instanceof CSSFontFaceRule) {
+                    const family = unquote(
+                      rule.style.getPropertyValue("font-family"),
+                    );
+                    const urls = urlsByFamily.get(family) ?? new Set<string>();
+                    for (const match of rule.style
+                      .getPropertyValue("src")
+                      .matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/g)) {
+                      const raw = match[2] ?? "";
+                      if (raw === "" || raw.startsWith("data:")) continue;
+                      try {
+                        urls.add(new URL(raw, base).href);
+                      } catch {}
+                    }
+                    urlsByFamily.set(family, urls);
+                  } else if ("cssRules" in rule) {
+                    try {
+                      visitRules((rule as CSSGroupingRule).cssRules, base);
+                    } catch {}
+                  }
+                }
+              };
+              for (const sheet of document.styleSheets) {
+                try {
+                  visitRules(sheet.cssRules, sheet.href ?? document.baseURI);
+                } catch {
+                  // Cross-origin stylesheets do not expose their rules.
+                }
+              }
+              const faces = [...document.fonts].map((face) => ({
+                family: unquote(face.family),
+                status: face.status,
+                weight: face.weight,
+                style: face.style,
+                urls: [...(urlsByFamily.get(unquote(face.family)) ?? [])],
+              }));
+              const declared = new Set(faces.map((face) => face.family));
+              const generic = new Set([
+                "serif",
+                "sans-serif",
+                "monospace",
+                "cursive",
+                "fantasy",
+                "system-ui",
+                "ui-serif",
+                "ui-sans-serif",
+                "ui-monospace",
+                "ui-rounded",
+                "math",
+                "emoji",
+                "fangsong",
+                "-apple-system",
+                "blinkmacsystemfont",
+              ]);
+              const canvas = document.createElement("canvas");
+              const context = canvas.getContext("2d");
+              const usedFamilies = new Map<
+                string,
+                { selectors: string[]; fallback: boolean; measured: boolean }
+              >();
+              let scanned = 0;
+              if (declared.size > 0)
+                for (const element of document.body?.querySelectorAll("*") ??
+                  []) {
+                  if (scanned > 4000) break;
+                  const own = [...element.childNodes]
+                    .filter((node) => node.nodeType === Node.TEXT_NODE)
+                    .map((node) => node.textContent ?? "")
+                    .join("")
+                    .trim();
+                  if (own === "") continue;
+                  scanned++;
+                  if (!craftVisible(element)) continue;
+                  const style = getComputedStyle(element);
+                  let family: string | undefined;
+                  for (const name of style.fontFamily.split(",")) {
+                    const value = unquote(name);
+                    if (declared.has(value)) {
+                      family = value;
+                      break;
+                    }
+                    if (generic.has(value)) break;
+                  }
+                  if (family === undefined) continue;
+                  const entry = usedFamilies.get(family) ?? {
+                    selectors: [],
+                    fallback: false,
+                    measured: false,
+                  };
+                  if (entry.selectors.length < 5)
+                    entry.selectors.push(geometrySelector(element));
+                  if (!entry.measured && context !== null) {
+                    entry.measured = true;
+                    // A face renders nothing for characters it has no glyphs
+                    // for (CJK or emoji in a Latin font, Latin in a CJK
+                    // subset), so the family is in the fallback only when
+                    // neither the element's own text nor a Latin sample
+                    // renders differently from the generic stacks.
+                    const quoted = JSON.stringify(family);
+                    const matchesFallback = (sample: string) => {
+                      const measure = (stack: string) => {
+                        context.font = `${style.fontStyle} ${style.fontWeight} 32px ${stack}`;
+                        return context.measureText(sample).width;
+                      };
+                      return (
+                        measure(`${quoted}, monospace`) ===
+                          measure("monospace") &&
+                        measure(`${quoted}, serif`) === measure("serif")
+                      );
+                    };
+                    entry.fallback =
+                      matchesFallback(own.slice(0, 40)) &&
+                      matchesFallback("Hamburgefonstiv 0123456789");
+                  }
+                  usedFamilies.set(family, entry);
+                }
+              const faceUrls = new Set(faces.flatMap((face) => face.urls));
+              const failedRequests = (
+                performance.getEntriesByType(
+                  "resource",
+                ) as PerformanceResourceTiming[]
+              ).flatMap((entry) => {
+                const status = (entry as { responseStatus?: number })
+                  .responseStatus;
+                return faceUrls.has(entry.name) &&
+                  typeof status === "number" &&
+                  status >= 400
+                  ? [{ url: entry.name, reason: `HTTP ${status}` }]
+                  : [];
+              });
+              return {
+                status: "ran" as const,
+                faces,
+                used: [...usedFamilies].map(([family, entry]) => ({
+                  family,
+                  selectors: entry.selectors,
+                  fallback: entry.fallback,
+                })),
+                failedRequests,
+              };
+            })()
+          : undefined;
+
+      const links:
+        | GeometryScan<import("./types.js").LinkObservation>
+        | undefined = craftInput.links
+        ? (() => {
+            const records: import("./types.js").LinkObservation[] = [];
+            if (location.origin === "null") return { status: "ran", records };
+            const here = location.href.split("#")[0];
+            const seen = new Set<string>();
+            let capped = false;
+            for (const anchor of document.querySelectorAll("a[href]")) {
+              if (!(anchor instanceof HTMLAnchorElement)) continue;
+              if (anchor.hasAttribute("download")) continue;
+              let url: URL;
+              try {
+                url = new URL(anchor.href);
+              } catch {
+                continue;
+              }
+              if (url.protocol !== "http:" && url.protocol !== "https:")
+                continue;
+              url.hash = "";
+              if (url.href === here) continue;
+              if (!craftVisible(anchor)) continue;
+              const selector = geometrySelector(anchor);
+              if (seen.has(selector)) continue;
+              if (records.length >= 300) {
+                capped = true;
+                break;
+              }
+              seen.add(selector);
+              records.push({
+                selector,
+                text: clipText(
+                  anchor.innerText || anchor.getAttribute("aria-label") || "",
+                  80,
+                ),
+                href: url.href,
+                sameOrigin: url.origin === location.origin,
+              });
+            }
+            return capped
+              ? {
+                  status: "partial",
+                  reason: "Link record limit (300) reached",
+                  records,
+                }
+              : { status: "ran", records };
+          })()
+        : undefined;
+
+      const lineLengths:
+        | GeometryScan<import("./types.js").LineLengthObservation>
+        | undefined = craftInput.lineLength
+        ? (() => {
+            const records: import("./types.js").LineLengthObservation[] = [];
+            let capped = false;
+            for (const paragraph of document.querySelectorAll("p")) {
+              const text = (paragraph.textContent ?? "")
+                .replace(/\s+/g, " ")
+                .trim();
+              if (text.length < 20) continue;
+              if (!craftVisible(paragraph)) continue;
+              const style = getComputedStyle(paragraph);
+              if (style.writingMode !== "horizontal-tb") continue;
+              const range = document.createRange();
+              range.selectNodeContents(paragraph);
+              const lines: Array<{
+                top: number;
+                bottom: number;
+                left: number;
+                right: number;
+              }> = [];
+              for (const rect of range.getClientRects()) {
+                if (rect.width <= 0 || rect.height <= 0) continue;
+                const line = lines.find(
+                  (candidate) =>
+                    Math.min(candidate.bottom, rect.bottom) -
+                      Math.max(candidate.top, rect.top) >
+                    Math.min(candidate.bottom - candidate.top, rect.height) / 2,
+                );
+                if (line === undefined)
+                  lines.push({
+                    top: rect.top,
+                    bottom: rect.bottom,
+                    left: rect.left,
+                    right: rect.right,
+                  });
+                else {
+                  line.left = Math.min(line.left, rect.left);
+                  line.right = Math.max(line.right, rect.right);
+                }
+              }
+              if (lines.length === 0) continue;
+              const width = Math.max(
+                ...lines.map((line) => line.right - line.left),
+              );
+              // The average rendered character, from this paragraph's own
+              // line boxes: true to its font, size and letter spacing.
+              const charWidth =
+                lines.reduce((sum, line) => sum + line.right - line.left, 0) /
+                text.length;
+              if (!(charWidth > 0)) continue;
+              const chars = Math.round(width / charWidth);
+              if (chars <= 45) continue;
+              if (records.length >= 200) {
+                capped = true;
+                break;
+              }
+              records.push({
+                selector: geometrySelector(paragraph),
+                chars,
+                width: Math.round(width * 100) / 100,
+                charWidth: Math.round(charWidth * 1000) / 1000,
+                lines: lines.length,
+                text: text.slice(0, 160),
+              });
+            }
+            return capped
+              ? {
+                  status: "partial",
+                  reason: "Line length record limit (200) reached",
+                  records,
+                }
+              : { status: "ran", records };
+          })()
+        : undefined;
+
+      const orphanWords:
+        | GeometryScan<import("./types.js").OrphanWordObservation>
+        | undefined = craftInput.orphanWord
+        ? (() => {
+            const records: import("./types.js").OrphanWordObservation[] = [];
+            const reasons = new Set<string>();
+            // A link owns a label only when it reads as a button: laid out
+            // as a box but holding inline text alone. Card links wrap block
+            // copy (headings, descriptions) that is not a label.
+            const buttonLikeLink = (link: Element) =>
+              getComputedStyle(link).display !== "inline" &&
+              [...link.querySelectorAll("*")].every((child) =>
+                /^(inline\b|contents$|none$)/.test(
+                  getComputedStyle(child).display,
+                ),
+              );
+            const owners = [
+              ...document.querySelectorAll(
+                'h1,h2,h3,h4,h5,h6,[role="heading"][aria-level],button,[role="button"],a[href]',
+              ),
+            ].filter(
+              (element) =>
+                (element.tagName !== "A" || buttonLikeLink(element)) &&
+                craftVisible(element),
+            );
+            const ownerSet = new Set(owners);
+            let segmenter: Intl.Segmenter;
+            try {
+              segmenter = new Intl.Segmenter(
+                document.documentElement.lang || undefined,
+                { granularity: "word" },
+              );
+            } catch {
+              return {
+                status: "unavailable",
+                reason:
+                  "Document language cannot be used for word segmentation",
+                records,
+              };
+            }
+            let work = 0;
+            for (const owner of owners) {
+              if (work > 30000) {
+                reasons.add("Text range work limit reached");
+                break;
+              }
+              if (getComputedStyle(owner).writingMode !== "horizontal-tb") {
+                reasons.add("Vertical writing mode is unsupported");
+                continue;
+              }
+              let clamped = false;
+              for (
+                let element: Element | null = owner;
+                element && element !== document.body;
+                element = element.parentElement
+              )
+                if (hasActiveLineClamp(element)) clamped = true;
+              if (clamped) continue;
+              const words: Array<{
+                word: string;
+                top: number;
+                height: number;
+              }> = [];
+              const walker = document.createTreeWalker(
+                owner,
+                NodeFilter.SHOW_TEXT,
+              );
+              for (
+                let node = walker.nextNode();
+                node !== null;
+                node = walker.nextNode()
+              ) {
+                const parent = node.parentElement;
+                if (!parent || parent.closest('[aria-hidden="true"]')) continue;
+                let nearest: Element | null = parent;
+                while (nearest && !ownerSet.has(nearest))
+                  nearest = nearest.parentElement;
+                if (nearest !== owner) continue;
+                if (!craftVisible(parent)) continue;
+                const value = node.textContent ?? "";
+                for (const segment of segmenter.segment(value)) {
+                  if (!segment.isWordLike) continue;
+                  if (++work > 30000) break;
+                  const range = document.createRange();
+                  range.setStart(node, segment.index);
+                  range.setEnd(node, segment.index + segment.segment.length);
+                  const rect = [...range.getClientRects()].find(
+                    (r) => r.width > 0 && r.height > 0,
+                  );
+                  if (rect)
+                    words.push({
+                      word: segment.segment,
+                      top: rect.top,
+                      height: rect.height,
+                    });
+                }
+              }
+              if (words.length < 3) continue;
+              const lines: Array<typeof words> = [];
+              for (const word of words) {
+                const line = lines.at(-1);
+                const first = line?.[0];
+                if (line && first && word.top < first.top + first.height / 2)
+                  line.push(word);
+                else lines.push([word]);
+              }
+              const last = lines.at(-1);
+              if (lines.length < 2 || !last || last.length !== 1) continue;
+              const word = (last[0]?.word ?? "").replace(/[\p{P}]+$/u, "");
+              if (word === "") continue;
+              records.push({
+                selector: geometrySelector(owner),
+                word,
+                lines: lines.length,
+                text: clipText(
+                  owner instanceof HTMLElement
+                    ? owner.innerText
+                    : (owner.textContent ?? ""),
+                  160,
+                ),
+              });
+            }
+            return reasons.size
+              ? { status: "partial", reason: [...reasons].join("; "), records }
+              : { status: "ran", records };
+          })()
+        : undefined;
+
+      const imageRenders:
+        | GeometryScan<import("./types.js").ImageRenderObservation>
+        | undefined = craftInput.imageRenders
+        ? await (async () => {
+            const candidates = [...document.querySelectorAll("img")].filter(
+              (image) => {
+                if (!image.hasAttribute("src") && !image.hasAttribute("srcset"))
+                  return false;
+                const rect = image.getBoundingClientRect();
+                return (
+                  rect.width >= 8 && rect.height >= 8 && craftVisible(image)
+                );
+              },
+            );
+            const measured = await Promise.all(
+              candidates.map(async (image) => {
+                const decoded = await Promise.race([
+                  image.decode().then(
+                    () => true,
+                    () => false,
+                  ),
+                  new Promise<undefined>((resolve) =>
+                    setTimeout(() => resolve(undefined), 1500),
+                  ),
+                ]);
+                const style = getComputedStyle(image);
+                const rect = image.getBoundingClientRect();
+                const n = (value: string) => Number.parseFloat(value) || 0;
+                const rendered = {
+                  x: rect.x + n(style.borderLeftWidth) + n(style.paddingLeft),
+                  y: rect.y + n(style.borderTopWidth) + n(style.paddingTop),
+                  width: Math.max(
+                    0,
+                    rect.width -
+                      n(style.borderLeftWidth) -
+                      n(style.borderRightWidth) -
+                      n(style.paddingLeft) -
+                      n(style.paddingRight),
+                  ),
+                  height: Math.max(
+                    0,
+                    rect.height -
+                      n(style.borderTopWidth) -
+                      n(style.borderBottomWidth) -
+                      n(style.paddingTop) -
+                      n(style.paddingBottom),
+                  ),
+                };
+                const source =
+                  image.currentSrc || image.getAttribute("src") || "";
+                const broken =
+                  image.complete &&
+                  image.naturalWidth === 0 &&
+                  image.naturalHeight === 0 &&
+                  decoded === false;
+                const svg =
+                  /^data:image\/svg/i.test(source) ||
+                  /\.svg(?:[?#]|$)/i.test(source);
+                const distortion =
+                  !broken &&
+                  !svg &&
+                  style.objectFit === "fill" &&
+                  image.naturalWidth > 0 &&
+                  image.naturalHeight > 0 &&
+                  rendered.width > 0 &&
+                  rendered.height > 0
+                    ? Math.abs(
+                        rendered.width /
+                          rendered.height /
+                          (image.naturalWidth / image.naturalHeight) -
+                          1,
+                      )
+                    : 0;
+                return {
+                  selector: geometrySelector(image),
+                  src: source.slice(0, 200),
+                  naturalWidth: image.naturalWidth,
+                  naturalHeight: image.naturalHeight,
+                  rendered,
+                  objectFit: style.objectFit,
+                  distortion: Math.round(distortion * 10000) / 10000,
+                  broken,
+                };
+              }),
+            );
+            const records = measured.filter(
+              (record) => record.broken || record.distortion > 0.005,
+            );
+            return records.length > 200
+              ? {
+                  status: "partial",
+                  reason: "Image record limit (200) reached",
+                  records: records.slice(0, 200),
+                }
+              : { status: "ran", records };
+          })()
+        : undefined;
+
       const geometry = window.__idiomVisibility;
       const shellVisibility: import("./types.js").ShellVisibilityObservation = {
         shell: { status: "not-configured" },
@@ -6058,6 +6941,12 @@ export async function observePage(
         ...(collections === undefined ? {} : { collections }),
         ...(selectorMarks.length === 0 ? {} : { selectorMarks }),
         ...(images === undefined ? {} : { images }),
+        ...(fonts === undefined ? {} : { fonts }),
+        ...(links === undefined ? {} : { links }),
+        ...(lineLengths === undefined ? {} : { lineLengths }),
+        ...(orphanWords === undefined ? {} : { orphanWords }),
+        ...(imageRenders === undefined ? {} : { imageRenders }),
+        ...(layoutShift === undefined ? {} : { layoutShift }),
       };
     },
     {
@@ -6077,6 +6966,14 @@ export async function observePage(
       imagesInput: observeOptions.images === true,
       bandEdgesInput: observeOptions.bandEdges === true,
       wordBreakInput: observeOptions.wordBreak === true,
+      craftInput: {
+        fonts: observeOptions.fonts === true,
+        links: observeOptions.links === true,
+        lineLength: observeOptions.lineLength === true,
+        orphanWord: observeOptions.orphanWord === true,
+        imageRenders: observeOptions.imageRenders === true,
+        layoutShift: observeOptions.layoutShift === true,
+      },
       emptyInput: observeOptions.emptyState ?? {
         regions: [],
         auto: true,
@@ -6130,7 +7027,45 @@ export async function observePage(
         }
     }
   }
+  if (observeOptions.designComparison && artifact.version === 2) {
+    const borders = await page.evaluate(
+      (selectors) =>
+        selectors.map((selector) => {
+          const element = document.querySelector(selector);
+          if (!element) return null;
+          const style = getComputedStyle(element);
+          return {
+            borderTopStyle: style.borderTopStyle,
+            borderRightStyle: style.borderRightStyle,
+            borderBottomStyle: style.borderBottomStyle,
+            borderLeftStyle: style.borderLeftStyle,
+          };
+        }),
+      artifact.elements.map((e) => e.selector),
+    );
+    artifact.elements.forEach((e, i) => {
+      const border = borders[i];
+      if (border) Object.assign(e.styles, border);
+    });
+  }
+
   if (artifact.version === 2 && liveness) artifact.liveness = liveness;
+  if (artifact.version === 2 && artifact.layoutShift?.status === "ran") {
+    const entries = artifact.layoutShift.entries as Array<
+      LayoutShiftEntry & { sources: string[] }
+    >;
+    artifact.layoutShift = {
+      status: "ran",
+      score: layoutShiftScore(entries),
+      entries: entries
+        .filter((entry) => entry.hadRecentInput !== true)
+        .map(({ value, startTime, sources }) => ({
+          value: Math.round(value * 10000) / 10000,
+          startTime: Math.round(startTime),
+          sources,
+        })),
+    };
+  }
   return observeOptions.fresh === true
     ? { ...artifact, fresh: true }
     : artifact;

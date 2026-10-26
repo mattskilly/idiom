@@ -5,7 +5,7 @@ import {
   captureTupleKey,
   expectedCaptureTupleKeys,
 } from "../capture/resolve.js";
-import { checksConfigFrom } from "../checks/registry.js";
+import { projectChecksConfig } from "../checks/project-config.js";
 import { type CheckSummary, checkWithReview } from "../commands/check.js";
 import { readDecisionLog } from "../decisions/log.js";
 import { IdiomError } from "../errors.js";
@@ -17,6 +17,7 @@ import {
   type ReviewCatalog,
 } from "../review/catalog.js";
 import { lineageDecision } from "../review/lifecycle.js";
+import type { RootCause } from "../review/root-causes.js";
 import type { ReviewDependencies } from "../review/run.js";
 import { type Finding, findingSchema } from "../schemas/finding.js";
 import { validateProject } from "../validation.js";
@@ -81,27 +82,64 @@ export async function refreshEligibility(snapshot: FixSnapshot): Promise<void> {
   );
 }
 
+/**
+ * Findings for one repair attempt, in issue rank order. A root cause is
+ * attempted whole (past `top`) and never split: it is either the whole
+ * selection or excluded from it.
+ */
 export function selectTargets(
   snapshot: FixSnapshot,
   records: CatalogFinding[],
   top: number,
 ): CatalogFinding[] {
   const byId = new Map(records.map((record) => [record.finding.id, record]));
+  const resolve = (ids: string[]) =>
+    [...new Set(ids)].flatMap((id) => {
+      const record = byId.get(id);
+      return record === undefined ? [] : [record];
+    });
+  const issues = snapshot.summary.issues;
+  if (issues === undefined)
+    return resolve(
+      snapshot.summary.findings.map((finding) => finding.id),
+    ).slice(0, top);
   const groups = new Map(
     snapshot.summary.groups?.map((group) => [group.id, group]),
   );
-  const ordered =
-    snapshot.summary.issues?.flatMap((issue) =>
+  const selected: CatalogFinding[] = [];
+  for (const issue of issues) {
+    const eligible = resolve(
       issue.groups.flatMap(
         (id) => groups.get(id)?.members.map((member) => member.id) ?? [],
       ),
-    ) ?? snapshot.summary.findings.map((finding) => finding.id);
-  return [...new Set(ordered)]
-    .flatMap((id) => {
-      const record = byId.get(id);
-      return record === undefined ? [] : [record];
-    })
-    .slice(0, top);
+    ).filter((record) => !selected.includes(record));
+    if (eligible.length === 0) continue;
+    if (issue.rootCause !== undefined) {
+      if (selected.length === 0) return eligible;
+      break;
+    }
+    for (const record of eligible) {
+      if (selected.length >= top) return selected;
+      selected.push(record);
+    }
+  }
+  return selected;
+}
+
+/** The root cause a selection attempts, when it is one. */
+export function selectedCause(
+  snapshot: FixSnapshot,
+  selected: CatalogFinding[],
+): RootCause | undefined {
+  if (selected.length === 0) return undefined;
+  return snapshot.summary.issues?.find((issue) => {
+    const ids = new Set(
+      issue.rootCause?.symptoms.flatMap((symptom) =>
+        symptom.findings.map((finding) => finding.id),
+      ),
+    );
+    return selected.every((record) => ids.has(record.finding.id));
+  })?.rootCause;
 }
 
 export async function takeFixSnapshot(options: {
@@ -178,7 +216,7 @@ export async function takeFixSnapshot(options: {
       tuples: loaded.tuples,
       expectedTupleKeys: loaded.expectedTupleKeys,
       legacyColorScheme: validated.project.capture.colorScheme,
-      config: checksConfigFrom(validated.project.checks),
+      config: await projectChecksConfig(validated),
     }),
     eligible: [],
     // Include flow, policy and design rules: agents must repair the application, not weaken the evidence contract.

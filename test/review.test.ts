@@ -494,6 +494,7 @@ test("stored review ignores an expected 404 document error but keeps genuine err
     from: runId,
     deterministicOnly: true,
   });
+  expect(result).not.toHaveProperty("issueRankingContext");
   const findings = JSON.parse(
     await readFile(result.findingsPath, "utf8"),
   ) as Array<{

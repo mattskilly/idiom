@@ -1,0 +1,92 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`HTML-vs-HTML matching is unchanged by the Figma rules 1`] = `
+{
+  "pairs": [
+    {
+      "app": "html",
+      "design": "html",
+      "id": "c465144b53cf1b68c82baf43",
+      "method": "root",
+      "parent": null,
+    },
+    {
+      "app": "body",
+      "design": "body",
+      "id": "791ed0b0cad3d74ee12aa4b0",
+      "method": "root",
+      "parent": "c465144b53cf1b68c82baf43",
+    },
+    {
+      "app": "body > main",
+      "design": "body > main",
+      "id": "483fb5d22be2c45af68bee24",
+      "method": "data-node-id",
+      "parent": "791ed0b0cad3d74ee12aa4b0",
+    },
+    {
+      "app": "body > main > h1",
+      "design": "body > main > h1",
+      "id": "ab65ce751e58f9c6303a8272",
+      "method": "role-name",
+      "parent": "483fb5d22be2c45af68bee24",
+    },
+    {
+      "app": "div.card",
+      "design": "div.card",
+      "id": "a693dd2e47ee69fa49637b92",
+      "method": "data-node-id",
+      "parent": "483fb5d22be2c45af68bee24",
+    },
+    {
+      "app": "div.row",
+      "design": "div.row",
+      "id": "f459ae170f6b26a06270588e",
+      "method": "data-node-id",
+      "parent": "483fb5d22be2c45af68bee24",
+    },
+    {
+      "app": "body > main > div:nth-of-type(2) > div:nth-of-type(1)",
+      "design": "body > main > div:nth-of-type(2) > div:nth-of-type(1)",
+      "id": "c04e30248f27c6041c8bb1c4",
+      "method": "data-node-id",
+      "parent": "f459ae170f6b26a06270588e",
+    },
+    {
+      "app": "body > main > div:nth-of-type(2) > div:nth-of-type(2)",
+      "design": "body > main > div:nth-of-type(2) > div:nth-of-type(2)",
+      "id": "5ecd37d25f40f64d2741eb88",
+      "method": "data-node-id",
+      "parent": "f459ae170f6b26a06270588e",
+    },
+    {
+      "app": "div.weight",
+      "design": "div.weight",
+      "id": "78f1e6cb87265a72a67cc8b6",
+      "method": "data-node-id",
+      "parent": "483fb5d22be2c45af68bee24",
+    },
+    {
+      "app": "div.colour",
+      "design": "div.colour",
+      "id": "952c7251c1b1f23405391655",
+      "method": "data-node-id",
+      "parent": "483fb5d22be2c45af68bee24",
+    },
+    {
+      "app": "p.copy",
+      "design": "p.copy",
+      "id": "37f061984c2cc6d7cf4cf072",
+      "method": "parent-position",
+      "parent": "483fb5d22be2c45af68bee24",
+    },
+  ],
+  "unmatchedApp": [
+    "span.extra",
+  ],
+  "unmatchedDesign": [
+    "body > main > button",
+  ],
+  "version": 1,
+}
+`;

@@ -10,16 +10,24 @@ import type {
 import { IdiomError } from "../errors.js";
 import { assertEvidencePaths } from "../review/artifacts.js";
 import type { CatalogFinding } from "../review/catalog.js";
+import type { RootCause } from "../review/root-causes.js";
 
+/** The root cause a member's finding is a symptom of, when one formed. */
+export type ClusterCause = Pick<
+  RootCause,
+  "id" | "kind" | "key" | "cause" | "confidence" | "evidence" | "fix"
+> & { symptoms: number };
 export type ClusterMember = {
   id: string;
   record: CatalogFinding;
   component: string;
+  cause?: ClusterCause | undefined;
 };
 export type FindingCluster = {
   key: string;
   component: string;
   members: ClusterMember[];
+  cause?: ClusterCause | undefined;
 };
 export function findingSelector(record: CatalogFinding): string | undefined {
   const selector = record.finding.verification.params?.selector;
@@ -27,7 +35,7 @@ export function findingSelector(record: CatalogFinding): string | undefined {
     ? selector
     : record.finding.verification.locus?.target.selector;
 }
-function isComponentShell(element: ObservedElement): boolean {
+export function isComponentShell(element: ObservedElement): boolean {
   const attrs = (element as Partial<ObservedElementV2>).attributes ?? {};
   const role =
     (element as Partial<ObservedElementV2>).signals?.role ?? attrs.role;
@@ -38,7 +46,7 @@ function isComponentShell(element: ObservedElement): boolean {
     /^#(?:root|app|__next|__nuxt|app-root)$/i.test(element.selector)
   );
 }
-function isComponentBoundary(element: ObservedElement): boolean {
+export function isComponentBoundary(element: ObservedElement): boolean {
   const attrs = (element as Partial<ObservedElementV2>).attributes ?? {};
   const role =
     (element as Partial<ObservedElementV2>).signals?.role ?? attrs.role ?? "";
@@ -109,15 +117,17 @@ export function groupFindings(members: ClusterMember[]): FindingCluster[] {
   const groups = new Map<string, FindingCluster>();
   for (const member of members) {
     const finding = member.record.finding;
-    const key = JSON.stringify([
-      finding.flow,
-      finding.category,
-      member.component,
-    ]);
+    // One ticket per root cause, across categories and components.
+    const key = JSON.stringify(
+      member.cause === undefined
+        ? [finding.flow, finding.category, member.component]
+        : ["cause", member.cause.id],
+    );
     const cluster = groups.get(key) ?? {
       key,
       component: member.component,
       members: [],
+      ...(member.cause === undefined ? {} : { cause: member.cause }),
     };
     cluster.members.push(member);
     groups.set(key, cluster);

@@ -7,9 +7,12 @@ import {
   ExplanationCollector,
   mergeExplanations,
 } from "../src/capture/explanations.js";
+import { sweepFocusVisible } from "../src/capture/focus.js";
+import type { LinkChecker } from "../src/capture/links.js";
 import { sampleMediaFrames } from "../src/capture/media-bands.js";
 import { mergeMotion } from "../src/capture/motion.js";
 import { probeControls } from "../src/capture/probe.js";
+import { createProbeLedger } from "../src/capture/probe-ledger.js";
 import {
   inferDesignComponents,
   inferredComponentInputs,
@@ -71,6 +74,14 @@ export type ReviewOptions = {
   published?: CheckTuple["published"];
   /** Record `<img>` observations, as capture does for published flows. */
   images?: boolean;
+  /** Navigate to this URL instead of setting the fixture HTML as content. */
+  url?: string;
+  /** Wait this long after load, as capture's settle does. */
+  settleMs?: number;
+  /** Run the keyboard focus sweep (also on whenever `probe` is true). */
+  focusSweep?: boolean;
+  /** Check observed links with this checker, as web capture does. */
+  links?: LinkChecker;
 };
 
 /**
@@ -82,7 +93,7 @@ export async function reviewFixture(
   html: string,
   options: ReviewOptions = {},
 ): Promise<ReviewedFixture> {
-  const { state, focus, ...shared } = options;
+  const { state, focus, url, ...shared } = options;
   return (
     await reviewStates(
       browser,
@@ -91,6 +102,7 @@ export async function reviewFixture(
           state: state ?? "editor",
           html,
           ...(focus === undefined ? {} : { focus }),
+          ...(url === undefined ? {} : { url }),
         },
       ],
       shared,
@@ -109,6 +121,7 @@ export async function reviewStates(
     html: string;
     focus?: string;
     siblings?: string;
+    url?: string;
   }>,
   options: Omit<ReviewOptions, "state" | "focus"> = {},
 ): Promise<{ findings: ReviewedFixture; tuples: CheckTuple[] }> {
@@ -123,7 +136,10 @@ export async function reviewStates(
   );
   const viewport = options.viewport ?? { width: 1440, height: 900 };
   const tuples: CheckTuple[] = [];
-  for (const { state, html, focus, siblings } of states) {
+  // One flow-scoped ledger, as a real capture run has: a control probed at an
+  // earlier state is reused at later ones.
+  const probeLedger = createProbeLedger();
+  for (const { state, html, focus, siblings, url } of states) {
     for (const colorScheme of options.colorSchemes ?? [options.colorScheme]) {
       const context = await browser.newContext({
         viewport,
@@ -139,7 +155,13 @@ export async function reviewStates(
           ? `${state}/desktop`
           : `${state}/desktop/${colorScheme}`;
       try {
-        await page.setContent(html);
+        const load = async () => {
+          if (url === undefined) await page.setContent(html);
+          else await page.goto(url);
+          if (options.settleMs !== undefined)
+            await page.waitForTimeout(options.settleMs);
+        };
+        await load();
         const explanations =
           settings.explanation === "visible"
             ? new ExplanationCollector(page, "capture", settings.probe.waitMs)
@@ -186,8 +208,23 @@ export async function reviewStates(
                 }),
             bandEdges: settings.bandEdges?.enabled === true,
             wordBreak: settings.wordBreak?.enabled === true,
+            fonts: true,
+            lineLength: true,
+            orphanWord: true,
+            imageRenders: true,
+            layoutShift: true,
+            links: options.links !== undefined,
           },
         );
+        if (
+          observations.version === 2 &&
+          observations.links !== undefined &&
+          options.links !== undefined
+        )
+          observations = {
+            ...observations,
+            links: await options.links.check(observations.links.records),
+          };
         if (
           observations.version === 2 &&
           observations.mediaFrames !== undefined &&
@@ -210,6 +247,14 @@ export async function reviewStates(
             ...observations,
             explanations: explanations.evidence(),
           };
+        if ((options.probe || options.focusSweep) && observations.version === 2)
+          observations = {
+            ...observations,
+            focusVisible: await sweepFocusVisible(page, {
+              maxStops: settings.probe.maxControls,
+              ignore: [...settings.focusVisible.ignore, ...settings.probe.skip],
+            }),
+          };
         if (options.probe && observations.version === 2) {
           const probe = await probeControls({
             page,
@@ -220,9 +265,10 @@ export async function reviewStates(
             motionSelectors: settings.motion.selectors,
             explanation: settings.explanation,
             collections: settings.collections.map(({ selector }) => selector),
-            restore: async () => {
-              await page.setContent(html);
-            },
+            ledger: probeLedger,
+            stateId: state,
+            ledgerPartition: `desktop\0${colorScheme ?? "light"}`,
+            restore: load,
           });
           observations = {
             ...observations,

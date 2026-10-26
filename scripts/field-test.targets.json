@@ -1,0 +1,88 @@
+[
+  {
+    "id": "raycast-marketing",
+    "kind": "marketing",
+    "aiBuilt": false,
+    "urls": ["https://www.raycast.com/"],
+    "notes": "Polished, animation-heavy product marketing page; a hand-built reference for how much a craft-focused team's site trips the rules."
+  },
+  {
+    "id": "shadcn-dashboard",
+    "kind": "saas-dashboard",
+    "aiBuilt": false,
+    "urls": ["https://ui.shadcn.com/examples/dashboard"],
+    "notes": "Canonical React/Tailwind dashboard example (charts, data table, sidebar); the component library most AI builders copy from."
+  },
+  {
+    "id": "react-docs",
+    "kind": "docs",
+    "aiBuilt": false,
+    "urls": ["https://react.dev/learn"],
+    "notes": "Large OSS documentation site with sidebar navigation, code samples and interactive sandboxes."
+  },
+  {
+    "id": "nextjs-commerce",
+    "kind": "ecommerce",
+    "aiBuilt": false,
+    "urls": ["https://vercel.store/"],
+    "notes": "Next.js Commerce demo storefront: product grid, carousel, cart drawer. Stable OSS-hosted demo."
+  },
+  {
+    "id": "bootstrap-checkout",
+    "kind": "form-heavy",
+    "aiBuilt": false,
+    "urls": ["https://getbootstrap.com/docs/5.3/examples/checkout/"],
+    "notes": "Bootstrap's checkout example: a long billing/payment form with selects, radios and validation styling."
+  },
+  {
+    "id": "wikipedia-mobile",
+    "kind": "mobile-first",
+    "aiBuilt": false,
+    "urls": ["https://en.m.wikipedia.org/wiki/Typography"],
+    "notes": "Wikipedia's mobile skin (MinervaNeue), designed mobile-first; long-form article with collapsible sections."
+  },
+  {
+    "id": "v0-sales-dashboard",
+    "kind": "ai-built",
+    "aiBuilt": true,
+    "urls": ["https://v0-sales-operations-dashboard.vercel.app/"],
+    "notes": "Public v0 community template (generator meta v0.app): a sales-operations dashboard."
+  },
+  {
+    "id": "v0-energy-landing",
+    "kind": "ai-built",
+    "aiBuilt": true,
+    "urls": ["https://v0-gigi-energy-drink-landing-page.vercel.app/"],
+    "notes": "Public v0 community template (generator meta v0.app): a consumer-brand landing page."
+  },
+  {
+    "id": "lovable-curry-club",
+    "kind": "ai-built",
+    "aiBuilt": true,
+    "urls": ["https://thecurryclub.lovable.app/"],
+    "notes": "Lovable app listed on the madewithlovable.com directory: a restaurant site with menu and booking sections."
+  },
+  {
+    "id": "astro-paper-repo",
+    "kind": "docs",
+    "aiBuilt": false,
+    "urls": ["http://127.0.0.1:4321/"],
+    "notes": "OSS Astro blog/content theme (satnaing/astro-paper). Clones without secrets, builds statically, and exposes 30+ unauthenticated routes, so it carries init --flows + check and the 10-state speed target. Served with astro preview (production build) so the dev toolbar is not captured.",
+    "repo": {
+      "url": "https://github.com/satnaing/astro-paper",
+      "commit": "35cfa7fbe0b897306d27670d3819e55d5205f3dd",
+      "install": ["bun install"],
+      "server": {
+        "build": "npx astro build",
+        "start": "npx astro preview --host 127.0.0.1 --port $PORT",
+        "readyUrl": "http://127.0.0.1:4321/",
+        "port": 4321,
+        "startupTimeoutMs": 120000
+      },
+      "dev": [
+        "npx astro build",
+        "npx astro preview --host 127.0.0.1 --port 4321"
+      ]
+    }
+  }
+]

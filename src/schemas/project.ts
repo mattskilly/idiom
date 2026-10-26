@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { parseCssColor } from "../checks/shared.js";
 import { designTokensSchema } from "../system/learn/schema.js";
+import {
+  componentToleranceDefault,
+  designDriftConfigSchema,
+} from "./design.js";
 
 export const colorSchemeSchema = z.enum(["light", "dark"]);
 
@@ -72,7 +76,7 @@ const componentSizeSchema = z
         mode: z.enum(["tighter", "looser"]).default("looser"),
       })
       .strict()
-      .default({ ratio: 0.15, px: 1, mode: "tighter" }),
+      .default(componentToleranceDefault),
   })
   .strict();
 
@@ -429,6 +433,7 @@ export const checksConfigSchema = z
       })
       .default({ inner: 4, between: 12 }),
     scales: scalesSchema,
+    designDrift: designDriftConfigSchema.optional(),
     luminanceParity: z
       .object({ primarySelectors: selectorList, ignore: selectorList })
       .strict()
@@ -473,6 +478,54 @@ export const checksConfigSchema = z
     liveness: livenessConfigSchema.optional(),
     mediaFill: mediaFillConfigSchema,
     collections: collectionsConfigSchema,
+    fonts: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    links: z
+      .object({
+        enabled: z.boolean().default(true),
+        external: z.boolean().default(false),
+        timeoutMs: z.number().int().positive().default(5000),
+        budgetMs: z.number().int().positive().default(30000),
+        concurrency: z.number().int().min(1).max(32).default(4),
+        /** Absolute-URL or path prefixes that are never requested. */
+        ignore: z.array(z.string().trim().min(1)).default([]),
+      })
+      .strict()
+      .prefault({}),
+    focusVisible: z
+      .object({ enabled: z.boolean().default(true), ignore: selectorList })
+      .strict()
+      .prefault({}),
+    lineLength: z
+      .object({
+        enabled: z.boolean().default(true),
+        max: z.number().int().min(20).default(90),
+      })
+      .strict()
+      .prefault({}),
+    orphanWord: z
+      .object({
+        enabled: z.boolean().default(true),
+        maxChars: z.number().int().min(1).default(7),
+      })
+      .strict()
+      .prefault({}),
+    images: z
+      .object({
+        enabled: z.boolean().default(true),
+        distortionTolerance: z.number().finite().gt(0).lt(1).default(0.03),
+      })
+      .strict()
+      .prefault({}),
+    layoutShift: z
+      .object({
+        enabled: z.boolean().default(true),
+        max: z.number().finite().min(0).default(0.1),
+      })
+      .strict()
+      .prefault({}),
   })
   .strict();
 
@@ -640,6 +693,11 @@ const projectInputSchema = z
         fullPage: z.boolean().default(true),
         settleMs: z.number().default(250),
         maxMinutes: z.number().finite().positive().default(30),
+        /**
+         * Capture lanes (one per viewport and colour scheme) run at once.
+         * Each tuple keeps its own fresh context; only tuples overlap.
+         */
+        concurrency: z.number().int().min(1).max(8).default(4),
       })
       .strict(),
     design: z

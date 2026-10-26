@@ -1,4 +1,5 @@
 import { IdiomError } from "../errors.js";
+import type { DesignLocation } from "../schemas/design.js";
 import { flowSchema, isWebFlow, type WebFlow } from "../schemas/flow.js";
 import {
   type ChecksSettings,
@@ -63,11 +64,13 @@ export function normalizeQuickUrls(values: string[]): string[] {
 export function createQuickConfiguration(
   values: string[],
   options: {
+    design?: DesignLocation | undefined;
     flowId?: string | undefined;
     title?: string | undefined;
     colorSchemes?: ColorScheme[] | undefined;
     statePrefix?: string | undefined;
     checks?: ChecksSettings | undefined;
+    viewports?: Array<"desktop" | "mobile"> | undefined;
   } = {},
 ): QuickConfiguration {
   const urls = normalizeQuickUrls(values);
@@ -88,7 +91,11 @@ export function createQuickConfiguration(
     viewports: [
       { name: "desktop", width: 1440, height: 900 },
       { name: "mobile", width: 390, height: 844 },
-    ],
+    ].filter(
+      (viewport) =>
+        options.viewports === undefined ||
+        options.viewports.includes(viewport.name as "desktop" | "mobile"),
+    ),
     colorSchemes,
     capture: {
       timezoneId: "America/New_York",
@@ -114,11 +121,12 @@ export function createQuickConfiguration(
     states: urls.map((url, index) => ({
       id: `${options.statePrefix ?? "page"}-${index + 1}`,
       description: url,
+      ...(options.design === undefined ? {} : { design: options.design }),
       url,
       expect: { status: 200 },
       mask: [],
     })),
-    viewports: ["desktop", "mobile"],
+    viewports: options.viewports ?? ["desktop", "mobile"],
     colorSchemes,
   });
   if (!isWebFlow(flow)) throw new Error("quick flow must be web");
