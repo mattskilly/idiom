@@ -245,9 +245,81 @@ test("text leaves and controls collide; below-fold geometry still reports", asyn
         c.explanation.includes("#text") && c.explanation.includes("#control"),
     ),
   ).toBe(true);
+  const below = overlaps.find((c) => c.explanation.includes("#a overlaps #b"));
+  expect(below?.explanation).toContain("below the fold, geometry only");
+  expect(below?.severity).toBe("minor");
   expect(
-    overlaps.find((c) => c.explanation.includes("#a overlaps #b"))?.explanation,
-  ).toContain("below the fold, geometry only");
+    overlaps.find(
+      (c) =>
+        c.explanation.includes("#text") && c.explanation.includes("#control"),
+    )?.severity,
+  ).toBe("major");
+});
+
+// A chart with a tooltip layer drawn over it, as Recharts renders one.
+const chart = (tooltip: string, offset = 0) =>
+  page(
+    `<div class="chart" style="margin-top:${offset}px"><svg id="plot" role="application" tabindex="0" width="600" height="300"><rect width="600" height="300" fill="#eee"/></svg>${tooltip}</div>`,
+    ".chart { position:relative; width:600px; } .tip { position:absolute; top:40px; left:100px; background:white; } .grid { display:grid; gap:4px; }",
+  );
+const tooltipBody =
+  '<div class="grid"><span>Jun 29</span><span>Mobile 400</span><span>Desktop 446</span></div>';
+const overlapsOf = async (html: string) =>
+  (await reviewFixture(browser, html))
+    .filter(({ candidate }) => candidate.category === "element-overlap")
+    .map(({ candidate }) => candidate);
+
+test.each([0, 1000])(
+  "a chart-library tooltip never overlaps its own chart (offset %ipx)",
+  async (offset) => {
+    const overlaps = await overlapsOf(
+      chart(
+        `<div class="recharts-tooltip-wrapper tip" style="pointer-events:none">${tooltipBody}</div>`,
+        offset,
+      ),
+    );
+    expect(overlaps.filter((c) => c.explanation.includes("#plot"))).toEqual([]);
+  },
+);
+
+test.each([
+  ["role=tooltip", '<div role="tooltip" class="tip">'],
+  [
+    "a classless pointer-events:none layer",
+    '<div class="tip" style="pointer-events:none">',
+  ],
+])("%s over a chart below the fold is not an overlap", async (_name, open) => {
+  const overlaps = await overlapsOf(chart(`${open}${tooltipBody}</div>`, 1000));
+  expect(overlaps.filter((c) => c.explanation.includes("#plot"))).toEqual([]);
+});
+
+test("collisions inside a tooltip layer still report", async () => {
+  const overlaps = await overlapsOf(
+    chart(
+      '<div class="recharts-tooltip-wrapper tip" style="pointer-events:none; width:200px; height:60px"><span id="first">Mobile 400</span><span id="second" style="position:absolute; left:20px; top:0">Desktop 446</span></div>',
+      1000,
+    ),
+  );
+  expect(
+    overlaps.some(
+      (c) =>
+        c.explanation.includes("#first") && c.explanation.includes("#second"),
+    ),
+  ).toBe(true);
+});
+
+test("absolute text that takes pointer events still collides below the fold, as minor", async () => {
+  const overlaps = await overlapsOf(
+    page(
+      '<div class="row" style="margin-top:1000px"><button id="go">Continue</button><span id="note">Saved</span></div>',
+      ".row { position:relative; } button { width:120px; height:32px; } #note { position:absolute; left:20px; top:4px; }",
+    ),
+  );
+  const finding = overlaps.find(
+    (c) => c.explanation.includes("#go") && c.explanation.includes("#note"),
+  );
+  expect(finding?.explanation).toContain("below the fold, geometry only");
+  expect(finding?.severity).toBe("minor");
 });
 
 test("wrapping labels, arbitrary [for] labels and described helpers form groups", async () => {

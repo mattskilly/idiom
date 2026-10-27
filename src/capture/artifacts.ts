@@ -255,6 +255,11 @@ export async function writeTupleArtifacts(options: {
       };
   }
   const design = designs[0];
+  // How the screenshot was taken; its drift rects stay in observations.
+  const shot =
+    result?.observations?.version === 2
+      ? result.observations.screenshot
+      : undefined;
   const metadata = {
     ...(design === undefined ? {} : { design }),
     ...(several ? { designs } : {}),
@@ -350,6 +355,18 @@ export async function writeTupleArtifacts(options: {
     },
     browserVersion: tuple.runtimeVersion ?? options.browserVersion,
     toolVersion: IDIOM_VERSION,
+    ...(shot === undefined
+      ? {}
+      : {
+          screenshot: {
+            strategy: shot.strategy,
+            scale: shot.scale,
+            width: shot.width,
+            height: shot.height,
+            ...(shot.tiles === undefined ? {} : { tiles: shot.tiles }),
+            ...(shot.drift === undefined ? {} : { drift: shot.drift }),
+          },
+        }),
   };
   await writeFile(join(directory, "metadata.json"), json(metadata));
 }

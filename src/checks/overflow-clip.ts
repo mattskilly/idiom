@@ -1,3 +1,4 @@
+import { isElementPainted, paintedGate } from "./painted.js";
 import { isVisuallyHidden, ran, unavailable, verify } from "./shared.js";
 import type { DeterministicCheck, ObservedElement } from "./types.js";
 
@@ -51,6 +52,7 @@ export const overflowClipCheck: DeterministicCheck = {
     const observation = tuple.observations;
     if (observation === undefined)
       return unavailable(this.id, "observations.json is unavailable");
+    const gate = paintedGate(tuple, ["idiom:element-content-clipped"]);
     const candidates = [];
     const documentHorizontallyOverflows =
       observation.document.scrollWidth > observation.document.clientWidth + 1;
@@ -107,6 +109,28 @@ export const overflowClipCheck: DeterministicCheck = {
         });
         continue;
       }
+      const ownerPainted = gate.allows(
+        "idiom:element-content-clipped",
+        element,
+      );
+      if (element.paintedContent !== undefined) {
+        // Count each rejected contributor even when none survives.
+        let hiddenContributor = false;
+        for (const selector of element.paintedContent.selectors)
+          if (!gate.allows("idiom:element-content-clipped", selector))
+            hiddenContributor = true;
+        const size = element.paintedContent;
+        if (
+          hiddenContributor &&
+          !(horizontal && size.width > element.clientWidth + 1) &&
+          !(
+            vertical &&
+            size.height > element.clientHeight + (singleLine ? 2 : 1)
+          )
+        )
+          continue;
+      }
+      if (!ownerPainted) continue;
       // Crop-to-fit media (thumbnails, avatars, canvases) is the design, as is
       // a box marked data-idiom-crop. Text inside either is still judged by
       // clipped-text.
@@ -114,28 +138,51 @@ export const overflowClipCheck: DeterministicCheck = {
         const crop =
           "attributes" in element &&
           element.attributes["data-idiom-crop"] !== undefined;
-        const children = childrenOf(element, observation.elements);
+        const children = childrenOf(
+          element,
+          observation.elements.filter(isElementPainted),
+        );
         if (
           crop ||
           (children.length > 0 &&
             children.every((child) =>
-              isMediaContent(child, observation.elements),
+              isMediaContent(
+                child,
+                observation.elements.filter(isElementPainted),
+              ),
             ))
         )
           continue;
       }
+      // Newer captures say what is cut off. Only decoration (a glow, a bleed,
+      // an illustration, a marquee track) is the design, not lost content.
+      const clipped = element.paintedContent?.clipped;
+      if (
+        clipped !== undefined &&
+        clipped.text.length === 0 &&
+        clipped.interactive.length === 0
+      )
+        continue;
+      const cutText = clipped?.text[0];
+      const cutControl = clipped?.interactive[0];
+      const cut =
+        cutText !== undefined
+          ? `, cutting off text in ${cutText}`
+          : cutControl !== undefined
+            ? `, cutting off ${cutControl}`
+            : "";
       candidates.push({
         category: this.id,
         severity: "major" as const,
         rule: "idiom:element-content-clipped",
         selectorHint: element.selector,
-        explanation: `${element.selector} clips ${horizontal ? "horizontal" : "vertical"} content by ${measured} (${element.scrollWidth}×${element.scrollHeight}px content in ${element.clientWidth}×${element.clientHeight}px).`,
+        explanation: `${element.selector} clips ${horizontal ? "horizontal" : "vertical"} content by ${measured} (${element.scrollWidth}×${element.scrollHeight}px content in ${element.clientWidth}×${element.clientHeight}px)${cut}.`,
         acceptance: [
           `${element.selector} exposes all of its rendered content without clipping.`,
         ],
         verification: verify(this.id, { selector: element.selector }),
       });
     }
-    return ran(this.id, candidates);
+    return gate.result(ran(this.id, candidates));
   },
 };

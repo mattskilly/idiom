@@ -8,7 +8,7 @@ Anyone building UI with AI coding agents such as Claude Code, Codex or Cursor. I
 
 ## How it works
 
-1. **Check**: `idiom check <flow>` renders every state you declare at each viewport and colour scheme (`idiom quick <url>` does the same for the pages you name, with no setup) and runs more than 60 measured checks: contrast, broken links and images, fonts that fail to load, missing focus styles, controls that do nothing, duplicate entry points, spacing, alignment, sizes off your design system and more ([docs/rules.md](docs/rules.md)). Top issues come first, ranked by how noticeable each problem is and how prominent the element is ([ranking](docs/ranking.md)); symptoms that share one cause are grouped into one issue.
+1. **Check**: `idiom check <flow>` renders every state you declare at each viewport and colour scheme (`idiom quick <url>` does the same for the pages you name, with no setup) and runs more than 60 measured checks: contrast, broken links and images, fonts that fail to load, missing focus styles, controls that do nothing, duplicate entry points, spacing, alignment, sizes off your design system and more ([docs/rules.md](docs/rules.md)). Top issues come first, ranked by how noticeable each problem is and how prominent the element is ([ranking](docs/ranking.md)); symptoms that share one cause are grouped into one issue. Capture waits for entrance animations to finish, then only what is actually on screen is judged: content in a closed menu or collapsed section, and hidden, fully transparent or clipped-away elements are skipped and counted in the report, not measured.
 2. **Fix**: every finding names the element, the measurement and when it counts as fixed, with a cropped screenshot. `idiom fix <flow>` hands the top findings to Claude Code or Codex, then recaptures to verify each repair.
 3. **Guard**: the first `idiom check` on a committed HEAD records today's findings as a baseline. After that, checks and the GitHub Action fail only on new findings. Accept and reject decisions are stored in the repo, so a settled finding stays settled.
 
@@ -73,7 +73,7 @@ npm install -g @mattskilly/idiom
 idiom --version
 ```
 
-The version command prints `<version> (<short source commit>)`, for example `0.10.0 (a85659a)`. To pin a project to an exact release instead, add it as a dev dependency (`bun add -d --exact @mattskilly/idiom@0.10.0`) and run it with `bunx idiom` or `npx idiom`.
+The version command prints `<version> (<short source commit>)`, for example `0.11.0 (a85659a)`. To pin a project to an exact release instead, add it as a dev dependency (`bun add -d --exact @mattskilly/idiom@0.11.0`) and run it with `bunx idiom` or `npx idiom`.
 
 ### Browser setup
 
@@ -120,6 +120,7 @@ Quick review is the entry point, not the coverage ceiling. Configure a flow when
 
 ```sh
 idiom init --yes          # scaffold PRODUCT.md, DESIGN.md and .idiom/
+idiom init --flows        # draft flows from your routes (real HTML pages only)
 idiom validate home       # after defining .idiom/flows/home.json
 idiom check home          # every deterministic finding; records the baseline
 idiom review home         # deterministic + model critique

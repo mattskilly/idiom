@@ -1,6 +1,8 @@
 <!doctype html><html lang="en"><head><title>Fix fixture</title><style>
+.target-row { display:flex; align-items:center; gap:4px; }
+.neighbor { display:block; width:100px; height:44px; margin:24px 0; background:#222; }
 body { margin: 32px; font: 16px Arial; color: #111; background: white; }
 button { display:block; padding:0; border:0; appearance:none; background:#222; margin: 24px 0; width: 100px; height: 44px; }
 #first { width: 100px; height: 44px; }
 #second { width: 100px; height: 44px; }
-</style></head><body><main><h1>Settings</h1><button id="first" aria-label="Save"></button><button id="second" aria-label="Cancel"></button></main></body></html>
+</style></head><body><main><h1>Settings</h1><div class="target-row"><button id="first" aria-label="Save"></button><a class="neighbor" href="/neighbor" aria-label="Neighbor Save"></a></div><div class="target-row"><button id="second" aria-label="Cancel"></button><a class="neighbor" href="/neighbor" aria-label="Neighbor Cancel"></a></div></main></body></html>

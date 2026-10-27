@@ -241,6 +241,7 @@ async function captureInContext(
       onActivity: tuple.onActivity,
       state: tuple.state,
       settleMs: tuple.state.settleMs ?? tuple.project.capture.settleMs,
+      animationSettleMs: tuple.project.capture.animationSettleMs,
       statusExpectation: tuple.state.expect.status ?? 200,
       reachStage: "navigation",
       reach: () =>
@@ -277,6 +278,7 @@ async function captureInContext(
       tokens: tuple.tokens ?? { status: "not-configured" },
       screenshotOptions: deterministicScreenshotOptions(tuple.project),
       reuseScreenshot: tuple.reuseScreenshot,
+      reuseScreenshotGeometry: tuple.reuseScreenshotGeometry,
       now: runtime.now,
       monotonicNow: runtime.monotonicNow,
       observe: tuple.designReference

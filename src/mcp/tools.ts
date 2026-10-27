@@ -200,6 +200,9 @@ export function registerIdiomTools(
             groups: groups.length,
             captures: output.counts,
           },
+          ...(output.checkCoverage === undefined
+            ? {}
+            : { checkCoverage: output.checkCoverage }),
           reports: {
             markdown: output.reportPath,
             html: output.htmlReportPath,
@@ -350,6 +353,9 @@ export function registerIdiomTools(
           })),
           fixed: summary.fixed,
           coverage: summary.coverage,
+          ...(summary.checkCoverage === undefined
+            ? {}
+            : { checkCoverage: summary.checkCoverage }),
           reports: {
             markdown: output.reportPath,
             html: output.htmlReportPath,

@@ -10,6 +10,10 @@ Each finding has one of three severities:
 
 Every check reports coverage as well as findings. A check whose evidence is missing (an older capture, a capture path that cannot record it, or a probe that did not run) reports coverage `unavailable` rather than passing; recapture to measure it. A check you turn off reports `skipped`.
 
+Geometry, text and consistency rules judge only painted participants when the capture records that fact. An element is unpainted when it or an ancestor is CSS-hidden, inside a closed details disclosure outside its first summary, at cumulative opacity zero, without rendered area, or fully outside an ancestor's overflow clip. Partially clipped and below-fold elements remain eligible. The gate applies before grouping or majority selection, on both sides of comparisons, to `idiom:elements-overlap`, `idiom:interactive-overlap`, `idiom:text-clipped`, `idiom:element-content-clipped`, `idiom:label-off-centre`, `idiom:adjacent-elements-touch`, `idiom:mixed-label-casing`, `idiom:mixed-locale-spelling`, `idiom:orphan-word`, `idiom:line-too-long`, `idiom:scale-outlier`, `idiom:sibling-select-inconsistent`, `idiom:selected-state-invisible`, `idiom:image-distorted` and `idiom:dead-link-text`.
+
+Coverage reports distinct elements skipped as not painted for each rule and tuple, including zero. This does not turn a running check into a skipped check. Artifacts without painted facts retain their previous findings and coverage. Axe, document overflow, font/link checks, console errors, expectation status and other branches of shared checks retain their existing domains. See [the observation contract](schemas.md) and [animation settling](configuration.md).
+
 Configure checks under `checks.*` in `.idiom/project.json`; every field is optional, and [configuration.md](configuration.md#checks) has the full reference. Some checks are opt-in and do nothing until their block is present.
 
 Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `--reject` dismisses that occurrence, and `--reject --scope rule` suppresses it in every later run. To change a finding's severity or suppress it by category, flow, state or rule, add an override to `.idiom/rules.json` (see [Rules](configuration.md#rules)). Questions a review cannot settle on its own arrive as `ruling-N` decisions, which `idiom ruling` records in `DESIGN.md`.
@@ -18,15 +22,15 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `overflow-clip`
 
-- **Catches:** A document wider than its viewport, and boxes with `overflow: hidden` or `clip` that cut off part of their content; a text field whose value is wider than the field is reported separately.
+- **Catches:** A document wider than its viewport, and boxes with `overflow: hidden` or `clip` that cut off part of their readable text or a control; a text field whose value is wider than the field is reported separately. A box whose cut-off content is only decoration (a glow, a bleed, a tinted block, imagery) is not reported, nor is content in an `aria-hidden` or `inert` illustration, content a nearer scroller owns, or a marquee track (an infinite translate animation, or repeated text that is translated).
 - **Why it matters:** Hidden content is content nobody can read or reach, and a page that scrolls sideways feels broken.
 - **Severity:** major; minor for a value truncated inside an `input` or `textarea`.
 - **Source:** WCAG 2.2 1.4.10 Reflow, for document overflow; otherwise craft convention: content should not be silently cut off.
-- **Configure or decide:** No settings; crop-to-fit media and boxes marked `data-idiom-crop` are exempt, and findings are decided with `idiom decide` or a `.idiom/rules.json` override.
+- **Configure or decide:** No settings; crop-to-fit media, boxes marked `data-idiom-crop`, and boxes that cut off only decoration, presentational illustrations, scroller-owned content or marquee tracks are exempt. Captures made before this classification keep the previous behaviour. Findings are decided with `idiom decide` or a `.idiom/rules.json` override.
 
 ### `responsive-break`
 
-- **Catches:** At the narrowest viewport, two visible interactive elements in normal flow that overlap, confirmed by a hit test at capture.
+- **Catches:** At the narrowest viewport, two visible interactive elements in normal flow that overlap, confirmed by a hit test at capture. Joined controls (an input group whose shared border overlaps by 1px or less, with squared facing corners) are not reported.
 - **Why it matters:** Overlapping controls on small screens hide each other and cause mis-taps.
 - **Severity:** major.
 - **Source:** WCAG 2.2 1.4.10 Reflow.
@@ -50,15 +54,15 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `target-size`
 
-- **Catches:** Interactive targets smaller than the minimum for the viewport's input class: 24×24 CSS px for fine pointers, 44×44 for narrow or touch viewports.
+- **Catches:** Interactive targets without a clickable region containing the required square: 24×24 CSS px for fine pointers, 44×44 for narrow or touch viewports. Native checkbox/radio targets include captured associated label fragments, excluding independent interactive descendants and nonclickable gaps. At the default fine-pointer minimum, undersized targets pass when their centered 24px circle overlaps neither another target nor another undersized target's circle; exact tangency passes.
 - **Why it matters:** Small targets are hard to hit, especially by touch or with limited dexterity.
 - **Severity:** minor.
 - **Source:** WCAG 2.2 2.5.8 Target Size (Minimum) for the 24px figure; the 44px touch figure follows 2.5.5 Target Size (Enhanced) and Apple's Human Interface Guidelines.
-- **Configure or decide:** `checks.targetSize` sets `fine`, `coarse` and `narrowBelow` (defaults 24, 44 and 768); spacing-based exemptions are not assessed, so decide those with `idiom decide`.
+- **Configure or decide:** `checks.targetSize` sets `fine`, `coarse` and `narrowBelow` (defaults 24, 44 and 768); spacing relief applies only to the fine-pointer 24px policy. Custom fine minima and narrow/touch captures retain their size requirement. Older captures support spacing but need recapture for label evidence; decide intentional exceptions with `idiom decide`.
 
 ### `heading-structure`
 
-- **Catches:** Pages with no visible level-one heading or more than one, and headings that skip a level, from axe-core's heading rules and Idiom's own heading scan.
+- **Catches:** HTML pages with no visible level-one heading or more than one, and headings that skip a level, from axe-core's heading rules and Idiom's own heading scan. Captured non-HTML documents (such as images, JSON and feeds) are skipped. Older captures without a document content type retain the existing checks.
 - **Why it matters:** Screen reader users navigate by headings, and a broken outline hides the page's structure from them.
 - **Severity:** minor.
 - **Source:** WCAG 2.2 1.3.1 Info and Relationships and 2.4.6 Headings and Labels.
@@ -106,15 +110,15 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `text-centering`
 
-- **Catches:** Single-line labels in chips, buttons and badges sitting off their box's vertical centre.
+- **Catches:** Single-line labels in chips, buttons and badges sitting off their box's vertical centre; an open box with a single top or bottom rule (a divider or underline) is measured against its content box.
 - **Why it matters:** Off-centre labels are a small misalignment people notice without knowing why.
 - **Severity:** minor.
 - **Source:** Craft convention: labels sit on their box's optical centre.
-- **Configure or decide:** `checks.centeringTolerance` sets the allowed offset (default 1.5px); decide findings with `idiom decide`.
+- **Configure or decide:** `checks.centeringTolerance` sets the allowed offset (default 1.5px); filled or fully bordered shapes are still measured edge to edge. Decide findings with `idiom decide`.
 
 ### `adjacent-gap`
 
-- **Catches:** Neighbouring controls closer than the minimum gap, including a focused field's ring, and bordered shapes that touch inside the same parent.
+- **Catches:** Neighbouring controls closer than the minimum gap, including a focused field's ring, and bordered shapes that touch inside the same parent. Keycap glyph groups (⌘ K) and the contents of illustrations or static, non-selectable mock-ups with no controls are not compared.
 - **Why it matters:** Controls jammed together look like one control and are easy to mis-hit.
 - **Severity:** major when they touch or overlap (gap of 0.5px or less); minor otherwise.
 - **Source:** Craft convention: separate controls need visible separation.
@@ -122,7 +126,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `dead-affordance`
 
-- **Catches:** Text that reads or looks like a link or action ("View terms", "Learn more") but is plain text, disabled buttons with navigation copy, and `href="#"` placeholder links.
+- **Catches:** Text that reads or looks like a link or action ("View terms", "Learn more") but is plain text, disabled buttons with navigation copy, and `href="#"` placeholder links. Text inside a non-interactive illustration frame is not reported as dead link text: an `aria-hidden`, `inert` or `role="img"` subtree, or the root of a `user-select: none` region at least 200×120 px with six or more text pieces, with no focusable descendants (a picture of product UI, such as a launcher window on a marketing page).
 - **Why it matters:** An affordance that leads nowhere breaks trust in every other link on the page.
 - **Severity:** major for link-like plain text; minor for disabled link-like buttons and `href="#"` placeholders.
 - **Source:** Craft convention: anything that looks clickable should do something.
@@ -154,7 +158,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `copy-lint`
 
-- **Catches:** Code identifiers and token paths in copy, stuttered words, sibling labels cased two ways, mixed locale spelling, and glossary, retired or jargon terms.
+- **Catches:** Code identifiers and token paths in copy, stuttered words, sibling labels cased two ways, mixed locale spelling, and glossary, retired or jargon terms. Casing comparisons exclude capitalised multi-word linked names with a page destination and either a matching title attribute or `<cite>` ancestry; full anchor text covers inline spans. This evidence-based heuristic can also exempt authored title-case navigation with matching metadata. Ordinary labels without that evidence still compare, and glossary/term checks still apply to linked names. Locale spelling skips text inside a page link that names a titled page (title metadata matching the full link text of two or more words, case-insensitively; `<cite>` ancestry; or a capitalised name with any title metadata) and spans matching declared `properNouns`. Other UI strings, including single-word, untitled and mismatched-title links, still report; a multi-word nav link whose title repeats its text is exempt by the same evidence.
 - **Why it matters:** Engineering names and inconsistent wording make a product feel unfinished and harder to learn.
 - **Severity:** major for code identifiers, raw token paths and repeated words; minor for casing, spelling and term policy.
 - **Source:** Craft convention: copy is written for people, consistently.
@@ -202,7 +206,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `selected-state`
 
-- **Catches:** Radio groups, tabs, listboxes, segmented controls and swatch grids with no option marked selected, several selected in a single-select group, or a selected option that looks the same as the others.
+- **Catches:** Radio groups, tabs, listboxes, segmented controls and swatch grids with no option marked selected, several selected in a single-select group, or a selected option that looks the same as the others. Explicit, homogeneous checkbox groups (`fieldset` or `role=group`) also receive the visual comparison; zero or multiple checked options are valid. Native radios and checkboxes use their live checked state; ARIA radio and checkbox controls use `aria-checked`. Custom indicators inside associated labels or an unambiguous single-control wrapper contribute painted borders, fills, SVG and pseudo-elements. Hidden indicators and paint from neighboring options do not establish a visible selection.
 - **Why it matters:** People need to see the current choice, and assistive technology needs it exposed.
 - **Severity:** major for several selected or an invisible selection; minor when nothing is marked selected.
 - **Source:** WCAG 2.2 4.1.2 Name, Role, Value for the exposed state; craft convention for the visible difference.
@@ -252,9 +256,9 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 - **Catches:** Controls or text in the same layer whose boxes intersect, including partly visible elements, with both selectors and the overlap size.
 - **Why it matters:** Overlapping elements hide each other and can make controls unclickable.
-- **Severity:** major when a control is involved or the overlap covers at least a quarter of the smaller element; minor otherwise.
+- **Severity:** major when a control is involved or the overlap covers at least a quarter of the smaller element; minor otherwise, and always minor when no hit-test point could confirm it (below the fold, geometry only).
 - **Source:** Craft convention: elements in one layer should not collide.
-- **Configure or decide:** No settings; menus and dialogs are kept apart from content beneath them, and findings are decided with `idiom decide`.
+- **Configure or decide:** No settings; menus, dialogs, tooltips (including chart-library tooltip layers) and pointer-events:none overlays are kept apart from content beneath them, and findings are decided with `idiom decide`.
 
 ### `clipped-text`
 
@@ -262,7 +266,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 - **Why it matters:** A label missing its end can say the wrong thing or nothing at all.
 - **Severity:** major.
 - **Source:** Craft convention: truncation should be visible and intentional.
-- **Configure or decide:** No settings; intentional ellipses, line clamps and scrollable content are excluded, and findings are decided with `idiom decide`.
+- **Configure or decide:** No settings; intentional ellipses, line clamps and scrollable content are excluded. Small overruns below measured font descender space are excluded only when every line is readable and its glyph ink fits. Active repeated tracks translating through a clipping strip are excluded horizontally; independent nested clips and vertical slicing still report. Recapture saved observations to apply these exclusions; findings are decided with `idiom decide`.
 
 ### `field-group`
 
@@ -278,11 +282,11 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 - **Why it matters:** Values off the scale accumulate into a layout that never quite lines up.
 - **Severity:** minor.
 - **Source:** Craft convention: dimensions and colours come from a small, declared scale.
-- **Configure or decide:** `checks.scales` declares spacing, control heights, radii, border colours and role selectors; decide findings with `idiom decide`.
+- **Configure or decide:** `checks.scales` declares spacing, control heights, radii, border colours and role selectors; decide findings with `idiom decide`. Without a declared scale, a value is compared only with peers in the same viewport, colour scheme and role, and dividers split into heading rules, table borders and other rules. Borders on inline text (dotted underlines, abbreviations) are not dividers, and radius is judged only on boxes with a visible background, border or shadow.
 
 ### `control-anatomy`
 
-- **Catches:** A select chevron or an icon in an icon button or segmented control more than 1px off its label's centre, and sibling selects with different inner padding or chevron size.
+- **Catches:** A select chevron or an icon in an icon button or segmented control more than 1px off its label's centre, and sibling selects with different inner padding or chevron size. Sibling comparisons require matching control family (native select, combobox or labelled listbox trigger), host type and role; icon-only action/menu buttons are excluded.
 - **Why it matters:** Misaligned chevrons and icons make controls look slightly broken.
 - **Severity:** minor.
 - **Source:** Craft convention: a control's parts align on one centre line.
@@ -458,15 +462,15 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `line-length`
 
-- **Catches:** Body paragraphs running more than the maximum number of characters per line at a viewport.
+- **Catches:** Multiline body paragraphs whose longest rendered text line exceeds the maximum character count (grapheme clusters, including rendered internal spaces). Single-line paragraphs are exempt.
 - **Why it matters:** Very long lines are tiring to read and make it hard to find the start of the next line.
 - **Severity:** minor.
 - **Source:** WCAG 2.2 1.4.8 Visual Presentation (AAA), which recommends at most 80 characters; the default allows 90.
-- **Configure or decide:** On by default; `checks.lineLength` sets `enabled` and `max` (default 90), and findings are decided with `idiom decide`.
+- **Configure or decide:** On by default; `checks.lineLength` sets `enabled` and `max` (default 90), and findings are decided with `idiom decide`. Recapture older saved observations to replace their width-based estimates with measured rendered-line counts.
 
 ### `orphan-word`
 
-- **Catches:** Headings and button labels whose last line holds a single short word, per viewport.
+- **Catches:** Headings and button labels whose last line holds a single short word, per viewport. Only words whose own text is painted and not clipped away by an ancestor count, and a stranded word that leaves no ink in the captured screenshot is skipped (counted in coverage as not visible in the captured screenshot). Inline buttons running through copy (for example `role="button"` sentences) are not labels, like inline links. The crop shows the measured text block.
 - **Why it matters:** A lone word on the last line makes a heading or label look unbalanced.
 - **Severity:** minor.
 - **Source:** Craft convention: typographic orphans weaken short display text.
@@ -474,11 +478,11 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `image-distortion`
 
-- **Catches:** Images drawn with `object-fit: fill` more than the tolerance out of their natural aspect ratio; SVG is exempt.
+- **Catches:** Images drawn with `object-fit: fill` more than the tolerance out of their natural aspect ratio and by at least 1px on either axis after the best proportional scaling; SVG is exempt.
 - **Why it matters:** Stretched or squashed images look broken and distort people and products.
 - **Severity:** major.
 - **Source:** Craft convention: images keep their natural proportions.
-- **Configure or decide:** On by default; `checks.images` sets `enabled` and `distortionTolerance` (default 0.03), shared with `broken-image`, and findings are decided with `idiom decide`.
+- **Configure or decide:** On by default; `checks.images` sets `enabled` and `distortionTolerance` (default 0.03), shared with `broken-image`. The 1px floor is fixed and applies to existing captures without recapture. Findings are decided with `idiom decide`.
 
 ### `broken-image`
 

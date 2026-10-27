@@ -19,7 +19,7 @@
       },
       "devDependencies": {
         "@biomejs/biome": "^2.0.0",
-        "@defrex/autobuild": "0.14.0",
+        "@defrex/autobuild": "1.0.1",
         "@modelcontextprotocol/client": "2.4.0",
         "@types/node": "^26.2.0",
         "@types/pixelmatch": "^5.2.6",
@@ -65,7 +65,7 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.5.8", "", { "os": "win32", "cpu": "x64" }, "sha512-I2czzXTY61f3nFJxXoMDq80t7MivxDEnCjE+8sDKoFfcKMaoQdkqhIFQ3KyY0XLzeSpUBYeNAXgD+iOV/BU0VA=="],
 
-    "@defrex/autobuild": ["@defrex/autobuild@0.14.0", "", { "dependencies": { "@ai-sdk/gateway": "4.0.82", "@modelcontextprotocol/sdk": "^1.30.0", "@vercel/sandbox": "^3.1.0", "ai": "^7.0.101", "drizzle-orm": "^0.45.2", "semver": "^7.7.4", "smol-toml": "^1.7.0", "zod": "^4.4.3" }, "bin": { "ab": "bin/ab.ts" } }, "sha512-8FtbiY5pOl6R1xGedJC15ZmiI1CqCH1buUozlG9AZqA3dFJqX3Vso62/zCqbMBMXOZjwNg+Hc53u0lAg+nKWew=="],
+    "@defrex/autobuild": ["@defrex/autobuild@1.0.1", "", { "dependencies": { "@ai-sdk/gateway": "4.0.82", "@modelcontextprotocol/sdk": "^1.30.0", "@vercel/sandbox": "^3.1.0", "ai": "^7.0.101", "drizzle-orm": "^0.45.2", "semver": "^7.7.4", "smol-toml": "^1.7.0", "zod": "^4.4.3" }, "bin": { "ab": "bin/ab.ts" } }, "sha512-LaIMRtLYjrmAb28TcBv3oS5Gy76ywHslcVX81u/yM+KTNUTmROA3VT6oanlbitDCKYoeYV1g8fygT0m8A4bUNw=="],
 
     "@electron-internal/extract-zip": ["@electron-internal/extract-zip@1.0.5", "", {}, "sha512-+bqFCP98pLI0Tt0XQo1TmlXtwjWchISndDOxCkEcIuUgXWpBnLyRI+2DU+mesvnMMX6L1XDqYNA0lXNDHd/yiA=="],
 

@@ -1,3 +1,4 @@
+import { paintedGate } from "./painted.js";
 import { reportsInteractiveOverlap } from "./responsive-break.js";
 import { ran, round, unavailable, verify } from "./shared.js";
 import type {
@@ -20,7 +21,8 @@ function isBadge(element: ObservedElementV2): boolean {
  * Interactive or text elements whose visible boxes intersect in one layer,
  * confirmed by sampling the intersection with the browser's hit test.
  * Overlays (dialogs, menus, popovers, fixed layers) are separate layers and
- * never compared with the page beneath them.
+ * never compared with the page beneath them. Overlaps no hit-test point
+ * could sample (below the fold, geometry only) are reported as minor.
  */
 export const elementOverlapCheck: DeterministicCheck = {
   id: "element-overlap",
@@ -33,6 +35,7 @@ export const elementOverlapCheck: DeterministicCheck = {
         this.id,
         "observations predate overlap signals (recapture)",
       );
+    const gate = paintedGate(tuple, ["idiom:elements-overlap"]);
     const bySelector = new Map(
       observation.elements.map((element) => [element.selector, element]),
     );
@@ -41,6 +44,7 @@ export const elementOverlapCheck: DeterministicCheck = {
       const a = bySelector.get(overlap.a);
       const b = bySelector.get(overlap.b);
       if (a === undefined || b === undefined) continue;
+      if (!gate.allows("idiom:elements-overlap", a, b)) continue;
       if (
         reportsInteractiveOverlap(a, b, narrowViewport) ||
         reportsInteractiveOverlap(b, a, narrowViewport)
@@ -61,10 +65,11 @@ export const elementOverlapCheck: DeterministicCheck = {
       const area = overlap.rect.width * overlap.rect.height;
       const width = round(overlap.rect.width);
       const height = round(overlap.rect.height);
-      const evidence =
-        overlap.samples === 0
-          ? " (below the fold, geometry only)"
-          : ` (${overlap.hits}/${overlap.samples} hit-test points)`;
+      // No hit-test sample means no confirmation: geometry alone is minor.
+      const geometryOnly = overlap.samples === 0;
+      const evidence = geometryOnly
+        ? " (below the fold, geometry only)"
+        : ` (${overlap.hits}/${overlap.samples} hit-test points)`;
       const partial =
         overlap.partial.length === 0
           ? ""
@@ -72,7 +77,8 @@ export const elementOverlapCheck: DeterministicCheck = {
       candidates.push({
         category: this.id,
         severity:
-          interactive > 0 || (smaller > 0 && area / smaller >= 0.25)
+          !geometryOnly &&
+          (interactive > 0 || (smaller > 0 && area / smaller >= 0.25))
             ? "major"
             : "minor",
         rule: "idiom:elements-overlap",
@@ -89,6 +95,6 @@ export const elementOverlapCheck: DeterministicCheck = {
         }),
       });
     }
-    return ran(this.id, candidates);
+    return gate.result(ran(this.id, candidates));
   },
 };

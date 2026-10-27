@@ -10,10 +10,18 @@ import type {
   ObservationArtifact,
   ProbeArtifact,
   ProgressArtifact,
+  ScreenshotGeometry,
 } from "../checks/types.js";
+import { classifyDocument } from "../document.js";
+import { settleAnimations } from "./animation-settle.js";
 import { ExplanationCollector, mergeExplanations } from "./explanations.js";
-import { sampleMediaFrames } from "./media-bands.js";
+import { sampleMediaFrames, sampleOrphanInk } from "./media-bands.js";
 import { mergeMotion } from "./motion.js";
+import {
+  captureScreenshot,
+  fullPageSize,
+  withScreenshotGeometry,
+} from "./screenshot.js";
 import { diagnoseTouchReachability, parkPointer } from "./touch.js";
 import type {
   ConsoleRecord,
@@ -24,6 +32,9 @@ import type {
 } from "./types.js";
 
 import { type StepHealthGuard, WebStepFailure } from "./web-steps.js";
+
+/** Matches the media-fill default: compression noise on a flat background stays inside it. */
+const orphanInkTolerance = 8;
 
 export type AxeFactory = (page: Page) => {
   analyze(): Promise<unknown>;
@@ -39,6 +50,7 @@ export async function collectPageEvidence(options: {
   onActivity?: ((step: string) => void) | undefined;
   state: FlowState;
   settleMs: number;
+  animationSettleMs?: number | undefined;
   statusExpectation?: number | undefined;
   reachStage: "navigation" | "state";
   reach: () => Promise<number | null>;
@@ -49,6 +61,8 @@ export async function collectPageEvidence(options: {
   tokens: Parameters<typeof observePage>[1];
   screenshotOptions: Parameters<Page["screenshot"]>[0];
   reuseScreenshot?: Buffer | undefined;
+  /** Geometry of `reuseScreenshot`, recorded when it was taken. */
+  reuseScreenshotGeometry?: ScreenshotGeometry | undefined;
   now: () => Date;
   monotonicNow?: (() => number) | undefined;
   observe?: ObserveOptions | undefined;
@@ -78,7 +92,9 @@ export async function collectPageEvidence(options: {
   let status: number | null | undefined;
   let dom: string | undefined;
   let screenshot: Buffer | undefined;
+  let screenshotGeometry: ScreenshotGeometry | undefined;
   let axe: unknown;
+  let nonHtml = false;
   let observations: ObservationArtifact | undefined;
   let stage: TupleFailureStage = options.reachStage;
   let failure: unknown;
@@ -104,7 +120,29 @@ export async function collectPageEvidence(options: {
     await options.page.waitForTimeout(options.settleMs);
     await options.healthGuard?.checkpoint();
 
-    if (options.observe?.designComparison) {
+    // Reach is complete: a client redirect that lands during the animation
+    // wait destroys the evaluate context; that is an expectation failure the
+    // destination guard names.
+    stage = "expectation";
+    activity("animation settle");
+    const animations = await settleAnimations(
+      options.page,
+      options.animationSettleMs ?? 1500,
+      options.signal,
+      () => options.healthGuard?.checkpoint() ?? Promise.resolve(),
+    ).catch((error: unknown) => {
+      options.assertDestination?.();
+      throw error;
+    });
+
+    activity(stage);
+    options.assertDestination?.();
+    const documentType = await options.page.evaluate(() => ({
+      contentType: document.contentType,
+    }));
+    nonHtml = classifyDocument(documentType.contentType) === "non-html";
+
+    if (!nonHtml && options.observe?.designComparison) {
       activity("design resources");
       await options.page.evaluate(async () => {
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -136,10 +174,11 @@ export async function collectPageEvidence(options: {
       });
       options.signal?.throwIfAborted();
     }
-    stage = "expectation";
-    activity(stage);
-    options.assertDestination?.();
-    const bodyText = await options.page.locator("body").innerText();
+    const bodyText = nonHtml
+      ? await options.page.evaluate(
+          () => (document.body ?? document.documentElement)?.textContent ?? "",
+        )
+      : await options.page.locator("body").innerText();
     if (
       options.statusExpectation !== undefined &&
       status !== options.statusExpectation
@@ -172,7 +211,7 @@ export async function collectPageEvidence(options: {
     }
 
     const focus = (options.state as { focus?: string | undefined }).focus;
-    if (focus !== undefined) {
+    if (!nonHtml && focus !== undefined) {
       const target = options.page.locator(focus).first();
       if ((await target.count()) === 0) {
         mismatches.push({ kind: "selector-present", expected: focus });
@@ -192,7 +231,8 @@ export async function collectPageEvidence(options: {
       }
     }
 
-    if (options.observe?.touchReachability) await parkPointer(options.page);
+    if (!nonHtml && options.observe?.touchReachability)
+      await parkPointer(options.page);
     await options.healthGuard?.checkpoint();
     stage = "dom";
     activity(stage);
@@ -200,10 +240,20 @@ export async function collectPageEvidence(options: {
     await options.healthGuard?.checkpoint();
     stage = "axe";
     activity(stage);
-    axe = await options.createAxe(options.page).analyze();
+    const axeDocument = await options.page.evaluate(() => ({
+      contentType: document.contentType,
+    }));
+    nonHtml = classifyDocument(axeDocument.contentType) === "non-html";
+    axe = nonHtml
+      ? { violations: [] }
+      : await options.createAxe(options.page).analyze();
     await options.healthGuard?.checkpoint();
     stage = "observations";
     activity(stage);
+    // The size a full-page shot would capture before observing starts,
+    // compared after the shot: layout that moves during or after observe
+    // (observe itself takes seconds on large pages) leaves its rects stale.
+    const observedSize = nonHtml ? undefined : await fullPageSize(options.page);
     observations = await observePage(
       options.page,
       options.tokens,
@@ -211,6 +261,9 @@ export async function collectPageEvidence(options: {
       options.state.mask,
       options.observe,
     );
+    nonHtml =
+      classifyDocument(observations.document.contentType) === "non-html";
+    if (nonHtml) axe = { violations: [] };
     await options.healthGuard?.checkpoint();
     if (observations.version === 2)
       observations = {
@@ -244,6 +297,7 @@ export async function collectPageEvidence(options: {
       };
     }
     if (
+      !nonHtml &&
       observations.version === 2 &&
       observations.links !== undefined &&
       options.checkLinks !== undefined
@@ -273,26 +327,80 @@ export async function collectPageEvidence(options: {
     }
     stage = "screenshot";
     activity(stage);
-    screenshot =
-      options.reuseScreenshot ??
-      (await options.page.screenshot(options.screenshotOptions));
-    if (
-      observations.version === 2 &&
-      observations.mediaFrames !== undefined &&
-      observations.mediaFrames.length > 0
-    ) {
+    const reused = !animations.hadAnimations
+      ? options.reuseScreenshot
+      : undefined;
+    let geometry: Omit<ScreenshotGeometry, "drift" | "rects"> | undefined;
+    if (reused !== undefined) {
+      screenshot = reused;
+      geometry = options.reuseScreenshotGeometry;
+    } else {
+      const captured = await captureScreenshot(
+        options.page,
+        animations.unresolved
+          ? { ...options.screenshotOptions, animations: "allow" }
+          : options.screenshotOptions,
+      );
+      screenshot = captured.buffer;
+      geometry = captured.geometry;
+    }
+    if (geometry !== undefined) {
+      const {
+        drift: _drift,
+        rects: _rects,
+        ...own
+      } = geometry as ScreenshotGeometry;
+      screenshotGeometry =
+        !nonHtml && observations.version === 2
+          ? await withScreenshotGeometry(
+              options.page,
+              own,
+              observedSize,
+              observations.elements.map((element) => element.selector),
+            )
+          : own;
+      if (observations.version === 2)
+        observations = { ...observations, screenshot: screenshotGeometry };
+    }
+    if (!nonHtml && observations.version === 2) {
       const image = screenshot;
-      const tolerance = options.observe?.mediaFill?.tolerance ?? 8;
-      observations = {
-        ...observations,
-        mediaFill: { tolerance },
-        mediaFrames: sampleMediaFrames(
-          observations.mediaFrames,
-          () => PNG.sync.read(image),
-          observations.viewport.width,
-          tolerance,
-        ),
+      // One lazy decode serves every pixel sampler below.
+      let decoded: PNG | undefined;
+      const decode = () => {
+        decoded ??= PNG.sync.read(image);
+        return decoded;
       };
+      if (
+        observations.mediaFrames !== undefined &&
+        observations.mediaFrames.length > 0
+      ) {
+        const tolerance = options.observe?.mediaFill?.tolerance ?? 8;
+        observations = {
+          ...observations,
+          mediaFill: { tolerance },
+          mediaFrames: sampleMediaFrames(
+            observations.mediaFrames,
+            decode,
+            observations.viewport.width,
+            tolerance,
+          ),
+        };
+      }
+      const orphans = observations.orphanWords;
+      if (orphans !== undefined && orphans.status !== "unavailable")
+        observations = {
+          ...observations,
+          orphanWords: {
+            ...orphans,
+            records: sampleOrphanInk(
+              orphans.records,
+              decode,
+              observations.viewport,
+              observations.document.scrollWidth,
+              orphanInkTolerance,
+            ),
+          },
+        };
     }
     await options.healthGuard?.finish();
   } catch (error) {
@@ -324,6 +432,7 @@ export async function collectPageEvidence(options: {
   let probeBlocked: string | undefined;
   if (
     failure === undefined &&
+    !nonHtml &&
     options.observe?.touchReachability !== undefined &&
     observations?.version === 2
   ) {
@@ -350,6 +459,7 @@ export async function collectPageEvidence(options: {
     };
   } else if (
     failure === undefined &&
+    !nonHtml &&
     options.probe !== undefined &&
     observations?.version === 2
   ) {
@@ -417,6 +527,7 @@ export async function collectPageEvidence(options: {
     status: status ?? null,
     dom: dom as string,
     screenshot: screenshot as Buffer,
+    screenshotGeometry,
     console: records,
     axe,
     observations,

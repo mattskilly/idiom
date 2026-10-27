@@ -1,6 +1,7 @@
 import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ProductionBuild } from "../capture/types.js";
+import { paintedCoverageText } from "../checks/painted.js";
 import type { CheckCoverage, CheckTuple } from "../checks/types.js";
 import { tupleDesigns } from "../design/evidence.js";
 import type { DesignDescriptor } from "../design/types.js";
@@ -592,15 +593,15 @@ export function renderReport(options: {
   for (const coverage of options.captureCoverage ?? []) {
     lines.push(
       axisAware
-        ? `| — | — | — | ${coverage.check} | ${coverage.status} | ${text(coverage.reason ?? "")} |`
-        : `| — | — | ${coverage.check} | ${coverage.status} | ${text(coverage.reason ?? "")} |`,
+        ? `| — | — | — | ${coverage.check} | ${coverage.status} | ${text(paintedCoverageText(coverage))} |`
+        : `| — | — | ${coverage.check} | ${coverage.status} | ${text(paintedCoverageText(coverage))} |`,
     );
   }
   for (const entry of options.coverage) {
     lines.push(
       axisAware
-        ? `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.tuple.colorScheme ?? "light"} | ${entry.coverage.check} | ${entry.coverage.status} | ${text(entry.coverage.reason ?? "")} |`
-        : `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.coverage.check} | ${entry.coverage.status} | ${text(entry.coverage.reason ?? "")} |`,
+        ? `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.tuple.colorScheme ?? "light"} | ${entry.coverage.check} | ${entry.coverage.status} | ${text(paintedCoverageText(entry.coverage))} |`
+        : `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.coverage.check} | ${entry.coverage.status} | ${text(paintedCoverageText(entry.coverage))} |`,
     );
   }
   lines.push("");

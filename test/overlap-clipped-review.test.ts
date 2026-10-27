@@ -1,7 +1,9 @@
 import { type Browser, chromium } from "playwright";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import type { ObservationArtifactV2 } from "../src/checks/types.js";
-import { reviewFixture } from "./benchmark-support.js";
+import { collapseIssues } from "../src/review/issues.js";
+import { buildIssueRankingContext, scoreGroup } from "../src/review/ranking.js";
+import { reviewFixture, reviewStates } from "./benchmark-support.js";
 
 let browser: Browser;
 beforeAll(async () => {
@@ -432,3 +434,44 @@ test.each([
     else expect(clips).toEqual([]);
   },
 );
+
+test("a confirmed overlap outranks a geometry-only one, which stays minor", async () => {
+  const { findings, tuples } = await reviewStates(browser, [
+    {
+      state: "editor",
+      html: page(
+        '<div class="row"><strong id="text">Zoom options</strong><button id="control">Fit</button></div><div class="row" style="margin-top:1000px"><button id="a">First</button><button id="b">Second</button></div>',
+        ".row { position:relative; height:40px; } button { width:100px; height:32px; } #control { position:absolute; left:50px; top:0; } #b { position:absolute; left:30px; top:0; }",
+      ),
+    },
+  ]);
+  const context = buildIssueRankingContext(tuples);
+  const groups = findings
+    .filter(({ candidate }) => candidate.category === "element-overlap")
+    .map(({ candidate }) => ({
+      id: candidate.fingerprintHint ?? "",
+      severity: candidate.severity,
+      category: candidate.category,
+      rule: candidate.rule,
+      selector: candidate.selectorHint,
+      coordinates: [...context.keys()],
+      members: [candidate],
+    }));
+  const confirmed = groups.find((group) => group.id.includes("#control"));
+  const geometryOnly = groups.find((group) => group.id === "#a | #b");
+  if (confirmed === undefined || geometryOnly === undefined)
+    throw new Error("missing overlap");
+  expect(confirmed.severity).toBe("major");
+  expect(geometryOnly.severity).toBe("minor");
+  const counts = { states: 1, places: 1 };
+  expect(scoreGroup(confirmed, counts, context).score).toBeGreaterThan(
+    scoreGroup(geometryOnly, counts, context).score,
+  );
+  expect(collapseIssues(groups, new Set(), context)[0]).toMatchObject({
+    id: confirmed.id,
+    severity: "major",
+  });
+  expect(collapseIssues([geometryOnly], new Set(), context)[0]?.severity).toBe(
+    "minor",
+  );
+});

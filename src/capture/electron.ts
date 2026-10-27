@@ -396,6 +396,7 @@ export function createElectronLauncher(
             onActivity: tuple.onActivity,
             state: tuple.state,
             settleMs: tuple.state.settleMs ?? tuple.project.capture.settleMs,
+            animationSettleMs: tuple.project.capture.animationSettleMs,
             reachStage: "state",
             reach: async () => {
               await synchronizePage(

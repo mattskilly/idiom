@@ -313,6 +313,18 @@ describe("element-overlap", () => {
       ).candidates[0]?.severity,
     ).toBe("major");
   });
+  test("geometry-only overlaps are minor whatever their kinds or area", () => {
+    const severity = (extra: Partial<OverlapObservation>) =>
+      run(elementOverlapCheck, scene(extra)).candidates[0]?.severity;
+    expect(severity({ samples: 0, hits: 0 })).toBe("minor");
+    expect(severity({ samples: 25, hits: 9 })).toBe("major");
+    const large = {
+      kinds: ["text", "text"] as OverlapObservation["kinds"],
+      rect: { x: 0, y: 0, width: 120, height: 20 },
+    };
+    expect(severity({ ...large, samples: 0, hits: 0 })).toBe("minor");
+    expect(severity(large)).toBe("major");
+  });
 });
 
 const clip: ClippedTextObservation = {

@@ -1,3 +1,4 @@
+import { paintedGate } from "./painted.js";
 import { ran, unavailable, verify } from "./shared.js";
 import type {
   ClippedTextObservation,
@@ -39,8 +40,12 @@ export const clippedTextCheck: DeterministicCheck = {
         this.id,
         "observations predate clipped-text signals (recapture)",
       );
-    const candidates: FindingCandidate[] = observation.clippedText.map(
-      (clip) => {
+    const gate = paintedGate(tuple, ["idiom:text-clipped"]);
+    const candidates: FindingCandidate[] = observation.clippedText
+      .filter((clip) =>
+        gate.allows("idiom:text-clipped", clip.selector, clip.owner),
+      )
+      .map((clip) => {
         const owner = clip.owner === clip.selector ? "its own box" : clip.owner;
         const overflow = [
           clip.overflow.x > 0 ? `${clip.overflow.x}px horizontally` : "",
@@ -68,8 +73,7 @@ export const clippedTextCheck: DeterministicCheck = {
             cut: clip.cut,
           }),
         };
-      },
-    );
-    return ran(this.id, candidates);
+      });
+    return gate.result(ran(this.id, candidates));
   },
 };

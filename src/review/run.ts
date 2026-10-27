@@ -7,6 +7,10 @@ import type { RunRecord } from "../capture/run-record.js";
 import type { CaptureScope } from "../capture/scope.js";
 import type { RunTimings } from "../capture/timings.js";
 import type { ProductionBuild } from "../capture/types.js";
+import {
+  type PaintedCoverageReport,
+  reportedCheckCoverage,
+} from "../checks/painted.js";
 import { projectChecksConfig } from "../checks/project-config.js";
 import { runDeterministicChecks } from "../checks/registry.js";
 import { AnthropicCritiqueAdapter } from "../critique/anthropic.js";
@@ -114,7 +118,7 @@ export type ReviewDependencies = {
   environment?: NodeJS.ProcessEnv | undefined;
 };
 
-export type ReviewRunResult = {
+export type ReviewRunResult = PaintedCoverageReport & {
   scope?: RunRecord | undefined;
   timings?: RunTimings | undefined;
   reportCoverage?: ReportCoverage | undefined;
@@ -807,6 +811,7 @@ export async function runReview(options: {
     scope: loaded.record,
     timings,
     reportCoverage: reportOptions.reportCoverage,
+    ...reportedCheckCoverage(reviewed.coverage),
     runDirectory,
     findingsPath,
     deferredFindings,

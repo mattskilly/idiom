@@ -1,3 +1,4 @@
+import { isElementPainted, paintedGate } from "./painted.js";
 import {
   type Facing,
   isBounded,
@@ -11,7 +12,12 @@ import {
   unavailable,
   verify,
 } from "./shared.js";
-import type { DeterministicCheck, FindingCandidate, Rect } from "./types.js";
+import type {
+  DeterministicCheck,
+  FindingCandidate,
+  ObservedElementV2,
+  Rect,
+} from "./types.js";
 
 const excludedTags = new Set([
   "html",
@@ -194,6 +200,90 @@ function regionTest(
   };
 }
 
+const keyNames = new Set([
+  "ctrl",
+  "control",
+  "cmd",
+  "command",
+  "alt",
+  "opt",
+  "option",
+  "shift",
+  "esc",
+  "escape",
+  "enter",
+  "return",
+  "tab",
+  "space",
+  "del",
+  "delete",
+  "backspace",
+  "fn",
+  "home",
+  "end",
+  "pgup",
+  "pgdn",
+  "up",
+  "down",
+  "left",
+  "right",
+]);
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/**
+ * Keycap rows (⌘ K) are set tight by design: a glyph group, not neighbouring
+ * controls. A keycap is a small non-interactive box whose whole text is a
+ * key: a `kbd`, one or two glyphs, or a key name.
+ */
+function keycap(element: SignalledElement): boolean {
+  if (element.interactive) return false;
+  const text = element.text.trim();
+  if (text === "" || element.rect.height > 32) return false;
+  if (element.tag === "kbd")
+    return text.length <= 12 && element.rect.width <= 96;
+  const short =
+    [...graphemes.segment(text)].length <= 2 ||
+    keyNames.has(text.toLowerCase());
+  return short && element.rect.width <= 64;
+}
+
+const mockupMinWidth = 240;
+const mockupMinHeight = 160;
+
+/**
+ * Illustrations: anything inside a box marked as a picture (`aria-hidden`,
+ * `role="img"`), or inside a static mock-up — a large, non-selectable box
+ * with no control anywhere beneath it, the fingerprint of a picture of UI.
+ * Controls are never exempt.
+ */
+function illustrationTest(
+  elements: readonly ObservedElementV2[],
+): (element: SignalledElement) => boolean {
+  const holdsControl = new Set<string>();
+  for (const element of elements)
+    if (element.interactive)
+      for (const ancestor of element.ancestorSelectors)
+        holdsControl.add(ancestor);
+  const containers = new Set(
+    elements
+      .filter(
+        (element) =>
+          !element.interactive &&
+          (element.attributes["aria-hidden"] === "true" ||
+            element.attributes.role === "img" ||
+            (element.styles.userSelect === "none" &&
+              element.rect.width >= mockupMinWidth &&
+              element.rect.height >= mockupMinHeight &&
+              !holdsControl.has(element.selector))),
+      )
+      .map((element) => element.selector),
+  );
+  return (element) =>
+    !element.interactive &&
+    element.ancestorSelectors.some((selector) => containers.has(selector));
+}
+
 /** The nearest element both sit inside. */
 function sharedParent(first: SignalledElement, second: SignalledElement) {
   return (
@@ -210,8 +300,9 @@ function sharedParent(first: SignalledElement, second: SignalledElement) {
  *
  * Interactive controls are compared with each other wherever they sit. A
  * bordered shape is compared only within its own parent group or row, so
- * unrelated subtrees that happen to meet are not. Layout regions and small
- * non-interactive indicators (dots, badges) are never compared.
+ * unrelated subtrees that happen to meet are not. Layout regions, small
+ * non-interactive indicators (dots, badges), keycap glyph groups and the
+ * contents of illustrations or static mock-ups are never compared.
  */
 export const adjacentGapCheck: DeterministicCheck = {
   id: "adjacent-gap",
@@ -221,126 +312,148 @@ export const adjacentGapCheck: DeterministicCheck = {
     const observation = tuple.observations;
     const viewportArea =
       (observation?.viewport.width ?? 1) * (observation?.viewport.height ?? 1);
-    const boxes = observed.elements.filter((element) => {
-      if (isVisuallyHidden(element) || excludedTags.has(element.tag))
-        return false;
-      if (
-        element.styles.display === "inline" ||
-        element.styles.display === "contents"
-      )
-        return false;
-      if (element.rect.width < 8 || element.rect.height < 8) return false;
-      if (element.interactive) return true;
-      return (
-        isBounded(element) &&
-        element.rect.width * element.rect.height < viewportArea * 0.25
-      );
-    });
-    const selectors = new Set(boxes.map((box) => box.selector));
-    const isRegion = regionTest(
-      observed.elements,
-      new Set(
-        (observation?.version === 2 ? (observation.selectorMarks ?? []) : [])
-          .filter((mark) => mark.purpose === "adjacent-region")
-          .flatMap((mark) => mark.matches),
-      ),
-    );
-    const { indicatorMax } = config.adjacentGap;
-    const members = boxes.filter(
-      (box) =>
-        !isRegion(box) &&
-        (box.interactive ||
-          box.rect.width > indicatorMax ||
-          box.rect.height > indicatorMax),
-    );
+    const gate = paintedGate(tuple, ["idiom:adjacent-elements-touch"]);
     const candidates: FindingCandidate[] = [];
-    const seen = new Set<string>();
-    for (let left = 0; left < members.length; left += 1) {
-      const first = members[left] as SignalledElement;
-      for (let right = left + 1; right < members.length; right += 1) {
-        const second = members[right] as SignalledElement;
+    const illustrated = illustrationTest(
+      observation?.version === 2 ? observation.elements : [],
+    );
+    const modes = observation?.elements.some(
+      (element) => element.painted !== undefined,
+    )
+      ? (["touch", "focus"] as const)
+      : (["all"] as const);
+    for (const mode of modes) {
+      const domain =
+        mode !== "touch"
+          ? observed.elements
+          : observed.elements.filter(isElementPainted);
+      const rawBoxes = observed.elements.filter((element) => {
+        if (isVisuallyHidden(element) || excludedTags.has(element.tag))
+          return false;
         if (
-          first.ancestorSelectors.includes(second.selector) ||
-          second.ancestorSelectors.includes(first.selector)
+          element.styles.display === "inline" ||
+          element.styles.display === "contents"
         )
-          continue;
-        // Compare siblings at one level: a control inside a bounded wrapper
-        // is measured through the wrapper, not twice.
-        const firstWrapped = first.ancestorSelectors.some(
-          (selector) =>
-            selectors.has(selector) &&
-            !second.ancestorSelectors.includes(selector),
+          return false;
+        if (element.rect.width < 8 || element.rect.height < 8) return false;
+        if (element.interactive) return true;
+        return (
+          isBounded(element) &&
+          element.rect.width * element.rect.height < viewportArea * 0.25
         );
-        const secondWrapped = second.ancestorSelectors.some(
-          (selector) =>
-            selectors.has(selector) &&
-            !first.ancestorSelectors.includes(selector),
-        );
-        if (firstWrapped || secondWrapped) continue;
-        // A shape is only compared within its own parent group or row.
-        if (
-          (!first.interactive || !second.interactive) &&
-          first.ancestorSelectors[0] !== second.ancestorSelectors[0]
-        )
-          continue;
-        if (
-          !first.interactive &&
-          !second.interactive &&
-          !(isBounded(first) && isBounded(second))
-        )
-          continue;
-        const firstBox = visibleBox(first);
-        const secondBox = visibleBox(second);
-        const related = relation(firstBox, secondBox);
-        if (related === undefined) continue;
-        const rest = relation(first.rect, second.rect);
-        const ringed = first.signals.focused || second.signals.focused;
-        const gap = related.gap;
-        if (gap >= config.minGap || gap < -1.5) continue;
-        if (
-          !ringed &&
-          (rest?.gap ?? gap) <= 2 &&
-          joined(first, second, related.axis)
-        )
-          continue;
-        // At rest a gap is only visible between two drawn edges, or between
-        // a text field and a drawn neighbour its ring will meet on focus.
-        const field = (element: SignalledElement) =>
-          focusable(element) && ["input", "textarea"].includes(element.tag);
-        if (
-          !ringed &&
-          !(isBounded(first) && isBounded(second)) &&
-          !(field(first) && isBounded(second)) &&
-          !(field(second) && isBounded(first))
-        )
-          continue;
-        const key = [first.selector, second.selector].sort().join("\u0000");
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const measured = round(Math.max(0, gap));
-        const parent = sharedParent(first, second);
-        candidates.push({
-          category: this.id,
-          severity: gap <= 0.5 ? "major" : "minor",
-          rule: ringed
-            ? "idiom:focus-ring-collision"
-            : "idiom:adjacent-elements-touch",
-          selectorHint: first.selector,
-          explanation: ringed
-            ? `With focus, the ring of ${first.signals.focused ? first.selector : second.selector} comes within ${measured}px of ${first.signals.focused ? second.selector : first.selector} in ${parent} (minimum ${config.minGap}px).`
-            : `${first.selector} and ${second.selector} sit ${measured}px apart ${related.axis === "horizontal" ? "side by side" : "stacked"} in ${parent}; neighbouring controls need at least ${config.minGap}px between them.`,
-          acceptance: [
-            `${first.selector} and ${second.selector} are separated by at least ${config.minGap}px, including any focus ring.`,
-          ],
-          verification: verify(this.id, {
-            selector: first.selector,
-            neighbour: second.selector,
-            minimum: config.minGap,
-            parent,
-          }),
-        });
+      });
+      const boxes =
+        mode !== "touch"
+          ? rawBoxes
+          : gate.filter("idiom:adjacent-elements-touch", rawBoxes);
+      const selectors = new Set(boxes.map((box) => box.selector));
+      const isRegion = regionTest(
+        domain,
+        new Set(
+          (observation?.version === 2 ? (observation.selectorMarks ?? []) : [])
+            .filter((mark) => mark.purpose === "adjacent-region")
+            .flatMap((mark) => mark.matches),
+        ),
+      );
+      const { indicatorMax } = config.adjacentGap;
+      const members = boxes.filter(
+        (box) =>
+          !isRegion(box) &&
+          !illustrated(box) &&
+          (box.interactive ||
+            box.rect.width > indicatorMax ||
+            box.rect.height > indicatorMax),
+      );
+      const seen = new Set<string>();
+      for (let left = 0; left < members.length; left += 1) {
+        const first = members[left] as SignalledElement;
+        for (let right = left + 1; right < members.length; right += 1) {
+          const second = members[right] as SignalledElement;
+          if (
+            first.ancestorSelectors.includes(second.selector) ||
+            second.ancestorSelectors.includes(first.selector)
+          )
+            continue;
+          // Compare siblings at one level: a control inside a bounded wrapper
+          // is measured through the wrapper, not twice.
+          const firstWrapped = first.ancestorSelectors.some(
+            (selector) =>
+              selectors.has(selector) &&
+              !second.ancestorSelectors.includes(selector),
+          );
+          const secondWrapped = second.ancestorSelectors.some(
+            (selector) =>
+              selectors.has(selector) &&
+              !first.ancestorSelectors.includes(selector),
+          );
+          if (firstWrapped || secondWrapped) continue;
+          // A shape is only compared within its own parent group or row.
+          if (
+            (!first.interactive || !second.interactive) &&
+            first.ancestorSelectors[0] !== second.ancestorSelectors[0]
+          )
+            continue;
+          if (keycap(first) && keycap(second)) continue;
+          if (
+            !first.interactive &&
+            !second.interactive &&
+            !(isBounded(first) && isBounded(second))
+          )
+            continue;
+          const firstBox = visibleBox(first);
+          const secondBox = visibleBox(second);
+          const related = relation(firstBox, secondBox);
+          if (related === undefined) continue;
+          const rest = relation(first.rect, second.rect);
+          const ringed = first.signals.focused || second.signals.focused;
+          if (mode !== "all" && (mode === "focus") !== ringed) continue;
+          const gap = related.gap;
+          if (gap >= config.minGap || gap < -1.5) continue;
+          if (
+            !ringed &&
+            (rest?.gap ?? gap) <= 2 &&
+            joined(first, second, related.axis)
+          )
+            continue;
+          // At rest a gap is only visible between two drawn edges, or between
+          // a text field and a drawn neighbour its ring will meet on focus.
+          const field = (element: SignalledElement) =>
+            focusable(element) && ["input", "textarea"].includes(element.tag);
+          if (
+            !ringed &&
+            !(isBounded(first) && isBounded(second)) &&
+            !(field(first) && isBounded(second)) &&
+            !(field(second) && isBounded(first))
+          )
+            continue;
+          const key = [first.selector, second.selector].sort().join("\u0000");
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const measured = round(Math.max(0, gap));
+          const parent = sharedParent(first, second);
+          candidates.push({
+            category: this.id,
+            severity: gap <= 0.5 ? "major" : "minor",
+            rule: ringed
+              ? "idiom:focus-ring-collision"
+              : "idiom:adjacent-elements-touch",
+            selectorHint: first.selector,
+            explanation: ringed
+              ? `With focus, the ring of ${first.signals.focused ? first.selector : second.selector} comes within ${measured}px of ${first.signals.focused ? second.selector : first.selector} in ${parent} (minimum ${config.minGap}px).`
+              : `${first.selector} and ${second.selector} sit ${measured}px apart ${related.axis === "horizontal" ? "side by side" : "stacked"} in ${parent}; neighbouring controls need at least ${config.minGap}px between them.`,
+            acceptance: [
+              `${first.selector} and ${second.selector} are separated by at least ${config.minGap}px, including any focus ring.`,
+            ],
+            verification: verify(this.id, {
+              selector: first.selector,
+              neighbour: second.selector,
+              minimum: config.minGap,
+              parent,
+            }),
+          });
+        }
       }
     }
-    return ran(this.id, candidates);
+    return gate.result(ran(this.id, candidates));
   },
 };

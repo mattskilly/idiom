@@ -58,7 +58,7 @@ export function constructSiteFlow(
       (counts.get(routeStateId(route.route)) ?? 0) + 1,
     );
   const states = discovery.routes.flatMap((route) => {
-    if (!route.path) {
+    if (!route.path || route.rejected) {
       todos.push(
         `TODO: ${route.route} (${route.sources.join(", ")}): ${route.reason}`,
       );

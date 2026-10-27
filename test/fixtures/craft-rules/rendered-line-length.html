@@ -1,0 +1,19 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Rendered line length</title>
+<style>body{margin:0;padding:16px;font:16px/1.6 monospace}p{margin:0 0 24px}.hero{width:56ch;max-width:100%}.animation{display:inline-block}.animation span{display:inline-block}.wide{width:110.5ch;max-width:100%}.lead{text-align:center}.exact{white-space:pre-wrap}.hidden{display:none}.small{font-size:12px}.big{font-size:24px}</style>
+<p id="wrapped" class="hero"><span class="animation"><span>Build</span> <span>better</span> <span>habits</span> <span>with</span> <span>tools</span> <span>to</span> <span>keep</span> <span>your</span> <span>day</span> <span>simple.</span><br><span>Build</span> <span>better</span> <span>habits</span> <span>with</span> <span>tools</span> <span>to</span> <span>keep</span> <span>your</span> <span>day</span> <span>simple.</span></span></p>
+<p id="plain" class="hero">Build better habits with tools to keep your day simple.<br>Build better habits with tools to keep your day simple.</p>
+<p id="short" class="wide">A short line in a very wide container.</p>
+<p id="single" style="white-space:nowrap">word word word word word word word word word word word word word word word word word word word words</p>
+<p id="body" class="wide">word word word word word word word word word word word word word word word word word word word words word word word word word word word word word word word word word word word word word word word words word word word word word word word word word word word word word word word word word word word words</p>
+<p id="lead" class="wide lead">word word word word word word word word word word word word word word word word word word word words word word word word word word word word word word word word word word word word word word word words word word word word word word word word word word word word word word word word word word word words</p>
+<p id="at90" class="exact">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<br>short final line</p>
+<p id="at91" class="exact">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<br>short final line</p>
+<p id="mixed">aaaaaaaaaaaaaaaaaaaa<a href="#mixed"><code class="small">bbbbbbbbbb</code></a><em class="big">cccccccccc</em><br>short final line</p>
+<p id="collapsed">alpha   beta <span> gamma delta epsilon</span><span class="hidden">hidden hidden hidden hidden hidden hidden hidden hidden hidden hidden hidden hidden hidden hidden hidden hidden hidden hidden hidden hidden </span><br>end</p>
+<p id="preserved" class="exact">alpha  beta<br>gamma   delta epsilon</p>
+<p id="unicode" class="exact">éééééééééé👩‍💻👩‍💻👩‍💻<br>end</p>
+<p id="margin"><span style="margin-right:30px">abcdefghij</span><span>klmnopqrst</span><br>short final line</p>
+<p id="aria" aria-hidden="true">Visible text despite accessibility hiding.<br>another ordinary line</p>
+<p id="bidi" dir="rtl">אבגדה <span>abcde</span> אבגדה<br>אבגדה אבגדה אבגדה אבגדה</p>
+<div style="height:1800px"></div><p id="below" class="exact">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<br>short final line</p>
+</html>

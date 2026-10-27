@@ -12,6 +12,7 @@ import {
 } from "../baseline/summary.js";
 import type { CaptureScope } from "../capture/scope.js";
 import type { ProductionBuild } from "../capture/types.js";
+import type { PaintedCoverageReport } from "../checks/painted.js";
 import { projectChecksConfig } from "../checks/project-config.js";
 import { IdiomError } from "../errors.js";
 import { loadRunTuples, resolveStoredRun } from "../review/artifacts.js";
@@ -41,7 +42,7 @@ import {
 import { validateProject } from "../validation.js";
 import { deterministicFingerprintSet } from "../verify/evaluate.js";
 
-export type CheckSummary = {
+export type CheckSummary = PaintedCoverageReport & {
   scope?: import("../capture/run-record.js").RunRecord | undefined;
   timings?: import("../capture/timings.js").RunTimings | undefined;
   coverage?: import("../report/coverage.js").ReportCoverage | undefined;
@@ -330,6 +331,8 @@ export async function checkWithReview(
   summary.scope = result.scope;
   summary.timings = result.timings;
   summary.coverage = result.reportCoverage;
+  if (result.checkCoverage !== undefined)
+    summary.checkCoverage = result.checkCoverage;
   if (emitTickets !== undefined) {
     const actionable = new Set(
       summary.findings

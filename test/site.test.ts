@@ -266,7 +266,11 @@ describe("standalone site build", () => {
       expect(absoluteUrls.length).toBeGreaterThan(0);
       for (const value of absoluteUrls) {
         const url = new URL(value, "https://idiom.build/");
-        if (url.href === "https://github.com/mattskilly/idiom") continue;
+        if (
+          url.href === "https://github.com/mattskilly/idiom" ||
+          url.href === "https://www.npmjs.com/package/@mattskilly/idiom"
+        )
+          continue;
         expect(url.origin).toBe("https://idiom.build");
       }
     } finally {
@@ -282,7 +286,8 @@ describe("standalone site build", () => {
       height: 630,
     });
 
-    const requiredColors = new Set(["244,244,239", "21,25,22", "10,104,77"]);
+    // Redline brand: sheet --bg, ink --fg and --redline (the wordmark dot, tag and frame).
+    const requiredColors = new Set(["250,250,248", "17,17,19", "224,53,43"]);
     const seenColors = new Set<string>();
     let opaque = true;
     for (let offset = 0; offset < png.data.length; offset += 4) {
@@ -362,7 +367,7 @@ describe("landing-page copy follows the shipped command surface", () => {
   test("the version pin forces a re-audit, and the only install is the published package", () => {
     // Bump this literal deliberately at every release; the page must be
     // re-read against the shipped CLI each time.
-    expect(packageJson.version).toBe("0.10.0");
+    expect(packageJson.version).toBe("0.11.0");
     expect(source).toContain("npm install -g @mattskilly/idiom");
     expect(source).not.toMatch(/git\+ssh|\bbun add\b/);
     expect([...source.matchAll(/\bv\d+\.\d+\.\d+\b/g)]).toEqual([]);
@@ -381,8 +386,40 @@ describe("landing-page copy follows the shipped command surface", () => {
     expect(source).not.toMatch(
       /\b(?:invitation|invited|private repository|authorized GitHub access)\b/i,
     );
-    expect(source).toContain("benchmark fixtures, not a customer's product");
   });
+});
+
+describe("theme toggle", () => {
+  test.each(["light", "dark"] as const)(
+    "starts from the %s system scheme and switches to the other",
+    async (colorScheme) => {
+      const { context, page } = await loadPage({
+        width: 390,
+        colorScheme,
+        html: standalone,
+      });
+      try {
+        const background = () =>
+          page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+        const toggle = page.locator(".theme-toggle");
+        const other = colorScheme === "light" ? "dark" : "light";
+        const before = await background();
+        await expect
+          .poll(() => toggle.getAttribute("aria-label"))
+          .toBe(`Switch to ${other} theme`);
+        await toggle.click();
+        expect(
+          await page.evaluate(() => document.documentElement.dataset.theme),
+        ).toBe(other);
+        expect(await background()).not.toBe(before);
+        expect(await toggle.getAttribute("aria-label")).toBe(
+          `Switch to ${colorScheme} theme`,
+        );
+      } finally {
+        await context.close();
+      }
+    },
+  );
 });
 
 describe("landing-page presentation contract", () => {
@@ -413,7 +450,7 @@ describe("landing-page presentation contract", () => {
                   /^(?:https?:)?\/\//i.test(attribute.value.trim()) &&
                   !(
                     attribute.name === "href" &&
-                    /^https:\/\/(?:idiom\.build(?:\/|$)|github\.com\/mattskilly\/idiom$)/i.test(
+                    /^https:\/\/(?:idiom\.build(?:\/|$)|github\.com\/mattskilly\/idiom$|www\.npmjs\.com\/package\/@mattskilly\/idiom$)/i.test(
                       attribute.value.trim(),
                     )
                   ),
@@ -469,7 +506,7 @@ describe("landing-page presentation contract", () => {
         }));
         expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + 1);
 
-        for (const name of ["What it catches", "With your agent", "Status"])
+        for (const name of ["What it catches", "With your agent", "Install"])
           await expect(
             page.getByText(name, { exact: true }).first().isVisible(),
           ).resolves.toBe(true);
@@ -482,10 +519,8 @@ describe("landing-page presentation contract", () => {
             document.querySelector(".standfirst") as Element,
           ).fontFamily,
         }));
-        expect(typography.machine).toMatch(/ui-monospace|SF Mono|Menlo/);
-        expect(typography.human).toMatch(
-          /Iowan Old Style|Charter|Palatino|Georgia/,
-        );
+        expect(typography.machine).toMatch(/Archivo/);
+        expect(typography.human).toMatch(/Instrument Sans/);
       } finally {
         await context.close();
       }

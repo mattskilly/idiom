@@ -4,6 +4,33 @@ User-visible changes to Idiom are recorded here, newest first.
 
 ## [Unreleased]
 
+## [v0.11.0] - 2026-10-27
+
+Idiom now judges only what people can see, and its rules are much stricter about what counts as a problem on sites it has never seen.
+
+- **Only what people can see is judged.** Geometry, copy and consistency heuristics ignore wholly unpainted elements, with per-rule skip counts in JSON, Markdown and HTML coverage. Existing captures retain their previous review behavior. Capture waits naturally for finite entrance animations and transitions within `capture.animationSettleMs` (default 1500ms), and preserves unresolved animation state in evidence screenshots.
+- **Generated flows contain only real pages.** `idiom init --flows` keeps a discovered route only when both the response and the settled document are HTML, so images, feeds and JSON no longer become states or receive document-structure findings such as a missing `h1`. Underscore-prefixed (private) directories and non-page files are skipped, Astro projects admit only page formats, and routes that return 404 become TODO notes instead of states. Hand-written flows are unchanged.
+- **Crops show their element on very tall pages.** Crops on very tall pages and on pages that overflow the viewport horizontally now show their element. Full-page captures taller than the browser's texture limit are taken in tiles and stitched, and `metadata.json` records which screenshot strategy was used. Crops also follow content that moved between observing the page and taking the screenshot.
+
+Rules tightened so their findings hold up on unfamiliar sites:
+
+- `idiom:orphan-word` judges only words that are visibly painted: words hidden by a reveal mask or clipped away by an ancestor no longer form a line, and a stranded word that leaves no ink in the captured screenshot is skipped and counted in coverage. Inline `role="button"` sentences in running copy are no longer treated as labels. Its crop now shows the measured text instead of whatever the selector matched, and crops of full-page captures that overflow horizontally are no longer offset. Recapture to get the new evidence; older captures keep their previous behaviour.
+- `idiom:mixed-locale-spelling` no longer reports a link that names a titled page (matching title metadata, `<cite>` ancestry, or a capitalised name with a title), or a declared `properNouns` span such as "Centre Pompidou". Buttons, single-word and untitled links in the minority locale still report.
+- Input groups whose controls share a 1px border (Bootstrap's `.input-group`) no longer count as overlapping controls.
+- Keycap glyph groups and static product mock-ups no longer count as touching controls; captures record each element's `user-select`.
+- `idiom:image-distorted` no longer reports a stretch that is under 1px on either axis after the best proportional scaling, such as a small icon a few percent out of proportion. Visibly stretched photos and logos are still reported, and existing captures are re-judged without recapture.
+- Labels above underlines or below dividers are measured against their content box, avoiding off-centre reports caused by one-sided decoration.
+- A chart's tooltip no longer counts as overlapping the chart it describes, and below-the-fold overlaps confirmed only by geometry are reported as minor.
+- `idiom:scale-outlier` compares only peers: prevailing values are per colour scheme, and heading rules, table borders and other dividers are separate scales. Dotted or dashed underlines on inline text are no longer dividers, and radius is skipped on controls with no visible background, border or shadow (this also applies to `idiom:off-scale-radius`).
+- `idiom:element-content-clipped` reports a box only when it cuts off painted text or a control. Decorative overflow (glows, bleeds, imagery), `aria-hidden` or `inert` illustrations, content a nearer scroller owns, and marquee tracks no longer report. Captures made before this release keep their previous behaviour.
+- `idiom:selected-state-invisible` sees custom selection indicators (a dot or check rendered beside the label, including SVG and pseudo-elements) and reads native radio and checkbox state from the live control, so a visibly selected custom option is no longer reported.
+- `idiom:sibling-select-inconsistent` compares only controls of the same family, element and role. A select is no longer compared with an icon-only menu button; same-type padding differences still report.
+- `idiom:text-clipped` no longer reports a vertical overrun smaller than the font's descender space when no glyph ink is cut, or a moving marquee track whose repeated text is meant to run past its strip.
+- `idiom:dead-link-text` ignores action-like copy inside non-interactive product illustrations (decorative frames with no interactive descendants).
+- `idiom:mixed-label-casing` ignores hidden labels and capitalised multi-word links that name a real page (matching title metadata or a `<cite>` ancestor).
+- `idiom:line-too-long` measures characters on each rendered line instead of estimating from the element's width, and records the line count and widest line in pixels. Single-line text in a wide column is no longer reported by column capacity.
+- `idiom:minimum-target-size` applies the WCAG 2.5.8 spacing exception (an undersized target with enough clear space around it passes) and credits the clickable area a label adds to a native checkbox or radio.
+
 ## [v0.10.0] - 2026-10-26
 
 Idiom now works inside your coding agent and compares what you built against what you designed.

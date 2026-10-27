@@ -141,6 +141,7 @@ function tupleOf(
   options: {
     state?: string;
     viewport?: { name: string; width: number; height: number };
+    colorScheme?: "light" | "dark";
     extra?: Partial<ObservationArtifactV2>;
   } = {},
 ): CheckTuple {
@@ -156,7 +157,10 @@ function tupleOf(
     viewport: viewport.name,
     width: viewport.width,
     height: viewport.height,
-    metadataPath: `${state}/${viewport.name}/metadata.json`,
+    metadataPath: `${state}/${viewport.name}${options.colorScheme === undefined ? "" : `-${options.colorScheme}`}/metadata.json`,
+    ...(options.colorScheme === undefined
+      ? {}
+      : { colorScheme: options.colorScheme }),
     artifactPaths: [],
     commit: "abc123",
     createdAt: "2026-10-23T00:00:00.000Z",
@@ -566,6 +570,225 @@ const anatomy = (elements: ObservedElementV2[], extra = {}) =>
     config: config(),
   });
 
+const siblingFindings = (elements: ObservedElementV2[]) =>
+  anatomy(elements).candidates.filter(
+    (candidate) => candidate.rule === "idiom:sibling-select-inconsistent",
+  );
+
+function siblingControl(
+  selector: string,
+  overrides: Parameters<typeof element>[0] = {},
+) {
+  return element({
+    selector,
+    ...overrides,
+    signals: {
+      role: "combobox",
+      haspopup: "listbox",
+      renderedContent: { text: true, directText: true, graphic: true },
+      adornment: {
+        status: "measured",
+        source: "background",
+        rect: { x: 72, y: 11, width: 10, height: 10 },
+      },
+      ...overrides.signals,
+    },
+  });
+}
+
+test.each(["menu", "true", "listbox"])(
+  "icon-only %s buttons cannot be select siblings, even with accessible or hidden labels",
+  (haspopup) => {
+    for (const separateCells of [false, true]) {
+      for (const role of ["button", "combobox"]) {
+        const reviewer = siblingControl("#reviewer", {
+          ancestorSelectors: separateCells ? ["#cell1", "#row"] : ["#row"],
+        });
+        const menu = siblingControl("#menu", {
+          text: "Open menu",
+          attributes: { "aria-label": "Open menu" },
+          ancestorSelectors: separateCells ? ["#cell2", "#row"] : ["#row"],
+          styles: { paddingLeft: "2px", paddingRight: "2px" },
+          signals: {
+            role,
+            haspopup,
+            name: "Open menu",
+            renderedContent: { text: false, directText: false, graphic: true },
+            adornment: {
+              status: "measured",
+              source: "background",
+              rect: { x: 70, y: 9, width: 14, height: 14 },
+            },
+          },
+        });
+        const hidden = element({
+          selector: "#menu-label",
+          tag: "span",
+          text: "Open menu",
+          directText: "Open menu",
+          interactive: false,
+          ancestorSelectors: ["#menu", ...menu.ancestorSelectors],
+          rect: { x: 0, y: 0, width: 1, height: 1 },
+          styles: {
+            position: "absolute",
+            overflowX: "hidden",
+            overflowY: "hidden",
+          },
+        });
+        expect(siblingFindings([reviewer, menu, hidden])).toEqual([]);
+      }
+    }
+  },
+);
+
+test.each([
+  {
+    name: "native select and button combobox",
+    left: { tag: "select" },
+    right: {},
+  },
+  {
+    name: "listbox button and combobox",
+    left: { signals: { role: "button" } },
+    right: {},
+  },
+  {
+    name: "different native roles",
+    left: { tag: "select" },
+    right: { tag: "select", signals: { role: "listbox" } },
+  },
+  { name: "different combobox hosts", left: { tag: "input" }, right: {} },
+  {
+    name: "different listbox hosts",
+    left: { signals: { role: "button" } },
+    right: { tag: "div", signals: { role: "button" } },
+  },
+  {
+    name: "different listbox roles",
+    left: { signals: { role: "button" } },
+    right: { signals: { role: "menuitem" } },
+  },
+  {
+    name: "labelled menu actions",
+    left: { signals: { role: "button", haspopup: "menu" } },
+    right: { signals: { role: "button", haspopup: "menu" } },
+  },
+  {
+    name: "labelled generic popup actions",
+    left: { signals: { role: "button", haspopup: "true" } },
+    right: { signals: { role: "button", haspopup: "true" } },
+  },
+])("sibling comparisons exclude $name", ({ left, right }) => {
+  expect(
+    siblingFindings([
+      siblingControl("#first", left),
+      siblingControl("#second", { ...right, styles: { paddingLeft: "14px" } }),
+    ]),
+  ).toEqual([]);
+});
+
+test.each([
+  { name: "native selects", overrides: { tag: "select" } },
+  { name: "button comboboxes", overrides: {} },
+  {
+    name: "labelled listbox buttons",
+    overrides: { signals: { role: "button" } },
+  },
+  {
+    name: "input comboboxes without DOM label text",
+    overrides: {
+      tag: "input",
+      text: "",
+      signals: {
+        renderedContent: { text: false, directText: false, graphic: false },
+      },
+    },
+  },
+])(
+  "matching $name retain padding comparisons and tolerance",
+  ({ overrides }) => {
+    const first = siblingControl("#first", overrides);
+    for (const padding of [10, 10.5, 11]) {
+      const findings = siblingFindings([
+        first,
+        siblingControl("#second", {
+          ...overrides,
+          styles: { paddingLeft: `${padding}px` },
+        }),
+      ]);
+      expect(findings).toHaveLength(padding <= 10.5 ? 0 : 1);
+      if (padding > 10.5) {
+        expect(findings[0]?.verification.params).toEqual({
+          property: "paddingLeft",
+          selectors: ["#first", "#second"],
+          tolerance: 0.5,
+        });
+        expect(findings[0]?.selectorHint).toBe("#second");
+      }
+    }
+  },
+);
+
+test.each(["menu", "type", "role"])(
+  "foreign %s controls do not affect singleton grouping or the height median",
+  (foreign) => {
+    for (const separateCells of [false, true]) {
+      const first = siblingControl("#first", {
+        ancestorSelectors: separateCells ? ["#cell1", "#row"] : ["#row"],
+      });
+      const second = siblingControl("#second", {
+        ancestorSelectors: separateCells ? ["#cell2", "#row"] : ["#row"],
+        styles: { paddingLeft: "14px" },
+      });
+      const foreigners = [40, 48, 56].map((height, index) =>
+        siblingControl(`#foreign${index}`, {
+          ancestorSelectors: first.ancestorSelectors,
+          rect: { x: 0, y: 0, width: 96, height },
+          ...(foreign === "type" ? { tag: "select" } : {}),
+          signals:
+            foreign === "menu"
+              ? { role: "button", haspopup: "menu" }
+              : foreign === "role"
+                ? { role: "button" }
+                : {},
+        }),
+      );
+      const findings = siblingFindings([first, second, ...foreigners]);
+      expect(findings).toHaveLength(1);
+      expect(findings[0]?.verification.params).toEqual({
+        property: "paddingLeft",
+        selectors: ["#first", "#second"],
+        tolerance: 0.5,
+      });
+      expect(findings[0]?.explanation).toContain(
+        "Sibling selects in #row differ",
+      );
+    }
+  },
+);
+
+test("an excluded popup action still reports its off-centre icon", () => {
+  const menu = siblingControl("#menu", {
+    signals: {
+      role: "button",
+      haspopup: "menu",
+      renderedContent: { text: false, directText: false, graphic: true },
+      adornment: {
+        status: "measured",
+        source: "background",
+        rect: { x: 72, y: 14, width: 10, height: 10 },
+      },
+    },
+  });
+  expect(anatomy([menu]).candidates).toContainEqual(
+    expect.objectContaining({
+      rule: "idiom:icon-off-centre",
+      selectorHint: "#menu",
+      explanation: expect.stringContaining("3px below"),
+    }),
+  );
+});
+
 test("a select-like without the adornment signal or a child chevron is unavailable (pre-signal capture)", () => {
   const select = element({
     selector: "#font",
@@ -718,4 +941,233 @@ test("artifacts load with and without the adornment signal; an unknown status is
   expect(observationArtifactSchema.safeParse(unknown).success).toBe(false);
   signals.adornment = { status: "measured", source: "pseudo", rect: {} };
   expect(observationArtifactSchema.safeParse(unknown).success).toBe(false);
+});
+
+const rule = (
+  selector: string,
+  color: string,
+  overrides: Parameters<typeof element>[0] = {},
+) =>
+  element({
+    selector,
+    tag: "div",
+    text: "",
+    interactive: false,
+    rect: { x: 0, y: 0, width: 600, height: 40 },
+    ...overrides,
+    signals: { role: "generic", lineCount: 0, ...overrides.signals },
+    styles: {
+      display: "block",
+      backgroundColor: "rgba(0, 0, 0, 0)",
+      borderTopWidth: "0px",
+      borderRightWidth: "0px",
+      borderLeftWidth: "0px",
+      borderBottomWidth: "1px",
+      borderBottomColor: color,
+      ...overrides.styles,
+    },
+  });
+
+const outliers = (tuples: CheckTuple[], property: string) =>
+  values(tuples).filter(
+    (found) =>
+      found.rule === "idiom:scale-outlier" && found.property === property,
+  );
+
+test("scale outliers: dividers are compared only within one colour scheme", () => {
+  const light = tupleOf(
+    Array.from({ length: 6 }, (_, index) =>
+      rule(`#light${index}`, "rgb(235, 236, 240)"),
+    ),
+    { colorScheme: "light" },
+  );
+  const darkRule = element({
+    selector: "#dark-hr",
+    tag: "hr",
+    text: "",
+    interactive: false,
+    rect: { x: 0, y: 0, width: 600, height: 1 },
+    signals: { role: "separator", lineCount: 0 },
+    styles: {
+      display: "block",
+      backgroundColor: "rgba(0, 0, 0, 0)",
+      borderTopWidth: "1px",
+      borderTopColor: "rgb(52, 58, 70)",
+      borderRightWidth: "0px",
+      borderBottomWidth: "0px",
+      borderLeftWidth: "0px",
+    },
+  });
+  expect(
+    outliers([light, tupleOf([darkRule], { colorScheme: "dark" })], "border"),
+  ).toEqual([]);
+
+  // Within the dark scheme a sharp departure is still an outlier.
+  const dark = tupleOf(
+    [
+      ...Array.from({ length: 4 }, (_, index) =>
+        rule(`#dark${index}`, "rgb(52, 58, 70)"),
+      ),
+      rule("#odd", "rgb(200, 200, 200)"),
+    ],
+    { colorScheme: "dark" },
+  );
+  expect(outliers([light, dark], "border")).toEqual([
+    expect.objectContaining({ value: "rgb(200, 200, 200)" }),
+  ]);
+});
+
+test("scale outliers: borders on inline text are not dividers", () => {
+  const tuple = tupleOf([
+    ...Array.from({ length: 8 }, (_, index) =>
+      rule(`#rule${index}`, "rgb(253, 253, 253)"),
+    ),
+    rule("#dotted", "rgb(32, 33, 34)", {
+      tag: "span",
+      directText: "commented",
+      styles: { display: "inline", borderBottomStyle: "dotted" },
+    }),
+    rule("#abbr", "rgb(32, 33, 34)", {
+      tag: "abbr",
+      directText: "CSS",
+      styles: { display: "inline" },
+    }),
+    rule("#chip", "rgb(32, 33, 34)", {
+      tag: "span",
+      directText: "note",
+      styles: { display: "inline-block" },
+    }),
+  ]);
+  expect(outliers([tuple], "border")).toEqual([]);
+  // The same span as a block-level rule is a divider and an outlier.
+  expect(
+    outliers(
+      [
+        tupleOf([
+          ...Array.from({ length: 4 }, (_, index) =>
+            rule(`#rule${index}`, "rgb(253, 253, 253)"),
+          ),
+          rule("#block", "rgb(32, 33, 34)", { tag: "span" }),
+        ]),
+      ],
+      "border",
+    ),
+  ).toEqual([expect.objectContaining({ value: "rgb(32, 33, 34)" })]);
+});
+
+test("scale outliers: heading rules and table borders are separate scales", () => {
+  const heading = (selector: string, color: string) =>
+    rule(selector, color, {
+      tag: "h2",
+      directText: "Section",
+      signals: { role: "heading" },
+    });
+  const wrapper = rule("#wrapper", "rgb(162, 169, 177)", {
+    rect: { x: 0, y: 0, width: 600, height: 44 },
+  });
+  const wrapped = element({
+    selector: "#wrapped",
+    tag: "h2",
+    text: "Wrapped",
+    interactive: false,
+    ancestorSelectors: ["#wrapper", "#root"],
+    rect: { x: 0, y: 0, width: 600, height: 40 },
+    signals: { role: "heading", lineCount: 1 },
+    styles: {
+      display: "block",
+      backgroundColor: "rgba(0, 0, 0, 0)",
+      borderTopWidth: "0px",
+      borderRightWidth: "0px",
+      borderBottomWidth: "0px",
+      borderLeftWidth: "0px",
+    },
+  });
+  const cells = Array.from({ length: 20 }, (_, index) =>
+    rule(`#cell${index}`, "rgb(253, 253, 253)", {
+      tag: "td",
+      signals: { role: "cell" },
+    }),
+  );
+  const headings = Array.from({ length: 11 }, (_, index) =>
+    heading(`#h${index}`, "rgb(162, 169, 177)"),
+  );
+  expect(
+    outliers([tupleOf([...cells, ...headings, wrapper, wrapped])], "border"),
+  ).toEqual([]);
+
+  // Among headings, one sharply different rule is still an outlier.
+  expect(
+    outliers(
+      [
+        tupleOf([
+          ...cells,
+          ...headings.slice(0, 4),
+          heading("#odd", "rgb(20, 20, 20)"),
+        ]),
+      ],
+      "border",
+    ),
+  ).toEqual([expect.objectContaining({ value: "rgb(20, 20, 20)" })]);
+});
+
+test("scale outliers: radius is ignored on controls with no visible background, border or shadow", () => {
+  const ring =
+    "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px";
+  const bare = (selector: string, boxShadow = ring) =>
+    element({
+      selector,
+      styles: {
+        ...radius("0px"),
+        backgroundColor: "rgba(0, 0, 0, 0)",
+        borderTopWidth: "0px",
+        borderRightWidth: "0px",
+        borderBottomWidth: "0px",
+        borderLeftWidth: "0px",
+        boxShadow,
+      },
+    });
+  const pill = (selector: string) =>
+    element({ selector, styles: { ...radius("9999px"), boxShadow: ring } });
+  const transparent = Array.from({ length: 5 }, (_, index) =>
+    bare(`#nav${index}`),
+  );
+  expect(
+    outliers([tupleOf([...transparent, pill("#p1"), pill("#p2")])], "radius"),
+  ).toEqual([]);
+
+  // A painted shadow makes the corners visible, so the radius is measured.
+  const shadowed = Array.from({ length: 4 }, (_, index) =>
+    bare(`#shadow${index}`, "rgba(0, 0, 0, 0.1) 0px 1px 3px 0px"),
+  );
+  expect(outliers([tupleOf([...shadowed, pill("#p3")])], "radius")).toEqual([
+    expect.objectContaining({ value: "full" }),
+  ]);
+});
+
+test("scale outliers: a real radius outlier among cards is still reported", () => {
+  const card = (selector: string, corner: string) =>
+    element({
+      selector,
+      tag: "article",
+      text: "",
+      interactive: false,
+      rect: { x: 0, y: 0, width: 320, height: 200 },
+      signals: { role: "article", lineCount: 0 },
+      styles: { display: "block", ...radius(corner) },
+    });
+  const [found] = scale([
+    tupleOf([
+      card("#c1", "12px"),
+      card("#c2", "12px"),
+      card("#c3", "12px"),
+      card("#c4", "12px"),
+      card("#c5", "6px"),
+    ]),
+  ]).flatMap(({ candidates }) => candidates);
+  expect(found?.rule).toBe("idiom:scale-outlier");
+  expect(found?.verification.params).toMatchObject({
+    property: "radius",
+    value: "6px",
+    prevailing: "12px",
+  });
 });

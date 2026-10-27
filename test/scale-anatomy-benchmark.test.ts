@@ -84,14 +84,11 @@ test("eight button heights, mixed radii, dark dividers and the Fit chevron are r
   ).toBe(
     'The chevron in #zoom-fit sits 3px below the "Fit" label\'s ink centre (tolerance 1px).',
   );
-  expect(found).toContainEqual(
-    expect.objectContaining({
-      rule: "idiom:sibling-select-inconsistent",
-      selectorHint: "#font",
-      explanation:
-        "Sibling selects in div.zoom differ in padding-left: 8px (#zoom-fit), 12px (#font).",
-    }),
-  );
+  expect(
+    found.filter(
+      (candidate) => candidate.rule === "idiom:sibling-select-inconsistent",
+    ),
+  ).toEqual([]);
 }, 60_000);
 
 test.each([
@@ -134,6 +131,75 @@ ${css}
 </style></head><body>${body}</body></html>`;
 const svg =
   '<svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8" stroke="currentColor"/></svg>';
+
+test.each([
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+])(
+  "table siblings require matching controls at $width px",
+  async (viewport) => {
+    const table = (padding: number) =>
+      page(
+        `<table><tbody>
+      <tr id="mixed"><td><button id="reviewer" role="combobox" aria-haspopup="listbox"><span>Assign reviewer</span>${svg}</button></td>
+      <td><button id="menu" aria-haspopup="menu" aria-label="Open menu"><svg viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="3" r="1"/><circle cx="7" cy="7" r="1"/><circle cx="7" cy="11" r="1"/></svg><span class="sr-only" id="hidden-label">Open menu</span></button></td></tr>
+      <tr id="native"><td><select id="native1"><option>One</option></select></td><td><select id="native2" style="padding-left:${padding}px"><option>Two</option></select></td></tr>
+      <tr id="custom"><td><button id="custom1" role="combobox" aria-haspopup="listbox">One${svg}</button></td><td><button id="custom2" role="combobox" aria-haspopup="listbox" style="padding-left:${padding}px">Two${svg}</button></td></tr>
+    </tbody></table>`,
+        `body { padding:8px; } button, select { height:32px; } #menu { width:32px; padding:2px; } #menu svg { width:18px; height:18px; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }`,
+      );
+    const { findings, tuples } = await reviewStates(
+      browser,
+      [
+        { state: "unequal", html: table(14) },
+        { state: "corrected", html: table(10) },
+      ],
+      { viewport },
+    );
+    for (const tuple of tuples) {
+      const observations = tuple.observations;
+      if (observations?.version !== 2) throw new Error("expected v2");
+      const observed = (selector: string) =>
+        observations.elements.find((element) => element.selector === selector);
+      expect(observed("#reviewer")?.signals?.role).toBe("combobox");
+      expect(observed("#reviewer")?.signals?.renderedContent?.text).toBe(true);
+      expect(observed("#menu")?.signals?.role).toBe("button");
+      expect(observed("#menu")?.signals?.name).toBe("Open menu");
+      expect(observed("#menu")?.signals?.renderedContent).toMatchObject({
+        text: false,
+        directText: false,
+        graphic: true,
+      });
+      expect(observed("#reviewer")?.rect.height).toBe(
+        observed("#menu")?.rect.height,
+      );
+      expect(observed("#reviewer")?.ancestorSelectors[1]).toBe("#mixed");
+      expect(observed("#menu")?.ancestorSelectors[1]).toBe("#mixed");
+      for (const selector of ["#native1", "#native2", "#custom1", "#custom2"])
+        expect(observed(selector)?.signals?.role).toBe("combobox");
+    }
+    const siblings = findings.filter(
+      ({ candidate }) => candidate.rule === "idiom:sibling-select-inconsistent",
+    );
+    expect(siblings.filter(({ state }) => state === "corrected")).toEqual([]);
+    expect(
+      siblings.map(({ candidate }) => candidate.verification.params),
+    ).toEqual([
+      {
+        property: "paddingLeft",
+        selectors: ["#custom1", "#custom2"],
+        tolerance: 0.5,
+      },
+      {
+        property: "paddingLeft",
+        selectors: ["#native1", "#native2"],
+        tolerance: 0.5,
+      },
+    ]);
+  },
+);
+
 const buttons = (count: number) =>
   Array.from(
     { length: count },

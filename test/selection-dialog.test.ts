@@ -855,3 +855,507 @@ test("selected-state: radio exclusivity survives unsupported aria-multiselectabl
     "idiom:selected-state-multiple",
   ]);
 }, 60_000);
+
+// A hidden input, sibling dot and external label, as in Wikipedia Appearance.
+const customOptions = (name: string, type = "radio", checked = [0]) =>
+  [0, 1, 2]
+    .map(
+      (index) =>
+        `<div class="choice"><input type="${type}" name="${name}" id="${name}${index}" ${checked.includes(index) ? "checked" : ""}><span class="indicator"></span><label for="${name}${index}">Option ${index}</label></div>`,
+    )
+    .join("");
+const customStyle = `input{position:absolute;opacity:0;width:18px;height:18px}.choice{display:flex;gap:8px;align-items:center;margin:8px}.indicator{box-sizing:border-box;display:inline-block;width:18px;height:18px;border:1px solid #72777d;border-radius:50%}input:checked+.indicator{border:6px solid #36c}@media(prefers-color-scheme:dark){body{background:#101418;color:#eaecf0}.indicator{border-color:#a2a9b1}input:checked+.indicator{border-color:#36c}}`;
+
+test.each(["light", "dark"] as const)(
+  "selected-state: external custom radio dots in %s keep group and control identity",
+  async (colorScheme) => {
+    const { findings, tuples } = await reviewStates(
+      browser,
+      [
+        {
+          state: "appearance",
+          html: page(
+            `<form>${customOptions("size")}${customOptions("width")}</form>`,
+            customStyle,
+          ),
+        },
+      ],
+      { colorScheme },
+    );
+    const observations = tuples[0]?.observations;
+    expect(observations?.version).toBe(2);
+    if (observations?.version !== 2) return;
+    expect(observations.selectionGroups).toHaveLength(2);
+    for (const [index, name] of ["size", "width"].entries()) {
+      const group = observations.selectionGroups?.[index];
+      expect(group?.members).toHaveLength(3);
+      expect(group?.single).toBe(true);
+      expect(group?.members[0]).toMatchObject({
+        control: `#${name}0`,
+        selected: true,
+        source: "checked",
+        nativeIndicator: false,
+      });
+      expect(group?.members[0]?.selector).not.toBe(`#${name}0`);
+      expect(group?.members[0]?.paintedDecoration).toHaveProperty(
+        "indicator0.self.top.border",
+        "6px rgb(51, 102, 204)",
+      );
+    }
+    expect(of(findings, "selected-state")).toEqual([]);
+  },
+  60_000,
+);
+
+test("selected-state: identical external dots still report each radio group", async () => {
+  const { findings, tuples } = await reviewStates(browser, [
+    {
+      state: "identical",
+      html: page(
+        `<form>${customOptions("size")}${customOptions("width")}</form>`,
+        `${customStyle}input:checked+.indicator{border:1px solid #72777d}`,
+      ),
+    },
+  ]);
+  expect(
+    tuples[0]?.observations?.version === 2 &&
+      tuples[0].observations.selectionGroups,
+  ).toHaveLength(2);
+  expect(of(findings, "selected-state").map(({ rule }) => rule)).toEqual([
+    "idiom:selected-state-invisible",
+    "idiom:selected-state-invisible",
+  ]);
+}, 60_000);
+
+test.each(["radio", "checkbox"])(
+  "selected-state: %s uses live checked properties and parses strict artifacts",
+  async (type) => {
+    const { findings, tuples } = await reviewStates(browser, [
+      {
+        state: "live",
+        html: page(
+          `<fieldset>${customOptions("live", type)}<script>document.getElementById('live0').checked=false;document.getElementById('live1').checked=true;</script></fieldset>`,
+          customStyle,
+        ),
+      },
+    ]);
+    const observations = tuples[0]?.observations;
+    expect(observations?.version).toBe(2);
+    if (observations?.version !== 2) return;
+    expect(observationArtifactSchema.parse(observations)).toEqual(observations);
+    const group = observations.selectionGroups?.[0];
+    expect(group?.memberRole).toBe(type);
+    expect(group?.single).toBe(type === "radio");
+    expect(
+      group?.members.map(({ control, selected, source }) => ({
+        control,
+        selected,
+        source,
+      })),
+    ).toEqual(
+      [0, 1, 2].map((index) => ({
+        control: `#live${index}`,
+        selected: index === 1,
+        source: "checked",
+      })),
+    );
+    expect(
+      observations.elements.find(({ selector }) => selector === "#live0")
+        ?.attributes,
+    ).toHaveProperty("checked");
+    expect(of(findings, "selected-state")).toEqual([]);
+  },
+  60_000,
+);
+
+test.each([{ checked: [] }, { checked: [0, 1] }, { checked: [0, 1, 2] }])(
+  "selected-state: checkbox selection $checked is optional and permits multiple",
+  async ({ checked }) => {
+    const { findings, tuples } = await reviewStates(browser, [
+      {
+        state: "checks",
+        html: page(
+          `<fieldset>${customOptions("checks", "checkbox", checked)}</fieldset>`,
+          customStyle,
+        ),
+      },
+    ]);
+    expect(
+      tuples[0]?.observations?.version === 2 &&
+        tuples[0].observations.selectionGroups?.[0]?.single,
+    ).toBe(false);
+    expect(of(findings, "selected-state")).toEqual([]);
+  },
+  60_000,
+);
+
+test("selected-state: identical checkbox dots remain invisible", async () => {
+  const { findings, tuples } = await reviewStates(browser, [
+    {
+      state: "identical",
+      html: page(
+        `<div role="group">${customOptions("checks", "checkbox", [0, 1])}</div>`,
+        `${customStyle}input:checked+.indicator{border:1px solid #72777d}`,
+      ),
+    },
+  ]);
+  expect(
+    tuples[0]?.observations?.version === 2 &&
+      tuples[0].observations.selectionGroups,
+  ).toHaveLength(1);
+  expect(of(findings, "selected-state").map(({ rule }) => rule)).toEqual([
+    "idiom:selected-state-invisible",
+  ]);
+}, 60_000);
+
+test.each(["radio", "checkbox"])(
+  "selected-state: wrapping labels retain nested pseudo indicators for %s",
+  async (type) => {
+    const { findings, tuples } = await reviewStates(browser, [
+      {
+        state: "wrapped",
+        html: page(
+          `<fieldset>${[0, 1].map((index) => `<label><input type="${type}" name="wrap" id="wrap${index}" ${index === 0 ? "checked" : ""}><span class="outer"><span class="dot"></span></span>Option ${index}</label>`).join("")}</fieldset>`,
+          `input{position:absolute;opacity:0}label{display:flex;gap:8px;margin:8px}.dot{display:inline-block;width:18px;height:18px;border:1px solid #777}.dot::before{content:"";display:block;width:10px;height:10px;margin:4px}input:checked+span .dot::before{background:#36c}`,
+        ),
+      },
+    ]);
+    const observations = tuples[0]?.observations;
+    if (observations?.version !== 2) throw new Error("missing observations");
+    const member = observations.selectionGroups?.[0]?.members[0];
+    expect(member?.control).toBe("#wrap0");
+    expect(
+      Object.keys(member?.paintedDecoration ?? {}).some((key) =>
+        key.includes("before.bg"),
+      ),
+    ).toBe(true);
+    expect(
+      Object.keys(member?.paintedDecoration ?? {}).some((key) =>
+        key.startsWith("indicator"),
+      ),
+    ).toBe(false);
+    expect(new Set(member?.decorationOwners).size).toBe(
+      member?.decorationOwners?.length,
+    );
+    expect(of(findings, "selected-state")).toEqual([]);
+  },
+  60_000,
+);
+
+test("selected-state: appearance:none controls use external nested pseudo indicators", async () => {
+  const { findings, tuples } = await reviewStates(browser, [
+    {
+      state: "appearance-none",
+      html: page(
+        `<fieldset>${customOptions("styled").replaceAll('<span class="indicator"></span>', '<span class="outer"><span class="indicator"></span></span>')}</fieldset>`,
+        `${customStyle}input{position:static;opacity:1;appearance:none}.indicator{border:1px solid #777}.indicator::before{content:"";display:block;width:10px;height:10px;margin:3px}input:checked+.outer .indicator::before{background:#36c}`,
+      ),
+    },
+  ]);
+  const observations = tuples[0]?.observations;
+  if (observations?.version !== 2) throw new Error("missing observations");
+  const member = observations.selectionGroups?.[0]?.members[0];
+  expect(member).toMatchObject({
+    selector: "#styled0",
+    control: "#styled0",
+    nativeIndicator: false,
+    selected: true,
+  });
+  expect(member?.paintedDecoration?.["indicator0.before.bg"]).toBe(
+    "rgb(51, 102, 204)",
+  );
+  expect(of(findings, "selected-state")).toEqual([]);
+}, 60_000);
+
+test.each([false, true])(
+  "selected-state: ARIA checkboxes read control state (painted=%s)",
+  async (painted) => {
+    const { findings, tuples } = await reviewStates(browser, [
+      {
+        state: "aria",
+        html: page(
+          `<div role="group" aria-label="Features">${[0, 1, 2].map((index) => `<div role="checkbox" id="aria${index}" aria-checked="${index === 0}" aria-labelledby="label${index}"><span class="indicator"></span><span id="label${index}">Feature ${index}</span></div>`).join("")}</div>`,
+          `.indicator{display:inline-block;width:18px;height:18px;border:1px solid #777}${painted ? "[aria-checked=true] .indicator{background:#36c}" : ""}`,
+        ),
+      },
+    ]);
+    const observations = tuples[0]?.observations;
+    if (observations?.version !== 2) throw new Error("missing observations");
+    expect(observations.selectionGroups?.[0]).toMatchObject({
+      memberRole: "checkbox",
+      single: false,
+      members: [
+        {
+          selector: "#aria0",
+          control: "#aria0",
+          selected: true,
+          source: "aria-checked",
+        },
+        { selected: false },
+        { selected: false },
+      ],
+    });
+    expect(of(findings, "selected-state").map(({ rule }) => rule)).toEqual(
+      painted ? [] : ["idiom:selected-state-invisible"],
+    );
+  },
+  60_000,
+);
+
+test.each([
+  ["display:none", ".indicator{display:none}"],
+  ["opacity zero", ".indicator{opacity:0}"],
+  [
+    "ancestor clip",
+    ".clip{position:relative;width:1px;height:1px;overflow:hidden}.clip .indicator{position:absolute;left:10px;top:10px}",
+  ],
+])(
+  "selected-state: external dots hidden by %s cannot clear selection",
+  async (_name, hiddenStyle) => {
+    const html = `<fieldset>${customOptions("hidden").replaceAll('<span class="indicator"></span>', '<span class="clip"><span class="indicator"></span></span>')}</fieldset>`;
+    const { findings, tuples } = await reviewStates(browser, [
+      {
+        state: "hidden",
+        html: page(
+          html,
+          `${customStyle}input:checked+.clip .indicator{border:6px solid #36c}${hiddenStyle}`,
+        ),
+      },
+      {
+        state: "shown",
+        html: page(
+          html,
+          `${customStyle}input:checked+.clip .indicator{border:6px solid #36c}`,
+        ),
+      },
+    ]);
+    expect(
+      of(findings, "selected-state").map(({ state, rule }) => ({
+        state,
+        rule,
+      })),
+    ).toEqual([{ state: "hidden", rule: "idiom:selected-state-invisible" }]);
+    const observations = tuples[0]?.observations;
+    if (observations?.version !== 2) throw new Error("missing observations");
+    expect(observations.selectionGroups?.[0]?.members).toHaveLength(3);
+    expect(observations.selectionGroups?.[0]?.members[0]?.nativeIndicator).toBe(
+      false,
+    );
+  },
+  60_000,
+);
+
+test("selected-state: a neighboring selected group's dot cannot clear a cue-less option", async () => {
+  const { findings, tuples } = await reviewStates(browser, [
+    {
+      state: "neighbors",
+      html: page(
+        `<form><div id="cueless">${customOptions("bad")}</div><div>${customOptions("good")}</div></form>`,
+        `${customStyle}#cueless input:checked+.indicator{border:1px solid #72777d}`,
+      ),
+    },
+  ]);
+  expect(
+    tuples[0]?.observations?.version === 2 &&
+      tuples[0].observations.selectionGroups,
+  ).toHaveLength(2);
+  const selected = of(findings, "selected-state");
+  expect(selected).toHaveLength(1);
+  expect(selected[0]?.rule).toBe("idiom:selected-state-invisible");
+  expect(selected[0]?.explanation).toContain("#cueless");
+}, 60_000);
+
+test.each(["form", "div"])(
+  "selected-state: a shared %s and ambiguous labels cannot supply another option's paint",
+  async (container) => {
+    const { findings, tuples } = await reviewStates(browser, [
+      {
+        state: "ambiguous",
+        html: page(
+          `<${container}>${customOptions("shared").replaceAll('<div class="choice">', "").replaceAll("</label></div>", "</label>")}</${container}>`,
+          customStyle,
+        ),
+      },
+    ]);
+    const observations = tuples[0]?.observations;
+    if (observations?.version !== 2) throw new Error("missing observations");
+    expect(observations.selectionGroups?.[0]?.members).toHaveLength(3);
+    expect(
+      Object.keys(
+        observations.selectionGroups?.[0]?.members[0]?.paintedDecoration ?? {},
+      ).some((key) => key.startsWith("indicator")),
+    ).toBe(false);
+    expect(of(findings, "selected-state").map(({ rule }) => rule)).toEqual([
+      "idiom:selected-state-invisible",
+    ]);
+  },
+  60_000,
+);
+
+test("selected-state: checkbox discovery excludes standalone, mixed, nested and switch groups", async () => {
+  const { tuples } = await reviewStates(browser, [
+    {
+      state: "boundaries",
+      html: page(
+        `${customOptions("loose", "checkbox")}<fieldset><label><input type="checkbox" checked>Agree</label></fieldset><div role="group">${customOptions("mixed", "checkbox")}<button>Submit</button></div><div role="group"><span role="switch" aria-checked="true">A</span><span role="switch" aria-checked="false">B</span></div><div role="group"><input type="checkbox" role="switch" checked><input type="checkbox" role="switch"></div><fieldset><label><input type="checkbox">Outer</label><fieldset>${customOptions("inner", "checkbox")}</fieldset></fieldset>`,
+        customStyle,
+      ),
+    },
+  ]);
+  const observations = tuples[0]?.observations;
+  if (observations?.version !== 2) throw new Error("missing observations");
+  expect(observations.selectionGroups).toHaveLength(1);
+  expect(
+    observations.selectionGroups?.[0]?.members.map(({ control }) => control),
+  ).toEqual(["#inner0", "#inner1", "#inner2"]);
+}, 60_000);
+
+test.each(["radio", "checkbox"])(
+  "selected-state: visible native %s controls retain the native indicator",
+  async (type) => {
+    const { findings, tuples } = await reviewStates(browser, [
+      {
+        state: "native",
+        html: page(`<fieldset>${customOptions("native", type)}</fieldset>`),
+      },
+    ]);
+    const observations = tuples[0]?.observations;
+    if (observations?.version !== 2) throw new Error("missing observations");
+    expect(observations.selectionGroups?.[0]?.members[0]).toMatchObject({
+      control: "#native0",
+      selector: "#native0",
+      nativeIndicator: true,
+    });
+    expect(of(findings, "selected-state")).toEqual([]);
+  },
+  60_000,
+);
+
+test.each([
+  { extra: "<button>Help</button>", invisible: true },
+  {
+    extra: '<input type="radio" aria-hidden="true" tabindex="-1">',
+    invisible: false,
+  },
+  { extra: "<button inert>Help</button>", invisible: false },
+])(
+  "selected-state: option wrappers respect independent controls and ignored mirrors ($extra)",
+  async ({ extra, invisible }) => {
+    const { findings, tuples } = await reviewStates(browser, [
+      {
+        state: "controls",
+        html: page(
+          `<fieldset>${customOptions("boundary").replaceAll("</label></div>", `</label>${extra}</div>`)}</fieldset>`,
+          customStyle,
+        ),
+      },
+    ]);
+    const observations = tuples[0]?.observations;
+    if (observations?.version !== 2) throw new Error("missing observations");
+    expect(observations.selectionGroups?.[0]?.members).toHaveLength(3);
+    expect(of(findings, "selected-state").map(({ rule }) => rule)).toEqual(
+      invisible ? ["idiom:selected-state-invisible"] : [],
+    );
+  },
+  60_000,
+);
+
+test("selected-state: another checked checkbox cannot supply a cue-less selected member's dot", async () => {
+  const { findings, tuples } = await reviewStates(browser, [
+    {
+      state: "multi",
+      html: page(
+        `<fieldset>${customOptions("multi", "checkbox", [0, 1])}</fieldset>`,
+        `${customStyle}#multi0:checked+.indicator{border:1px solid #72777d}`,
+      ),
+    },
+  ]);
+  const observations = tuples[0]?.observations;
+  if (observations?.version !== 2) throw new Error("missing observations");
+  const member = observations.selectionGroups?.[0]?.members[0];
+  expect(member?.selected).toBe(true);
+  const selected = of(findings, "selected-state");
+  expect(selected).toHaveLength(1);
+  expect(selected[0]?.rule).toBe("idiom:selected-state-invisible");
+  expect(selected[0]?.selectorHint).toBe(member?.selector);
+}, 60_000);
+
+test.each([
+  { containerRole: "tablist", memberRole: "tab" },
+  { containerRole: "listbox", memberRole: "option" },
+])(
+  "selected-state: clipped $memberRole peers retain selection validity in a scrolling $containerRole",
+  async ({ containerRole, memberRole }) => {
+    const html = (selected: number[]) =>
+      page(
+        `<div id="scrolling-choices" role="${containerRole}">${Array.from({ length: 12 }, (_, index) => `<button id="choice-${index}" role="${memberRole}" aria-selected="${selected.includes(index)}">Choice ${index}</button>`).join("")}</div>`,
+        "#scrolling-choices{display:flex;overflow-x:auto;width:300px}#scrolling-choices button{flex:0 0 80px;height:36px}[aria-selected=true]{background:#36c;color:white}",
+      );
+    const { findings, tuples } = await reviewStates(browser, [
+      { state: "selected-outside-clip", html: html([10]) },
+      { state: "empty", html: html([]) },
+      { state: "multiple-outside-clip", html: html([10, 11]) },
+    ]);
+    for (const tuple of tuples) {
+      const observations = tuple.observations;
+      if (observations?.version !== 2) throw new Error("missing observations");
+      const group = observations.selectionGroups?.[0];
+      expect(group?.members).toHaveLength(12);
+      expect(group?.members[10]).toMatchObject({
+        control: "#choice-10",
+        selector: "#choice-10",
+        source: "aria-selected",
+        selected: tuple.state !== "empty",
+      });
+      expect(
+        observations.elements.find(({ selector }) => selector === "#choice-10")
+          ?.painted,
+      ).toMatchObject({ value: false });
+    }
+    expect(
+      of(findings, "selected-state").map(({ state, rule }) => ({
+        state,
+        rule,
+      })),
+    ).toEqual([
+      ...(containerRole === "tablist"
+        ? [{ state: "empty", rule: "idiom:selected-state-none" }]
+        : []),
+      {
+        state: "multiple-outside-clip",
+        rule: "idiom:selected-state-multiple",
+      },
+    ]);
+  },
+  60_000,
+);
+
+test.each(["radio", "checkbox"])(
+  "selected-state: clipped native %s inputs keep label representatives and cannot claim native paint",
+  async (type) => {
+    const { findings, tuples } = await reviewStates(browser, [
+      {
+        state: "clipped-input",
+        html: page(
+          `<fieldset>${customOptions("clipped-native", type)}</fieldset>`,
+          `${customStyle}input{opacity:1;clip-path:inset(50%)}input:checked+.indicator{border:1px solid #72777d}`,
+        ),
+      },
+    ]);
+    const observations = tuples[0]?.observations;
+    if (observations?.version !== 2) throw new Error("missing observations");
+    const members = observations.selectionGroups?.[0]?.members;
+    expect(members).toHaveLength(3);
+    expect(members?.[0]).toMatchObject({
+      control: "#clipped-native0",
+      selected: true,
+      source: "checked",
+      nativeIndicator: false,
+    });
+    expect(members?.[0]?.selector).not.toBe("#clipped-native0");
+    expect(of(findings, "selected-state").map(({ rule }) => rule)).toEqual([
+      "idiom:selected-state-invisible",
+    ]);
+  },
+  60_000,
+);

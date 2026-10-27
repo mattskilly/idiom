@@ -1,4 +1,5 @@
 import type { ProductionBuild } from "../capture/types.js";
+import { paintedCoverageText } from "../checks/painted.js";
 import type { CheckCoverage, CheckTuple } from "../checks/types.js";
 import { tupleDesigns } from "../design/evidence.js";
 import type { LoadedDesign } from "../design/types.js";
@@ -146,7 +147,7 @@ function coverageTable(options: ReviewHtmlOptions): string {
   return `<section><h2>Check coverage</h2><p>${escapeHtml(narrow)}</p><table><thead><tr><th>State</th><th>Viewport</th>${axisAware ? "<th>Scheme</th>" : ""}<th>Check</th><th>Coverage</th><th>Reason</th></tr></thead><tbody>${rows
     .map(
       ({ state, viewport, colorScheme, coverage }) =>
-        `<tr><td>${escapeHtml(state)}</td><td>${escapeHtml(viewport)}</td>${axisAware ? `<td>${escapeHtml(colorScheme)}</td>` : ""}<td>${escapeHtml(coverage.check)}</td><td>${escapeHtml(coverage.status)}</td><td>${escapeHtml(coverage.reason ?? "")}</td></tr>`,
+        `<tr><td>${escapeHtml(state)}</td><td>${escapeHtml(viewport)}</td>${axisAware ? `<td>${escapeHtml(colorScheme)}</td>` : ""}<td>${escapeHtml(coverage.check)}</td><td>${escapeHtml(coverage.status)}</td><td>${escapeHtml(paintedCoverageText(coverage))}</td></tr>`,
     )
     .join("")}</tbody></table></section>`;
 }

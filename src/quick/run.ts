@@ -28,6 +28,10 @@ import type {
   ProbeProgress,
 } from "../capture/types.js";
 import {
+  type PaintedCoverageReport,
+  reportedCheckCoverage,
+} from "../checks/painted.js";
+import {
   checksConfigFrom,
   runDeterministicChecks,
 } from "../checks/registry.js";
@@ -76,7 +80,7 @@ export type QuickDependencies = CaptureLifetime & {
   figma?: import("../design/figma/client.js").FigmaDependencies | undefined;
 };
 
-export type QuickRunResult = {
+export type QuickRunResult = PaintedCoverageReport & {
   runDirectory: string;
   findingsPath: string;
   reportPath: string;
@@ -478,6 +482,7 @@ export async function runQuick(options: {
       reportPath,
       htmlReportPath,
       findingCount: findings.length,
+      ...reportedCheckCoverage(reviewed.coverage),
       counts,
       ...(options.materializeAllDeterministic
         ? { findings, groups, issues }

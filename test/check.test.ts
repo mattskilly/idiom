@@ -210,10 +210,7 @@ test("stored checks use measured touch signals and fall back to width for old ca
   const olderTargets = older.findings.filter(
     (finding) => finding.category === "target-size",
   );
-  expect(olderTargets).toHaveLength(1);
-  expect(olderTargets[0]?.problem).toContain(
-    "20×20 at desktop (fine pointer, minimum 24)",
-  );
+  expect(olderTargets).toHaveLength(0);
 }, 30_000);
 
 test("check lists open deterministic findings, most severe first, with the fix", async () => {
@@ -701,3 +698,37 @@ test.each([false, true])(
   },
   60_000,
 );
+
+test("check --from retains captured label regions and reads legacy observations without them", async () => {
+  const { project, commit } = await studioProject();
+  const from = "2026-10-26T00-00-00-000Z";
+  await storedRun(project, from, commit, "../target-size/exemptions.html");
+  const current = await checkCommand({
+    all: true,
+    project,
+    flow: "studio-lab",
+    from,
+  });
+  const targetSelectors = (result: typeof current) =>
+    result.findings
+      .filter((finding) => finding.category === "target-size")
+      .map((finding) => finding.selector);
+  expect(targetSelectors(current)).not.toContain("#explicit");
+  expect(targetSelectors(current)).toContain("#small");
+  const path = join(current.runDirectory, "editor/desktop/observations.json");
+  const saved = JSON.parse(await readFile(path, "utf8"));
+  expect(
+    saved.elements.find(
+      (element: { selector: string }) => element.selector === "#explicit",
+    ).targetSizeLabels,
+  ).toHaveLength(1);
+  for (const element of saved.elements) delete element.targetSizeLabels;
+  await writeFile(path, JSON.stringify(saved));
+  const legacy = await checkCommand({
+    all: true,
+    project,
+    flow: "studio-lab",
+    from,
+  });
+  expect(targetSelectors(legacy)).toContain("#explicit");
+}, 30_000);

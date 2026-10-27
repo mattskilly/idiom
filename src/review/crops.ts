@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { PNG } from "pngjs";
-import type { CheckTuple, Rect } from "../checks/types.js";
+import { screenshotScale } from "../capture/media-bands.js";
+import type { CheckTuple, ObservationArtifact, Rect } from "../checks/types.js";
 import { tupleDesigns } from "../design/evidence.js";
 import type { LoadedDesign } from "../design/types.js";
 import type { Finding } from "../schemas/finding.js";
@@ -16,6 +17,22 @@ export function selectorsFor(finding: Finding): string[] {
   );
 }
 
+/** A finding's own measured rect (`params.rect`), when it is a usable CSS-px box. */
+export function paramsRect(finding: Finding): Rect | undefined {
+  const rect = finding.verification.params?.rect;
+  if (typeof rect !== "object" || rect === null) return undefined;
+  const { x, y, width, height } = rect as Record<string, unknown>;
+  return typeof x === "number" &&
+    typeof y === "number" &&
+    typeof width === "number" &&
+    typeof height === "number" &&
+    [x, y, width, height].every(Number.isFinite) &&
+    width > 0 &&
+    height > 0
+    ? { x, y, width, height }
+    : undefined;
+}
+
 export function union(rects: Rect[]): Rect | undefined {
   if (rects.length === 0) return undefined;
   const left = Math.min(...rects.map((rect) => rect.x));
@@ -23,6 +40,24 @@ export function union(rects: Rect[]): Rect | undefined {
   const right = Math.max(...rects.map((rect) => rect.x + rect.width));
   const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
   return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+/**
+ * Where an observed element sits in the stored screenshot: the screenshot's
+ * recorded device scale, and the element's rect re-measured at screenshot
+ * time when layout drifted after observing. Observations without screenshot
+ * geometry fall back to the observed rect and the width-derived scale.
+ */
+export function screenshotPlacement(observations: ObservationArtifact): {
+  scale?: number | undefined;
+  rect(element: { selector: string; rect: Rect }): Rect;
+} {
+  const geometry =
+    observations.version === 2 ? observations.screenshot : undefined;
+  return {
+    scale: geometry?.scale,
+    rect: (element) => geometry?.rects?.[element.selector] ?? element.rect,
+  };
 }
 
 /**
@@ -36,6 +71,10 @@ export async function cropToFile(options: {
   screenshotPath: string;
   images: Map<string, PNG | undefined>;
   viewportWidth: number;
+  /** Device px per CSS px; derived from the image width when absent. */
+  scale?: number | undefined;
+  /** Without `scale`, accounts for full-page screenshots wider than the viewport. */
+  viewport?: { width: number; height: number; documentWidth: number };
   rect: Rect;
   padding: number;
   relativePath: string;
@@ -54,7 +93,15 @@ export async function cropToFile(options: {
   const image = options.images.get(screenshotPath);
   if (image === undefined) return false;
   const { rect, padding } = options;
-  const scale = image.width / options.viewportWidth;
+  const scale =
+    options.scale ??
+    (options.viewport === undefined
+      ? image.width / options.viewportWidth
+      : screenshotScale(
+          image,
+          options.viewport,
+          options.viewport.documentWidth,
+        ));
   const x = Math.max(0, Math.floor((rect.x - padding) * scale));
   const y = Math.max(0, Math.floor((rect.y - padding) * scale));
   const width = Math.min(
@@ -142,6 +189,10 @@ export async function attachCrops(
               screenshotPath: screenshot,
               images: decoded,
               viewportWidth: tuple.width,
+              scale: design
+                ? undefined
+                : tuple.observations &&
+                  screenshotPlacement(tuple.observations).scale,
               rect: design ? drift.region.designRect : drift.region.rect,
               padding,
               relativePath: path,
@@ -160,10 +211,12 @@ export async function attachCrops(
           ? drift.neighbour?.designSelector
           : drift.neighbour?.appSelector;
         if (!screenshot || !observation || !selector) continue;
+        // Design sides keep the width-derived scale and observed rects.
+        const placement = design ? undefined : screenshotPlacement(observation);
         const rect = union(
           observation.elements
             .filter((e) => e.selector === selector || e.selector === neighbour)
-            .map((e) => e.rect),
+            .map((e) => placement?.rect(e) ?? e.rect),
         );
         if (!rect) continue;
         if (
@@ -172,6 +225,7 @@ export async function attachCrops(
             screenshotPath: screenshot,
             images: decoded,
             viewportWidth: tuple.width,
+            scale: placement?.scale,
             rect,
             padding,
             relativePath: path,
@@ -199,22 +253,28 @@ export async function attachCrops(
       continue;
     }
     const selectors = selectorsFor(finding);
+    const measured = paramsRect(finding);
     const observations = tuple?.observations;
     if (
       tuple?.screenshotPath === undefined ||
       observations === undefined ||
-      selectors.length === 0
+      (selectors.length === 0 && measured === undefined)
     ) {
       result.push(finding);
       continue;
     }
-    const rect = union(
-      observations.elements
-        .filter(
-          (element) => element.visible && selectors.includes(element.selector),
-        )
-        .map((element) => element.rect),
-    );
+    const placement = screenshotPlacement(observations);
+    // A rect the check measured is the exact subject; selectors can resolve elsewhere.
+    const rect =
+      measured ??
+      union(
+        observations.elements
+          .filter(
+            (element) =>
+              element.visible && selectors.includes(element.selector),
+          )
+          .map((element) => placement.rect(element)),
+      );
     if (rect === undefined || rect.width <= 0 || rect.height <= 0) {
       result.push(finding);
       continue;
@@ -229,6 +289,11 @@ export async function attachCrops(
       screenshotPath: tuple.screenshotPath,
       images: decoded,
       viewportWidth: observations.viewport.width,
+      viewport: {
+        ...observations.viewport,
+        documentWidth: observations.document.scrollWidth,
+      },
+      scale: placement.scale,
       rect,
       padding,
       relativePath,

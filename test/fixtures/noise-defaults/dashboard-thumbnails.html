@@ -25,7 +25,8 @@
   #declared-crop, #plain-overflow { width: 100px; height: 100px; }
   #declared-crop > div, #plain-overflow > div { width: 300px; height: 300px; background: #eef1f5; }
   #captioned { width: 200px; height: 120px; }
-  #captioned iframe { width: 200px; height: 120px; }
+  #captioned-partial { width: 200px; height: 136px; }
+  #captioned iframe, #captioned-partial iframe { width: 200px; height: 120px; }
   #crop-text { width: 120px; height: 24px; }
   #crop-text span { white-space: nowrap; }
   #fixed-text { width: 160px; height: 40px; }
@@ -41,6 +42,7 @@
     <div class="box" id="declared-crop" data-idiom-crop><div></div></div>
     <div class="box" id="plain-overflow"><div></div></div>
     <div class="box" id="captioned"><iframe title="Draft" srcdoc="<body style='margin:0'></body>"></iframe><div>Draft, edited two days ago</div></div>
+    <div class="box" id="captioned-partial"><iframe title="Draft partial" srcdoc="<body style='margin:0'></body>"></iframe><div>Draft, edited two days ago</div></div>
     <div class="box" id="crop-text" data-idiom-crop><span>Quarterly retention review for the growth team</span></div>
     <div class="box" id="fixed-text">Leads captured this week across every published page and form</div>
   </div>

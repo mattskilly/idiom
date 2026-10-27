@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { Page } from "playwright";
 import postcss from "postcss";
+import { classifyDocument } from "../document.js";
 import { IdiomError } from "../errors.js";
 import {
   type EffectiveInvariant,
@@ -345,6 +346,25 @@ export async function observePage(
   masks: string[] = [],
   observeOptions: ObserveOptions = {},
 ): Promise<ObservationArtifact> {
+  const snapshot = await page.evaluate(() => ({
+    viewport: { width: innerWidth, height: innerHeight },
+    document: {
+      contentType: document.contentType,
+      scrollWidth: document.documentElement?.scrollWidth ?? 0,
+      scrollHeight: document.documentElement?.scrollHeight ?? 0,
+      clientWidth: document.documentElement?.clientWidth ?? 0,
+      clientHeight: document.documentElement?.clientHeight ?? 0,
+    },
+  }));
+  if (classifyDocument(snapshot.document.contentType) === "non-html")
+    return {
+      version: 2,
+      ...snapshot,
+      elements: [],
+      headings: [],
+      maskMembership: [],
+      tokens: { status: "not-configured" },
+    };
   const liveness = observeOptions.liveness
     ? await sampleLiveness(page, observeOptions.liveness)
     : undefined;
@@ -746,6 +766,7 @@ export async function observePage(
         "translate",
         "disabled",
         "hidden",
+        "inert",
         "open",
         "readonly",
         "required",
@@ -2397,6 +2418,152 @@ export async function observePage(
       for (const { mark, elements } of markMatches)
         if (mark.purpose === "primary-action")
           for (const element of elements) primaryMarked.add(element);
+      const paintedFacts = new Map<
+        Element,
+        ReturnType<typeof window.__idiomVisibility.painted>
+      >();
+      const paintedOf = (element: Element) => {
+        let fact = paintedFacts.get(element);
+        if (fact === undefined) {
+          fact = window.__idiomVisibility.painted(element);
+          paintedFacts.set(element, fact);
+        }
+        return fact;
+      };
+      // Keep fragments separate: neither a wrapped label's envelope nor the gap
+      // to a distant label is a clickable rectangle. Never activate controls here.
+      const targetSizeLabels = (input: HTMLInputElement) => {
+        if (
+          input.matches(":disabled") ||
+          input.getAttribute("aria-disabled") === "true"
+        )
+          return [];
+        const box = (rect: DOMRect): Rect => ({
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        });
+        const intersect = (a: Rect, b: Rect): Rect => {
+          const x = Math.max(a.x, b.x),
+            y = Math.max(a.y, b.y);
+          return {
+            x,
+            y,
+            width: Math.max(0, Math.min(a.x + a.width, b.x + b.width) - x),
+            height: Math.max(0, Math.min(a.y + a.height, b.y + b.height) - y),
+          };
+        };
+        const subtract = (a: Rect, b: Rect): Rect[] => {
+          const overlap = intersect(a, b);
+          if (overlap.width <= 0 || overlap.height <= 0) return [a];
+          return [
+            { x: a.x, y: a.y, width: a.width, height: overlap.y - a.y },
+            {
+              x: a.x,
+              y: overlap.y + overlap.height,
+              width: a.width,
+              height: a.y + a.height - overlap.y - overlap.height,
+            },
+            {
+              x: a.x,
+              y: overlap.y,
+              width: overlap.x - a.x,
+              height: overlap.height,
+            },
+            {
+              x: overlap.x + overlap.width,
+              y: overlap.y,
+              width: a.x + a.width - overlap.x - overlap.width,
+              height: overlap.height,
+            },
+          ].filter((rect) => rect.width > 0 && rect.height > 0);
+        };
+        return [...(input.labels ?? [])]
+          .filter((label) => label.control === input)
+          .flatMap((label) => {
+            if (
+              !isVisibleContent(label) ||
+              !paintedOf(label).value ||
+              label.closest("[inert]") ||
+              input.closest("[inert]")
+            )
+              return [];
+            let rects = [...label.getClientRects()]
+              .map(box)
+              .filter((rect) => rect.width > 0 && rect.height > 0);
+            let current: Element | null = label;
+            while (current !== null) {
+              const style = getComputedStyle(current);
+              // Axis-aligned rectangular evidence only. Unsupported paint geometry
+              // contributes nothing rather than manufacturing a passing hit area.
+              if (
+                style.pointerEvents === "none" ||
+                style.clipPath !== "none" ||
+                style.clip !== "auto" ||
+                style.transform !== "none" ||
+                style.rotate !== "none" ||
+                style.scale !== "none" ||
+                style.translate !== "none" ||
+                (style.zoom !== "1" && style.zoom !== "normal")
+              )
+                return [];
+              if (style.display !== "contents") {
+                const bounds = current.getBoundingClientRect();
+                const html = current as HTMLElement;
+                const contained = /\b(paint|strict|content)\b/.test(
+                  style.contain,
+                );
+                const clipX =
+                  contained ||
+                  ["hidden", "clip", "scroll", "auto"].includes(
+                    style.overflowX,
+                  );
+                // The root scrollport is the capture viewport, not a local
+                // clip: full-page evidence must retain labels below the fold.
+                const clipY =
+                  current !== document.documentElement &&
+                  (contained ||
+                    ["hidden", "clip", "scroll", "auto"].includes(
+                      style.overflowY,
+                    ));
+                rects = rects
+                  .map((rect) =>
+                    intersect(rect, {
+                      x: clipX ? bounds.x + html.clientLeft : rect.x,
+                      y: clipY ? bounds.y + html.clientTop : rect.y,
+                      width: clipX ? html.clientWidth : rect.width,
+                      height: clipY ? html.clientHeight : rect.height,
+                    }),
+                  )
+                  .filter((rect) => rect.width > 0 && rect.height > 0);
+              }
+              current = current.parentElement;
+            }
+            for (const descendant of label.querySelectorAll("*")) {
+              if (
+                descendant === input ||
+                !(
+                  isInteractive(descendant) ||
+                  descendant.matches(
+                    "audio[controls], video[controls], iframe, embed, object, [contenteditable]",
+                  )
+                )
+              )
+                continue;
+              for (const rect of descendant.getClientRects())
+                rects = rects.flatMap((fragment) =>
+                  subtract(fragment, box(rect)),
+                );
+            }
+            const unique = new Map(
+              rects.map((rect) => [JSON.stringify(rect), rect]),
+            );
+            return [
+              { selector: selectorFor(label), rects: [...unique.values()] },
+            ];
+          });
+      };
       const observed = all.map((element) => {
         const html = element as HTMLElement;
         const styles = getComputedStyle(element);
@@ -2595,6 +2762,7 @@ export async function observePage(
               .trim()
               .slice(0, 500),
             visible,
+            painted: paintedOf(element),
             interactive,
             enabled:
               !(html as HTMLButtonElement).disabled &&
@@ -2611,6 +2779,10 @@ export async function observePage(
             clientWidth: html.clientWidth,
             clientHeight: html.clientHeight,
             outOfFlow,
+            ...(element instanceof HTMLInputElement &&
+            ["checkbox", "radio"].includes(element.type)
+              ? { targetSizeLabels: targetSizeLabels(element) }
+              : {}),
             inlineTextTarget:
               tag === "a" &&
               styles.display === "inline" &&
@@ -2653,6 +2825,7 @@ export async function observePage(
               outlineWidth: styles.outlineWidth,
               outlineStyle: styles.outlineStyle,
               outlineOffset: styles.outlineOffset,
+              userSelect: styles.userSelect || styles.webkitUserSelect,
               textOverflow: styles.textOverflow,
               fill: styles.fill,
               stroke: styles.stroke,
@@ -2910,14 +3083,32 @@ export async function observePage(
         top: rect.top + rect.height * 0.2,
         bottom: rect.bottom - rect.height * 0.2,
       });
+      // Chart-library tooltip layers, which carry no tooltip role.
+      const tooltipLayerClasses = [
+        "recharts-tooltip-wrapper",
+        "apexcharts-tooltip",
+        "highcharts-tooltip",
+        "chartjs-tooltip",
+        "vega-tooltip",
+        "c3-tooltip-container",
+        "nvtooltip",
+        "google-visualization-tooltip",
+        "visx-tooltip",
+      ];
       const layerRoot = (element: Element): Element => {
+        // The outermost passive overlay in an unbroken pointer-events:none
+        // chain, so absolute children of a tooltip stay in its layer.
+        let passive: Element | undefined;
         for (
           let current: Element | null = element;
           current !== null;
           current = current.parentElement
         ) {
           const role = current.getAttribute("role") ?? "";
-          const position = getComputedStyle(current).position;
+          const style = getComputedStyle(current);
+          if (passive !== undefined && style.pointerEvents !== "none")
+            return passive;
+          const position = style.position;
           const box = current.getBoundingClientRect();
           // Large absolute panels are commonly stacked illustration cards or
           // overlay sheets. Keep their contents together, while small pinned
@@ -2928,22 +3119,37 @@ export async function observePage(
             current.children.length > 0 &&
             box.width >= 120 &&
             box.height >= 120;
+          // Tooltips and passive overlays annotate the content beneath them
+          // and cannot be hit-tested, so they are layers of their own (a
+          // child re-enabling pointer events stays inside its tooltip).
+          const tooltipLayer =
+            current.id === "vg-tooltip-element" ||
+            tooltipLayerClasses.some((name) =>
+              current.classList.contains(name),
+            );
           if (
             ["dialog", "alertdialog", "menu", "listbox", "tooltip"].includes(
               role,
             ) ||
             current.tagName.toLowerCase() === "dialog" ||
             position === "fixed" ||
-            absolutePanel
+            tooltipLayer
           )
             return current;
+          if (
+            position === "absolute" &&
+            !isInteractive(current) &&
+            style.pointerEvents === "none"
+          )
+            passive = current;
+          else if (absolutePanel) return current;
           try {
             if (current.matches(":popover-open")) return current;
           } catch {
             // :popover-open is unsupported; popovers fall back to role.
           }
         }
-        return document.documentElement;
+        return passive ?? document.documentElement;
       };
       // Overlaps: the interactive hit test above, widened to text, sampled
       // across the intersection and bounded by what is actually visible.
@@ -3271,6 +3477,269 @@ export async function observePage(
         };
         return inside(marker);
       };
+      // An effect must translate this repeated track relative to the strip.
+      // Cache live inspection for sibling text owners in the same track.
+      const tickerTracks = new WeakMap<Element, boolean>();
+      const repeatedTrack = (track: Element) => {
+        const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+        const runs = [...track.childNodes]
+          .map((node) => normalize(node.textContent ?? ""))
+          .filter(Boolean);
+        for (let period = 1; period <= runs.length / 2; period += 1) {
+          if (runs.length % period !== 0) continue;
+          if (runs.every((run, index) => run === runs[index % period]))
+            return true;
+        }
+        // Inline tickers can carry both complete copies in one text run.
+        const words = normalize(track.textContent ?? "").split(" ");
+        for (let period = 2; period <= words.length / 2; period += 1) {
+          if (words.length % period !== 0) continue;
+          if (words.every((word, index) => word === words[index % period]))
+            return true;
+        }
+        return false;
+      };
+      const translatingTrack = (track: Element) => {
+        const cached = tickerTracks.get(track);
+        if (cached !== undefined) return cached;
+        let translates = false;
+        const trackStyle = getComputedStyle(track);
+        if (
+          trackStyle.rotate === "none" &&
+          trackStyle.scale === "none" &&
+          repeatedTrack(track)
+        ) {
+          for (const animation of track.getAnimations()) {
+            const effect = animation.effect;
+            if (
+              animation.playState !== "running" ||
+              animation.playbackRate === 0 ||
+              !(effect instanceof KeyframeEffect) ||
+              effect.target !== track ||
+              effect.pseudoElement !== null ||
+              effect.composite !== "replace" ||
+              (effect.iterationComposite ?? "replace") !== "replace" ||
+              effect.getComputedTiming().progress === null ||
+              !(Number(effect.getComputedTiming().duration) > 0)
+            )
+              continue;
+            const frames = effect.getKeyframes();
+            if (
+              ["rotate", "scale"].some(
+                (property) =>
+                  new Set(
+                    frames.map((frame) => String(frame[property] ?? "none")),
+                  ).size > 1,
+              )
+            )
+              continue;
+            const width = (track as HTMLElement).offsetWidth;
+            const height = (track as HTMLElement).offsetHeight;
+            const matrices: DOMMatrix[] = [];
+            try {
+              for (const frame of frames) {
+                if (
+                  (frame.composite ?? "auto") !== "auto" &&
+                  frame.composite !== "replace"
+                )
+                  throw new Error("composite");
+                // Percentage translations resolve against the track, not the strip.
+                const resolve = (value: string) =>
+                  value.replace(
+                    /translate(X|Y|3d)?\(([^)]+)\)/gi,
+                    (_all, axis: string | undefined, args: string) => {
+                      const parts = args
+                        .split(/[,\s]+/)
+                        .filter(Boolean)
+                        .map((part, index) =>
+                          part.endsWith("%")
+                            ? `${(Number.parseFloat(part) * (axis?.toLowerCase() === "y" || index === 1 ? height : width)) / 100}px`
+                            : part,
+                        );
+                      return `translate${axis ?? ""}(${parts.join(",")})`;
+                    },
+                  );
+                const transform = String(frame.transform ?? "none");
+                let matrix = new DOMMatrix(
+                  transform === "none" ? undefined : resolve(transform),
+                );
+                if (
+                  frame.translate !== undefined &&
+                  frame.translate !== "none"
+                ) {
+                  const parts = String(frame.translate).trim().split(/\s+/);
+                  if (parts.length > 3) throw new Error("translate");
+                  const values = parts.map((part, index) => {
+                    if (!/^-?(?:\d*\.)?\d+(?:px|%)?$/.test(part))
+                      throw new Error("unresolved translate");
+                    return (
+                      Number.parseFloat(part) *
+                      (part.endsWith("%")
+                        ? (index === 1 ? height : width) / 100
+                        : 1)
+                    );
+                  });
+                  matrix = new DOMMatrix()
+                    .translate(values[0] ?? 0, values[1] ?? 0, values[2] ?? 0)
+                    .multiply(matrix);
+                }
+                matrices.push(matrix);
+              }
+              const first = matrices[0];
+              // Fixed linear components distinguish translation from rotation/scale.
+              const linear = (m: DOMMatrix) => [
+                m.m11,
+                m.m12,
+                m.m13,
+                m.m14,
+                m.m21,
+                m.m22,
+                m.m23,
+                m.m24,
+                m.m31,
+                m.m32,
+                m.m33,
+                m.m34,
+                m.m44,
+              ];
+              if (
+                first !== undefined &&
+                matrices.length > 1 &&
+                matrices.every((m) =>
+                  linear(m).every(
+                    (v, i) =>
+                      Number.isFinite(v) &&
+                      Math.abs(v - (linear(first)[i] ?? NaN)) < 0.000001,
+                  ),
+                ) &&
+                matrices.some((m) => Math.abs(m.m41 - first.m41) > 0.01)
+              )
+                translates = true;
+            } catch {
+              /* Unresolved effects retain clipping evidence. */
+            }
+          }
+        }
+        tickerTracks.set(track, translates);
+        return translates;
+      };
+      const tickerAt = (element: Element, owner: Element | undefined) => {
+        if (owner === undefined || owner === element) return false;
+        for (
+          let track: Element | null = element;
+          track !== null && track !== owner;
+          track = track.parentElement
+        ) {
+          if (!translatingTrack(track)) continue;
+          let supported = true;
+          for (
+            let ancestor = track.parentElement;
+            ancestor !== null;
+            ancestor = ancestor.parentElement
+          ) {
+            const style = getComputedStyle(ancestor);
+            try {
+              const matrix = new DOMMatrix(
+                style.transform === "none" ? undefined : style.transform,
+              );
+              if (
+                !matrix.is2D ||
+                matrix.a !== 1 ||
+                matrix.b !== 0 ||
+                matrix.c !== 0 ||
+                matrix.d !== 1 ||
+                style.rotate !== "none" ||
+                style.scale !== "none"
+              )
+                supported = false;
+            } catch {
+              supported = false;
+            }
+          }
+          if (supported) return true;
+        }
+        return false;
+      };
+      type InkLine = { top: number; bottom: number; text: string };
+      const containedTextInk = (
+        element: Element,
+        lines: InkLine[],
+        box: Edges,
+        overruns: number[],
+        complete: boolean,
+      ) => {
+        if (measureCanvas === null || !complete || lines.length === 0)
+          return false;
+        const style = getComputedStyle(element);
+        // Locale-dependent casing and non-BMP shaping need richer evidence.
+        if (
+          lines.some((line) => /[^\u0020-\u007e]/.test(line.text)) ||
+          element
+            .closest("[lang]")
+            ?.getAttribute("lang")
+            ?.match(/^(tr|az|lt)(-|$)/i)
+        )
+          return false;
+        if (
+          style.writingMode !== "horizontal-tb" ||
+          style.direction !== "ltr" ||
+          !["none", "uppercase", "lowercase"].includes(style.textTransform) ||
+          style.fontVariantCaps !== "normal"
+        )
+          return false;
+        // Canvas metrics and DOM Range baselines share CSS pixels only in
+        // unscaled, unrotated horizontal geometry. Translation is harmless.
+        for (
+          let current: Element | null = element;
+          current !== null;
+          current = current.parentElement
+        ) {
+          const ancestor = getComputedStyle(current);
+          if (
+            (ancestor.zoom !== "1" && ancestor.zoom !== "normal") ||
+            ancestor.rotate !== "none" ||
+            ancestor.scale !== "none"
+          )
+            return false;
+          try {
+            const m = new DOMMatrix(
+              ancestor.transform === "none" ? undefined : ancestor.transform,
+            );
+            if (!m.is2D || m.a !== 1 || m.b !== 0 || m.c !== 0 || m.d !== 1)
+              return false;
+          } catch {
+            return false;
+          }
+        }
+        measureCanvas.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        return lines.every((line) => {
+          const text =
+            style.textTransform === "uppercase"
+              ? line.text.toLocaleUpperCase()
+              : style.textTransform === "lowercase"
+                ? line.text.toLocaleLowerCase()
+                : line.text;
+          const metrics = measureCanvas.measureText(text);
+          const ascent = metrics.fontBoundingBoxAscent;
+          const descent = metrics.fontBoundingBoxDescent;
+          const inkAscent = metrics.actualBoundingBoxAscent;
+          const inkDescent = metrics.actualBoundingBoxDescent;
+          if (
+            ![ascent, descent, inkAscent, inkDescent].every(Number.isFinite) ||
+            ascent <= 0 ||
+            descent <= 0 ||
+            Math.abs(line.bottom - line.top - ascent - descent) > 1 ||
+            overruns.some((overrun) => overrun > 1 && overrun >= descent)
+          )
+            return false;
+          const baseline =
+            line.top + (line.bottom - line.top - ascent - descent) / 2 + ascent;
+          return (
+            baseline - inkAscent >= box.top - 0.05 &&
+            baseline + inkDescent <= box.bottom + 0.05
+          );
+        });
+      };
       const clippedText: Array<{
         selector: string;
         owner: string;
@@ -3353,14 +3822,20 @@ export async function observePage(
         const bands = fragments.map(inkBand);
         const minTop = Math.min(...bands.map((band) => band.top));
         const maxBottom = Math.max(...bands.map((band) => band.bottom));
-        const xClip = (
+        const xClips = (
           [
             { edge: "left", pixels: box.left - minLeft },
             { edge: "right", pixels: maxRight - box.right },
           ] as const
         )
-          .filter((cut) => cut.pixels > 1 && !ellipsisAt(cut.edge))
-          .sort((a, b) => b.pixels - a.pixels)[0];
+          .filter(
+            (cut) =>
+              cut.pixels > 1 &&
+              !ellipsisAt(cut.edge) &&
+              !tickerAt(element, clip.hiddenOwners[cut.edge]),
+          )
+          .sort((a, b) => b.pixels - a.pixels);
+        const xClip = xClips[0];
         const yClip = (
           [
             { edge: "top", pixels: box.top - minTop },
@@ -3380,6 +3855,13 @@ export async function observePage(
           outsideX: boolean;
         }> = [];
         let walked = 0;
+        const inkLines: InkLine[] = [];
+        const textLength = [...element.childNodes]
+          .filter((node) => node.nodeType === Node.TEXT_NODE)
+          .reduce(
+            (length, node) => length + (node.textContent?.length ?? 0),
+            0,
+          );
         for (const node of element.childNodes) {
           if (node.nodeType !== Node.TEXT_NODE) continue;
           const content = node.textContent ?? "";
@@ -3403,12 +3885,32 @@ export async function observePage(
                 });
               continue;
             }
+            if (rect.width > 0 && rect.height > 0) {
+              const line = inkLines.find(
+                (line) =>
+                  Math.abs(line.top - rect.top) < 0.05 &&
+                  Math.abs(line.bottom - rect.bottom) < 0.05,
+              );
+              if (line === undefined)
+                inkLines.push({
+                  top: rect.top,
+                  bottom: rect.bottom,
+                  text: character,
+                });
+              else line.text += character;
+            }
             const cx = rect.left + rect.width / 2;
             const cy = rect.top + rect.height / 2;
-            const outsideX = cx < box.left || cx > box.right;
+            const outsideX = xClips.some((cut) =>
+              cut.edge === "left" ? cx < box.left : cx > box.right,
+            );
             characters.push({
               character,
-              inside: !outsideX && cy >= box.top && cy <= box.bottom,
+              inside:
+                cx >= box.left &&
+                cx <= box.right &&
+                cy >= box.top &&
+                cy <= box.bottom,
               outsideX,
             });
           }
@@ -3463,7 +3965,18 @@ export async function observePage(
               visibleWidth(line) >= (line.right - line.left) * 0.5),
         );
         const yCut =
-          overflowY > 1 && lineCentres.some((line) => fractionY(line) < 0.85);
+          overflowY > 1 &&
+          lineCentres.some((line) => fractionY(line) < 0.85) &&
+          !(
+            shown.length === lineCentres.length &&
+            containedTextInk(
+              element,
+              inkLines,
+              box,
+              [box.top - minTop, maxBottom - box.bottom],
+              walked === textLength && inkLines.length === lineCentres.length,
+            )
+          );
         const xCut = overflowX > 1;
         if (!xCut && !yCut) continue;
         if (shown.length === 0) continue;
@@ -3760,7 +4273,12 @@ export async function observePage(
           ? Number.parseFloat(alpha) / 100
           : Number.parseFloat(alpha);
       };
-      const decorationOf = (representative: Element) => {
+      const decorationOf = (
+        representative: Element,
+        supplemental: Element[],
+        control: Element,
+        onlyPainted = false,
+      ) => {
         const decoration: Record<string, string> = {};
         const svgPaints = (element: Element, style: CSSStyleDeclaration) =>
           element instanceof SVGGraphicsElement &&
@@ -3936,7 +4454,9 @@ export async function observePage(
         };
         recordPseudos(representative, "");
         const descendants = [...representative.querySelectorAll("*")].filter(
-          (element) => renderedPaths.has(element),
+          (element) =>
+            renderedPaths.has(element) &&
+            (!onlyPainted || paintedOf(element).value),
         );
         let paintedDescendants = 0;
         for (const element of descendants) {
@@ -3971,10 +4491,88 @@ export async function observePage(
           paintedDescendants += 1;
         }
         decoration.descendants = String(paintedDescendants);
+        // Supplemental roots are option-local branches outside the measured
+        // representative. Allocate evidence slots only to actual paint, so
+        // transparent wrappers cannot crowd a nested dot out of the capture.
+        let indicators = 0;
+        for (const element of supplemental.flatMap((root) => [
+          root,
+          ...root.querySelectorAll("*"),
+        ])) {
+          if (
+            element === control ||
+            representative.contains(element) ||
+            !renderedPaths.has(element) ||
+            !isVisibleContent(element) ||
+            (onlyPainted && !paintedOf(element).value)
+          )
+            continue;
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          const graphic = svgPaints(element, style);
+          // Text, classes and state attributes are not supplemental cues.
+          const paints =
+            rect.width > 0 &&
+            rect.height > 0 &&
+            (boxPaints(style) ||
+              graphic ||
+              (element instanceof HTMLImageElement &&
+                element.complete &&
+                element.naturalWidth > 0));
+          const prefix = `indicator${indicators}`;
+          const emit = indicators < 6;
+          const pseudos = recordPseudos(element, `${prefix}.`, emit);
+          if (!paints && !pseudos) continue;
+          if (paints && emit) record(`${prefix}.self`, style, false, graphic);
+          indicators += 1;
+        }
         return decoration;
       };
       const groupContainers =
         "[role=radiogroup],[role=tablist],[role=listbox],[role=toolbar],[role=group],[role=menu],[role=grid]";
+      const primaryControl =
+        "input:not([type=hidden]),select,textarea,button,summary,a[href],[onclick],[tabindex],[contenteditable=true],[role=radio],[role=checkbox],[role=switch],[role=button],[role=link],[role=tab],[role=option],[role=menuitem]";
+      const ignoredMirror = (element: Element) =>
+        element.closest("[aria-hidden=true],[inert]") !== null;
+      const indicatorRoots = (control: Element, representative: Element) => {
+        if (!(control instanceof HTMLInputElement)) return [];
+        const label = [...(control.labels ?? [])].find(
+          (candidate) =>
+            candidate === representative ||
+            (renderedPaths.has(candidate) && isVisibleContent(candidate)),
+        );
+        if (label === undefined) return [];
+        // A wrapping label already defines one option. External labels need
+        // a common ancestor containing only this control, never a whole group.
+        let wrapper: Element | null = label;
+        while (wrapper !== null && !wrapper.contains(control))
+          wrapper = wrapper.parentElement;
+        if (
+          wrapper === null ||
+          wrapper.matches(`form,fieldset,body,html,${groupContainers}`) ||
+          [...wrapper.querySelectorAll(primaryControl)].some(
+            (candidate) => candidate !== control && !ignoredMirror(candidate),
+          )
+        )
+          return [];
+        if (representative === wrapper) return [];
+        if (representative === label) {
+          // Walk only the branches outside the label and input; roots are
+          // disjoint and retain DOM order even when either is nested.
+          const roots: Element[] = [];
+          const visit = (parent: Element) => {
+            for (const child of parent.children) {
+              if (child === representative || child === control) continue;
+              if (child.contains(representative) || child.contains(control))
+                visit(child);
+              else roots.push(child);
+            }
+          };
+          visit(wrapper);
+          return roots;
+        }
+        return [wrapper];
+      };
       const selectionGroupMap = new Map<
         Element | HTMLInputElement[],
         {
@@ -3993,6 +4591,8 @@ export async function observePage(
               | "checked";
             nativeIndicator: boolean;
             decoration: Record<string, string>;
+            paintedDecoration: Record<string, string>;
+            decorationOwners: string[];
           }>;
         }
       >();
@@ -4000,42 +4600,63 @@ export async function observePage(
         HTMLFormElement | null,
         Map<string, HTMLInputElement[]>
       >();
+      const checkboxGroups = new Map<Element, HTMLInputElement[]>();
       for (const element of all) {
         const role = implicitRole(element);
         const stateAttribute = (
-          ["aria-selected", "aria-checked", "aria-pressed"] as const
+          ["radio", "checkbox"].includes(role)
+            ? (["aria-checked"] as const)
+            : (["aria-selected", "aria-checked", "aria-pressed"] as const)
         ).find((name) => element.hasAttribute(name));
-        const nativeRadio =
-          element instanceof HTMLInputElement && element.type === "radio";
+        const nativeInput =
+          element instanceof HTMLInputElement &&
+          ["radio", "checkbox"].includes(element.type)
+            ? element
+            : undefined;
+        const nativeRadio = nativeInput?.type === "radio";
+        const checkbox = role === "checkbox";
+        if (["switch", "menuitemcheckbox"].includes(role)) continue;
         if (
-          !nativeRadio &&
-          !["radio", "tab", "option", "menuitemradio"].includes(role) &&
-          (stateAttribute === undefined ||
-            ["checkbox", "switch", "menuitemcheckbox"].includes(role))
+          nativeInput === undefined &&
+          !["radio", "checkbox", "tab", "option", "menuitemradio"].includes(
+            role,
+          ) &&
+          stateAttribute === undefined
         )
           continue;
         // Hidden mirrors (Radix/Base UI form inputs) are not part of the
         // control a reader or assistive technology sees.
-        if (element.closest("[aria-hidden=true],[inert]") !== null) continue;
+        if (ignoredMirror(element)) continue;
         let representative: Element | undefined;
         const rect = element.getBoundingClientRect();
-        if (renderedPaths.has(element) && rect.width > 1 && rect.height > 1)
+        if (
+          renderedPaths.has(element) &&
+          rect.width > 1 &&
+          rect.height > 1 &&
+          // Keep ARIA peers in the validity domain even when scrolled out
+          // of an overflow clip. Only native inputs need this extra guard
+          // before using their own box (and the native-indicator exemption).
+          (nativeInput === undefined ||
+            (isVisibleContent(element) && paintedOf(element).value))
+        )
           representative = element;
-        else if (nativeRadio)
-          representative = [...(element.labels ?? [])].find((label) =>
-            renderedPaths.has(label),
+        else if (nativeInput !== undefined)
+          representative = [...(nativeInput.labels ?? [])].find(
+            (label) => renderedPaths.has(label) && isVisibleContent(label),
           );
         if (representative === undefined) continue;
-        const source = nativeRadio
-          ? "checked"
-          : (stateAttribute ??
-            (["tab", "option"].includes(role)
-              ? "aria-selected"
-              : "aria-checked"));
-        const selected = nativeRadio
-          ? element.checked
-          : stateAttribute !== undefined &&
-            element.getAttribute(stateAttribute) === "true";
+        const source =
+          nativeInput !== undefined
+            ? "checked"
+            : (stateAttribute ??
+              (["tab", "option"].includes(role)
+                ? "aria-selected"
+                : "aria-checked"));
+        const selected =
+          nativeInput !== undefined
+            ? nativeInput.checked
+            : stateAttribute !== undefined &&
+              element.getAttribute(stateAttribute) === "true";
         let container = element.parentElement?.closest(groupContainers) ?? null;
         // A group section inside a listbox, menu or tab list shares its
         // parent's selection (cmdk, grouped menus).
@@ -4045,21 +4666,45 @@ export async function observePage(
               "[role=listbox],[role=menu],[role=tablist],[role=radiogroup],[role=grid]",
             ) ?? container;
         let nativePeers: HTMLInputElement[] | undefined;
-        if (nativeRadio) {
+        if (checkbox) {
+          container =
+            element.parentElement?.closest("fieldset,[role=group]") ?? null;
+          if (container === null) continue;
+          const peers = [...container.querySelectorAll(primaryControl)].filter(
+            (candidate) =>
+              !ignoredMirror(candidate) &&
+              candidate.parentElement?.closest("fieldset,[role=group]") ===
+                container,
+          );
+          if (
+            peers.length < 2 ||
+            peers.some((peer) => implicitRole(peer) !== "checkbox")
+          )
+            continue;
+          // Separate checkbox groups from any other selection kinds that
+          // happen to share the explicit boundary.
+          let identity = checkboxGroups.get(container);
+          if (identity === undefined) {
+            identity = [];
+            checkboxGroups.set(container, identity);
+          }
+          nativePeers = identity;
+        }
+        if (nativeRadio && nativeInput !== undefined) {
           // Unnamed native radios are independent controls in HTML.
-          if (element.name === "") continue;
+          if (nativeInput.name === "") continue;
           // Generic ARIA wrappers do not change HTML's form/name identity.
           const formGroups =
-            nativeRadioGroups.get(element.form) ??
+            nativeRadioGroups.get(nativeInput.form) ??
             new Map<string, HTMLInputElement[]>();
-          nativeRadioGroups.set(element.form, formGroups);
-          const peers = formGroups.get(element.name) ?? [];
+          nativeRadioGroups.set(nativeInput.form, formGroups);
+          const peers = formGroups.get(nativeInput.name) ?? [];
           if (peers.length === 0) {
             for (const candidate of document.querySelectorAll<HTMLInputElement>(
-              `input[type=radio][name="${CSS.escape(element.name)}"]`,
+              `input[type=radio][name="${CSS.escape(nativeInput.name)}"]`,
             ))
-              if (candidate.form === element.form) peers.push(candidate);
-            formGroups.set(element.name, peers);
+              if (candidate.form === nativeInput.form) peers.push(candidate);
+            formGroups.set(nativeInput.name, peers);
           }
           nativePeers = peers;
           let ancestor: Element | null = element.parentElement;
@@ -4082,6 +4727,7 @@ export async function observePage(
           native: nativeRadio,
           members: [],
         };
+        const supplemental = indicatorRoots(element, representative);
         group.members.push({
           selector: selectorFor(representative),
           control: selectorFor(element),
@@ -4089,9 +4735,24 @@ export async function observePage(
           source,
           nativeIndicator:
             representative === element &&
-            nativeRadio &&
+            nativeInput !== undefined &&
             getComputedStyle(element).appearance !== "none",
-          decoration: decorationOf(representative),
+          decoration: decorationOf(representative, supplemental, element),
+          paintedDecoration: decorationOf(
+            representative,
+            supplemental,
+            element,
+            true,
+          ),
+          decorationOwners: [
+            ...representative.querySelectorAll("*"),
+            ...supplemental.flatMap((root) => [
+              root,
+              ...root.querySelectorAll("*"),
+            ]),
+          ]
+            .filter((owner) => owner !== element && renderedPaths.has(owner))
+            .map(selectorFor),
         });
         selectionGroupMap.set(groupKey, group);
       }
@@ -4101,12 +4762,13 @@ export async function observePage(
           container: selectorFor(container),
           ...group,
           single:
-            native ||
-            group.role === "radiogroup" ||
-            group.memberRole === "radio" ||
-            (["grid", "listbox", "tablist"].includes(group.role)
-              ? container.getAttribute("aria-multiselectable") !== "true"
-              : group.memberRole === "tab"),
+            group.memberRole !== "checkbox" &&
+            (native ||
+              group.role === "radiogroup" ||
+              group.memberRole === "radio" ||
+              (["grid", "listbox", "tablist"].includes(group.role)
+                ? container.getAttribute("aria-multiselectable") !== "true"
+                : group.memberRole === "tab")),
         }));
       const dialogs = all
         .filter(
@@ -6463,74 +7125,198 @@ export async function observePage(
         | undefined = craftInput.lineLength
         ? (() => {
             const records: import("./types.js").LineLengthObservation[] = [];
-            let capped = false;
+            const reasons = new Set<string>();
+            const graphemes = new Intl.Segmenter(undefined, {
+              granularity: "grapheme",
+            });
+            const range = document.createRange();
+            let work = 0;
             for (const paragraph of document.querySelectorAll("p")) {
-              const text = (paragraph.textContent ?? "")
-                .replace(/\s+/g, " ")
-                .trim();
-              if (text.length < 20) continue;
               if (!craftVisible(paragraph)) continue;
               const style = getComputedStyle(paragraph);
               if (style.writingMode !== "horizontal-tb") continue;
-              const range = document.createRange();
-              range.selectNodeContents(paragraph);
-              const lines: Array<{
+              if (records.length >= 200 || work >= 100000) {
+                reasons.add(
+                  records.length >= 200
+                    ? "Line length record limit (200) reached"
+                    : "Line length character range work limit (100000) reached",
+                );
+                break;
+              }
+              type Glyph = {
                 top: number;
                 bottom: number;
                 left: number;
                 right: number;
-              }> = [];
-              for (const rect of range.getClientRects()) {
-                if (rect.width <= 0 || rect.height <= 0) continue;
-                const line = lines.find(
-                  (candidate) =>
-                    Math.min(candidate.bottom, rect.bottom) -
-                      Math.max(candidate.top, rect.top) >
-                    Math.min(candidate.bottom - candidate.top, rect.height) / 2,
-                );
-                if (line === undefined)
-                  lines.push({
-                    top: rect.top,
-                    bottom: rect.bottom,
-                    left: rect.left,
-                    right: rect.right,
-                  });
-                else {
-                  line.left = Math.min(line.left, rect.left);
-                  line.right = Math.max(line.right, rect.right);
-                }
-              }
-              if (lines.length === 0) continue;
-              const width = Math.max(
-                ...lines.map((line) => line.right - line.left),
+                space: boolean;
+                id: number;
+              };
+              const glyphs: Glyph[] = [];
+              const walker = document.createTreeWalker(
+                paragraph,
+                NodeFilter.SHOW_TEXT,
               );
-              // The average rendered character, from this paragraph's own
-              // line boxes: true to its font, size and letter spacing.
-              const charWidth =
-                lines.reduce((sum, line) => sum + line.right - line.left, 0) /
-                text.length;
-              if (!(charWidth > 0)) continue;
-              const chars = Math.round(width / charWidth);
-              if (chars <= 45) continue;
-              if (records.length >= 200) {
-                capped = true;
-                break;
+              let nodes = 0;
+              let length = 0;
+              let text = "";
+              let incomplete = false;
+              for (
+                let node = walker.nextNode();
+                node;
+                node = walker.nextNode()
+              ) {
+                // Bounds apply before segmentation or any character range work.
+                if (
+                  nodes >= 2000 ||
+                  length + (node.nodeValue?.length ?? 0) > 20000
+                ) {
+                  reasons.add(
+                    nodes >= 2000
+                      ? "Line length text node limit (2000) reached"
+                      : "Line length paragraph text limit (20000 UTF-16 units) reached",
+                  );
+                  incomplete = true;
+                  break;
+                }
+                nodes++;
+                const value = node.nodeValue ?? "";
+                length += value.length;
+                const parent = node.parentElement;
+                if (!parent || !isVisibleContent(parent, false)) continue;
+                if (getComputedStyle(parent).writingMode !== "horizontal-tb") {
+                  reasons.add(
+                    "Line length descendant writing mode is unsupported",
+                  );
+                  incomplete = true;
+                  break;
+                }
+                text += value;
+                for (const { segment, index } of graphemes.segment(value)) {
+                  if (work >= 100000) {
+                    reasons.add(
+                      "Line length character range work limit (100000) reached",
+                    );
+                    incomplete = true;
+                    break;
+                  }
+                  work++;
+                  range.setStart(node, index);
+                  range.setEnd(node, index + segment.length);
+                  const boxes = [...range.getClientRects()].filter(
+                    (rect) => rect.width > 0.01 && rect.height > 0,
+                  );
+                  if (!boxes.length) continue;
+                  // Duplicate bidi/font boxes still represent one grapheme.
+                  const first = boxes[0];
+                  if (!first) continue;
+                  if (
+                    boxes.some(
+                      (box) =>
+                        Math.min(box.bottom, first.bottom) -
+                          Math.max(box.top, first.top) <=
+                        0.5,
+                    )
+                  ) {
+                    reasons.add(
+                      "Line length grapheme spans incompatible line bands",
+                    );
+                    incomplete = true;
+                    break;
+                  }
+                  glyphs.push({
+                    top: first.top,
+                    bottom: first.bottom,
+                    left: Math.min(...boxes.map((box) => box.left)),
+                    right: Math.max(...boxes.map((box) => box.right)),
+                    space: /^\s+$/u.test(segment),
+                    id: work,
+                  });
+                }
+                if (incomplete) break;
               }
+              if (incomplete) continue;
+              text = text.replace(/\s+/g, " ").trim();
+              if (text.length < 20 || !glyphs.length) continue;
+              // Small text establishes the bands first. Keep their common
+              // intersection, so a tall inline glyph cannot bridge two lines.
+              // Geometry, rather than DOM order, also handles bidi fragments.
+              const bands: Array<{
+                top: number;
+                bottom: number;
+                glyphs: Glyph[];
+              }> = [];
+              glyphs.sort(
+                (a, b) =>
+                  a.bottom - a.top - (b.bottom - b.top) || a.top - b.top,
+              );
+              for (const glyph of glyphs) {
+                const matches = bands.filter(
+                  (band) =>
+                    Math.min(band.bottom, glyph.bottom) -
+                      Math.max(band.top, glyph.top) >
+                    Math.min(band.bottom - band.top, glyph.bottom - glyph.top) /
+                      2 -
+                      0.5,
+                );
+                if (matches.length > 1) {
+                  reasons.add(
+                    "Line length overlapping text line bands are ambiguous",
+                  );
+                  incomplete = true;
+                  break;
+                }
+                const band = matches[0];
+                if (band) {
+                  band.top = Math.max(band.top, glyph.top);
+                  band.bottom = Math.min(band.bottom, glyph.bottom);
+                  band.glyphs.push(glyph);
+                } else
+                  bands.push({
+                    top: glyph.top,
+                    bottom: glyph.bottom,
+                    glyphs: [glyph],
+                  });
+              }
+              if (incomplete) continue;
+              const lines = bands.flatMap((band) => {
+                const ink = band.glyphs.filter((glyph) => !glyph.space);
+                if (!ink.length) return [];
+                const left = Math.min(...ink.map((glyph) => glyph.left));
+                const right = Math.max(...ink.map((glyph) => glyph.right));
+                // Browsers can expose positive-width hanging wrap spaces.
+                // Count painted internal/preserved spaces, but not the line end.
+                const counted = band.glyphs.filter(
+                  (glyph) =>
+                    !glyph.space ||
+                    (style.direction === "rtl"
+                      ? glyph.right > left + 0.5
+                      : glyph.left < right - 0.5),
+                );
+                return [
+                  {
+                    chars: new Set(counted.map((glyph) => glyph.id)).size,
+                    width:
+                      Math.max(...counted.map((glyph) => glyph.right)) -
+                      Math.min(...counted.map((glyph) => glyph.left)),
+                  },
+                ];
+              });
+              if (!lines.length) continue;
+              const width = Math.max(...lines.map((line) => line.width));
+              const charWidth =
+                lines.reduce((sum, line) => sum + line.width, 0) /
+                lines.reduce((sum, line) => sum + line.chars, 0);
               records.push({
                 selector: geometrySelector(paragraph),
-                chars,
+                chars: Math.max(...lines.map((line) => line.chars)),
                 width: Math.round(width * 100) / 100,
-                charWidth: Math.round(charWidth * 1000) / 1000,
+                charWidth: Math.max(0.001, Math.round(charWidth * 1000) / 1000),
                 lines: lines.length,
                 text: text.slice(0, 160),
               });
             }
-            return capped
-              ? {
-                  status: "partial",
-                  reason: "Line length record limit (200) reached",
-                  records,
-                }
+            return reasons.size
+              ? { status: "partial", reason: [...reasons].join("; "), records }
               : { status: "ran", records };
           })()
         : undefined;
@@ -6557,10 +7343,24 @@ export async function observePage(
               ),
             ].filter(
               (element) =>
+                // Like links, an inline button is running copy (role="button"
+                // sentences), not a label: its last line continues with the
+                // text that follows. Headings stay display text when inline.
+                (element.matches('h1,h2,h3,h4,h5,h6,[role="heading"]') ||
+                  getComputedStyle(element).display !== "inline") &&
                 (element.tagName !== "A" || buttonLikeLink(element)) &&
                 craftVisible(element),
             );
             const ownerSet = new Set(owners);
+            const paintedParents = new Map<Element, boolean | undefined>();
+            const orphanPainted = (element: Element) => {
+              if (!paintedParents.has(element))
+                paintedParents.set(
+                  element,
+                  window.__idiomVisibility?.painted(element).value,
+                );
+              return paintedParents.get(element);
+            };
             let segmenter: Intl.Segmenter;
             try {
               segmenter = new Intl.Segmenter(
@@ -6593,9 +7393,17 @@ export async function observePage(
               )
                 if (hasActiveLineClamp(element)) clamped = true;
               if (clamped) continue;
+              // Words an ancestor clips away (overflow, clip-path) never
+              // reach the capture, so they cannot form a line.
+              const clip = window.__idiomVisibility?.extent(
+                owner,
+                document.documentElement,
+              );
               const words: Array<{
                 word: string;
+                left: number;
                 top: number;
+                width: number;
                 height: number;
               }> = [];
               const walker = document.createTreeWalker(
@@ -6614,6 +7422,9 @@ export async function observePage(
                   nearest = nearest.parentElement;
                 if (nearest !== owner) continue;
                 if (!craftVisible(parent)) continue;
+                // The word's own text must be painted: animated-in spans can
+                // sit at opacity 0 inside a painted heading.
+                if (orphanPainted(parent) === false) continue;
                 const value = node.textContent ?? "";
                 for (const segment of segmenter.segment(value)) {
                   if (!segment.isWordLike) continue;
@@ -6622,12 +7433,21 @@ export async function observePage(
                   range.setStart(node, segment.index);
                   range.setEnd(node, segment.index + segment.segment.length);
                   const rect = [...range.getClientRects()].find(
-                    (r) => r.width > 0 && r.height > 0,
+                    (r) =>
+                      r.width > 0 &&
+                      r.height > 0 &&
+                      (clip === undefined ||
+                        (r.right > clip.x &&
+                          r.left < clip.x + clip.width &&
+                          r.bottom > clip.y &&
+                          r.top < clip.y + clip.height)),
                   );
                   if (rect)
                     words.push({
                       word: segment.segment,
+                      left: rect.left,
                       top: rect.top,
+                      width: rect.width,
                       height: rect.height,
                     });
                 }
@@ -6643,12 +7463,27 @@ export async function observePage(
               }
               const last = lines.at(-1);
               if (lines.length < 2 || !last || last.length !== 1) continue;
-              const word = (last[0]?.word ?? "").replace(/[\p{P}]+$/u, "");
-              if (word === "") continue;
+              const stranded = last[0];
+              const word = (stranded?.word ?? "").replace(/[\p{P}]+$/u, "");
+              if (!stranded || word === "") continue;
+              const left = Math.min(...words.map((w) => w.left));
+              const top = Math.min(...words.map((w) => w.top));
               records.push({
                 selector: geometrySelector(owner),
                 word,
                 lines: lines.length,
+                rect: {
+                  x: left,
+                  y: top,
+                  width: Math.max(...words.map((w) => w.left + w.width)) - left,
+                  height: Math.max(...words.map((w) => w.top + w.height)) - top,
+                },
+                lastLine: {
+                  x: stranded.left,
+                  y: stranded.top,
+                  width: stranded.width,
+                  height: stranded.height,
+                },
                 text: clipText(
                   owner instanceof HTMLElement
                     ? owner.innerText
@@ -6865,6 +7700,156 @@ export async function observePage(
           };
         }
       }
+      // What a clipping box actually cuts off: painted text or controls that
+      // extend past it, as opposed to decoration, an illustration declared
+      // presentational, content a nearer scroller owns, or a marquee track.
+      const establishesFixedBlock = (s: CSSStyleDeclaration) =>
+        s.transform !== "none" ||
+        s.perspective !== "none" ||
+        [s.translate, s.rotate, s.scale].some((v) => v && v !== "none") ||
+        s.filter !== "none" ||
+        (s.backdropFilter !== "" && s.backdropFilter !== "none") ||
+        /\b(layout|paint|strict|content)\b/.test(s.contain) ||
+        /\b(transform|translate|rotate|scale|perspective|filter|backdrop-filter|contain)\b/.test(
+          s.willChange,
+        ) ||
+        ["auto", "hidden"].includes(s.contentVisibility);
+      /** Boxes between el and owner that contain it, or undefined when it escapes the owner. */
+      const containingBoxes = (
+        el: Element,
+        owner: Element,
+      ): Element[] | undefined => {
+        const boxes: Element[] = [];
+        let escaping: "absolute" | "fixed" | undefined;
+        for (
+          let current: Element | null = el;
+          current;
+          current = current.parentElement
+        ) {
+          const s = getComputedStyle(current);
+          if (
+            escaping &&
+            (establishesFixedBlock(s) ||
+              (escaping === "absolute" && s.position !== "static"))
+          )
+            escaping = undefined;
+          if (current === owner) return escaping ? undefined : boxes;
+          if (current !== el && !escaping && s.display !== "contents")
+            boxes.push(current);
+          if (s.position === "fixed") escaping = "fixed";
+          else if (s.position === "absolute" && escaping !== "fixed")
+            escaping = "absolute";
+        }
+        return undefined;
+      };
+      /** Rects left after nearer hidden/clip boxes; undefined when a nearer scroller owns them. */
+      const visibleRects = (
+        el: Element,
+        rects: readonly DOMRect[],
+        owner: Element,
+      ) => {
+        const boxes = containingBoxes(el, owner);
+        if (boxes === undefined) return undefined;
+        let result = rects
+          .map((r) => ({ x: r.x, y: r.y, width: r.width, height: r.height }))
+          .filter((r) => r.width > 0 && r.height > 0);
+        for (const box of boxes) {
+          const s = getComputedStyle(box);
+          const scrolls = (axis: string) => ["auto", "scroll"].includes(axis);
+          if (scrolls(s.overflowX) || scrolls(s.overflowY)) return undefined;
+          const x = ["hidden", "clip"].includes(s.overflowX);
+          const y = ["hidden", "clip"].includes(s.overflowY);
+          if (!x && !y) continue;
+          const c = window.__idiomVisibility.client(box);
+          result = result
+            .map((r) => {
+              const left = x ? Math.max(r.x, c.x) : r.x;
+              const top = y ? Math.max(r.y, c.y) : r.y;
+              return {
+                x: left,
+                y: top,
+                width: x
+                  ? Math.min(r.x + r.width, c.x + c.width) - left
+                  : r.width,
+                height: y
+                  ? Math.min(r.y + r.height, c.y + c.height) - top
+                  : r.height,
+              };
+            })
+            .filter((r) => r.width > 0 && r.height > 0);
+        }
+        return result;
+      };
+      const presentational = (el: Element, owner: Element) => {
+        for (
+          let current: Element | null = el;
+          current;
+          current = current.parentElement
+        ) {
+          if (
+            current.getAttribute("aria-hidden") === "true" ||
+            current.hasAttribute("inert")
+          )
+            return true;
+          if (current === owner) return false;
+        }
+        return false;
+      };
+      const marqueeVerdicts = new Map<Element, boolean>();
+      const isMarquee = (el: Element) => {
+        const known = marqueeVerdicts.get(el);
+        if (known !== undefined) return known;
+        let verdict = false;
+        try {
+          if (typeof el.getAnimations === "function")
+            verdict = el.getAnimations().some((animation) => {
+              const effect = animation.effect;
+              if (
+                animation.playState !== "running" ||
+                !(effect instanceof KeyframeEffect) ||
+                typeof effect.getKeyframes !== "function" ||
+                effect.getComputedTiming().iterations !== Infinity
+              )
+                return false;
+              return effect
+                .getKeyframes()
+                .some((frame) =>
+                  ["transform", "translate"].some(
+                    (property) =>
+                      typeof frame[property] === "string" &&
+                      frame[property] !== "none",
+                  ),
+                );
+            });
+        } catch {
+          verdict = false;
+        }
+        if (!verdict && getComputedStyle(el).transform !== "none") {
+          const seen = new Set<string>();
+          for (const child of el.children) {
+            const text = (child instanceof HTMLElement ? child.innerText : "")
+              .replace(/\s+/g, " ")
+              .trim();
+            if (text === "") continue;
+            if (seen.has(text)) {
+              verdict = true;
+              break;
+            }
+            seen.add(text);
+          }
+        }
+        marqueeVerdicts.set(el, verdict);
+        return verdict;
+      };
+      const marqueeTrack = (el: Element, owner: Element) => {
+        for (
+          let current: Element | null = el;
+          current && current !== owner;
+          current = current.parentElement
+        )
+          if (isMarquee(current)) return current;
+        return undefined;
+      };
       return {
         version: 2,
         ...(Number.parseFloat(getComputedStyle(root).fontSize) > 0
@@ -6885,6 +7870,7 @@ export async function observePage(
           maxTouchPoints: navigator.maxTouchPoints,
         },
         document: {
+          contentType: document.contentType,
           scrollWidth: root.scrollWidth,
           scrollHeight: root.scrollHeight,
           clientWidth: root.clientWidth,
@@ -6892,12 +7878,154 @@ export async function observePage(
         },
         elements: observed.map(({ element, value }) => {
           const viewportIntersection = viewportIntersections.get(element);
+          const style = getComputedStyle(element);
+          let paintedContent:
+            | {
+                selectors: string[];
+                width: number;
+                height: number;
+                clipped: {
+                  text: string[];
+                  interactive: string[];
+                  marquee: string[];
+                };
+              }
+            | undefined;
+          if (
+            [style.overflowX, style.overflowY].some((axis) =>
+              ["hidden", "clip"].includes(axis),
+            ) &&
+            (element.scrollWidth > element.clientWidth + 1 ||
+              element.scrollHeight > element.clientHeight + 1)
+          ) {
+            const origin = element.getBoundingClientRect();
+            const left = origin.x + element.clientLeft;
+            const top = origin.y + element.clientTop;
+            let right = left + element.clientWidth;
+            let bottom = top + element.clientHeight;
+            const selectors: string[] = [];
+            for (const contributor of [
+              element,
+              ...element.querySelectorAll("*"),
+            ]) {
+              const text = [...contributor.childNodes].some(
+                (node) =>
+                  node.nodeType === Node.TEXT_NODE &&
+                  (node.textContent ?? "").trim() !== "",
+              );
+              const media = [
+                "IMG",
+                "VIDEO",
+                "CANVAS",
+                "IFRAME",
+                "SVG",
+              ].includes(contributor.tagName);
+              const contributorStyle = getComputedStyle(contributor);
+              const decorated =
+                alphaOf(contributorStyle.backgroundColor) > 0 ||
+                contributorStyle.backgroundImage !== "none" ||
+                contributorStyle.boxShadow !== "none" ||
+                ["top", "right", "bottom", "left"].some(
+                  (side) =>
+                    Number.parseFloat(
+                      contributorStyle.getPropertyValue(`border-${side}-width`),
+                    ) > 0 &&
+                    alphaOf(
+                      contributorStyle.getPropertyValue(`border-${side}-color`),
+                    ) > 0,
+                );
+              if (!text && !media && !decorated) continue;
+              selectors.push(selectorFor(contributor));
+              if (!paintedOf(contributor).value) continue;
+              const rects: DOMRect[] = [];
+              if (media || decorated)
+                rects.push(contributor.getBoundingClientRect());
+              if (text)
+                for (const node of contributor.childNodes) {
+                  if (node.nodeType !== Node.TEXT_NODE) continue;
+                  const range = document.createRange();
+                  range.selectNodeContents(node);
+                  rects.push(...range.getClientRects());
+                }
+              for (const rect of rects) {
+                right = Math.max(right, rect.right);
+                bottom = Math.max(bottom, rect.bottom);
+              }
+            }
+            const clipsX = ["hidden", "clip"].includes(style.overflowX);
+            const clipsY = ["hidden", "clip"].includes(style.overflowY);
+            // The owner's padding box in viewport space, scaled like the rects.
+            const clip = window.__idiomVisibility.client(element);
+            const clipped = {
+              text: [] as string[],
+              interactive: [] as string[],
+              marquee: [] as string[],
+            };
+            const note = (list: string[], selector: string) => {
+              if (list.length < 10 && !list.includes(selector))
+                list.push(selector);
+            };
+            for (const contributor of [
+              element,
+              ...element.querySelectorAll("*"),
+            ]) {
+              const textNodes = [...contributor.childNodes].filter(
+                (node) =>
+                  node.nodeType === Node.TEXT_NODE &&
+                  (node.textContent ?? "").trim() !== "",
+              );
+              // A box cannot clip its own border box: an interactive owner is
+              // judged by its text alone.
+              const control =
+                contributor !== element && isInteractive(contributor);
+              if (textNodes.length === 0 && !control) continue;
+              if (!paintedOf(contributor).value) continue;
+              if (presentational(contributor, element)) continue;
+              const rects: DOMRect[] = [];
+              if (control) rects.push(contributor.getBoundingClientRect());
+              else
+                for (const node of textNodes) {
+                  const range = document.createRange();
+                  range.selectNodeContents(node);
+                  rects.push(...range.getClientRects());
+                }
+              const visible = visibleRects(contributor, rects, element);
+              if (visible === undefined) continue;
+              const cut = visible.some(
+                (r) =>
+                  (clipsX &&
+                    (r.x < clip.x - 1 ||
+                      r.x + r.width > clip.x + clip.width + 1)) ||
+                  (clipsY &&
+                    (r.y < clip.y - 1 ||
+                      r.y + r.height > clip.y + clip.height + 1)),
+              );
+              if (!cut) continue;
+              const track = marqueeTrack(contributor, element);
+              if (track !== undefined) {
+                note(clipped.marquee, selectorFor(track));
+                continue;
+              }
+              note(
+                control ? clipped.interactive : clipped.text,
+                selectorFor(contributor),
+              );
+            }
+            paintedContent = {
+              selectors,
+              width: Math.max(0, right - origin.x - element.clientLeft),
+              height: Math.max(0, bottom - origin.y - element.clientTop),
+              clipped,
+            };
+          }
           const edges = frameEdges.get(element);
+          const enriched =
+            paintedContent === undefined ? value : { ...value, paintedContent };
           return value.signals === undefined ||
             (viewportIntersection === undefined && edges === undefined)
-            ? value
+            ? enriched
             : {
-                ...value,
+                ...enriched,
                 signals: {
                   ...value.signals,
                   ...(viewportIntersection === undefined

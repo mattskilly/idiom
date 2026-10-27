@@ -24,7 +24,7 @@ if (mode !== "noop") {
   if (mode === "regress")
     html = html.replace(
       "</main>",
-      '<button id="new" aria-label="Help" style="width:23px;height:23px"></button></main>',
+      '<div class="target-row"><button id="new" aria-label="Help" style="width:10px;height:10px"></button><a class="neighbor" href="/neighbor" aria-label="Neighbor help"></a></div></main>',
     );
   await writeFile("page.html", html);
 }

@@ -98,6 +98,8 @@ export type ObservedStyles = {
   outlineStyle?: string | undefined;
   /** Absent in captures that predate ring-offset measurement. */
   outlineOffset?: string | undefined;
+  /** Absent in captures that predate mock-up detection. */
+  userSelect?: string | undefined;
   textOverflow?: string | undefined;
   fill: string;
   stroke: string;
@@ -146,11 +148,31 @@ export type ExpandedObservedStyles = ObservedStyles & {
   zIndex: string;
 };
 
+export type PaintedFact =
+  | { value: true }
+  | { value: false; reason: string; boundary?: string | undefined };
+
 export type ObservedElement = {
   selector: string;
   tag: string;
   text: string;
   visible: boolean;
+  painted?: PaintedFact | undefined;
+  /** Contributors and scroll extent excluding wholly unpainted content. */
+  paintedContent?:
+    | {
+        selectors: string[];
+        width: number;
+        height: number;
+        /**
+         * Painted text/control contributors partly cut off by this box;
+         * marquee tracks excluded. Absent on captures that predate it.
+         */
+        clipped?:
+          | { text: string[]; interactive: string[]; marquee: string[] }
+          | undefined;
+      }
+    | undefined;
   interactive: boolean;
   enabled: boolean;
   headingLevel?: number | undefined;
@@ -161,6 +183,8 @@ export type ObservedElement = {
   clientHeight: number;
   outOfFlow: boolean;
   inlineTextTarget?: boolean | undefined;
+  /** Clickable fragments of associated native checkbox/radio labels; absent in legacy captures. */
+  targetSizeLabels?: Array<{ selector: string; rects: Rect[] }> | undefined;
   ancestorSelectors: string[];
   authoredProperties?: string[] | undefined;
   styles: ObservedStyles;
@@ -188,6 +212,7 @@ export type ObservationArtifactV1 = {
   version: 1;
   viewport: { width: number; height: number };
   document: {
+    contentType?: string | undefined;
     scrollWidth: number;
     scrollHeight: number;
     clientWidth: number;
@@ -600,16 +625,18 @@ export type InvariantObservation = EffectiveInvariant & {
 /**
  * One member of a selection group: the element that carries the selected
  * state (`control`) and the element a reader sees (`selector`), which differ
- * for a visually hidden native radio styled through its label.
+ * for a visually hidden native radio or checkbox styled through its label.
  */
 export type SelectionMember = {
   selector: string;
   control: string;
   selected: boolean;
   source: "aria-selected" | "aria-checked" | "aria-pressed" | "checked";
-  /** A rendered native radio with appearance ≠ none: the UA paints the state. */
+  /** A rendered native radio/checkbox with appearance ≠ none: the UA paints the state. */
   nativeIndicator: boolean;
   decoration: Record<string, string>;
+  paintedDecoration?: Record<string, string> | undefined;
+  decorationOwners?: string[] | undefined;
 };
 
 export type SelectionGroupObservation = {
@@ -900,19 +927,37 @@ export type FocusVisibleObservation = {
 
 export type LineLengthObservation = {
   selector: string;
-  /** Widest rendered line, in average characters. */
+  /** Maximum grapheme count on a measured rendered text line. */
   chars: number;
+  /** Widest measured rendered text line, in CSS pixels. */
   width: number;
+  /** Descriptive average text-line width per counted grapheme; not an estimate. */
   charWidth: number;
+  /** Number of nonempty measured rendered text lines. */
   lines: number;
   text: string;
 };
+
+/** Pixel ink under a rect of the stored screenshot. */
+export type InkMeasurement =
+  | {
+      status: "measured";
+      /** Share of samples that differ from the rect's modal colour. */
+      share: number;
+    }
+  | { status: "unavailable"; reason: string };
 
 export type OrphanWordObservation = {
   selector: string;
   word: string;
   lines: number;
   text: string;
+  /** Union of the owner's measured, painted word rects (viewport-relative, like element rects). */
+  rect?: Rect | undefined;
+  /** The stranded word's own rect. */
+  lastLine?: Rect | undefined;
+  /** Ink under `lastLine` in the stored screenshot; absent on older captures. */
+  ink?: InkMeasurement | undefined;
 };
 
 export type ImageRenderObservation = {
@@ -1055,6 +1100,30 @@ export type ObservationArtifactV2 = Omit<
   orphanWords?: GeometryScan<OrphanWordObservation> | undefined;
   imageRenders?: GeometryScan<ImageRenderObservation> | undefined;
   layoutShift?: LayoutShiftObservation | undefined;
+  /** How the tuple screenshot was taken; absent in older observations. */
+  screenshot?: ScreenshotGeometry | undefined;
+};
+
+/**
+ * Where crops are cut from: the screenshot's strategy and device scale, and,
+ * when layout moved between observing and screenshotting, each observed
+ * selector's rect re-measured at screenshot time.
+ */
+export type ScreenshotGeometry = {
+  strategy: "viewport" | "full-page" | "tiled";
+  /** Device px per CSS px. */
+  scale: number;
+  /** CSS px of the captured image. */
+  width: number;
+  height: number;
+  tiles?: number | undefined;
+  drift?:
+    | {
+        observed: { width: number; height: number };
+        captured: { width: number; height: number };
+      }
+    | undefined;
+  rects?: Record<string, Rect> | undefined;
 };
 
 export type ObservationArtifact = ObservationArtifactV1 | ObservationArtifactV2;
@@ -1063,6 +1132,9 @@ export type CoverageStatus = "ran" | "skipped" | "unavailable";
 
 export type CheckCoverage = {
   check: DeterministicCheckId;
+  paintedSkipped?: Record<string, number> | undefined;
+  /** Records dropped because the stored screenshot shows no ink where they were measured. */
+  inkSkipped?: Record<string, number> | undefined;
   status: CoverageStatus;
   reason?: string | undefined;
 };

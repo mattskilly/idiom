@@ -244,6 +244,79 @@ export function interactiveAncestry(
     element.ancestorSelectors.some((selector) => interactive.has(selector));
 }
 
+// A non-selectable region has to look like a picture of a whole window, not a
+// single chip: frame-sized, and holding several separate pieces of text.
+const ILLUSTRATION_MIN_WIDTH = 200;
+const ILLUSTRATION_MIN_HEIGHT = 120;
+const ILLUSTRATION_MIN_TEXTS = 6;
+const illustrationRoles = new Set(["img", "presentation", "none"]);
+
+/**
+ * A picture of product UI (a launcher window, a dashboard screenshot built in
+ * HTML) mimics controls nobody expects to work. The lookup returns the
+ * selector of the nearest ancestor that holds no visible interactive element
+ * and either is declared decorative (`aria-hidden="true"`, `inert`,
+ * `role="img"|"presentation"|"none"`) or is where a frame-sized, text-rich
+ * `user-select: none` region starts. Pass every observed element: the
+ * run-root test reads the parent's computed `user-select`, even when the
+ * parent is invisible or is `<body>` (which `ancestorSelectors` omits). An
+ * unresolvable parent, or one without a recorded value, is never "not none".
+ */
+export function illustrationFrames(
+  elements: readonly ObservedElementV2[],
+): (element: ObservedElementV2) => string | undefined {
+  const bySelector = new Map(
+    elements.map((element) => [element.selector, element]),
+  );
+  const interactive = new Map<string, number>();
+  const texts = new Map<string, number>();
+  for (const element of elements) {
+    if (!element.visible) continue;
+    const isInteractive = element.interactive;
+    const hasText = element.directText.trim() !== "";
+    if (!isInteractive && !hasText) continue;
+    for (const ancestor of element.ancestorSelectors) {
+      if (isInteractive)
+        interactive.set(ancestor, (interactive.get(ancestor) ?? 0) + 1);
+      if (hasText) texts.set(ancestor, (texts.get(ancestor) ?? 0) + 1);
+    }
+  }
+  const qualifies = new Map<string, boolean>();
+  const frame = (selector: string): boolean => {
+    const known = qualifies.get(selector);
+    if (known !== undefined) return known;
+    const candidate = bySelector.get(selector);
+    let result = false;
+    if (
+      candidate !== undefined &&
+      !candidate.interactive &&
+      (interactive.get(selector) ?? 0) === 0
+    ) {
+      const role = candidate.attributes.role?.trim().toLowerCase();
+      const declared =
+        candidate.attributes["aria-hidden"] === "true" ||
+        "inert" in candidate.attributes ||
+        (role !== undefined && illustrationRoles.has(role));
+      result = declared || nonSelectableFrame(candidate);
+    }
+    qualifies.set(selector, result);
+    return result;
+  };
+  const nonSelectableFrame = (candidate: ObservedElementV2): boolean => {
+    if (candidate.styles.userSelect !== "none") return false;
+    if (candidate.tag === "body" || candidate.tag === "html") return false;
+    const parent = bySelector.get(candidate.ancestorSelectors[0] ?? "body");
+    const parentValue = parent?.styles.userSelect;
+    if (parentValue === undefined || parentValue === "none") return false;
+    return (
+      candidate.rect.width >= ILLUSTRATION_MIN_WIDTH &&
+      candidate.rect.height >= ILLUSTRATION_MIN_HEIGHT &&
+      (texts.get(candidate.selector) ?? 0) >= ILLUSTRATION_MIN_TEXTS
+    );
+  };
+  return (element) => element.ancestorSelectors.find(frame);
+}
+
 export function round(value: number, places = 1): number {
   const factor = 10 ** places;
   return Math.round(value * factor) / factor;

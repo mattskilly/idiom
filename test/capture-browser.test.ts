@@ -282,11 +282,7 @@ test("compact editor chrome uses measured input capabilities at each viewport", 
       ).candidates.filter(
         ({ candidate }) => candidate.category === "target-size",
       );
-      expect(found).toHaveLength(viewport.name === "desktop" ? 1 : 5);
-      if (viewport.name === "desktop")
-        expect(found[0]?.candidate.explanation).toContain(
-          "20×20 at desktop (fine pointer, minimum 24)",
-        );
+      expect(found).toHaveLength(viewport.name === "desktop" ? 0 : 5);
       if (viewport.touch)
         expect(
           found.every(({ candidate }) =>
@@ -1912,3 +1908,371 @@ test.each(["navigation", "replacement"])(
   },
   60000,
 );
+
+test("non-HTML captures save usable evidence and replay without document findings while HTML controls still report", async () => {
+  const { cp, writeFile } = await import("node:fs/promises");
+  const { AxeBuilder } = await import("@axe-core/playwright");
+  const { initProject } = await import("../src/commands/init.js");
+  const { loadCaptureRun } = await import("../src/review/artifacts.js");
+  const directory = await mkdtemp(join(tmpdir(), "idiom-non-html-"));
+  try {
+    await initProject({ project: directory, yes: true });
+    await cp(
+      join(import.meta.dirname, "fixtures/route-flow-generation/server.mjs"),
+      join(directory, "server.mjs"),
+    );
+    const port = await freePort();
+    const configured = projectSchema.parse({
+      ...project,
+      server: {
+        build: "node -e 0",
+        start: "node server.mjs",
+        readyUrl: `http://127.0.0.1:${port}/`,
+        port,
+        env: { PORT: String(port) },
+      },
+      capture: { ...project.capture, settleMs: 500 },
+    });
+    const types = {
+      "og.png": "image/png",
+      data: "application/json",
+      // Chromium represents an RSS response as a plain-text document.
+      feed: "text/plain",
+      xml: "application/xml",
+    };
+    const flow = flowSchema.parse({
+      id: "mime",
+      title: "MIME capture",
+      intent: [],
+      setup: [],
+      states: [
+        ...Object.keys(types),
+        "mime-client",
+        "no-h1",
+        "multiple-h1",
+      ].map((id) => ({
+        id: id.replace(".", "-"),
+        description: id,
+        url: `/${id}`,
+        expect: {},
+        probe: true,
+      })),
+    });
+    await writeFile(
+      join(directory, ".idiom/project.json"),
+      JSON.stringify(configured),
+    );
+    const analyzed: string[] = [];
+    const capture = await runCapture({
+      projectDirectory: directory,
+      project: configured,
+      flow,
+      dependencies: {
+        snapshotSource: async () => ({ commit: "fixture", dirty: false }),
+        browserLauncher: createBrowserLauncher({
+          createAxe: (page) => ({
+            analyze: async () => {
+              analyzed.push(new URL(page.url()).pathname);
+              return new AxeBuilder({ page }).analyze();
+            },
+          }),
+        }),
+      },
+    });
+    expect(capture.counts).toEqual({ passed: 7, failed: 0, total: 7 });
+    expect([...new Set(analyzed)].sort()).toEqual(["/multiple-h1", "/no-h1"]);
+    const loaded = await loadCaptureRun({
+      runDirectory: capture.runDirectory,
+      expectedFlow: "mime",
+      legacyColorScheme: "dark",
+    });
+    expect(loaded.tuples).toHaveLength(7);
+    for (const tuple of loaded.tuples) {
+      const observed = observationArtifactSchema.parse(tuple.observations);
+      const nonHtml = !["no-h1", "multiple-h1"].includes(tuple.state);
+      const findings = runDeterministicChecks([tuple]).candidates.map(
+        ({ candidate }) => candidate,
+      );
+      if (nonHtml) {
+        expect(observed.document.contentType).toBe(
+          tuple.state === "mime-client"
+            ? "application/json"
+            : types[
+                tuple.state === "og-png"
+                  ? "og.png"
+                  : (tuple.state as keyof typeof types)
+              ],
+        );
+        expect(observed.elements).toEqual([]);
+        expect(observed.headings).toEqual([]);
+        expect(observed.tokens).toEqual({ status: "not-configured" });
+        expect(observed.version === 2 && observed.probe).toBeUndefined();
+        expect(tuple.axe).toEqual({ violations: [] });
+        expect(
+          findings.filter(
+            (candidate) =>
+              candidate.category === "heading-structure" ||
+              /landmark|region/.test(candidate.rule),
+          ),
+        ).toEqual([]);
+      } else {
+        expect(observed.document.contentType).toBe("text/html");
+        expect(
+          findings.some((candidate) =>
+            tuple.state === "multiple-h1"
+              ? candidate.rule === "idiom:multiple-h1"
+              : ["idiom:missing-h1", "axe:page-has-heading-one"].includes(
+                  candidate.rule,
+                ),
+          ),
+        ).toBe(true);
+      }
+      for (const name of ["dom.html", "screenshot.png", "console.jsonl"]) {
+        const path = tuple.artifactPaths.find((path) =>
+          path.endsWith(`/${name}`),
+        );
+        expect(path).toBeDefined();
+        expect(
+          (await readFile(join(capture.runDirectory, path as string))).length,
+        ).toBeGreaterThanOrEqual(name === "console.jsonl" ? 0 : 1);
+      }
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 40_000);
+
+test.each([0, 1000])(
+  "web launcher threads animationSettleMs=%i to shared evidence",
+  async (bound) => {
+    const html = await readFile(
+      join(import.meta.dirname, "fixtures/painted-visibility/entrance.html"),
+      "utf8",
+    );
+    const server = createHttpServer((_request, response) => {
+      response.writeHead(200, { "Content-Type": "text/html" });
+      response.end(html);
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      throw new Error("missing port");
+    const session = await createBrowserLauncher({
+      createAxe: () => ({ analyze: async () => ({ violations: [] }) }),
+    })();
+    const configured = projectSchema.parse({
+      ...project,
+      capture: {
+        ...project.capture,
+        settleMs: 0,
+        reducedMotion: false,
+        animationSettleMs: bound,
+      },
+    });
+    const target = flowSchema.parse({
+      id: "f",
+      title: "f",
+      intent: [],
+      setup: [],
+      states: [
+        { id: "entrance", description: "entrance", url: "/", expect: {} },
+      ],
+    }).states[0];
+    if (!target || !configured.viewports[0]) throw new Error("missing tuple");
+    try {
+      const result = await session.capture({
+        project: configured,
+        state: target,
+        viewport: configured.viewports[0],
+        navigationUrl: `http://127.0.0.1:${address.port}/`,
+      });
+      expect(result.ok).toBe(true);
+      expect(
+        result.observations?.elements.find((e) => e.selector === "#entrance")
+          ?.painted?.value,
+      ).toBe(bound > 0);
+    } finally {
+      await session.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+);
+
+test("ordinary capture keeps an active repeated ticker quiet through settling", async () => {
+  const server = createHttpServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/html" });
+    response.end(`<!doctype html><style>
+      body { margin:40px; font:20px/30px Arial; }
+      #strip { width:180px; overflow:hidden; }
+      #track { display:flex; width:max-content; animation:ticker 1000s linear infinite; }
+      span { flex:none; white-space:nowrap; }
+      @keyframes ticker { from { transform:translateX(0%); } to { transform:translateX(-50%); } }
+      </style><div id="strip"><div id="track"><span id="ticker-text">Fresh curry made daily for everyone</span><span>Fresh curry made daily for everyone</span></div></div>`);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("missing port");
+  const session = await createBrowserLauncher({
+    createAxe: () => ({ analyze: async () => ({ violations: [] }) }),
+  })();
+  const configured = projectSchema.parse({
+    ...project,
+    capture: { ...project.capture, reducedMotion: false, settleMs: 0 },
+  });
+  const target = flowSchema.parse({
+    id: "ticker",
+    title: "ticker",
+    intent: [],
+    setup: [],
+    states: [{ id: "ticker", description: "ticker", url: "/", expect: {} }],
+  }).states[0];
+  if (!target || !configured.viewports[0]) throw new Error("missing tuple");
+  try {
+    const result = await session.capture({
+      project: configured,
+      state: target,
+      viewport: configured.viewports[0],
+      navigationUrl: `http://127.0.0.1:${address.port}/`,
+    });
+    expect(result.ok).toBe(true);
+    const observation = observationArtifactSchema.parse(result.observations);
+    expect(
+      observation.elements.find((e) => e.selector === "#ticker-text")?.rect
+        .width,
+    ).toBeGreaterThan(180);
+    expect(
+      observation.elements.find((e) => e.selector === "#ticker-text")?.painted
+        ?.value,
+    ).toBe(true);
+    expect(observation.version === 2 && observation.clippedText).toEqual([]);
+    expect(result.screenshot?.length).toBeGreaterThan(0);
+  } finally {
+    await session.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("native target labels capture only associated exposed clickable fragments", async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({
+    viewport: { width: 1280, height: 900 },
+  });
+  try {
+    await page.setContent(
+      await readFile(
+        join(import.meta.dirname, "fixtures/target-size/exemptions.html"),
+        "utf8",
+      ),
+    );
+    const observed = observationArtifactSchema.parse(
+      JSON.parse(
+        JSON.stringify(await observePage(page, { status: "not-configured" })),
+      ),
+    );
+    const owner = (id: string) => {
+      const element = observed.elements.find(
+        (element) => element.selector === `#${id}`,
+      );
+      if (!element) throw new Error(`missing ${id}`);
+      return element;
+    };
+    for (const id of [
+      "explicit",
+      "wrapping",
+      "multiple",
+      "below",
+      "new-owner",
+    ]) {
+      expect(owner(id).targetSizeLabels?.length).toBe(
+        id === "multiple" ? 2 : 1,
+      );
+      expect(
+        owner(id).targetSizeLabels?.some((label) =>
+          label.rects.some((rect) => rect.width >= 24 && rect.height >= 24),
+        ),
+      ).toBe(true);
+    }
+    for (const id of [
+      "hidden",
+      "pointer",
+      "wrong",
+      "sr",
+      "disabled",
+      "transformed",
+      "clip-path",
+      "closed",
+      "reassigned",
+    ])
+      expect(owner(id).targetSizeLabels).toEqual([]);
+    expect(owner("clipped").targetSizeLabels?.[0]?.rects).toEqual([
+      expect.objectContaining({ width: 10, height: 10 }),
+    ]);
+    expect(owner("below").targetSizeLabels?.[0]?.rects[0]?.y).toBeGreaterThan(
+      900,
+    );
+    expect(
+      owner("wrapped").targetSizeLabels?.[0]?.rects.length,
+    ).toBeGreaterThan(1);
+    expect(
+      owner("wrapped").targetSizeLabels?.[0]?.rects.every(
+        (rect) => rect.height < 24,
+      ),
+    ).toBe(true);
+    expect(
+      owner("nested").targetSizeLabels?.[0]?.rects.every(
+        (rect) => rect.width < 24,
+      ),
+    ).toBe(true);
+    const check = (width: number, current = observed) =>
+      runDeterministicChecks([
+        {
+          console: [],
+          mismatches: [],
+          flow: "labels",
+          state: "ready",
+          viewport: "desktop",
+          width,
+          height: 900,
+          metadataPath: "metadata.json",
+          artifactPaths: ["observations.json"],
+          commit: "abc123",
+          createdAt: "2026-10-26T00:00:00.000Z",
+          observations: current,
+        },
+      ])
+        .candidates.filter(
+          ({ candidate }) => candidate.category === "target-size",
+        )
+        .map(({ candidate }) => candidate.selectorHint);
+    expect(check(1280)).not.toContain("#explicit");
+    expect(check(1280)).not.toContain("#explicit-label");
+    expect(check(1280)).toContain("#small");
+    for (const id of [
+      "explicit",
+      "wrapping",
+      "small",
+      "clipped",
+      "nested",
+      "wrapped",
+      "distant",
+    ])
+      expect(check(390)).toContain(`#${id}`);
+    const legacy = structuredClone(observed);
+    for (const element of legacy.elements) delete element.targetSizeLabels;
+    expect(check(1280, legacy)).toContain("#explicit");
+    // Browser activation confirms ownership, including independent nested links.
+    await page.locator("#explicit-label").click();
+    expect(await page.locator("#explicit").isChecked()).toBe(true);
+    await page.locator("#wrapping-label").click({ position: { x: 70, y: 20 } });
+    expect(await page.locator("#wrapping").isChecked()).toBe(true);
+    await page.locator("#terms").click();
+    expect(await page.locator("#nested").isChecked()).toBe(false);
+    await page.locator("#second").click();
+    expect(await page.locator("#multiple").isChecked()).toBe(true);
+  } finally {
+    await browser.close();
+  }
+}, 30_000);

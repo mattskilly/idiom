@@ -1,3 +1,4 @@
+import { paintedGate } from "./painted.js";
 import {
   colorDelta,
   isVisuallyHidden,
@@ -83,6 +84,7 @@ export const selectedStateCheck: DeterministicCheck = {
         this.id,
         "observations predate selection-group signals (recapture)",
       );
+    const gate = paintedGate(tuple, ["idiom:selected-state-invisible"]);
     const threshold = config.selectedState.minColorDelta;
     const elements = new Map<string, ObservedElementV2>(
       observation.elements.map((element) => [element.selector, element]),
@@ -102,9 +104,16 @@ export const selectedStateCheck: DeterministicCheck = {
     for (const group of observation.selectionGroups) {
       const members = group.members.filter(shown);
       if (members.length < 2) continue;
+      for (const member of members)
+        gate.allows(
+          "idiom:selected-state-invisible",
+          member.selector,
+          ...(member.decorationOwners ?? []),
+        );
       const selected = members.filter((member) => member.selected);
-      const unselected = members.filter((member) => !member.selected);
-      const native = members.every((member) => member.source === "checked");
+      const nativeRadio =
+        group.memberRole === "radio" &&
+        members.every((member) => member.source === "checked");
       const label = `${group.container} (${members
         .slice(0, 4)
         .map(nameOf)
@@ -131,16 +140,17 @@ export const selectedStateCheck: DeterministicCheck = {
       if (selected.length === 0) {
         // An empty listbox selection is valid; toolbars hold formatting toggles.
         const selectable =
-          native ||
-          (!["listbox", "toolbar"].includes(group.role) &&
-            (["tablist", "radiogroup"].includes(group.role) ||
-              (["", "group"].includes(group.role) &&
-                members.every((member) =>
-                  Object.hasOwn(
-                    elements.get(member.control)?.attributes ?? {},
-                    member.source,
-                  ),
-                ))));
+          group.memberRole !== "checkbox" &&
+          (nativeRadio ||
+            (!["listbox", "toolbar"].includes(group.role) &&
+              (["tablist", "radiogroup"].includes(group.role) ||
+                (["", "group"].includes(group.role) &&
+                  members.every((member) =>
+                    Object.hasOwn(
+                      elements.get(member.control)?.attributes ?? {},
+                      member.source,
+                    ),
+                  )))));
         if (selectable)
           emit(
             "none",
@@ -161,17 +171,28 @@ export const selectedStateCheck: DeterministicCheck = {
         );
         continue;
       }
-      if (unselected.length === 0) continue;
+      // Selection validity keeps its legacy domain; only the visual comparison is gated.
+      const visual = members
+        .filter((member) =>
+          gate.allows("idiom:selected-state-invisible", member.selector),
+        )
+        .map((member) => ({
+          ...member,
+          decoration: member.paintedDecoration ?? member.decoration,
+        }));
+      const visualSelected = visual.filter((member) => member.selected);
+      const visualUnselected = visual.filter((member) => !member.selected);
+      if (visualUnselected.length === 0) continue;
       const keys = new Set(
-        members.flatMap((member) => Object.keys(member.decoration)),
+        visual.flatMap((member) => Object.keys(member.decoration)),
       );
       const compared = new Set<string>();
-      const invisible = selected.find((member) => {
+      const invisible = visualSelected.find((member) => {
         if (member.nativeIndicator) return false;
         for (const key of keys) {
-          const baseline = unselected[0]?.decoration[key];
+          const baseline = visualUnselected[0]?.decoration[key];
           if (
-            unselected.some((other) =>
+            visualUnselected.some((other) =>
               differs(key, baseline, other.decoration[key], threshold),
             )
           )
@@ -187,10 +208,10 @@ export const selectedStateCheck: DeterministicCheck = {
           "invisible",
           "major",
           invisible.selector,
-          `the selected option ${nameOf(invisible)} in ${label} looks the same as the other ${unselected.length} of ${members.length} options; compared ${[...compared].sort().join(", ") || "no shared properties"}.`,
+          `the selected option ${nameOf(invisible)} in ${label} looks the same as the other ${visualUnselected.length} of ${visual.length} options; compared ${[...compared].sort().join(", ") || "no shared properties"}.`,
           "The selected option differs visibly from its siblings (border, background, outline, box-shadow, or an indicator), not only by ARIA state.",
         );
     }
-    return ran(this.id, candidates);
+    return gate.result(ran(this.id, candidates));
   },
 };

@@ -3,7 +3,12 @@ import type { PNG } from "pngjs";
 import type { CheckTuple, Rect } from "../checks/types.js";
 import { tupleLabel } from "../critique/context.js";
 import type { CropRef } from "../critique/types.js";
-import { cropToFile, selectorsFor, union } from "../review/crops.js";
+import {
+  cropToFile,
+  screenshotPlacement,
+  selectorsFor,
+  union,
+} from "../review/crops.js";
 import type { Finding } from "../schemas/finding.js";
 
 /** Crops per surface (one flow state, every viewport and scheme). */
@@ -19,6 +24,8 @@ const contains = (outer: Rect, inner: Rect) =>
 
 /** Greedy boxes over interactive elements in reading order. */
 function controlRegions(tuple: CheckTuple): Rect[] {
+  const placement =
+    tuple.observations && screenshotPlacement(tuple.observations);
   const elements = (tuple.observations?.elements ?? [])
     .filter(
       (element) =>
@@ -27,6 +34,9 @@ function controlRegions(tuple: CheckTuple): Rect[] {
         element.rect.width > 0 &&
         element.rect.height > 0,
     )
+    .map((element) => ({
+      rect: placement?.rect(element) ?? element.rect,
+    }))
     .sort(
       (left, right) => left.rect.y - right.rect.y || left.rect.x - right.rect.x,
     );
@@ -52,6 +62,8 @@ function controlRegions(tuple: CheckTuple): Rect[] {
 
 function findingRegions(tuple: CheckTuple, findings: Finding[]): Rect[] {
   const elements = tuple.observations?.elements ?? [];
+  const placement =
+    tuple.observations && screenshotPlacement(tuple.observations);
   return findings
     .filter(
       (finding) =>
@@ -68,7 +80,7 @@ function findingRegions(tuple: CheckTuple, findings: Finding[]): Rect[] {
             (element) =>
               element.visible && selectors.includes(element.selector),
           )
-          .map((element) => element.rect),
+          .map((element) => placement?.rect(element) ?? element.rect),
       );
       return rect === undefined || rect.width <= 0 || rect.height <= 0
         ? []
@@ -117,6 +129,7 @@ export async function sweepCrops(options: {
         screenshotPath: tuple.screenshotPath,
         images,
         viewportWidth: observations.viewport.width,
+        scale: screenshotPlacement(observations).scale,
         rect,
         padding: PADDING,
         relativePath,

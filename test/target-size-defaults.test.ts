@@ -101,6 +101,10 @@ function targets(
 ) {
   const observation: ObservationArtifact = observations([
     element({ rect: { x: 0, y: 0, width: size, height: size } }),
+    element({
+      selector: "button.neighbor",
+      rect: { x: size, y: 0, width: 44, height: 44 },
+    }),
   ]);
   const inputObservation =
     options.input === undefined

@@ -22,6 +22,24 @@ const centering = (findings: Awaited<ReturnType<typeof reviewFixture>>) =>
     .map(({ candidate }) => candidate)
     .filter((c) => c.category === "text-centering");
 
+test("one-sided decoration uses the content box while filled chips retain their edges", async () => {
+  const html = await readFile(
+    join(
+      import.meta.dirname,
+      "fixtures/text-centering/one-sided-decoration.html",
+    ),
+    "utf8",
+  );
+  const found = centering(await reviewFixture(browser, html));
+  expect(found.map((c) => c.selectorHint).sort()).toEqual([
+    "#filled-pad",
+    "#underline-off",
+  ]);
+  expect(
+    found.find((c) => c.selectorHint === "#underline-off")?.explanation,
+  ).toContain("content box");
+});
+
 test("hidden labels and centred glyphs are not reported; off-centre glyphs and chips are (dogfooding requests #59, #71)", async () => {
   let observations: ObservationArtifact | undefined;
   const found = centering(

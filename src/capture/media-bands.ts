@@ -1,8 +1,10 @@
 import type { PNG } from "pngjs";
 import type {
+  InkMeasurement,
   MediaBand,
   MediaBands,
   MediaFrameObservation,
+  OrphanWordObservation,
   Rect,
   RGB,
 } from "../checks/types.js";
@@ -164,4 +166,126 @@ export function sampleMediaFrames(
     ...frame,
     bands: measureBands(image, frame.frame, scale, tolerance),
   }));
+}
+
+/**
+ * Image px per CSS px for a stored screenshot. A full-page screenshot spans
+ * the document's scroll width, which exceeds the viewport when content
+ * overflows horizontally; a viewport screenshot is exactly the viewport
+ * height tall at the same scale.
+ */
+export function screenshotScale(
+  image: { width: number; height: number },
+  viewport: { width: number; height: number },
+  documentWidth: number,
+): number {
+  const byViewport = image.width / viewport.width;
+  if (documentWidth <= viewport.width) return byViewport;
+  return Math.abs(image.height - viewport.height * byViewport) <= 1
+    ? byViewport
+    : image.width / documentWidth;
+}
+
+/** Rows sampled per ink rect; text boxes are short, so fewer than columns. */
+const maxInkRows = 16;
+
+/**
+ * Share of a CSS-px rect's sampled pixels that differ from its modal colour by
+ * more than `tolerance`. Glyphs leave ink; a solid background leaves none.
+ * The raw share is stored so the check's threshold re-judges offline.
+ */
+export function measureInk(
+  image: PNG,
+  rect: Rect,
+  scale: number,
+  tolerance: number,
+): InkMeasurement {
+  const x0 = Math.max(0, Math.ceil(rect.x * scale));
+  const y0 = Math.max(0, Math.ceil(rect.y * scale));
+  const x1 = Math.min(image.width, Math.floor((rect.x + rect.width) * scale));
+  const y1 = Math.min(image.height, Math.floor((rect.y + rect.height) * scale));
+  if (x1 - x0 < 1 || y1 - y0 < 1)
+    return { status: "unavailable", reason: "rect outside screenshot" };
+  const columns = positions(x0, x1);
+  const allRows = positions(y0, y1);
+  const rows =
+    allRows.length <= maxInkRows
+      ? allRows
+      : Array.from(
+          { length: maxInkRows },
+          (_, index) =>
+            allRows[
+              Math.floor(((index + 0.5) * allRows.length) / maxInkRows)
+            ] ?? y0,
+        );
+  const samples: RGB[] = [];
+  for (const y of rows)
+    for (const x of columns) {
+      const offset = (y * image.width + x) * 4;
+      samples.push({
+        r: image.data[offset] ?? 0,
+        g: image.data[offset + 1] ?? 0,
+        b: image.data[offset + 2] ?? 0,
+      });
+    }
+  const counts = new Map<number, { color: RGB; count: number }>();
+  for (const color of samples) {
+    const key = (color.r << 16) | (color.g << 8) | color.b;
+    const entry = counts.get(key);
+    if (entry) entry.count += 1;
+    else counts.set(key, { color, count: 1 });
+  }
+  let modal: RGB | undefined;
+  let best = 0;
+  for (const { color, count } of counts.values())
+    if (count > best) {
+      best = count;
+      modal = color;
+    }
+  if (modal === undefined)
+    return { status: "unavailable", reason: "rect outside screenshot" };
+  const mode = modal;
+  const inked = samples.filter(
+    (color) => channelDistance(color, mode) > tolerance,
+  ).length;
+  return {
+    status: "measured",
+    share: Math.round((inked / samples.length) * 10000) / 10000,
+  };
+}
+
+/** Attach ink under each orphan's stranded word, from one decode of the screenshot. */
+export function sampleOrphanInk(
+  records: OrphanWordObservation[],
+  decode: () => PNG,
+  viewport: { width: number; height: number },
+  documentWidth: number,
+  tolerance: number,
+): OrphanWordObservation[] {
+  if (!records.some((record) => record.lastLine !== undefined)) return records;
+  let image: PNG;
+  try {
+    image = decode();
+  } catch {
+    return records.map((record) =>
+      record.lastLine === undefined
+        ? record
+        : {
+            ...record,
+            ink: {
+              status: "unavailable",
+              reason: "screenshot could not be decoded",
+            },
+          },
+    );
+  }
+  const scale = screenshotScale(image, viewport, documentWidth);
+  return records.map((record) =>
+    record.lastLine === undefined
+      ? record
+      : {
+          ...record,
+          ink: measureInk(image, record.lastLine, scale, tolerance),
+        },
+  );
 }

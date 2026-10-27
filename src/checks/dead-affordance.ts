@@ -1,4 +1,6 @@
+import { paintedGate } from "./painted.js";
 import {
+  illustrationFrames,
   interactiveAncestry,
   isPainted,
   isVisuallyHidden,
@@ -38,7 +40,9 @@ const excludedTags = new Set([
  * Copy that reads as an action ("View terms", "Learn more", "Help") but is
  * neither a link nor a button. Matt's preference is a visible placeholder
  * link over dead text, so `href="#"` is reported separately as countable
- * placeholder debt rather than as a defect.
+ * placeholder debt rather than as a defect. Text inside a non-interactive
+ * illustration of product UI (see `illustrationFrames`) is a picture of a
+ * control, not dead copy, so it is not reported as dead link text.
  */
 export const deadAffordanceCheck: DeterministicCheck = {
   id: "dead-affordance",
@@ -46,9 +50,14 @@ export const deadAffordanceCheck: DeterministicCheck = {
     const observed = signalledElements(tuple);
     if ("reason" in observed) return unavailable(this.id, observed.reason);
     const insideInteractive = interactiveAncestry(observed.elements);
+    // signalledElements already confirmed a version-2 capture.
+    const insideIllustration = illustrationFrames(
+      tuple.observations?.version === 2 ? tuple.observations.elements : [],
+    );
     const byselector = new Map(
       observed.elements.map((element) => [element.selector, element]),
     );
+    const gate = paintedGate(tuple, ["idiom:dead-link-text"]);
     const candidates: FindingCandidate[] = [];
     for (const element of observed.elements) {
       if (isVisuallyHidden(element)) continue;
@@ -97,6 +106,7 @@ export const deadAffordanceCheck: DeterministicCheck = {
         continue;
       }
       if (insideInteractive(element) || excludedTags.has(element.tag)) continue;
+      if (insideIllustration(element) !== undefined) continue;
       const text = element.directText.trim();
       if (text === "" || text.split(/\s+/).length > 6) continue;
       if (element.text.trim() !== text) continue;
@@ -104,6 +114,7 @@ export const deadAffordanceCheck: DeterministicCheck = {
       const weak = !strong && weakPhrase.test(text);
       if (!strong && !weak) continue;
       const parent = byselector.get(element.ancestorSelectors[0] ?? "");
+      if (!gate.allows("idiom:dead-link-text", element, parent)) continue;
       const linkStyled =
         element.styles.textDecorationLine.includes("underline") ||
         element.signals.cursor === "pointer" ||
@@ -133,6 +144,6 @@ export const deadAffordanceCheck: DeterministicCheck = {
         verification: verify(this.id, { selector: element.selector }),
       });
     }
-    return ran(this.id, candidates);
+    return gate.result(ran(this.id, candidates));
   },
 };

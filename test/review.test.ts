@@ -1814,3 +1814,46 @@ test("empty production runs retain run-level build identity", async () => {
     loadCaptureRun({ runDirectory: directory, expectedFlow: "empty" }),
   ).rejects.toThrow(/invalid production build/);
 });
+
+test("painted skip counts render beside partial coverage reasons with escaping", () => {
+  const options = {
+    flow: "booking",
+    commit: "fixture",
+    findings: [],
+    tuples: [],
+    outcome: { kind: "full" as const },
+    coverage: [
+      {
+        tuple: {
+          flow: "booking",
+          state: "ready",
+          viewport: "phone",
+          width: 390,
+          height: 844,
+          metadataPath: "m.json",
+          artifactPaths: [],
+          commit: "fixture",
+          createdAt: "2026-10-26T00:00:00Z",
+          console: [],
+          mismatches: [],
+        },
+        coverage: {
+          check: "orphan-word" as const,
+          status: "ran" as const,
+          reason: "partial <scan>",
+          paintedSkipped: { "idiom:orphan-word": 2, "idiom:<test>": 0 },
+        },
+      },
+    ],
+  };
+  const markdown = renderReport(options);
+  const html = renderReviewHtmlReport({ ...options, screenshots: new Map() });
+  expect(markdown).toContain("idiom:orphan-word: 2 skipped as not painted");
+  expect(html).toContain(
+    "partial &lt;scan&gt;; idiom:orphan-word: 2 skipped as not painted",
+  );
+  expect(html).toContain("idiom:&lt;test&gt;: 0 skipped as not painted");
+  expect(
+    JSON.parse(JSON.stringify(options.coverage))[0].coverage.paintedSkipped,
+  ).toEqual({ "idiom:orphan-word": 2, "idiom:<test>": 0 });
+});

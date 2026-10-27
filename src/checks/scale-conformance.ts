@@ -1,3 +1,4 @@
+import { isElementPainted, paintedGate } from "./painted.js";
 import {
   canonicalColor,
   colorDelta,
@@ -64,7 +65,11 @@ type Observation = {
   label: string;
   /** A full radius on a square box: a circle, a shape of its own. */
   circle: boolean;
+  /** Dividers only: a heading rule, a table border or any other rule. */
+  dividerKind?: DividerKind | undefined;
 };
+
+type DividerKind = "heading" | "table" | "rule";
 
 type Group = {
   property: Property;
@@ -132,11 +137,60 @@ function paintedSides(element: SignalledElement): Side[] {
 }
 
 /**
+ * Whether any box-shadow layer paints: a non-transparent colour with a
+ * non-zero offset, blur or spread. Utility frameworks often compute an
+ * all-transparent ring shadow on every control, which draws nothing.
+ */
+export function hasVisibleShadow(value: string | undefined): boolean {
+  const shadow = (value ?? "").trim();
+  if (shadow === "" || shadow === "none") return false;
+  const layers: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const character of shadow) {
+    if (character === "(") depth += 1;
+    if (character === ")") depth -= 1;
+    if (character === "," && depth === 0) {
+      layers.push(current);
+      current = "";
+    } else current += character;
+  }
+  layers.push(current);
+  return layers.some((layer) => {
+    const color =
+      layer.match(
+        /(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^)]*\)/i,
+      )?.[0] ??
+      layer.match(/#[0-9a-f]{3,8}\b/i)?.[0] ??
+      layer
+        .replace(/-?\d*\.?\d+[a-z%]*/gi, "")
+        .replace(/\binset\b/gi, "")
+        .trim();
+    // No colour in the computed value means currentColor, which paints.
+    const painted = color === "" || isPainted(color);
+    const lengths = (
+      layer.replace(/\([^)]*\)/g, "").match(/-?\d*\.?\d+px/g) ?? []
+    ).map((length) => Number.parseFloat(length));
+    return painted && lengths.some((length) => length !== 0);
+  });
+}
+
+const inlineTextTags = new Set(["abbr", "acronym", "dfn"]);
+
+/**
  * The one thin painted side that makes an element a divider. A side rule on
  * a text block (a blockquote or callout's accent bar) is decoration, not a
- * divider.
+ * divider, and a border on inline text (a dotted underline on a span or an
+ * abbreviation) is a text annotation.
  */
 function dividerSide(element: SignalledElement): Side | undefined {
+  const display = element.styles.display ?? "";
+  if (
+    display === "inline" ||
+    inlineTextTags.has(element.tag) ||
+    (display.startsWith("inline") && element.directText !== "")
+  )
+    return undefined;
   const sides = paintedSides(element);
   const [only] = sides;
   if (sides.length !== 1 || only === undefined || only.width > 2)
@@ -198,6 +252,62 @@ function defaultRole(
     if (dividerSide(element) !== undefined) return "divider";
   }
   return undefined;
+}
+
+const headingTags = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
+const tableTags = new Set([
+  "table",
+  "caption",
+  "thead",
+  "tbody",
+  "tfoot",
+  "tr",
+  "td",
+  "th",
+]);
+const tableRoles = new Set([
+  "table",
+  "grid",
+  "row",
+  "cell",
+  "gridcell",
+  "columnheader",
+  "rowheader",
+]);
+
+const isHeading = (element: SignalledElement) =>
+  headingTags.has(element.tag) || element.signals.role === "heading";
+
+/**
+ * Selectors of elements that wrap a heading filling at least half their
+ * height (a section heading's wrapper carrying its underline).
+ */
+function headingWrappers(elements: readonly SignalledElement[]) {
+  const bySelector = new Map(
+    elements.map((element) => [element.selector, element]),
+  );
+  const wrappers = new Set<string>();
+  for (const heading of elements.filter(isHeading))
+    for (const selector of heading.ancestorSelectors) {
+      const ancestor = bySelector.get(selector);
+      if (
+        ancestor !== undefined &&
+        heading.rect.height >= 0.5 * ancestor.rect.height
+      )
+        wrappers.add(selector);
+    }
+  return wrappers;
+}
+
+/** Heading rules, table borders and other rules are separate scales. */
+function dividerKind(
+  element: SignalledElement,
+  wrappers: ReadonlySet<string>,
+): DividerKind {
+  if (isHeading(element) || wrappers.has(element.selector)) return "heading";
+  if (tableTags.has(element.tag) || tableRoles.has(element.signals.role))
+    return "table";
+  return "rule";
 }
 
 /** The largest corner, classified as px, full or a percentage ellipse. */
@@ -411,6 +521,7 @@ export function scaleMeasurements(
       )
       .map((element) => element.selector),
   );
+  const wrappers = headingWrappers(elements);
   const results: Observation[] = [];
   for (const element of [...elements].sort((left, right) =>
     left.structuralPath.localeCompare(right.structuralPath),
@@ -437,6 +548,9 @@ export function scaleMeasurements(
         circle:
           value.kind === "full" &&
           Math.abs(element.rect.width - element.rect.height) <= 1,
+        ...(role === "divider"
+          ? { dividerKind: dividerKind(element, wrappers) }
+          : {}),
       });
     if (role === "control" && element.signals.lineCount <= 1)
       push("height", {
@@ -445,7 +559,7 @@ export function scaleMeasurements(
       });
     if (
       role !== "divider" &&
-      (isBounded(element) || element.styles.boxShadow !== "none")
+      (isBounded(element) || hasVisibleShadow(element.styles.boxShadow))
     ) {
       const radius = radiusOf(element);
       if (radius !== undefined) push("radius", radius);
@@ -540,8 +654,24 @@ function analyse(
     const observed = signalledElements(tuple);
     if ("reason" in observed) continue;
     const tupleNotes: string[] = [];
+    const raw = scaleMeasurements(tuple, observed.elements, config, tupleNotes);
+    const painted = scaleMeasurements(
+      tuple,
+      observed.elements.filter(isElementPainted),
+      config,
+      [],
+    );
     observations.push(
-      ...scaleMeasurements(tuple, observed.elements, config, tupleNotes),
+      ...raw.filter(
+        (measurement) =>
+          declaredScale(config, measurement.property, measurement.role).length >
+          0,
+      ),
+      ...painted.filter(
+        (measurement) =>
+          declaredScale(config, measurement.property, measurement.role)
+            .length === 0,
+      ),
     );
     notes.set(tuple, tupleNotes);
   }
@@ -577,7 +707,8 @@ function analyse(
     }
     const surface =
       observation.value.kind === "color" ? observation.value.surface : "";
-    const cohort = `${observation.property}\0${observation.role}\0${observation.tuple.width}x${observation.tuple.height}\0${surface}`;
+    // Peers only: one viewport, colour scheme, role and (for dividers) kind.
+    const cohort = `${observation.property}\0${observation.role}\0${observation.dividerKind ?? ""}\0${observation.tuple.width}x${observation.tuple.height}\0${observation.tuple.colorScheme ?? ""}\0${surface}`;
     cohorts.set(cohort, [...(cohorts.get(cohort) ?? []), observation]);
   }
   for (const [, cohort] of [...cohorts].sort(([left], [right]) =>
@@ -728,6 +859,8 @@ function candidateFor(group: Group): FindingCandidate {
  * Control heights, corner radius by role and border colour by role judged
  * against the scales the project declares, or, when it declares none,
  * against what the run itself does most of the time (sharp outliers only).
+ * The prevailing value is per viewport, colour scheme, role and, for
+ * dividers, kind (heading rules, table borders, other rules).
  * The analysis is run-wide; each finding is emitted once, from the first
  * tuple where its value occurs.
  */
@@ -740,6 +873,18 @@ export const scaleConformanceCheck: DeterministicCheck = {
       tuples?.includes(tuple) ? tuples : [tuple],
       config,
     );
+    const gate = paintedGate(tuple, ["idiom:scale-outlier"]);
+    for (const measurement of scaleMeasurements(
+      tuple,
+      observed.elements,
+      config,
+      [],
+    ))
+      if (
+        declaredScale(config, measurement.property, measurement.role).length ===
+        0
+      )
+        gate.allows("idiom:scale-outlier", measurement.element);
     const notes = [...(analysis.notes.get(tuple) ?? [])];
     if (
       config.scales.spacing?.length &&
@@ -763,6 +908,7 @@ export const scaleConformanceCheck: DeterministicCheck = {
     return {
       coverage: {
         check: this.id,
+        ...gate.coverage(),
         status: "ran",
         ...(notes.length === 0 ? {} : { reason: notes.join("; ") }),
       },

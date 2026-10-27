@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Field — keycap groups, illustrations and static mock-ups beside real controls</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; padding: 16px; font: 14px/20px Arial, sans-serif; color: #1f2328; background: #fff; }
+button { font: inherit; }
+.row { display: flex; align-items: center; margin-bottom: 24px; }
+.cap { display: flex; align-items: center; justify-content: center; width: 24px; height: 21px; font-style: normal; font-size: 12px; background: rgba(0, 0, 0, 0.1); border-radius: 4px; }
+kbd { display: inline-block; height: 24px; padding: 0 6px; font: 12px/22px Arial, sans-serif; border: 1px solid #d0d7de; border-radius: 4px; }
+.chip { height: 28px; padding: 0 10px; line-height: 26px; border: 1px solid #d0d7de; border-radius: 6px; }
+.box { width: 600px; height: 200px; margin-bottom: 24px; display: flex; align-items: flex-start; gap: 1px; padding: 12px; }
+.mockup { height: 320px; user-select: none; -webkit-user-select: none; }
+.toolbar { user-select: none; -webkit-user-select: none; }
+.toolbar button, .buttons button, .key-button button { height: 32px; padding: 0 12px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; }
+.small-select-none { width: 200px; height: 40px; display: flex; gap: 1px; user-select: none; -webkit-user-select: none; margin-bottom: 24px; }
+.tile { display: flex; align-items: center; justify-content: center; width: 80px; height: 48px; border: 1px solid #d0d7de; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div class="row" id="hotkeys" style="gap: 2px">
+  <i class="cap" id="key-cmd">⌘</i><i class="cap" id="key-k">K</i>
+</div>
+<div class="row" id="kbd-row" style="gap: 1px">
+  <kbd id="kbd-ctrl">Ctrl</kbd><kbd id="kbd-shift">Shift</kbd>
+</div>
+<div class="box mockup" id="mockup">
+  <div class="chip" id="mock-inbox">Inbox</div><div class="chip" id="mock-archive">Archive</div>
+</div>
+<div class="box" id="aria-art" aria-hidden="true">
+  <div class="chip" id="art-a">Draft</div><div class="chip" id="art-b">Sent</div>
+</div>
+<div class="row buttons" id="buttons" style="gap: 1px">
+  <button type="button" id="btn-save">Save</button><button type="button" id="btn-cancel">Cancel</button>
+</div>
+<div class="box toolbar" id="toolbar">
+  <button type="button" id="tool-bold">Bold</button><button type="button" id="tool-italic">Italic</button>
+</div>
+<div class="box" id="chips">
+  <div class="chip" id="chip-a">Design</div><div class="chip" id="chip-b">Research</div>
+</div>
+<div class="small-select-none" id="small-select-none">
+  <div class="chip" id="pill-a">Alpha</div><div class="chip" id="pill-b">Beta</div>
+</div>
+<div class="row" id="tiles" style="gap: 1px">
+  <div class="tile" id="tile-a">A</div><div class="tile" id="tile-b">B</div>
+</div>
+<div class="row key-button" id="key-button" style="gap: 1px">
+  <i class="cap" id="key-search">⌘</i><button type="button" id="btn-search">Search</button>
+</div>
+</body>
+</html>

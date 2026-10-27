@@ -5,7 +5,10 @@ import { brokenImageCheck } from "../src/checks/broken-image.js";
 import { brokenLinkCheck } from "../src/checks/broken-link.js";
 import { focusVisibleCheck } from "../src/checks/focus-visible.js";
 import { fontLoadingCheck } from "../src/checks/font-loading.js";
-import { imageDistortionCheck } from "../src/checks/image-distortion.js";
+import {
+  distortionPixelError,
+  imageDistortionCheck,
+} from "../src/checks/image-distortion.js";
 import {
   layoutShiftCheck,
   layoutShiftScore,
@@ -162,6 +165,28 @@ describe("line-length", () => {
     expect(candidate?.rule).toBe("idiom:line-too-long");
     expect(at(91, { lineLength: { max: 100 } })).toEqual([]);
   });
+  test("single rendered lines are exempt even above a configured maximum", () => {
+    const result = run(
+      lineLengthCheck,
+      {
+        lineLengths: { status: "ran", records: [{ ...record(120), lines: 1 }] },
+      },
+      { lineLength: { max: 40 } },
+    );
+    expect(result.candidates).toEqual([]);
+    expect(result.coverage.status).toBe("ran");
+  });
+  test("configured low maxima use measured counts without a capture cutoff", () => {
+    const result = run(
+      lineLengthCheck,
+      {
+        lineLengths: { status: "ran", records: [record(40), record(41)] },
+      },
+      { lineLength: { max: 40 } },
+    );
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.explanation).toContain("41 characters");
+  });
 });
 
 describe("orphan-word", () => {
@@ -184,6 +209,46 @@ describe("orphan-word", () => {
     expect(run(orphanWordCheck, scan("now")).candidates[0]?.explanation).toBe(
       "h1 leaves “now” alone on its last line (2 lines) at 1440px.",
     );
+  });
+  const record = (patch: Record<string, unknown>) => ({
+    orphanWords: {
+      status: "ran",
+      records: [
+        { selector: "h1", word: "now", lines: 2, text: "Plan a now", ...patch },
+      ],
+    },
+  });
+  test("a stranded word with no ink in the screenshot is skipped and counted", () => {
+    const result = run(
+      orphanWordCheck,
+      record({ ink: { status: "measured", share: 0 } }),
+    );
+    expect(result.candidates).toEqual([]);
+    expect(result.coverage.inkSkipped).toEqual({ "idiom:orphan-word": 1 });
+  });
+  test("inked, unmeasured and legacy records are reported without an ink count", () => {
+    for (const ink of [
+      { status: "measured", share: 0.3 },
+      { status: "unavailable", reason: "rect outside screenshot" },
+      undefined,
+    ]) {
+      const result = run(
+        orphanWordCheck,
+        ink === undefined ? scan("now") : record({ ink }),
+      );
+      expect(result.candidates).toHaveLength(1);
+      expect(result.coverage.inkSkipped).toBeUndefined();
+    }
+  });
+  test("the measured text rect becomes the crop subject", () => {
+    const rect = { x: 10, y: 20, width: 300, height: 80 };
+    expect(
+      run(orphanWordCheck, record({ rect })).candidates[0]?.verification.params
+        ?.rect,
+    ).toEqual(rect);
+    expect(
+      run(orphanWordCheck, scan("now")).candidates[0]?.verification.params,
+    ).not.toHaveProperty("rect");
   });
 });
 
@@ -225,6 +290,55 @@ describe("image checks", () => {
         images: { distortionTolerance: 0.6 },
       }).candidates,
     ).toEqual([]);
+  });
+  test("distortion under a visible pixel is not reported", () => {
+    const icon = image({
+      selector: "img.icon",
+      naturalWidth: 24,
+      naturalHeight: 13,
+      rendered: { x: 0, y: 0, width: 20, height: 11 },
+      distortion: 0.037,
+    });
+    expect(distortionPixelError(icon)).toBeCloseTo(0.108, 3);
+    expect(run(imageDistortionCheck, scan(icon)).candidates).toEqual([]);
+    const narrow = image({
+      naturalWidth: 24,
+      naturalHeight: 10,
+      rendered: { x: 0, y: 0, width: 20, height: 8.75 },
+      distortion: 0.0476,
+    });
+    expect(distortionPixelError(narrow)).toBeCloseTo(0.294, 3);
+    expect(run(imageDistortionCheck, scan(narrow)).candidates).toEqual([]);
+    const [photo] = run(
+      imageDistortionCheck,
+      scan(
+        image({
+          naturalWidth: 2400,
+          naturalHeight: 1300,
+          rendered: { x: 0, y: 0, width: 2000, height: 1100 },
+          distortion: 0.037,
+        }),
+      ),
+    ).candidates;
+    expect(photo?.severity).toBe("major");
+    expect(
+      run(
+        imageDistortionCheck,
+        scan(
+          image({
+            naturalWidth: 569,
+            naturalHeight: 1024,
+            rendered: { x: 0, y: 0, width: 371, height: 642 },
+            distortion: 0.042,
+          }),
+        ),
+      ).candidates,
+    ).toHaveLength(1);
+    expect(
+      distortionPixelError(
+        image({ naturalWidth: 0, naturalHeight: 0, distortion: 0 }),
+      ),
+    ).toBe(0);
   });
   test("broken images are their own rule", () => {
     const records = scan(

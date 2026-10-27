@@ -1,3 +1,4 @@
+import { classifyDocument } from "../document.js";
 import {
   axeSelector,
   axeViolations,
@@ -12,6 +13,17 @@ const axeHeadingRules = new Set(["heading-order", "page-has-heading-one"]);
 export const headingStructureCheck: DeterministicCheck = {
   id: "heading-structure",
   run({ tuple }) {
+    if (
+      classifyDocument(tuple.observations?.document.contentType) === "non-html"
+    )
+      return {
+        candidates: [],
+        coverage: {
+          check: this.id,
+          status: "skipped",
+          reason: "Heading structure is not applicable to a non-HTML document.",
+        },
+      };
     if (tuple.observations === undefined && tuple.axe === undefined) {
       return unavailable(
         this.id,

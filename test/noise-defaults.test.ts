@@ -113,8 +113,17 @@ test("thumbnails, images and canvases cropped by their cards are not clipped con
     "#declared-crop",
   ])
     expect(at(selector), selector).toEqual([]);
-  expect(at("#plain-overflow")).toHaveLength(1);
-  expect(at("#captioned")).toHaveLength(1);
+  // A textless tinted block cut by its box is decoration, not lost content
+  // (file-177); cut-off text still reports below.
+  expect(at("#plain-overflow")).toEqual([]);
+  // The old caption is wholly below the clip. A partly painted caption still counts.
+  expect(at("#captioned")).toEqual([]);
+  expect(at("#captioned-partial")).toHaveLength(1);
+  expect(
+    observed?.elements.find(
+      (e) => e.ancestorSelectors.includes("#captioned") && e.tag === "div",
+    )?.painted?.value,
+  ).toBe(false);
   expect(at("#fixed-text")).toHaveLength(1);
   const text = findings.filter(({ rule }) => rule === "idiom:text-clipped");
   expect(
@@ -217,4 +226,75 @@ test("overflow-clip finds media children of version 1 observations by ancestor s
       ? result.candidates.map(({ selectorHint }) => selectorHint)
       : [];
   expect(selectors).toEqual(["#card"]);
+});
+
+test("overflow-clip reports only what the capture says is cut off (file-177)", () => {
+  const clipping = (clipped?: {
+    text: string[];
+    interactive: string[];
+    marquee: string[];
+  }) => ({
+    text: "Draft",
+    scrollHeight: 77,
+    styles: {
+      ...element("x").styles,
+      overflowX: "hidden",
+      overflowY: "hidden",
+    },
+    paintedContent: {
+      selectors: [],
+      width: 96,
+      height: 77,
+      ...(clipped === undefined ? {} : { clipped }),
+    },
+  });
+  const tuple = {
+    flow: "dashboard",
+    state: "recent",
+    viewport: "desktop",
+    width: 1440,
+    height: 900,
+    metadataPath: "recent/desktop/metadata.json",
+    artifactPaths: ["recent/desktop/observations.json"],
+    commit: "fixture",
+    createdAt: "2026-10-26T00:00:00.000Z",
+    observations: {
+      version: 1,
+      viewport: { width: 1440, height: 900 },
+      document: {
+        scrollWidth: 1440,
+        scrollHeight: 900,
+        clientWidth: 1440,
+        clientHeight: 900,
+      },
+      elements: [
+        element("#legacy", clipping()),
+        element("#decor", clipping({ text: [], interactive: [], marquee: [] })),
+        element(
+          "#marquee",
+          clipping({ text: [], interactive: [], marquee: ["#track"] }),
+        ),
+        element(
+          "#cut",
+          clipping({ text: ["#cut > p"], interactive: [], marquee: [] }),
+        ),
+      ],
+      headings: [],
+      tokens: { status: "not-configured" },
+    },
+    axe: { violations: [] },
+    console: [],
+    mismatches: [],
+  } as unknown as CheckTuple;
+  const result = overflowClipCheck.run({
+    tuple,
+    config: checksConfigFrom(checksConfigSchema.parse({})),
+  } as Parameters<typeof overflowClipCheck.run>[0]);
+  const candidates = "candidates" in result ? result.candidates : [];
+  expect(candidates.map(({ selectorHint }) => selectorHint)).toEqual([
+    "#legacy",
+    "#cut",
+  ]);
+  expect(candidates[0]?.explanation).not.toContain("cutting off");
+  expect(candidates[1]?.explanation).toContain("cutting off text in #cut > p");
 });

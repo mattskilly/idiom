@@ -1,6 +1,6 @@
 import type { Dirent } from "node:fs";
-import { readdir } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { type Flow, stateChainLabel } from "../schemas/flow.js";
 
 export type DiscoveredRoute = {
@@ -37,6 +37,7 @@ const ignoredDirectories = new Set([
 
 const pageFile = /^page\.(?:tsx|ts|jsx|js|mdx)$/;
 const pagesRouterFile = /\.(?:tsx|ts|jsx|js|mdx)$/;
+const astroPageFile = /\.(?:astro|md|mdx|html)$/;
 
 async function walk(
   directory: string,
@@ -53,7 +54,8 @@ async function walk(
   for (const entry of entries) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (ignoredDirectories.has(entry.name)) continue;
+      if (ignoredDirectories.has(entry.name) || entry.name.startsWith("_"))
+        continue;
       await walk(path, visit, depth + 1);
     } else visit(path, entry);
   }
@@ -108,7 +110,39 @@ export async function discoverRouteEntries(
   projectDirectory: string,
 ): Promise<DiscoveredRoute[]> {
   const found: DiscoveredRoute[] = [];
+  const boundary = resolve(projectDirectory);
+  const owners = new Map<string, Promise<boolean>>();
+  const isAstro = (directory: string): Promise<boolean> => {
+    const cached = owners.get(directory);
+    if (cached) return cached;
+    const lookup = (async () => {
+      try {
+        const manifest = JSON.parse(
+          await readFile(join(directory, "package.json"), "utf8"),
+        );
+        return (
+          Object.hasOwn(manifest?.dependencies ?? {}, "astro") ||
+          Object.hasOwn(manifest?.devDependencies ?? {}, "astro")
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
+        const parent = dirname(directory);
+        if (
+          directory === boundary ||
+          relative(boundary, parent).startsWith("..")
+        )
+          return false;
+        return isAstro(parent);
+      }
+    })();
+    owners.set(directory, lookup);
+    return lookup;
+  };
   for (const root of await routeRoots(projectDirectory)) {
+    const extension =
+      root.kind === "pages" && (await isAstro(resolve(root.path)))
+        ? astroPageFile
+        : pagesRouterFile;
     await walk(root.path, (path, entry) => {
       const relativePath = relative(root.path, path);
       const segments = relativePath.split(sep);
@@ -119,8 +153,14 @@ export async function discoverRouteEntries(
         if (route !== undefined) found.push({ route, source });
         return;
       }
-      if (!pagesRouterFile.test(entry.name) || segments[0] === "api") return;
-      const name = entry.name.replace(pagesRouterFile, "");
+      if (
+        !extension.test(entry.name) ||
+        segments[0] === "api" ||
+        segments.some((segment) => segment.startsWith("_")) ||
+        /\.d\.[cm]?ts$/.test(entry.name)
+      )
+        return;
+      const name = entry.name.replace(extension, "");
       if (name.startsWith("_")) return;
       const parts = [
         ...segments.slice(0, -1),

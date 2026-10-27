@@ -29,6 +29,8 @@ export type RouteRecord = {
   expectedPath?: string;
   setup?: string;
   reason?: string;
+  /** An affirmative live failure, distinct from unavailable inspection. */
+  rejected?: true;
 };
 export type Discovery = { routes: RouteRecord[]; warnings: string[] };
 export type DiscoveryLimits = {
@@ -71,12 +73,32 @@ function loginPath(path: string): boolean {
     .split("/")
     .some((segment) => /^(?:login|log-in|signin|sign-in)$/i.test(segment));
 }
+function nonHtml(result: Inspection): boolean {
+  return !result.error && result.status !== undefined && !result.html;
+}
 function assessment(
   path: string,
   origin: string,
   result: Inspection,
-): Pick<RouteRecord, "expectedPath" | "setup" | "reason"> {
+): Pick<RouteRecord, "expectedPath" | "setup" | "reason" | "rejected"> {
+  if (
+    result.status !== undefined &&
+    (result.status < 200 || result.status >= 300)
+  )
+    return {
+      reason: `not a successful HTML page (HTTP ${result.status})`,
+      rejected: true,
+    };
   if (result.error) return { reason: result.error };
+  if (nonHtml(result))
+    return {
+      reason: `non-HTML document (HTTP ${result.status})`,
+      rejected: true,
+    };
+  if (result.status === undefined || !result.html)
+    return {
+      reason: `not a successful HTML page (HTTP ${result.status ?? "unknown"})`,
+    };
   const final = new URL(result.finalUrl);
   const changed =
     final.origin !== origin ||
@@ -87,15 +109,9 @@ function assessment(
       setup: `${final.origin === origin ? "" : final.origin}${final.pathname}`,
     };
   if (final.origin !== origin)
-    return { reason: `unexpected off-origin destination ${final.href}` };
-  if (
-    result.status === undefined ||
-    result.status < 200 ||
-    result.status >= 300 ||
-    !result.html
-  )
     return {
-      reason: `not a successful HTML page (HTTP ${result.status ?? "unknown"})`,
+      reason: `unexpected off-origin destination ${final.href}`,
+      rejected: true,
     };
   return { expectedPath: final.pathname };
 }
@@ -235,8 +251,8 @@ export async function discoverFlowRoutes(options: {
         warnings.push(
           `Ready page ${path} could not be verified: ${assessed.reason}`,
         );
-      // The ready page is a route only when it really serves a page.
-      if (assessed.expectedPath !== undefined)
+      // Keep confirmed failures as diagnostic routes, but do not invent an offline ready route.
+      if (assessed.expectedPath !== undefined || assessed.rejected)
         admit(path, index === 0 ? options.readyUrl : origin + path);
       if (assessed.reason || assessed.setup) continue;
       const paths = [
@@ -313,6 +329,7 @@ export async function discoverFlowRoutes(options: {
       return score(b.route) - score(a.route) || a.route.localeCompare(b.route);
     });
   const fallbackExamples = new Map<RouteRecord, string[]>();
+  const failedExamples = new Map<RouteRecord, string[]>();
   for (const [path, sources] of [...observed].sort(([a], [b]) =>
     a.localeCompare(b),
   )) {
@@ -330,7 +347,14 @@ export async function discoverFlowRoutes(options: {
       // template still keeps its own identity, including overlapping routers.
       for (const record of owners) {
         record.sources.push(...sources);
-        if (assessed.expectedPath === undefined) continue;
+        if (assessed.expectedPath === undefined) {
+          if (assessed.rejected && record.route.includes("[")) {
+            const failures = failedExamples.get(record) ?? [];
+            failures.push(`${path}: ${assessed.reason}`);
+            failedExamples.set(record, failures);
+          }
+          continue;
+        }
         const candidates = fallbackExamples.get(record) ?? [];
         candidates.push(path);
         fallbackExamples.set(record, candidates);
@@ -348,9 +372,21 @@ export async function discoverFlowRoutes(options: {
   }
   for (const record of records.values()) {
     record.sources = [...new Set(record.sources)].sort();
+    if (record.path) {
+      const result = inspected.get(record.path);
+      if (result && nonHtml(result)) {
+        delete record.path;
+        delete record.expectedPath;
+        delete record.setup;
+        Object.assign(record, assessment(record.route, origin, result));
+      }
+    }
     if (!record.path)
-      record.reason =
-        "no successfully inspected link or sitemap example matched this dynamic template; it may be unreachable or beyond a discovery limit";
+      record.reason ??=
+        "no successfully inspected link or sitemap example matched this dynamic template; it may be unreachable or beyond a discovery limit" +
+        (failedExamples.has(record)
+          ? `; rejected examples: ${failedExamples.get(record)?.join(", ")}`
+          : "");
     else {
       const result = inspected.get(record.path);
       Object.assign(

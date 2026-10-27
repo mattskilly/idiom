@@ -1980,7 +1980,11 @@ test("full-flow evaluation adds all-severity regressions without changing the st
   small.enabled = true;
   small.rect.width = 10;
   small.rect.height = 10;
-  const after = tuple(artifactV2("After", [small]));
+  const neighbor = structuredClone(small);
+  neighbor.selector = "button.neighbor";
+  neighbor.structuralPath = "html[0]/body[0]/main[0]/button[1]";
+  neighbor.rect.x += 12;
+  const after = tuple(artifactV2("After", [small, neighbor]));
   const standalone = evaluateVerification({
     findings: [finding()],
     baseline: [before],

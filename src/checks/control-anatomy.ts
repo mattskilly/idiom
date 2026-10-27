@@ -1,3 +1,4 @@
+import { isElementPainted, paintedGate } from "./painted.js";
 import {
   isVisuallyHidden,
   px,
@@ -133,6 +134,28 @@ function hasVisibleLabel(
           element.ancestorSelectors.includes(graphic.selector),
       ),
   );
+}
+
+/** Sibling consistency requires matching semantics and control construction. */
+function siblingIdentity(
+  control: SignalledElement,
+  elements: readonly SignalledElement[],
+): string | undefined {
+  const role = control.signals.role;
+  const button = control.tag === "button" || role === "button";
+  let family: string;
+  if (control.tag === "select") family = "native-select";
+  else if (role === "combobox") {
+    if (button && !hasVisibleLabel(control, elements)) return undefined;
+    family = "combobox";
+  } else if (
+    button &&
+    control.signals.haspopup?.toLowerCase() === "listbox" &&
+    hasVisibleLabel(control, elements)
+  )
+    family = "listbox-trigger";
+  else return undefined;
+  return JSON.stringify([family, control.tag, role]);
 }
 
 function chevronOf(
@@ -284,6 +307,7 @@ export const controlAnatomyCheck: DeterministicCheck = {
     if ("reason" in observed) return unavailable(this.id, observed.reason);
     const observation = tuple.observations;
     const elements = observed.elements;
+    const gate = paintedGate(tuple, ["idiom:sibling-select-inconsistent"]);
     const bySelector = new Map(
       elements.map((element) => [element.selector, element]),
     );
@@ -411,33 +435,48 @@ export const controlAnatomyCheck: DeterministicCheck = {
       });
     }
 
-    // Sibling selects: same parent (or, for singletons, same grandparent),
-    // same height band.
-    const byParent = new Map<string, SignalledElement[]>();
+    // Partition matching controls before locality and height comparisons so
+    // foreign controls cannot change singleton status or the median height.
+    const paintedElements = elements.filter(isElementPainted);
+    const siblingChevrons = new Map<SignalledElement, Mark>();
+    const byIdentity = new Map<string, SignalledElement[]>();
     for (const select of selects) {
-      const key = select.ancestorSelectors[0] ?? "";
-      byParent.set(key, [...(byParent.get(key) ?? []), select]);
+      const identity = siblingIdentity(select, elements);
+      if (identity === undefined) continue;
+      if (!gate.allows("idiom:sibling-select-inconsistent", select)) continue;
+      byIdentity.set(identity, [...(byIdentity.get(identity) ?? []), select]);
+      for (const graphic of graphicsIn(select, elements))
+        gate.allows("idiom:sibling-select-inconsistent", graphic);
+      const mark = chevronOf(select, paintedElements);
+      if (mark !== undefined) siblingChevrons.set(select, mark);
     }
     const siblingGroups: Array<{
       container: string;
       members: SignalledElement[];
     }> = [];
-    const byGrandparent = new Map<string, SignalledElement[]>();
-    for (const [container, members] of byParent) {
-      if (members.length > 1) {
-        siblingGroups.push({ container, members });
-        continue;
+    for (const peers of byIdentity.values()) {
+      const byParent = new Map<string, SignalledElement[]>();
+      for (const select of peers) {
+        const key = select.ancestorSelectors[0] ?? "";
+        byParent.set(key, [...(byParent.get(key) ?? []), select]);
       }
-      const [only] = members;
-      const grandparent = only?.ancestorSelectors[1];
-      if (only === undefined || grandparent === undefined) continue;
-      byGrandparent.set(grandparent, [
-        ...(byGrandparent.get(grandparent) ?? []),
-        only,
-      ]);
+      const byGrandparent = new Map<string, SignalledElement[]>();
+      for (const [container, members] of byParent) {
+        if (members.length > 1) {
+          siblingGroups.push({ container, members });
+          continue;
+        }
+        const [only] = members;
+        const grandparent = only?.ancestorSelectors[1];
+        if (only === undefined || grandparent === undefined) continue;
+        byGrandparent.set(grandparent, [
+          ...(byGrandparent.get(grandparent) ?? []),
+          only,
+        ]);
+      }
+      for (const [container, members] of byGrandparent)
+        if (members.length > 1) siblingGroups.push({ container, members });
     }
-    for (const [container, members] of byGrandparent)
-      if (members.length > 1) siblingGroups.push({ container, members });
     const domOrder = (left: SignalledElement, right: SignalledElement) =>
       left.structuralPath.localeCompare(right.structuralPath);
     for (const { container, members: all } of siblingGroups) {
@@ -452,7 +491,7 @@ export const controlAnatomyCheck: DeterministicCheck = {
       const construction = (member: SignalledElement) =>
         nativeChevron(member)
           ? "native"
-          : (chevrons.get(member)?.source ?? "unmeasured");
+          : (siblingChevrons.get(member)?.source ?? "unmeasured");
       const properties: Array<{
         property: string;
         css: string;
@@ -479,14 +518,14 @@ export const controlAnatomyCheck: DeterministicCheck = {
           css: "chevron width",
           tolerance: 1,
           sameConstruction: false,
-          value: (member) => chevrons.get(member)?.rect?.width,
+          value: (member) => siblingChevrons.get(member)?.rect?.width,
         },
         {
           property: "chevronHeight",
           css: "chevron height",
           tolerance: 1,
           sameConstruction: false,
-          value: (member) => chevrons.get(member)?.rect?.height,
+          value: (member) => siblingChevrons.get(member)?.rect?.height,
         },
       ];
       const comparisons = properties.flatMap((entry) => {
@@ -569,6 +608,6 @@ export const controlAnatomyCheck: DeterministicCheck = {
             reason: `${unmeasured} select ${unmeasured === 1 ? "chevron" : "chevrons"} could not be measured (pseudo-element or unparsed background)`,
           }),
     };
-    return { coverage, candidates };
+    return gate.result({ coverage, candidates });
   },
 };

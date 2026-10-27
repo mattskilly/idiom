@@ -92,7 +92,7 @@ async function fixture(mode = "all", count = 2) {
       `${Array.from(
         { length: count - 2 },
         (_, i) =>
-          `<button id="extra${i}" style="width:12px;height:12px" aria-label="Extra"></button>`,
+          `<div class="target-row"><button id="extra${i}" style="width:12px;height:12px" aria-label="Extra"></button><a class="neighbor" href="/neighbor" aria-label="Neighbor extra ${i}"></a></div>`,
       ).join("")}</main>`,
     );
   await writeFile(join(cwd, "page.html"), html);

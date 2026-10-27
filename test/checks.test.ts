@@ -8,6 +8,7 @@ import {
   checksConfigFrom,
   runDeterministicChecks,
 } from "../src/checks/registry.js";
+import { reportsInteractiveOverlap } from "../src/checks/responsive-break.js";
 import { spacingRhythmCheck } from "../src/checks/spacing-rhythm.js";
 import type {
   CheckTuple,
@@ -455,13 +456,23 @@ describe("deterministic checks", () => {
     });
 
     test("fine-pointer failures state the viewport and applied minimum", () => {
-      const found = targets([compact(1440, 20)]);
+      const crowded = compact(1440, 20);
+      crowded.observations?.elements.push(
+        v2Element({
+          selector: "button.neighbor",
+          tag: "button",
+          structuralPath: "body[0]/button[1]",
+          interactive: true,
+          rect: { x: 20, y: 0, width: 44, height: 44 },
+        }),
+      );
+      const found = targets([crowded]);
       expect(found).toHaveLength(1);
       expect(found[0]?.candidate.explanation).toContain(
         "20×20 at desktop (fine pointer, minimum 24)",
       );
       expect(found[0]?.candidate.acceptance).toEqual([
-        "button.tool has a rendered hit area of at least 24×24 CSS pixels at desktop.",
+        "button.tool has a clickable region containing a 24×24 CSS pixel square or sufficient spacing for its 24px circle to avoid other targets and undersized target circles at desktop.",
       ]);
       expect(found[0]?.candidate.verification).toMatchObject({
         params: { minimum: 24, inputClass: "fine" },
@@ -497,9 +508,7 @@ describe("deterministic checks", () => {
 
     test("unconfigured desktop uses fine-pointer defaults", () => {
       expect(targets([compact(1440)], false)).toEqual([]);
-      expect(
-        targets([compact(1440, 20)], false)[0]?.candidate.explanation,
-      ).toContain("fine pointer, minimum 24");
+      expect(targets([compact(1440, 20)], false)).toEqual([]);
     });
 
     test("configuration is optional, strict, positive and ordered", () => {
@@ -782,6 +791,158 @@ describe("deterministic checks", () => {
         )
         .map(({ candidate }) => candidate.selectorHint),
     ).toEqual(["button.first | button.second"]);
+  });
+
+  describe("joined controls", () => {
+    const bordered: ObservedElement["styles"] = {
+      ...styles,
+      borderTopWidth: "1px",
+      borderRightWidth: "1px",
+      borderBottomWidth: "1px",
+      borderLeftWidth: "1px",
+      borderTopColor: "rgb(222, 226, 230)",
+      borderRightColor: "rgb(222, 226, 230)",
+      borderBottomColor: "rgb(222, 226, 230)",
+      borderLeftColor: "rgb(222, 226, 230)",
+    };
+    const promo = (
+      buttonRect: ObservedElement["rect"],
+      buttonStyles: Partial<ObservedElement["styles"]> = {},
+      inputRect: ObservedElement["rect"] = {
+        x: 0,
+        y: 0,
+        width: 250,
+        height: 38,
+      },
+    ) => {
+      const input = v2Element({
+        selector: "input.promo",
+        tag: "input",
+        structuralPath: "html[0]/body[0]/form[0]/input[0]",
+        interactive: true,
+        rect: inputRect,
+        styles: { ...expandedStyles, ...bordered },
+        hitTestWith: ["button.redeem"],
+      });
+      const button = v2Element({
+        selector: "button.redeem",
+        tag: "button",
+        structuralPath: "html[0]/body[0]/form[0]/button[0]",
+        interactive: true,
+        rect: buttonRect,
+        styles: { ...expandedStyles, ...bordered, ...buttonStyles },
+        hitTestWith: ["input.promo"],
+      });
+      return { input, button };
+    };
+    const intersection = (
+      a: ObservedElement["rect"],
+      b: ObservedElement["rect"],
+    ) => {
+      const x = Math.max(a.x, b.x);
+      const y = Math.max(a.y, b.y);
+      return {
+        x,
+        y,
+        width: Math.min(a.x + a.width, b.x + b.width) - x,
+        height: Math.min(a.y + a.height, b.y + b.height) - y,
+      };
+    };
+    const overlapRules = (pair: {
+      input: ObservedElementV2;
+      button: ObservedElementV2;
+    }) => {
+      const observed = v2Observations([pair.input, pair.button]);
+      if (observed.version === 2)
+        observed.overlaps = [
+          {
+            a: "button.redeem",
+            b: "input.promo",
+            kinds: ["interactive", "interactive"],
+            rect: intersection(pair.input.rect, pair.button.rect),
+            partial: [],
+            samples: 4,
+            hits: 4,
+          },
+        ];
+      return runDeterministicChecks([tuple({ observations: observed })])
+        .candidates.map(({ candidate }) => candidate)
+        .filter(
+          (candidate) =>
+            candidate.rule === "idiom:interactive-overlap" ||
+            candidate.rule === "idiom:elements-overlap",
+        )
+        .map((candidate) => `${candidate.rule} ${candidate.severity}`);
+    };
+
+    test("an input group's 1px shared border is not an overlap, in either rule", () => {
+      expect(
+        overlapRules(promo({ x: 249, y: 0, width: 80, height: 38 })),
+      ).toEqual([]);
+      // Sub-pixel layout measures the collapsed border a hair over 1px.
+      expect(
+        overlapRules(promo({ x: 249.0000153, y: 0, width: 80, height: 38 })),
+      ).toEqual([]);
+      // Stacked groups join on the vertical axis.
+      expect(
+        overlapRules(
+          promo(
+            { x: 0, y: 37, width: 250, height: 38 },
+            {},
+            { x: 0, y: 0, width: 250, height: 38 },
+          ),
+        ),
+      ).toEqual([]);
+    });
+
+    test("the predicate drops a joined pair in both argument orders", () => {
+      const { input, button } = promo({ x: 249, y: 0, width: 80, height: 38 });
+      expect(reportsInteractiveOverlap(input, button, true)).toBe(false);
+      expect(reportsInteractiveOverlap(button, input, true)).toBe(false);
+    });
+
+    test("thicker, unbordered, rounded, corner-clipped and click-stealing overlaps are still reported", () => {
+      const reported = ["idiom:interactive-overlap major"];
+      // 2px overlap with shared borders.
+      expect(
+        overlapRules(promo({ x: 248, y: 0, width: 80, height: 38 })),
+      ).toEqual(reported);
+      // No border on the button's facing side.
+      expect(
+        overlapRules(
+          promo(
+            { x: 249, y: 0, width: 80, height: 38 },
+            { borderLeftWidth: "0px" },
+          ),
+        ),
+      ).toEqual(reported);
+      // Transparent facing border.
+      expect(
+        overlapRules(
+          promo(
+            { x: 249, y: 0, width: 80, height: 38 },
+            { borderLeftColor: "rgba(0, 0, 0, 0)" },
+          ),
+        ),
+      ).toEqual(reported);
+      // Rounded facing corners: two pills, not a group.
+      expect(
+        overlapRules(
+          promo(
+            { x: 249, y: 0, width: 80, height: 38 },
+            { borderTopLeftRadius: "8px", borderBottomLeftRadius: "8px" },
+          ),
+        ),
+      ).toEqual(reported);
+      // A 1px corner clip, not an edge-to-edge join.
+      expect(
+        overlapRules(promo({ x: 249, y: 34, width: 80, height: 38 })),
+      ).toEqual(reported);
+      // The button sits on the field: it steals clicks.
+      expect(
+        overlapRules(promo({ x: 200, y: 0, width: 80, height: 38 })),
+      ).toEqual(reported);
+    });
   });
 
   test("maps axe, console, heading, token, and missing-state evidence", () => {
@@ -1780,4 +1941,92 @@ describe("component-size persisted tolerance", () => {
       },
     });
   });
+});
+
+test.each([
+  "image/png",
+  "application/json",
+  "application/rss+xml",
+  "application/xml",
+])(
+  "persisted %s suppresses heading checks even with stale HTML evidence",
+  (contentType) => {
+    for (const headings of [
+      [],
+      [
+        { selector: "h1.a", level: 1, text: "A" },
+        { selector: "h1.b", level: 1, text: "B" },
+        { selector: "h4", level: 4, text: "Skipped" },
+      ],
+    ]) {
+      const observed = observations();
+      observed.headings = headings;
+      observed.document.contentType = contentType;
+      const axe = {
+        violations: ["page-has-heading-one", "heading-order"].map((id) => ({
+          id,
+          nodes: [{ target: ["document"] }],
+        })),
+      };
+      const checked = runDeterministicChecks([
+        tuple({ observations: observed, axe }),
+      ]);
+      expect(
+        checked.candidates.filter(
+          ({ candidate }) => candidate.category === "heading-structure",
+        ),
+      ).toEqual([]);
+      expect(checked.coverage.map(({ coverage }) => coverage)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            check: "heading-structure",
+            status: "skipped",
+            reason: expect.stringContaining("non-HTML"),
+          }),
+        ]),
+      );
+      for (const mime of ["text/html", "application/xhtml+xml", undefined]) {
+        if (mime) observed.document.contentType = mime;
+        else delete observed.document.contentType;
+        expect(
+          runDeterministicChecks([
+            tuple({ observations: observed, axe }),
+          ]).candidates.filter(
+            ({ candidate }) => candidate.category === "heading-structure",
+          ).length,
+        ).toBeGreaterThan(0);
+      }
+    }
+  },
+);
+
+test("optional document MIME round trips in V1 and V2 while malformed values are rejected", () => {
+  for (const artifact of [observations(), v2Observations([])]) {
+    expect(observationArtifactSchema.parse(artifact)).toEqual(artifact);
+    artifact.document.contentType = "application/json";
+    expect(observationArtifactSchema.parse(artifact)).toEqual(artifact);
+    for (const contentType of ["", "  ", null, 42, {}, []])
+      expect(
+        observationArtifactSchema.safeParse({
+          ...artifact,
+          document: { ...artifact.document, contentType },
+        }).success,
+      ).toBe(false);
+  }
+});
+
+test("a declared 200 expectation capturing 404 remains an expectation-status blocker", () => {
+  const result = runDeterministicChecks([
+    tuple({
+      mismatches: [{ kind: "status", expected: 200, actual: 404 }],
+    }),
+  ]);
+  expect(result.candidates).toContainEqual(
+    expect.objectContaining({
+      candidate: expect.objectContaining({
+        rule: "idiom:expectation-status",
+        severity: "blocker",
+      }),
+    }),
+  );
 });

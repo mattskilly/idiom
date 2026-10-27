@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import type { Rect, VisibilityGeometry } from "./types.js";
+import type { PaintedFact, Rect, VisibilityGeometry } from "./types.js";
 
 type VisibilityQuery = { selector: string; within?: string | undefined };
 type VisibilityResult = {
@@ -9,6 +9,7 @@ type VisibilityResult = {
 };
 
 type VisibilityDom = {
+  painted(element: Element): PaintedFact;
   measure(element: Element, within?: Element): VisibilityGeometry;
   extent(element: Element, stop: Element): Rect | undefined;
   client(element: Element): Rect;
@@ -242,7 +243,102 @@ function installVisibilityDom(
       };
     return { ...base, visible, rendered: true };
   };
+  const painted = (element: Element): PaintedFact => {
+    const hidden = (reason: string, boundary: Element): PaintedFact => ({
+      value: false,
+      reason,
+      boundary: name(boundary),
+    });
+    // Causal hiding comes before layout: closed disclosures can expose phantom boxes.
+    for (
+      let current: Element | null = element;
+      current;
+      current = current.parentElement
+    ) {
+      const style = getComputedStyle(current);
+      if (style.display === "none") return hidden("display-none", current);
+      if (["hidden", "collapse"].includes(style.visibility))
+        return hidden(`visibility-${style.visibility}`, current);
+      if (style.contentVisibility === "hidden")
+        return hidden("content-visibility-hidden", current);
+      // A product is zero iff one factor is zero; multiplication can underflow.
+      if (Number(style.opacity) === 0) return hidden("opacity-0", current);
+      if (
+        current !== element &&
+        current instanceof HTMLDetailsElement &&
+        !current.open
+      ) {
+        const summary = [...current.children].find(
+          (child) => child.tagName === "SUMMARY",
+        );
+        if (!summary?.contains(element))
+          return hidden("closed-details", current);
+      }
+    }
+    let fragments = [...element.getClientRects()]
+      .map(box)
+      .filter((r) => r.width > 0 && r.height > 0);
+    if (fragments.length === 0) return hidden("zero-area", element);
+    let escaping: "absolute" | "fixed" | undefined;
+    for (
+      let current: Element | null = element;
+      current;
+      current = current.parentElement
+    ) {
+      const boundary = current;
+      const style = getComputedStyle(boundary);
+      if (
+        escaping &&
+        (containsFixed(style) ||
+          (escaping === "absolute" && style.position !== "static"))
+      )
+        escaping = undefined;
+      if (!escaping && style.display !== "contents") {
+        // The document scrollport does not bound eligibility to this viewport.
+        if (
+          current !== element &&
+          current !== document.documentElement &&
+          (current !== document.body ||
+            getComputedStyle(document.documentElement).overflowX !==
+              "visible" ||
+            getComputedStyle(document.documentElement).overflowY !==
+              "visible") &&
+          current !== document.scrollingElement
+        ) {
+          const x = ["hidden", "clip", "auto", "scroll"].includes(
+            style.overflowX,
+          );
+          const y = ["hidden", "clip", "auto", "scroll"].includes(
+            style.overflowY,
+          );
+          if (x || y)
+            fragments = fragments.map((r) =>
+              intersect(r, client(boundary), x, y),
+            );
+        }
+        if (
+          (style.clip !== "auto" &&
+            ["absolute", "fixed"].includes(style.position)) ||
+          style.clipPath.startsWith("inset(")
+        )
+          fragments = fragments.map((r) =>
+            intersect(
+              r,
+              paintClip(boundary, box(boundary.getBoundingClientRect())),
+            ),
+          );
+        fragments = fragments.filter((r) => r.width > 0 && r.height > 0);
+        if (fragments.length === 0)
+          return hidden(`clipped-by ${name(current)}`, current);
+      }
+      if (style.position === "fixed") escaping = "fixed";
+      else if (style.position === "absolute" && escaping !== "fixed")
+        escaping = "absolute";
+    }
+    return { value: true };
+  };
   window.__idiomVisibility = {
+    painted,
     measure,
     client,
     extent: (element, stop) => {

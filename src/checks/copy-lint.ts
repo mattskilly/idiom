@@ -1,4 +1,5 @@
 import { copyTermKey, mergeCopyTerms } from "../copy-policy.js";
+import { paintedGate } from "./painted.js";
 import {
   codeTags,
   isVisuallyHidden,
@@ -120,6 +121,50 @@ function words(text: string): string[] {
   return text.split(/\s+/).filter(Boolean);
 }
 
+function normalizedTitle(text: string): string {
+  return text
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^["'“”‘’«»]+\s*|\s*["'“”‘’«»]+$/gu, "");
+}
+
+const titleConnectors = new Set([
+  "at",
+  "of",
+  "the",
+  "for",
+  "on",
+  "in",
+  "and",
+  "to",
+  "a",
+  "an",
+  "by",
+  "with",
+]);
+
+/** Evidence of a name, rather than a blanket exemption for title-case links. */
+function capitalisedName(text: string): boolean {
+  let capitals = 0;
+  for (const word of words(text)) {
+    if (!/^[\p{L}\p{M}]+(?:['’‐‑-][\p{L}\p{M}]+)*$/u.test(word)) return false;
+    if (/^[\p{Lu}\p{Lt}]/u.test(word)) capitals += 1;
+    else if (!titleConnectors.has(word)) return false;
+  }
+  return capitals >= 2;
+}
+
+function pageDestination(href: string | undefined): boolean {
+  const value = href?.trim();
+  if (!value || value.startsWith("#")) return false;
+  try {
+    const url = new URL(value, "https://idiom.invalid/");
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Visible copy that leaks implementation (token names, camelCase keys),
  * stutters ("On primary on primary"), mixes casing among sibling labels, or
@@ -130,6 +175,10 @@ export const copyLintCheck: DeterministicCheck = {
   run({ tuple, config }) {
     const observed = signalledElements(tuple);
     if ("reason" in observed) return unavailable(this.id, observed.reason);
+    const gate = paintedGate(tuple, [
+      "idiom:mixed-label-casing",
+      "idiom:mixed-locale-spelling",
+    ]);
     const candidates: FindingCandidate[] = [];
     const seen = new Set<string>();
     const report = (
@@ -205,6 +254,98 @@ export const copyLintCheck: DeterministicCheck = {
         `\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
       ),
     }));
+    const properNouns = (config.copy.properNouns ?? []).map(
+      (noun) =>
+        new RegExp(
+          `(?<![\\p{L}\\p{N}])${noun.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`,
+          "gu",
+        ),
+    );
+    const comparedWords = (text: string): string[] => {
+      const named = properNouns.flatMap((pattern) =>
+        [...text.matchAll(pattern)].map(
+          (match) => [match.index, match.index + match[0].length] as const,
+        ),
+      );
+      return [...text.matchAll(/\S+/g)]
+        .slice(1)
+        .filter(
+          (match) =>
+            !named.some(
+              ([start, end]) =>
+                match.index < end && match.index + match[0].length > start,
+            ),
+        )
+        .map((match) => match[0]);
+    };
+    const maskProperNouns = (text: string): string =>
+      properNouns.reduce(
+        (masked, pattern) =>
+          masked.replace(pattern, (match) => " ".repeat(match.length)),
+        text,
+      );
+    // Every observed element, not just signalled ones, so ancestors resolve.
+    const byPath = new Map(
+      (tuple.observations?.version === 2
+        ? tuple.observations.elements
+        : []
+      ).map((element) => [element.structuralPath, element]),
+    );
+    const ancestry = (path: string) => {
+      const chain = [];
+      for (
+        let end = path.length;
+        end > 0;
+        end = path.lastIndexOf("/", end - 1)
+      ) {
+        const element = byPath.get(path.slice(0, end));
+        if (element !== undefined) chain.push(element);
+      }
+      return chain;
+    };
+    const anchorEvidence = (path: string) => {
+      const chain = ancestry(path);
+      const anchorIndex = chain.findIndex((element) => element.tag === "a");
+      const anchor = chain[anchorIndex];
+      if (anchor === undefined || !pageDestination(anchor.signals?.href))
+        return undefined;
+      // Full anchor text also covers a title split across inline descendants.
+      return {
+        label: normalizedTitle(anchor.text),
+        title: normalizedTitle(
+          anchor.signals?.title ?? anchor.attributes.title ?? "",
+        ),
+        cited: chain
+          .slice(anchorIndex + 1)
+          .some((element) => element.tag === "cite"),
+      };
+    };
+    const linkedName = (path: string): boolean => {
+      const evidence = anchorEvidence(path);
+      if (evidence === undefined || !capitalisedName(evidence.label))
+        return false;
+      return (
+        (evidence.title !== "" && evidence.title === evidence.label) ||
+        evidence.cited
+      );
+    };
+    // A link naming a titled page keeps that page's own spelling: title
+    // metadata repeating a label of two or more words (case-insensitively, so
+    // sentence-case article titles count), <cite> ancestry, or a capitalised
+    // name whose title names the destination ("Royal College of Art (London)").
+    // Single-word and untitled links stay reportable as UI strings.
+    const linkedTitle = (path: string): boolean => {
+      const evidence = anchorEvidence(path);
+      if (evidence === undefined) return false;
+      return (
+        evidence.cited ||
+        (evidence.title !== "" &&
+          words(evidence.label).length >= 2 &&
+          evidence.title.toLocaleLowerCase() ===
+            evidence.label.toLocaleLowerCase()) ||
+        (evidence.title !== "" && capitalisedName(evidence.label))
+      );
+    };
     const usage = new Map<string, { gb: string[]; us: string[] }>();
     for (const element of copy) {
       const text = element.directText.replace(/\s+/g, " ").trim();
@@ -281,12 +422,19 @@ export const copyLintCheck: DeterministicCheck = {
             `"${text}" (${element.selector}) exposes the internal schema word "${entry.word}".`,
             `${element.selector} describes the thing in product language, not as "${entry.word}".`,
           );
+      const localeEligible =
+        gate.allows("idiom:mixed-locale-spelling", element) &&
+        !linkedTitle(element.structuralPath);
+      // Declared proper nouns keep their own spelling ("Centre Pompidou");
+      // the reported text stays whole so wording and fingerprints hold.
+      const localeText = maskProperNouns(text);
       for (const [gb, us] of localePairs) {
+        if (!localeEligible) continue;
         if (config.copy.locale !== undefined) {
           const preferred = preferredSpelling(config.copy.locale, gb, us);
           if (preferred === undefined) continue;
           const incorrect = preferred === gb ? us : gb;
-          const match = text.match(new RegExp(`\\b${incorrect}\\b`, "i"));
+          const match = localeText.match(new RegExp(`\\b${incorrect}\\b`, "i"));
           if (match) {
             const replacement = matchCase(match[0], preferred);
             report(
@@ -305,7 +453,7 @@ export const copyLintCheck: DeterministicCheck = {
           continue;
         }
         const pairKey = us;
-        const lower = text.toLowerCase();
+        const lower = localeText.toLowerCase();
         const found = (word: string) => new RegExp(`\\b${word}\\b`).test(lower);
         const record = usage.get(pairKey) ?? { gb: [], us: [] };
         if (found(gb)) record.gb.push(`${element.selector}|${gb}|${text}`);
@@ -340,49 +488,6 @@ export const copyLintCheck: DeterministicCheck = {
     // (checks.copy.properNouns, matched case-sensitively) drop out of the
     // comparison, and so does an item marked data-idiom-name in a list or
     // grid collection: a picker of pattern names is a list of names.
-    const properNouns = (config.copy.properNouns ?? []).map(
-      (noun) =>
-        new RegExp(
-          `(?<![\\p{L}\\p{N}])${noun.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`,
-          "gu",
-        ),
-    );
-    const comparedWords = (text: string): string[] => {
-      const named = properNouns.flatMap((pattern) =>
-        [...text.matchAll(pattern)].map(
-          (match) => [match.index, match.index + match[0].length] as const,
-        ),
-      );
-      return [...text.matchAll(/\S+/g)]
-        .slice(1)
-        .filter(
-          (match) =>
-            !named.some(
-              ([start, end]) =>
-                match.index < end && match.index + match[0].length > start,
-            ),
-        )
-        .map((match) => match[0]);
-    };
-    // Every observed element, not just signalled ones, so ancestors resolve.
-    const byPath = new Map(
-      (tuple.observations?.version === 2
-        ? tuple.observations.elements
-        : []
-      ).map((element) => [element.structuralPath, element]),
-    );
-    const ancestry = (path: string) => {
-      const chain = [];
-      for (
-        let end = path.length;
-        end > 0;
-        end = path.lastIndexOf("/", end - 1)
-      ) {
-        const element = byPath.get(path.slice(0, end));
-        if (element !== undefined) chain.push(element);
-      }
-      return chain;
-    };
     const collectionRoles = new Set([
       "list",
       "listitem",
@@ -420,6 +525,8 @@ export const copyLintCheck: DeterministicCheck = {
         continue;
       if (element.styles.textTransform !== "none") continue;
       if (namedInCollection(element.structuralPath)) continue;
+      if (!gate.allows("idiom:mixed-label-casing", element)) continue;
+      if (linkedName(element.structuralPath)) continue;
       const key = [
         element.stableIslandPath,
         element.tag,
@@ -459,6 +566,6 @@ export const copyLintCheck: DeterministicCheck = {
           );
       }
     }
-    return ran(this.id, candidates);
+    return gate.result(ran(this.id, candidates));
   },
 };

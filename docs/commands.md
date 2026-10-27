@@ -109,9 +109,12 @@ idiom capture site
 ```
 
 Interactive `idiom init` also offers route generation; plain init with
-non-interactive stdin skips the offer. Accepting it discovers Next.js App/Pages routes, `/sitemap.xml` (including sitemap indexes), and rendered
+non-interactive stdin skips the offer. Accepting it discovers Next.js App/Pages routes, Astro pages (`.astro`, `.md`,
+`.mdx`, `.html`), `/sitemap.xml` (including sitemap indexes), and rendered
 same-origin links, with at most 30 page paths admitted by the link crawl. Sitemap
-and filesystem routes are independent of that cap. It writes
+and filesystem routes are independent of that cap. Filesystem discovery skips
+underscore-prefixed files and directories, declarations and non-page modules
+such as Astro endpoints. It writes
 `.idiom/flows/site.json`, using the project's viewport names and colour schemes.
 `--flows --yes` preserves a differing existing site flow; rerun interactively to
 approve replacing that file. Other authored flows are preserved. For projects
@@ -120,9 +123,12 @@ automatically.
 
 Generation visits the configured running local app; it does not build or start
 it, execute setup, or call a model. Offline discovery still produces filesystem
-states and explicit unverified notes. Dynamic templates need an observed,
+states and explicit unverified notes. Confirmed live failures, including HTTP
+404 and non-HTML responses, are omitted from states and retained as diagnostic
+TODOs with their sources and reasons. Dynamic templates need an observed,
 verified example URL; unresolved templates are TODOs in `intent` and init output,
-never literal bracket URLs. Redirects to login produce states at their original
+never literal bracket URLs. Redirects to successful HTML login destinations
+produce states at their original
 URLs, with `TODO: requires setup` descriptions and instructions in `intent`.
 Add your real authentication or fixture command to the flow's `setup` array,
 then validate and capture again. Generated `expect.path` guards fail capture if

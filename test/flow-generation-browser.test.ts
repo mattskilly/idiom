@@ -411,3 +411,174 @@ test("short navigation timeout is specific and an overall deadline closes the re
     await f.close();
   }
 }, 15_000);
+
+test("init --flows omits actual non-HTML documents, including filesystem and settled redirects", async () => {
+  const f = await fixture();
+  try {
+    const endpoint = join(f.directory, "src/pages/og.png.ts");
+    await mkdir(join(endpoint, ".."), { recursive: true });
+    await writeFile(endpoint, "// filesystem image endpoint");
+    const config = join(f.directory, ".idiom/project.json");
+    const raw = JSON.parse(await readFile(config, "utf8"));
+    raw.server.readyUrl = `${f.origin}/mime-index`;
+    raw.capture.settleMs = 1_000;
+    await writeFile(config, JSON.stringify(raw));
+    const { project } = await validateProjectConfiguration({
+      project: f.directory,
+    });
+    const live = await openFlowBrowser(project);
+    try {
+      for (const path of [
+        "og.png",
+        "image",
+        "data",
+        "feed",
+        "mime-redirect",
+        "mime-client",
+      ])
+        expect(await live.inspect(`${f.origin}/${path}`)).toMatchObject({
+          html: false,
+          status: 200,
+        });
+      expect(await live.inspect(`${f.origin}/no-h1`)).toMatchObject({
+        html: true,
+      });
+    } finally {
+      await live.close();
+    }
+    await initProject({ project: f.directory, flows: true, yes: true });
+    const generated = flowSchema.parse(
+      JSON.parse(
+        await readFile(join(f.directory, ".idiom/flows/site.json"), "utf8"),
+      ),
+    );
+    const urls = generated.states.map((state) => state.url);
+    expect(urls).toEqual(expect.arrayContaining(["/mime-index", "/no-h1"]));
+    for (const path of [
+      "og.png",
+      "image",
+      "data",
+      "feed",
+      "mime-redirect",
+      "mime-client",
+    ])
+      expect(urls).not.toContain(`/${path}`);
+    expect(generated.intent.join(" ")).toContain("non-HTML");
+    expect(generated.intent.join(" ")).toContain("src/pages/og.png.ts");
+  } finally {
+    await f.close();
+  }
+}, 40_000);
+
+test("init --flows omits confirmed 404s and private Astro sources; authored 200 still fails", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(join(f.directory, ".fixture-status"), "");
+    await writeFile(
+      join(f.directory, "package.json"),
+      JSON.stringify({ dependencies: { astro: "*" } }),
+    );
+    for (const file of [
+      "src/pages/status-index.astro",
+      "src/pages/missing-filesystem.astro",
+      "src/pages/archives/_utils/getPostsByGroupCondition.ts",
+      "src/pages/archives/_utils/deep/helper.astro",
+      "src/pages/helper.ts",
+      "src/pages/Widget.tsx",
+    ]) {
+      await mkdir(join(f.directory, file, ".."), { recursive: true });
+      await writeFile(join(f.directory, file), "");
+    }
+    const config = join(f.directory, ".idiom/project.json");
+    const raw = JSON.parse(await readFile(config, "utf8"));
+    raw.server.readyUrl = `${f.origin}/status-index`;
+    raw.capture.settleMs = 1_000;
+    raw.viewports = [raw.viewports[0]];
+    raw.colorSchemes = ["light"];
+    await writeFile(config, JSON.stringify(raw));
+    const { project } = await validateProjectConfiguration({
+      project: f.directory,
+    });
+    const live = await openFlowBrowser(project);
+    try {
+      for (const path of ["missing-direct", "http-missing", "client-missing"])
+        expect(await live.inspect(`${f.origin}/${path}`)).toMatchObject({
+          status: 404,
+          html: true,
+        });
+      expect(await live.inspect(`${f.origin}/resource-control`)).toMatchObject({
+        status: 200,
+        html: true,
+      });
+    } finally {
+      await live.close();
+    }
+    await initProject({ project: f.directory, flows: true, yes: true });
+    const generated = flowSchema.parse(
+      JSON.parse(
+        await readFile(join(f.directory, ".idiom/flows/site.json"), "utf8"),
+      ),
+    );
+    expect(generated.states.map((s) => s.url)).toEqual([
+      "/_public/utils/private",
+      "/resource-control",
+      "/status-index",
+    ]);
+    expect(generated.intent.join(" ")).toContain("HTTP 404");
+    expect(generated.intent.join(" ")).toContain(
+      "src/pages/missing-filesystem.astro",
+    );
+    expect(generated.intent.join(" ")).toContain("/missing-sitemap");
+    expect(generated.intent.join(" ")).not.toContain("requires setup");
+    await writeFile(
+      join(f.directory, ".idiom/flows/authored.json"),
+      JSON.stringify({
+        id: "authored",
+        title: "Authored 200 expectation",
+        intent: [],
+        setup: [],
+        states: [
+          {
+            id: "missing",
+            description: "Explicit expectation",
+            url: "/missing-direct",
+            expect: { status: 200 },
+          },
+        ],
+      }),
+    );
+    await exec("git", ["init", "-q"], { cwd: f.directory });
+    await exec("git", ["add", "."], { cwd: f.directory });
+    await exec(
+      "git",
+      [
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.test",
+        "commit",
+        "-qm",
+        "Fixture",
+      ],
+      { cwd: f.directory },
+    );
+    const capture = await captureCommand({
+      project: f.directory,
+      flow: "authored",
+    });
+    expect(capture.counts.failed).toBe(1);
+    const metadata = JSON.parse(
+      await readFile(
+        join(capture.runDirectory, "missing/wide/metadata.json"),
+        "utf8",
+      ),
+    );
+    expect(metadata.expectations.mismatches).toContainEqual({
+      kind: "status",
+      expected: 200,
+      actual: 404,
+    });
+  } finally {
+    await f.close();
+  }
+}, 40_000);

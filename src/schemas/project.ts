@@ -692,6 +692,7 @@ const projectInputSchema = z
         reducedMotion: z.boolean().default(true),
         fullPage: z.boolean().default(true),
         settleMs: z.number().default(250),
+        animationSettleMs: z.number().finite().nonnegative().default(1500),
         maxMinutes: z.number().finite().positive().default(30),
         /**
          * Capture lanes (one per viewport and colour scheme) run at once.

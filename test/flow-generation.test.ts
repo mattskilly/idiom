@@ -271,6 +271,9 @@ test("auth redirects preserve requested paths, public redirects retain actual pa
     false,
   );
   expect(generated.todos.join(" ")).toContain("off-origin");
+  expect(generated.todos.join(" ")).toContain(
+    "/p/bad: not a successful HTML page (HTTP 404)",
+  );
 });
 
 test("overall deadline closes the inspector and preserves static routes", async () => {
@@ -288,6 +291,7 @@ test("overall deadline closes the inspector and preserves static routes", async 
   expect(found.routes[0]?.reason).toContain("unavailable");
   expect(found.warnings.join(" ")).toContain("overall time limit");
   expect(live.close).toHaveBeenCalledOnce();
+  expectUnverified(found, "/known");
 });
 
 test("unavailable origin stops repeated probes and does not invent a root route", async () => {
@@ -300,6 +304,7 @@ test("unavailable origin stops repeated probes and does not invent a root route"
   expect(live.inspect).toHaveBeenCalledOnce();
   expect(found.routes.map((r) => r.route)).toEqual(["/offline"]);
   expect(found.warnings.join(" ")).toContain("unavailable");
+  expectUnverified(found, "/offline");
 });
 
 test("surface selection validates legacy, single and multi-surface projects", () => {
@@ -630,4 +635,241 @@ test("more specific dynamic patterns own examples before broader fallbacks", asy
   );
   expect(found.routes.find((r) => r.route === "/p/[id]")?.path).toBe("/p/a");
   expect(found.routes.find((r) => r.route === "/[...parts]")?.path).toBe("/z");
+});
+
+test("confirmed non-HTML responses become TODOs across filesystem, sitemap, crawl and redirects", async () => {
+  const paths = [
+    "/og.png",
+    "/image",
+    "/feed",
+    "/data",
+    "/redirect",
+    "/login-image",
+  ];
+  const live = inspector(
+    {
+      "/": result("/", { links: paths }),
+      ...Object.fromEntries(
+        paths.map((path) => [
+          path,
+          result(path, {
+            html: false,
+            ...(path === "/redirect" ? { finalUrl: `${origin}/image` } : {}),
+            ...(path === "/login-image"
+              ? { finalUrl: `${origin}/login`, password: true }
+              : {}),
+          }),
+        ]),
+      ),
+    },
+    [`${origin}/feed`],
+  );
+  const found = await discover(live, [
+    { route: "/og.png", source: "src/pages/og.png.ts" },
+  ]);
+  const generated = constructSiteFlow(project, found);
+  expect(
+    flowSchema
+      .parse(JSON.parse(generated.content ?? ""))
+      .states.map((s) => s.url),
+  ).toEqual(["/"]);
+  for (const path of paths) {
+    expect(found.routes.find((r) => r.route === path)).toMatchObject({
+      reason: expect.stringContaining("non-HTML"),
+    });
+    expect(found.routes.find((r) => r.route === path)?.path).toBeUndefined();
+  }
+  expect(generated.todos.join(" ")).toContain("src/pages/og.png.ts");
+  expect(found.routes.find((r) => r.route === "/feed")?.sources).toContain(
+    `${origin}/sitemap.xml`,
+  );
+});
+
+test("non-HTML ready pages produce a valid empty flow with TODO provenance", async () => {
+  const found = await discover(
+    inspector({ "/": result("/", { html: false }) }),
+  );
+  const generated = constructSiteFlow(project, found);
+  expect(generated.stateCount).toBe(0);
+  expect(flowSchema.parse(JSON.parse(generated.content ?? "")).states).toEqual(
+    [],
+  );
+  expect(generated.todos.join(" ")).toContain("non-HTML");
+});
+
+test("dynamic templates choose HTML examples and unavailable static inspections retain fallback", async () => {
+  const found = await discover(
+    inspector({
+      "/": result("/", { links: ["/post/a", "/post/z"] }),
+      "/post/a": result("/post/a", { html: false }),
+      "/timeout": result("/timeout", {
+        html: false,
+        status: undefined,
+        error: "Timeout",
+      }),
+    }),
+    [
+      { route: "/post/[id]", source: "pages/post/[id].tsx" },
+      { route: "/timeout", source: "pages/timeout.tsx" },
+    ],
+  );
+  expect(found.routes.find((r) => r.route === "/post/[id]")?.path).toBe(
+    "/post/z",
+  );
+  expectUnverified(found, "/timeout");
+  expect(found.routes.find((r) => r.route === "/timeout")).toMatchObject({
+    path: "/timeout",
+    reason: "Timeout",
+  });
+});
+
+function expectUnverified(
+  found: Parameters<typeof constructSiteFlow>[1],
+  path: string,
+) {
+  const generated = constructSiteFlow(project, found);
+  const flow = flowSchema.parse(JSON.parse(generated.content ?? ""));
+  expect(flow.states.find((s) => s.url === path)).toMatchObject({
+    expect: { status: 200, path },
+    description: expect.stringContaining("unverified"),
+  });
+  expect(flow.intent.join(" ")).toContain(`Unverified ${path}`);
+}
+
+test("confirmed HTML failures are omitted across sources and missing login redirects", async () => {
+  const paths = [
+    "/missing",
+    "/login-redirect",
+    "/password-redirect",
+    "/error-race",
+    "/post/bad",
+  ];
+  const found = await discover(
+    inspector(
+      {
+        "/": result("/", {
+          links: [...paths, "/post/good", "/_public/utils/private"],
+        }),
+        "/missing": result("/missing", { status: 404 }),
+        "/login-redirect": result("/login", { status: 404 }),
+        "/password-redirect": result("/unknown", {
+          status: 404,
+          password: true,
+        }),
+        "/error-race": result("/error-race", {
+          status: 404,
+          error: "inspection interrupted",
+        }),
+        "/post/bad": result("/post/bad", { status: 404 }),
+      },
+      [`${origin}/missing`, `${origin}/post/bad`],
+    ),
+    [
+      { route: "/missing", source: "pages/missing.tsx" },
+      { route: "/missing", source: "apps/web/pages/missing.tsx" },
+      { route: "/post/[id]", source: "pages/post/[id].tsx" },
+    ],
+  );
+  const generated = constructSiteFlow(project, found);
+  const flow = flowSchema.parse(JSON.parse(generated.content ?? ""));
+  const urls = flow.states.map((s) => s.url);
+  expect(urls).toEqual(["/", "/_public/utils/private", "/post/good"]);
+  expect(generated.setup).toEqual([]);
+  for (const path of paths.filter((p) => p !== "/post/bad")) {
+    expect(found.routes.find((r) => r.route === path)).toMatchObject({
+      rejected: true,
+      reason: expect.stringContaining("404"),
+    });
+    expect(generated.todos.join(" ")).toContain(path);
+  }
+  expect(found.routes.find((r) => r.route === "/missing")?.sources).toEqual(
+    expect.arrayContaining([
+      "pages/missing.tsx",
+      "apps/web/pages/missing.tsx",
+      `${origin}/sitemap.xml`,
+      `${origin}/`,
+    ]),
+  );
+  expect(flow.intent.join(" ")).toContain("HTTP 404");
+  expect(flow.intent.join(" ")).toContain("pages/missing.tsx");
+});
+
+test("generation boundary omits rejected records but preserves unverified concrete states", () => {
+  const generated = constructSiteFlow(project, {
+    routes: [
+      {
+        route: "/bad",
+        path: "/bad",
+        sources: ["pages/bad.ts"],
+        reason: "HTTP 404",
+        rejected: true,
+      },
+      {
+        route: "/unknown",
+        path: "/unknown",
+        sources: ["pages/unknown.ts"],
+        reason: "inspection unavailable",
+      },
+    ],
+    warnings: [],
+  });
+  expect(generated.routeCount).toBe(2);
+  expect(generated.stateCount).toBe(1);
+  expectUnverified(
+    {
+      routes: [
+        { route: "/unknown", path: "/unknown", sources: [], reason: "unknown" },
+      ],
+      warnings: [],
+    },
+    "/unknown",
+  );
+  const flow = flowSchema.parse(JSON.parse(generated.content ?? ""));
+  expect(flow.states.map((s) => s.url)).toEqual(["/unknown"]);
+  expect(flow.intent.join(" ")).toContain("HTTP 404");
+  expect(JSON.stringify(flow.states)).not.toContain("rejected");
+});
+
+test.each([
+  { status: undefined, html: false, error: "Timeout" },
+  { status: undefined, html: false },
+  { status: undefined, html: true, finalUrl: `${origin}/login` },
+])(
+  "unknown inspection retains unverified filesystem states: %j",
+  async (changes) => {
+    const found = await discover(
+      inspector({ "/known": result("/known", changes) }),
+      [{ route: "/known", source: "pages/known.ts" }],
+    );
+    expect(
+      found.routes.find((r) => r.route === "/known")?.rejected,
+    ).toBeUndefined();
+    expectUnverified(found, "/known");
+  },
+);
+
+test("failure to open a stopped server retains filesystem fallback", async () => {
+  const found = await discoverFlowRoutes({
+    directory: ".",
+    entries: [{ route: "/known", source: "pages/known.ts" }],
+    readyUrl: origin,
+    exclude: [],
+    open: async () => {
+      throw new Error("connection refused");
+    },
+  });
+  expectUnverified(found, "/known");
+});
+
+test("a confirmed 404 ready page produces a valid diagnostic-only flow", async () => {
+  const found = await discover(
+    inspector({ "/": result("/", { status: 404 }) }),
+  );
+  const generated = constructSiteFlow(project, found);
+  expect(generated.routeCount).toBe(1);
+  expect(generated.stateCount).toBe(0);
+  expect(flowSchema.parse(JSON.parse(generated.content ?? "")).states).toEqual(
+    [],
+  );
+  expect(generated.todos.join(" ")).toContain("HTTP 404");
 });

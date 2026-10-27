@@ -297,7 +297,7 @@ test("real benchmark quick/check/issue expose ranked complete findings and the a
 }, 180000);
 
 const page = (size: number, extra = "") =>
-  `<!doctype html><html lang="en"><head><title>Repair</title><style>body{background:#fff;color:#111;font:16px sans-serif;margin:32px}button{width:${size}px;height:${size}px;padding:0;border:0;font-size:10px}main{width:300px}</style></head><body><main><h1>Repair</h1><button id="target" aria-label="Toggle" onclick="this.setAttribute('aria-pressed',this.getAttribute('aria-pressed')!=='true')">+</button>${extra}</main></body></html>`;
+  `<!doctype html><html lang="en"><head><title>Repair</title><style>body{background:#fff;color:#111;font:16px sans-serif;margin:32px}button{width:${size}px;height:${size}px;padding:0;border:0;font-size:10px}main{width:300px}</style></head><body><main><h1>Repair</h1><span style="display:inline-flex;align-items:center;gap:4px"><button id="target" aria-label="Toggle" onclick="this.setAttribute('aria-pressed',this.getAttribute('aria-pressed')!=='true')">+</button><button aria-label="Neighbor" style="width:44px;height:44px"></button></span>${extra}</main></body></html>`;
 
 test("baseline bootstrap, exact fix prompt and calibrated full-flow handoff preserve original identities across checks", async () => {
   const { client, project } = await configured(page(12), ["editor", "other"]);
@@ -393,7 +393,7 @@ test("baseline bootstrap, exact fix prompt and calibrated full-flow handoff pres
     join(project, "other.html"),
     page(
       48,
-      '<button id="introduced" style="width:10px;height:10px" aria-label="Small">x</button><div style="width:1500px">Overflow</div>',
+      '<span style="display:inline-flex;align-items:center;gap:4px"><button id="introduced" style="width:10px;height:10px" aria-label="Small">x</button><button aria-label="Neighbor introduced" style="width:44px;height:44px"></button></span><div style="width:1500px">Overflow</div>',
     ),
   );
   const regressed = toolData<{

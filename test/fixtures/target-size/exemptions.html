@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Target label regions</title>
+<style>
+html { overflow-x: hidden; }
+body { margin: 30px; font: 16px/20px sans-serif; }
+.row { position: relative; height: 100px; }
+input { appearance: none; box-sizing: border-box; width: 12px; height: 12px; margin: 0; border: 1px solid; }
+label { display: inline-block; width: 100px; height: 30px; background: #eee; }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); }
+.clip { position: absolute; left:30px; top:0; width:10px; height:10px; overflow:hidden; }
+</style>
+<div class="row"><input id="explicit" type="radio"><label id="explicit-label" for="explicit" tabindex="0">Explicit</label><button>Neighbor</button></div>
+<div class="row"><label id="wrapping-label"><input id="wrapping" type="checkbox"> Wrapping</label></div>
+<div class="row"><input id="multiple" type="checkbox"><label for="multiple" id="first">First</label><label for="multiple" id="second">Second</label></div>
+<div class="row"><input id="small" type="radio"><label for="small" style="width:10px;height:10px">S</label><button>Neighbor</button></div>
+<div class="row"><input id="hidden" type="radio"><label for="hidden" style="display:none">Hidden</label></div>
+<div class="row"><input id="pointer" type="checkbox"><label for="pointer" style="pointer-events:none">Pointer</label></div>
+<div class="row"><input id="clipped" type="checkbox"><span class="clip"><label id="clipped-label" for="clipped">Clipped</label></span></div>
+<div class="row"><input id="wrong" type="radio"><label for="absent">Wrong owner</label></div>
+<div class="row"><input id="sr" type="radio"><label for="sr" class="sr">Screen reader</label></div>
+<div class="row"><input id="disabled" type="checkbox" disabled><label for="disabled">Disabled</label></div>
+<div class="row"><input id="transformed" type="radio"><label for="transformed" style="transform:rotate(30deg)">Rotated</label></div>
+<div class="row"><input id="clip-path" type="radio"><label for="clip-path" style="clip-path:circle(5px)">Clip path</label></div>
+<div class="row"><input id="distant" type="checkbox"><label for="distant" id="distant-label" style="margin-left:150px;width:12px;height:12px">D</label></div>
+<div class="row"><input id="nested" type="checkbox"><label for="nested" id="nested-label" style="width:100px;height:44px"><a id="terms" href="#terms" style="display:inline-block;width:80px;height:44px">Terms</a></label></div>
+<div class="row" style="width:90px"><input id="wrapped" type="checkbox"><label for="wrapped" id="wrapped-label" style="display:inline;background:none">Wrap these words over several lines</label></div>
+<details><summary>Closed</summary><label for="closed">Hidden disclosure</label></details><input id="closed" type="checkbox">
+<div style="margin-top:1000px"><input id="below" type="radio"><label for="below" id="below-label">Below fold</label></div>
+<input id="reassigned" type="radio"><input id="new-owner" type="radio"><label id="reassigned-label" for="reassigned">Reassigned</label>
+<script>document.querySelector('#reassigned-label').htmlFor='new-owner';</script>
+</html>

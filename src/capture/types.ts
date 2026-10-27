@@ -1,6 +1,9 @@
 import type { InferredComponent } from "../checks/design-components.js";
 import type { TokenDeclarations } from "../checks/observe.js";
-import type { ObservationArtifact } from "../checks/types.js";
+import type {
+  ObservationArtifact,
+  ScreenshotGeometry,
+} from "../checks/types.js";
 import type { ElectronFlow, ElectronFlowState, Flow } from "../schemas/flow.js";
 import type { EffectiveInvariant } from "../schemas/invariant.js";
 import type { ColorScheme, Project } from "../schemas/project.js";
@@ -73,6 +76,8 @@ export type TupleCapture = {
   status: number | null;
   dom: string;
   screenshot: Buffer;
+  /** How `screenshot` was taken; absent when a reused shot carried none. */
+  screenshotGeometry?: ScreenshotGeometry | undefined;
   console: ConsoleRecord[];
   axe: unknown;
   observations?: ObservationArtifact | undefined;
@@ -102,6 +107,7 @@ export type TupleFailure = {
   status?: number | null | undefined;
   dom?: string | undefined;
   screenshot?: Buffer | undefined;
+  screenshotGeometry?: ScreenshotGeometry | undefined;
   console: ConsoleRecord[];
   axe?: unknown;
   observations?: ObservationArtifact | undefined;
@@ -117,6 +123,7 @@ export type BrowserTuple = CaptureHooks & {
   shell?: string | undefined;
   /** Reuse an equal-layout screenshot while collecting this tuple's own evidence. */
   reuseScreenshot?: Buffer | undefined;
+  reuseScreenshotGeometry?: ScreenshotGeometry | undefined;
   invariants?: EffectiveInvariant[] | undefined;
   project: Project;
   state: FlowState;

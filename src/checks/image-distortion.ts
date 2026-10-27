@@ -1,4 +1,5 @@
 import { defaultChecksSettings } from "../schemas/project.js";
+import { paintedGate } from "./painted.js";
 import {
   scanResult,
   skipped,
@@ -6,7 +7,21 @@ import {
   v2Observations,
   verify,
 } from "./shared.js";
-import type { DeterministicCheck, FindingCandidate } from "./types.js";
+import type {
+  DeterministicCheck,
+  FindingCandidate,
+  ImageRenderObservation,
+} from "./types.js";
+
+const minVisibleDistortionPx = 1;
+
+/** Pixels off on either axis after the best proportional scaling of the source. */
+export function distortionPixelError(record: ImageRenderObservation): number {
+  const { width: w, height: h } = record.rendered;
+  const { naturalWidth: W, naturalHeight: H } = record;
+  if (!(w > 0 && h > 0 && W > 0 && H > 0)) return 0;
+  return Math.abs(w * H - h * W) / (W + H);
+}
 
 export const imageDistortionCheck: DeterministicCheck = {
   id: "image-distortion",
@@ -20,12 +35,15 @@ export const imageDistortionCheck: DeterministicCheck = {
         "image render evidence is unavailable (recapture with this version)",
       );
     const seen = new Set<string>();
+    const gate = paintedGate(tuple, ["idiom:image-distorted"]);
     const candidates: FindingCandidate[] = scan.records
+      .filter((record) => gate.allows("idiom:image-distorted", record.selector))
       .filter(
         (record) =>
           !record.broken &&
           record.objectFit === "fill" &&
           record.distortion > settings.distortionTolerance &&
+          distortionPixelError(record) >= minVisibleDistortionPx &&
           !seen.has(record.selector) &&
           seen.add(record.selector) !== undefined,
       )
@@ -47,6 +65,6 @@ export const imageDistortionCheck: DeterministicCheck = {
           }),
         };
       });
-    return scanResult(this.id, candidates, scan);
+    return gate.result(scanResult(this.id, candidates, scan));
   },
 };

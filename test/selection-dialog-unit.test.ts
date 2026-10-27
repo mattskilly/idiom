@@ -4,7 +4,10 @@ import { dialogShellCheck } from "../src/checks/dialog-shell.js";
 import { checksConfigFrom } from "../src/checks/registry.js";
 import { selectedStateCheck } from "../src/checks/selected-state.js";
 import { colorDelta } from "../src/checks/shared.js";
-import type { ObservationArtifactV2 } from "../src/checks/types.js";
+import type {
+  ObservationArtifactV2,
+  ObservedElementV2,
+} from "../src/checks/types.js";
 import { invariantObservations, invariantTuple } from "./invariant-support.js";
 
 const run = (observations: ObservationArtifactV2) =>
@@ -88,3 +91,75 @@ test("the artifact schema accepts the new signals and rejects unknown member key
     observationArtifactSchema.safeParse(invariantObservations()).success,
   ).toBe(true);
 });
+
+// Only the display/state fields consumed by this check are needed here;
+// full captured observations are schema-checked in the browser regressions.
+const selectionObservation = (
+  selected: boolean[],
+  cue = "rgb(255, 255, 255)",
+  source: "checked" | "aria-checked" = "checked",
+): ObservationArtifactV2 => ({
+  ...invariantObservations(),
+  elements: selected.map(
+    (_, index) =>
+      ({
+        selector: `#c${index}`,
+        visible: true,
+        outOfFlow: false,
+        attributes: { [source]: "" },
+      }) as ObservedElementV2,
+  ),
+  selectionGroups: [
+    {
+      container: "#checks",
+      role: "group",
+      memberRole: "checkbox",
+      single: false,
+      members: selected.map((value, index) => ({
+        selector: `#c${index}`,
+        control: `#c${index}`,
+        selected: value,
+        source,
+        nativeIndicator: false,
+        decoration: {
+          "indicator0.self.bg": value ? cue : "rgb(255, 255, 255)",
+        },
+      })),
+    },
+  ],
+});
+
+test.each(["checked", "aria-checked"] as const)(
+  "checkbox %s permits zero or multiple selection",
+  (source) => {
+    for (const selected of [
+      [false, false],
+      [true, true],
+      [true, true, false],
+    ]) {
+      const result = run(
+        selectionObservation(selected, "rgb(0, 0, 0)", source),
+      )[0];
+      expect(result?.candidates).toEqual([]);
+    }
+  },
+);
+
+test.each([
+  { cue: "rgb(255, 255, 255)", invisible: true },
+  { cue: "rgb(250, 250, 250)", invisible: true },
+  { cue: "rgb(0, 0, 0)", invisible: false },
+])(
+  "supplemental indicator colour $cue respects the existing threshold and legacy fallback",
+  ({ cue, invisible }) => {
+    const observations = selectionObservation([true, false], cue);
+    expect(run(observations)[0]?.candidates.map(({ rule }) => rule)).toEqual(
+      invisible ? ["idiom:selected-state-invisible"] : [],
+    );
+    for (const member of observations.selectionGroups?.[0]?.members ?? [])
+      member.paintedDecoration = { "indicator0.self.bg": "rgb(255, 255, 255)" };
+    expect(run(observations)[0]?.candidates.map(({ rule }) => rule)).toEqual([
+      "idiom:selected-state-invisible",
+    ]);
+  },
+);

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>One-sided label decoration</title>
+    <style>
+      body { margin: 24px; font: 16px/32px system-ui, sans-serif; color: #1b1f24; }
+      #section-heading { border-bottom: 1px solid #a2a9b1; padding: 12px 0 4px; }
+      #total-row { border-top: 1px solid #e5e7eb; padding-top: 16px; margin-top: 24px; }
+      a { display: inline-block; color: inherit; text-decoration: none; margin-right: 24px; }
+      #all-events { border-bottom: 3px solid #facc15; padding-bottom: 4px; }
+      #tag { border-bottom: 2px dashed currentColor; padding-bottom: 6px; }
+      #underline-off { display: flex; align-items: flex-start; height: 40px; box-sizing: border-box; border-bottom: 2px solid #333; padding: 0; line-height: 20px; margin-top: 24px; }
+      #filled-pad { display: inline-block; background: #eef1ff; border-radius: 14px; height: 28px; box-sizing: border-box; padding: 6px 12px 0; line-height: 22px; margin-top: 24px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div id="section-heading">Etymology</div>
+      <div id="total-row">Total Pipeline Value</div>
+      <a id="all-events" href="#events">All events</a>
+      <a id="tag" href="#configuration">configuration</a>
+      <div id="underline-off">Off centre</div>
+      <span id="filled-pad">Button</span>
+    </main>
+  </body>
+</html>

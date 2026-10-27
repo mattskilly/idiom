@@ -1,5 +1,6 @@
-import { type Browser, chromium } from "playwright";
+import { type Browser, chromium, type Response } from "playwright";
 import { deterministicContextOptions } from "../capture/browser.js";
+import { classifyDocument } from "../document.js";
 import type { Project } from "../schemas/project.js";
 import type { Inspection, LiveInspector } from "./discover.js";
 
@@ -22,18 +23,30 @@ export async function openFlowBrowser(
       const context = await browser.newContext(
         deterministicContextOptions(project, viewport),
       );
+      let response: Response | undefined;
       try {
         const page = await context.newPage();
-        const response = await page.goto(url, {
+        page.on("response", (candidate) => {
+          try {
+            const request = candidate.request();
+            if (
+              request.isNavigationRequest() &&
+              request.frame() === page.mainFrame() &&
+              !(candidate.status() >= 300 && candidate.status() < 400)
+            )
+              response = candidate;
+          } catch {
+            // Some navigation requests have no accessible frame.
+          }
+        });
+        await page.goto(url, {
           waitUntil: "domcontentloaded",
           timeout,
         });
         await page.waitForTimeout(project.capture.settleMs);
         const finalUrl = page.url();
-        const html = /(?:text\/html|application\/xhtml\+xml)/i.test(
-          response?.headers()["content-type"] ?? "",
-        );
         const content = await page.evaluate(() => ({
+          contentType: document.contentType,
           base: document.baseURI,
           links: Array.from(
             document.querySelectorAll("a[href]:not([download])"),
@@ -41,11 +54,15 @@ export async function openFlowBrowser(
           ),
           password: document.querySelector('input[type="password"]') !== null,
         }));
+        const html =
+          classifyDocument(response?.headers()["content-type"]) === "html" &&
+          classifyDocument(content.contentType) === "html";
         return { finalUrl, status: response?.status(), html, ...content };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
-          finalUrl: url,
+          finalUrl: response?.url() ?? url,
+          status: response?.status(),
           html: false,
           password: false,
           links: [],

@@ -33,6 +33,7 @@ const stylesSchema = z
     outlineWidth: z.string(),
     outlineStyle: z.string().optional(),
     outlineOffset: z.string().optional(),
+    userSelect: z.string().optional(),
     textOverflow: z.string().optional(),
     fill: z.string(),
     stroke: z.string(),
@@ -88,6 +89,34 @@ const elementSchema = z
     tag: z.string().min(1),
     text: z.string(),
     visible: z.boolean(),
+    painted: z
+      .discriminatedUnion("value", [
+        z.object({ value: z.literal(true) }).strict(),
+        z
+          .object({
+            value: z.literal(false),
+            reason: z.string().min(1),
+            boundary: z.string().min(1).optional(),
+          })
+          .strict(),
+      ])
+      .optional(),
+    paintedContent: z
+      .object({
+        selectors: z.array(z.string()),
+        width: dimension,
+        height: dimension,
+        clipped: z
+          .object({
+            text: z.array(z.string()),
+            interactive: z.array(z.string()),
+            marquee: z.array(z.string()),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
     interactive: z.boolean(),
     enabled: z.boolean(),
     headingLevel: z.number().int().min(1).max(6).optional(),
@@ -98,6 +127,16 @@ const elementSchema = z
     clientHeight: dimension,
     outOfFlow: z.boolean(),
     inlineTextTarget: z.boolean().optional(),
+    targetSizeLabels: z
+      .array(
+        z
+          .object({
+            selector: z.string().min(1),
+            rects: z.array(rectSchema),
+          })
+          .strict(),
+      )
+      .optional(),
     ancestorSelectors: z.array(z.string()),
     authoredProperties: z.array(z.string()).optional(),
     styles: stylesSchema,
@@ -655,6 +694,8 @@ const selectionGroupSchema = z
           ]),
           nativeIndicator: z.boolean(),
           decoration: z.record(z.string(), z.string()),
+          paintedDecoration: z.record(z.string(), z.string()).optional(),
+          decorationOwners: z.array(z.string()).optional(),
         })
         .strict(),
     ),
@@ -900,6 +941,7 @@ const observationCommon = {
     .strict(),
   document: z
     .object({
+      contentType: z.string().trim().min(1).optional(),
       scrollWidth: dimension,
       scrollHeight: dimension,
       clientWidth: dimension,
@@ -1053,6 +1095,21 @@ const orphanWordSchema = z
     word: z.string().min(1),
     lines: z.number().int().min(2),
     text: z.string().max(160),
+    rect: rectSchema.optional(),
+    lastLine: rectSchema.optional(),
+    ink: z
+      .discriminatedUnion("status", [
+        z
+          .object({
+            status: z.literal("measured"),
+            share: z.number().min(0).max(1),
+          })
+          .strict(),
+        z
+          .object({ status: z.literal("unavailable"), reason: z.string() })
+          .strict(),
+      ])
+      .optional(),
   })
   .strict();
 const imageRenderSchema = z
@@ -1143,6 +1200,31 @@ const shellVisibilitySchema = z
     ),
   })
   .strict();
+
+const sizeSchema = z.object({ width: dimension, height: dimension }).strict();
+
+const screenshotGeometrySchema = z
+  .object({
+    strategy: z.enum(["viewport", "full-page", "tiled"]),
+    scale: finite.positive(),
+    width: dimension,
+    height: dimension,
+    tiles: z.number().int().positive().optional(),
+    drift: z
+      .object({ observed: sizeSchema, captured: sizeSchema })
+      .strict()
+      .optional(),
+    rects: z.record(z.string().min(1), rectSchema).optional(),
+  })
+  .strict()
+  .refine(
+    (value) => value.tiles === undefined || value.strategy === "tiled",
+    "tiles are recorded only for tiled screenshots",
+  )
+  .refine(
+    (value) => value.rects === undefined || value.drift !== undefined,
+    "screenshot rects are recorded only when layout drifted",
+  );
 
 const observationArtifactV2Schema = z
   .object({
@@ -1247,6 +1329,7 @@ const observationArtifactV2Schema = z
     orphanWords: geometryScan(orphanWordSchema).optional(),
     imageRenders: geometryScan(imageRenderSchema).optional(),
     layoutShift: layoutShiftSchema.optional(),
+    screenshot: screenshotGeometrySchema.optional(),
   })
   .strict();
 

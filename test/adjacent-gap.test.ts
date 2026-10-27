@@ -14,10 +14,15 @@ import { type ReviewOptions, reviewStates } from "./benchmark-support.js";
 
 let browser: Browser;
 let html: string;
+let fieldHtml: string;
 beforeAll(async () => {
   browser = await chromium.launch();
   html = await readFile(
     join(import.meta.dirname, "fixtures/adjacent-gap/editor.html"),
+    "utf8",
+  );
+  fieldHtml = await readFile(
+    join(import.meta.dirname, "fixtures/adjacent-gap/field.html"),
     "utf8",
   );
 });
@@ -34,6 +39,18 @@ async function gaps(
     [{ state: "editor", html, ...(focus === undefined ? {} : { focus }) }],
     shared,
   );
+  return {
+    found: findings
+      .map(({ candidate }) => candidate)
+      .filter((candidate) => candidate.category === "adjacent-gap"),
+    tuples,
+  };
+}
+
+async function field() {
+  const { findings, tuples } = await reviewStates(browser, [
+    { state: "field", html: fieldHtml },
+  ]);
   return {
     found: findings
       .map(({ candidate }) => candidate)
@@ -193,4 +210,59 @@ test("the observation schema accepts adjacent-region marks", async () => {
     ),
   ).toMatchObject({ selector: "#cards", matches: ["#cards"] });
   expect(observationArtifactSchema.parse(observation)).toEqual(observation);
+});
+
+test("keycap glyph groups are not reported", async () => {
+  const { found } = await field();
+  expect(naming(found, "#key-cmd")).toEqual([]);
+  expect(naming(found, "#key-k")).toEqual([]);
+  expect(naming(found, "#kbd-ctrl")).toEqual([]);
+  expect(naming(found, "#kbd-shift")).toEqual([]);
+});
+
+test("illustration and static mock-up contents are not reported", async () => {
+  const { found } = await field();
+  for (const quiet of ["#mock-inbox", "#mock-archive", "#art-a", "#art-b"])
+    expect(naming(found, quiet), quiet).toEqual([]);
+});
+
+test("real touching controls are still reported", async () => {
+  const { found } = await field();
+  for (const [first, second] of [
+    ["#btn-save", "#btn-cancel"],
+    ["#tool-bold", "#tool-italic"],
+    ["#chip-a", "#chip-b"],
+    ["#pill-a", "#pill-b"],
+    ["#tile-a", "#tile-b"],
+    ["#key-search", "#btn-search"],
+  ] as const) {
+    const pair = naming(found, first, second);
+    expect(pair, `${first} ${second}`).toHaveLength(1);
+    expect(pair[0]?.rule).toBe("idiom:adjacent-elements-touch");
+  }
+});
+
+test("captures without userSelect keep comparing mock-up contents", async () => {
+  const { tuples } = await field();
+  const tuple = tuples[0];
+  const observation = tuple?.observations as ObservationArtifactV2;
+  expect(
+    observation.elements.find((element) => element.selector === "#mockup")
+      ?.styles.userSelect,
+  ).toBe("none");
+  for (const element of observation.elements) delete element.styles.userSelect;
+  expect(observationArtifactSchema.parse(observation)).toEqual(observation);
+  const result = adjacentGapCheck.run({
+    tuple: {
+      ...(tuple as NonNullable<typeof tuple>),
+      observations: observation,
+    },
+    narrowViewport: false,
+    config: checksConfigFrom(),
+  });
+  expect(
+    naming(result.candidates, "#mock-inbox", "#mock-archive"),
+  ).toHaveLength(1);
+  for (const quiet of ["#art-a", "#key-cmd", "#kbd-ctrl"])
+    expect(naming(result.candidates, quiet), quiet).toEqual([]);
 });

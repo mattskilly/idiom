@@ -22,7 +22,7 @@ import {
 } from "../schemas/flow.js";
 import type { Project } from "../schemas/project.js";
 import { surfaceGeometry } from "../sweep/geometry.js";
-import { attachCrops, cropToFile } from "./crops.js";
+import { attachCrops, cropToFile, screenshotPlacement } from "./crops.js";
 import { buildModelDrafts, finalizeFindings } from "./findings.js";
 import type { ReviewOutcome } from "./report.js";
 
@@ -119,6 +119,7 @@ async function cropSection(options: {
     element.rect.height <= 0
   )
     return finding;
+  const placement = screenshotPlacement(observations);
   const relativePath = join(
     dirname(tuple.screenshotPath),
     "crops",
@@ -129,7 +130,8 @@ async function cropSection(options: {
     screenshotPath: tuple.screenshotPath,
     images: options.images,
     viewportWidth: observations.viewport.width,
-    rect: element.rect,
+    scale: placement.scale,
+    rect: placement.rect(element),
     padding: cropPadding,
     relativePath,
   });

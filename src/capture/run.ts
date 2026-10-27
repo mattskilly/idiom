@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { loadDesignComponents } from "../checks/design-components.js";
 import { loadTokenDeclarations } from "../checks/observe.js";
 import { captureDesigns, figmaFrameLoader } from "../design/capture.js";
+import { classifyDocument } from "../document.js";
 import { IdiomError } from "../errors.js";
 import {
   buildReviewCoverage,
@@ -650,6 +651,14 @@ async function captureOwned(
             representative?.result?.ok === true
               ? representative.result.screenshot
               : undefined;
+          // The collapsed tuple decides drift against its own observations.
+          const reuseScreenshotGeometry =
+            representative?.result?.ok === true &&
+            representative.result.screenshotGeometry !== undefined
+              ? (({ drift: _drift, rects: _rects, ...own }) => own)(
+                  representative.result.screenshotGeometry,
+                )
+              : undefined;
           if (collapse !== undefined && reuseScreenshot === undefined)
             collapsed.delete(tupleId(selected));
           const captureStarted = clock();
@@ -663,6 +672,7 @@ async function captureOwned(
               }),
             shell: options.flow.shell,
             reuseScreenshot,
+            reuseScreenshotGeometry,
             invariants: effectiveInvariants(
               options.flow,
               resolution.value.state,
@@ -872,7 +882,11 @@ async function captureOwned(
         for (const [index, selected] of selectedTuples.entries()) {
           if (
             !probeKeys.has(tupleId(selected)) ||
-            !laneResults[index]?.artifact.result?.ok
+            !laneResults[index]?.artifact.result?.ok ||
+            classifyDocument(
+              laneResults[index]?.artifact.result?.observations?.document
+                .contentType,
+            ) === "non-html"
           )
             continue;
           const partition = `${selected.viewport.name}\0${selected.colorScheme}`;
@@ -891,7 +905,11 @@ async function captureOwned(
           const work = selectedTuples.flatMap((selected, index) => {
             if (
               !probeKeys.has(tupleId(selected)) ||
-              !laneResults[index]?.artifact.result?.ok
+              !laneResults[index]?.artifact.result?.ok ||
+              classifyDocument(
+                laneResults[index]?.artifact.result?.observations?.document
+                  .contentType,
+              ) === "non-html"
             )
               return [];
             const partition = `${selected.viewport.name}\0${selected.colorScheme}`;

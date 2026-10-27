@@ -432,3 +432,86 @@ test("report coverage shows each DESIGN.md-inferred component's resolved selecto
     '<li>Component "chip" inferred from DESIGN.md:14',
   );
 });
+
+test("filesystem pages omit private descendants and declarations while preserving Next pages", async () => {
+  const project = await mkdtemp(join(tmpdir(), "idiom-private-routes-"));
+  directories.push(project);
+  for (const path of [
+    "src/pages/archives/_utils/getPostsByGroupCondition.ts",
+    "src/pages/archives/_utils/deep/helper.tsx",
+    "src/pages/_private/nested/index.tsx",
+    "src/pages/archives/_hidden.tsx",
+    "src/pages/types.d.ts",
+    "src/pages/archives/index.ts",
+    "src/pages/about.js",
+    "src/app/(public)/p/[id]/page.tsx",
+    "src/app/(public)/_private/deep/page.tsx",
+  ])
+    await touch(project, path);
+  expect((await discoverRoutes(project)).map((r) => r.route)).toEqual([
+    "/about",
+    "/archives",
+    "/p/[id]",
+  ]);
+});
+
+test("Astro page classification follows each monorepo package owner", async () => {
+  const project = await mkdtemp(join(tmpdir(), "idiom-astro-routes-"));
+  directories.push(project);
+  for (const path of [
+    "apps/blog/src/pages/index.astro",
+    "apps/blog/src/pages/posts/[slug].md",
+    "apps/blog/src/pages/guide.mdx",
+    "apps/blog/src/pages/contact.html",
+    "apps/blog/src/pages/archives/_utils/getPostsByGroupCondition.ts",
+    "apps/blog/src/pages/_draft/nested/page.astro",
+    "apps/blog/src/pages/og.png.ts",
+    "apps/blog/src/pages/helper.js",
+    "apps/blog/src/pages/Component.tsx",
+    "apps/web/pages/next.ts",
+    "apps/web/pages/next-js.js",
+  ])
+    await touch(project, path);
+  await writeFile(
+    join(project, "apps/blog/package.json"),
+    JSON.stringify({ devDependencies: { astro: "*" } }),
+  );
+  await writeFile(
+    join(project, "apps/web/package.json"),
+    JSON.stringify({ dependencies: { next: "*" } }),
+  );
+  expect((await discoverRoutes(project)).map((r) => r.route)).toEqual([
+    "/",
+    "/contact",
+    "/guide",
+    "/next",
+    "/next-js",
+    "/posts/[slug]",
+  ]);
+});
+
+test("missing or malformed owning manifests use fallback without reading outside the project", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "idiom-owner-boundary-"));
+  directories.push(parent);
+  await writeFile(
+    join(parent, "package.json"),
+    JSON.stringify({ dependencies: { astro: "*" } }),
+  );
+  const project = join(parent, "_project");
+  await touch(project, "pages/next.ts");
+  await touch(project, "pages/astro.astro");
+  expect((await discoverRoutes(project)).map((r) => r.route)).toEqual([
+    "/next",
+  ]);
+  await writeFile(join(project, "package.json"), "{ malformed");
+  expect((await discoverRoutes(project)).map((r) => r.route)).toEqual([
+    "/next",
+  ]);
+  await writeFile(
+    join(project, "package.json"),
+    JSON.stringify({ dependencies: { astro: "*" } }),
+  );
+  expect((await discoverRoutes(project)).map((r) => r.route)).toEqual([
+    "/astro",
+  ]);
+});

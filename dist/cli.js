@@ -4,9 +4,9 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
-var __export = (target, all) => {
+var __export = (target2, all) => {
   for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
+    __defProp(target2, name, { get: all[name], enumerable: true });
 };
 
 // src/baseline/render.ts
@@ -657,6 +657,47 @@ function interactiveAncestry(elements) {
   );
   return (element) => element.interactive || element.ancestorSelectors.some((selector) => interactive.has(selector));
 }
+function illustrationFrames(elements) {
+  const bySelector = new Map(
+    elements.map((element) => [element.selector, element])
+  );
+  const interactive = /* @__PURE__ */ new Map();
+  const texts = /* @__PURE__ */ new Map();
+  for (const element of elements) {
+    if (!element.visible) continue;
+    const isInteractive = element.interactive;
+    const hasText = element.directText.trim() !== "";
+    if (!isInteractive && !hasText) continue;
+    for (const ancestor of element.ancestorSelectors) {
+      if (isInteractive)
+        interactive.set(ancestor, (interactive.get(ancestor) ?? 0) + 1);
+      if (hasText) texts.set(ancestor, (texts.get(ancestor) ?? 0) + 1);
+    }
+  }
+  const qualifies = /* @__PURE__ */ new Map();
+  const frame = (selector) => {
+    const known = qualifies.get(selector);
+    if (known !== void 0) return known;
+    const candidate2 = bySelector.get(selector);
+    let result2 = false;
+    if (candidate2 !== void 0 && !candidate2.interactive && (interactive.get(selector) ?? 0) === 0) {
+      const role = candidate2.attributes.role?.trim().toLowerCase();
+      const declared = candidate2.attributes["aria-hidden"] === "true" || "inert" in candidate2.attributes || role !== void 0 && illustrationRoles.has(role);
+      result2 = declared || nonSelectableFrame(candidate2);
+    }
+    qualifies.set(selector, result2);
+    return result2;
+  };
+  const nonSelectableFrame = (candidate2) => {
+    if (candidate2.styles.userSelect !== "none") return false;
+    if (candidate2.tag === "body" || candidate2.tag === "html") return false;
+    const parent = bySelector.get(candidate2.ancestorSelectors[0] ?? "body");
+    const parentValue = parent?.styles.userSelect;
+    if (parentValue === void 0 || parentValue === "none") return false;
+    return candidate2.rect.width >= ILLUSTRATION_MIN_WIDTH && candidate2.rect.height >= ILLUSTRATION_MIN_HEIGHT && (texts.get(candidate2.selector) ?? 0) >= ILLUSTRATION_MIN_TEXTS;
+  };
+  return (element) => element.ancestorSelectors.find(frame);
+}
 function round(value, places = 1) {
   const factor = 10 ** places;
   return Math.round(value * factor) / factor;
@@ -740,7 +781,7 @@ function v2Observations(tuple) {
   const observation = tuple.observations;
   return observation?.version === 2 ? observation : void 0;
 }
-var codeTags;
+var codeTags, ILLUSTRATION_MIN_WIDTH, ILLUSTRATION_MIN_HEIGHT, ILLUSTRATION_MIN_TEXTS, illustrationRoles;
 var init_shared = __esm({
   "src/checks/shared.ts"() {
     "use strict";
@@ -755,6 +796,10 @@ var init_shared = __esm({
       "textarea",
       "input"
     ]);
+    ILLUSTRATION_MIN_WIDTH = 200;
+    ILLUSTRATION_MIN_HEIGHT = 120;
+    ILLUSTRATION_MIN_TEXTS = 6;
+    illustrationRoles = /* @__PURE__ */ new Set(["img", "presentation", "none"]);
   }
 });
 
@@ -1250,6 +1295,7 @@ var init_project = __esm({
         reducedMotion: z5.boolean().default(true),
         fullPage: z5.boolean().default(true),
         settleMs: z5.number().default(250),
+        animationSettleMs: z5.number().finite().nonnegative().default(1500),
         maxMinutes: z5.number().finite().positive().default(30),
         /**
          * Capture lanes (one per viewport and colour scheme) run at once.
@@ -1417,13 +1463,13 @@ function fromChainIssues(states) {
 function resolveFromStates(states) {
   const byId = new Map(states.map((state) => [state.id, state]));
   const resolved = /* @__PURE__ */ new Map();
-  const resolve55 = (state, visiting) => {
+  const resolve56 = (state, visiting) => {
     const done = resolved.get(state.id);
     if (done !== void 0) return done;
     const parent = state.from === void 0 ? void 0 : byId.get(state.from);
     if (parent === void 0 || visiting.has(parent.id)) return state;
     visiting.add(state.id);
-    const base = resolve55(parent, visiting);
+    const base = resolve56(parent, visiting);
     visiting.delete(state.id);
     if (base.url === void 0 && base.urlFrom === void 0) return state;
     const { url: _url, urlFrom: _urlFrom, ...own } = state;
@@ -1452,7 +1498,7 @@ function resolveFromStates(states) {
     resolved.set(state.id, flattened);
     return flattened;
   };
-  return states.map((state) => resolve55(state, /* @__PURE__ */ new Set()));
+  return states.map((state) => resolve56(state, /* @__PURE__ */ new Set()));
 }
 function routeStateId(route) {
   const slug2 = route.replace(/^\/+|\/+$/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
@@ -2790,10 +2836,10 @@ function matchElements(design, app) {
       let common3, any = false, split = false;
       for (const c of D.children.get(d.selector) ?? []) {
         const p = byDesign.get(c.selector);
-        const target = p ? A.bySelector.get(p.app) : span2.get(c.selector);
-        if (target === null) split = true;
-        if (!target) continue;
-        common3 = any ? lca(common3, target) : target;
+        const target2 = p ? A.bySelector.get(p.app) : span2.get(c.selector);
+        if (target2 === null) split = true;
+        if (!target2) continue;
+        common3 = any ? lca(common3, target2) : target2;
         any = true;
         if (!common3) split = true;
       }
@@ -3721,6 +3767,73 @@ var init_a11y_label = __esm({
   }
 });
 
+// src/checks/painted.ts
+function paintedGate(tuple, rules) {
+  const elements = tuple.observations?.elements ?? [];
+  const bySelector = new Map(
+    elements.map((element) => [element.selector, element])
+  );
+  const hasFacts = elements.some((element) => element.painted !== void 0);
+  const skipped3 = new Map(rules.map((rule) => [rule, /* @__PURE__ */ new Set()]));
+  const allows = (rule, ...owners) => {
+    let allowed = true;
+    for (const owner2 of owners) {
+      const element = typeof owner2 === "string" ? bySelector.get(owner2) : owner2;
+      if (element?.painted?.value === false) {
+        skipped3.get(rule)?.add(element.selector);
+        allowed = false;
+      }
+    }
+    return allowed;
+  };
+  const coverage = () => hasFacts ? {
+    paintedSkipped: Object.fromEntries(
+      [...skipped3].map(([rule, owners]) => [rule, owners.size])
+    )
+  } : {};
+  return {
+    allows,
+    filter: (rule, domain) => domain.filter((element) => allows(rule, element)),
+    coverage,
+    result: (result2) => ({
+      ...result2,
+      coverage: { ...result2.coverage, ...coverage() }
+    })
+  };
+}
+function paintedCoverageText(coverage) {
+  return [
+    coverage.reason,
+    ...Object.entries(coverage.paintedSkipped ?? {}).map(
+      ([rule, count]) => `${rule}: ${count} skipped as not painted`
+    ),
+    ...Object.entries(coverage.inkSkipped ?? {}).map(
+      ([rule, count]) => `${rule}: ${count} skipped as not visible in the captured screenshot`
+    )
+  ].filter(Boolean).join("; ");
+}
+function reportedCheckCoverage(entries) {
+  if (!entries.some(
+    ({ coverage }) => coverage.paintedSkipped !== void 0 || coverage.inkSkipped !== void 0
+  ))
+    return {};
+  return {
+    checkCoverage: entries.map(({ tuple, coverage }) => ({
+      ...coverage,
+      state: tuple.state,
+      viewport: tuple.viewport,
+      ...tuple.colorScheme === void 0 ? {} : { colorScheme: tuple.colorScheme }
+    }))
+  };
+}
+var isElementPainted;
+var init_painted = __esm({
+  "src/checks/painted.ts"() {
+    "use strict";
+    isElementPainted = (element) => element?.painted?.value !== false;
+  }
+});
+
 // src/checks/adjacent-gap.ts
 function focusable(element) {
   return element.interactive && ["input", "textarea", "select", "button"].includes(element.tag);
@@ -3806,15 +3919,38 @@ function regionTest(elements, marked) {
     return holdsHeading.has(element.selector) || holdsGroup.has(element.selector);
   };
 }
+function keycap(element) {
+  if (element.interactive) return false;
+  const text2 = element.text.trim();
+  if (text2 === "" || element.rect.height > 32) return false;
+  if (element.tag === "kbd")
+    return text2.length <= 12 && element.rect.width <= 96;
+  const short = [...graphemes.segment(text2)].length <= 2 || keyNames.has(text2.toLowerCase());
+  return short && element.rect.width <= 64;
+}
+function illustrationTest(elements) {
+  const holdsControl = /* @__PURE__ */ new Set();
+  for (const element of elements)
+    if (element.interactive)
+      for (const ancestor of element.ancestorSelectors)
+        holdsControl.add(ancestor);
+  const containers = new Set(
+    elements.filter(
+      (element) => !element.interactive && (element.attributes["aria-hidden"] === "true" || element.attributes.role === "img" || element.styles.userSelect === "none" && element.rect.width >= mockupMinWidth && element.rect.height >= mockupMinHeight && !holdsControl.has(element.selector))
+    ).map((element) => element.selector)
+  );
+  return (element) => !element.interactive && element.ancestorSelectors.some((selector) => containers.has(selector));
+}
 function sharedParent(first, second) {
   return first.ancestorSelectors.find(
     (selector) => second.ancestorSelectors.includes(selector)
   ) ?? "body";
 }
-var excludedTags, ringAllowance, regionTags, regionRoles, dialogRoles, adjacentGapCheck;
+var excludedTags, ringAllowance, regionTags, regionRoles, dialogRoles, keyNames, graphemes, mockupMinWidth, mockupMinHeight, adjacentGapCheck;
 var init_adjacent_gap = __esm({
   "src/checks/adjacent-gap.ts"() {
     "use strict";
+    init_painted();
     init_shared();
     excludedTags = /* @__PURE__ */ new Set([
       "html",
@@ -3858,6 +3994,37 @@ var init_adjacent_gap = __esm({
       "search"
     ]);
     dialogRoles = /* @__PURE__ */ new Set(["dialog", "alertdialog"]);
+    keyNames = /* @__PURE__ */ new Set([
+      "ctrl",
+      "control",
+      "cmd",
+      "command",
+      "alt",
+      "opt",
+      "option",
+      "shift",
+      "esc",
+      "escape",
+      "enter",
+      "return",
+      "tab",
+      "space",
+      "del",
+      "delete",
+      "backspace",
+      "fn",
+      "home",
+      "end",
+      "pgup",
+      "pgdn",
+      "up",
+      "down",
+      "left",
+      "right"
+    ]);
+    graphemes = new Intl.Segmenter(void 0, { granularity: "grapheme" });
+    mockupMinWidth = 240;
+    mockupMinHeight = 160;
     adjacentGapCheck = {
       id: "adjacent-gap",
       run({ tuple, config }) {
@@ -3865,82 +4032,95 @@ var init_adjacent_gap = __esm({
         if ("reason" in observed) return unavailable(this.id, observed.reason);
         const observation = tuple.observations;
         const viewportArea = (observation?.viewport.width ?? 1) * (observation?.viewport.height ?? 1);
-        const boxes = observed.elements.filter((element) => {
-          if (isVisuallyHidden(element) || excludedTags.has(element.tag))
-            return false;
-          if (element.styles.display === "inline" || element.styles.display === "contents")
-            return false;
-          if (element.rect.width < 8 || element.rect.height < 8) return false;
-          if (element.interactive) return true;
-          return isBounded(element) && element.rect.width * element.rect.height < viewportArea * 0.25;
-        });
-        const selectors = new Set(boxes.map((box) => box.selector));
-        const isRegion = regionTest(
-          observed.elements,
-          new Set(
-            (observation?.version === 2 ? observation.selectorMarks ?? [] : []).filter((mark) => mark.purpose === "adjacent-region").flatMap((mark) => mark.matches)
-          )
-        );
-        const { indicatorMax } = config.adjacentGap;
-        const members = boxes.filter(
-          (box) => !isRegion(box) && (box.interactive || box.rect.width > indicatorMax || box.rect.height > indicatorMax)
-        );
+        const gate = paintedGate(tuple, ["idiom:adjacent-elements-touch"]);
         const candidates = [];
-        const seen = /* @__PURE__ */ new Set();
-        for (let left = 0; left < members.length; left += 1) {
-          const first = members[left];
-          for (let right = left + 1; right < members.length; right += 1) {
-            const second = members[right];
-            if (first.ancestorSelectors.includes(second.selector) || second.ancestorSelectors.includes(first.selector))
-              continue;
-            const firstWrapped = first.ancestorSelectors.some(
-              (selector) => selectors.has(selector) && !second.ancestorSelectors.includes(selector)
-            );
-            const secondWrapped = second.ancestorSelectors.some(
-              (selector) => selectors.has(selector) && !first.ancestorSelectors.includes(selector)
-            );
-            if (firstWrapped || secondWrapped) continue;
-            if ((!first.interactive || !second.interactive) && first.ancestorSelectors[0] !== second.ancestorSelectors[0])
-              continue;
-            if (!first.interactive && !second.interactive && !(isBounded(first) && isBounded(second)))
-              continue;
-            const firstBox = visibleBox(first);
-            const secondBox = visibleBox(second);
-            const related2 = relation(firstBox, secondBox);
-            if (related2 === void 0) continue;
-            const rest = relation(first.rect, second.rect);
-            const ringed = first.signals.focused || second.signals.focused;
-            const gap = related2.gap;
-            if (gap >= config.minGap || gap < -1.5) continue;
-            if (!ringed && (rest?.gap ?? gap) <= 2 && joined(first, second, related2.axis))
-              continue;
-            const field = (element) => focusable(element) && ["input", "textarea"].includes(element.tag);
-            if (!ringed && !(isBounded(first) && isBounded(second)) && !(field(first) && isBounded(second)) && !(field(second) && isBounded(first)))
-              continue;
-            const key3 = [first.selector, second.selector].sort().join("\0");
-            if (seen.has(key3)) continue;
-            seen.add(key3);
-            const measured2 = round(Math.max(0, gap));
-            const parent = sharedParent(first, second);
-            candidates.push({
-              category: this.id,
-              severity: gap <= 0.5 ? "major" : "minor",
-              rule: ringed ? "idiom:focus-ring-collision" : "idiom:adjacent-elements-touch",
-              selectorHint: first.selector,
-              explanation: ringed ? `With focus, the ring of ${first.signals.focused ? first.selector : second.selector} comes within ${measured2}px of ${first.signals.focused ? second.selector : first.selector} in ${parent} (minimum ${config.minGap}px).` : `${first.selector} and ${second.selector} sit ${measured2}px apart ${related2.axis === "horizontal" ? "side by side" : "stacked"} in ${parent}; neighbouring controls need at least ${config.minGap}px between them.`,
-              acceptance: [
-                `${first.selector} and ${second.selector} are separated by at least ${config.minGap}px, including any focus ring.`
-              ],
-              verification: verify(this.id, {
-                selector: first.selector,
-                neighbour: second.selector,
-                minimum: config.minGap,
-                parent
-              })
-            });
+        const illustrated = illustrationTest(
+          observation?.version === 2 ? observation.elements : []
+        );
+        const modes = observation?.elements.some(
+          (element) => element.painted !== void 0
+        ) ? ["touch", "focus"] : ["all"];
+        for (const mode of modes) {
+          const domain = mode !== "touch" ? observed.elements : observed.elements.filter(isElementPainted);
+          const rawBoxes = observed.elements.filter((element) => {
+            if (isVisuallyHidden(element) || excludedTags.has(element.tag))
+              return false;
+            if (element.styles.display === "inline" || element.styles.display === "contents")
+              return false;
+            if (element.rect.width < 8 || element.rect.height < 8) return false;
+            if (element.interactive) return true;
+            return isBounded(element) && element.rect.width * element.rect.height < viewportArea * 0.25;
+          });
+          const boxes = mode !== "touch" ? rawBoxes : gate.filter("idiom:adjacent-elements-touch", rawBoxes);
+          const selectors = new Set(boxes.map((box) => box.selector));
+          const isRegion = regionTest(
+            domain,
+            new Set(
+              (observation?.version === 2 ? observation.selectorMarks ?? [] : []).filter((mark) => mark.purpose === "adjacent-region").flatMap((mark) => mark.matches)
+            )
+          );
+          const { indicatorMax } = config.adjacentGap;
+          const members = boxes.filter(
+            (box) => !isRegion(box) && !illustrated(box) && (box.interactive || box.rect.width > indicatorMax || box.rect.height > indicatorMax)
+          );
+          const seen = /* @__PURE__ */ new Set();
+          for (let left = 0; left < members.length; left += 1) {
+            const first = members[left];
+            for (let right = left + 1; right < members.length; right += 1) {
+              const second = members[right];
+              if (first.ancestorSelectors.includes(second.selector) || second.ancestorSelectors.includes(first.selector))
+                continue;
+              const firstWrapped = first.ancestorSelectors.some(
+                (selector) => selectors.has(selector) && !second.ancestorSelectors.includes(selector)
+              );
+              const secondWrapped = second.ancestorSelectors.some(
+                (selector) => selectors.has(selector) && !first.ancestorSelectors.includes(selector)
+              );
+              if (firstWrapped || secondWrapped) continue;
+              if ((!first.interactive || !second.interactive) && first.ancestorSelectors[0] !== second.ancestorSelectors[0])
+                continue;
+              if (keycap(first) && keycap(second)) continue;
+              if (!first.interactive && !second.interactive && !(isBounded(first) && isBounded(second)))
+                continue;
+              const firstBox = visibleBox(first);
+              const secondBox = visibleBox(second);
+              const related2 = relation(firstBox, secondBox);
+              if (related2 === void 0) continue;
+              const rest = relation(first.rect, second.rect);
+              const ringed = first.signals.focused || second.signals.focused;
+              if (mode !== "all" && mode === "focus" !== ringed) continue;
+              const gap = related2.gap;
+              if (gap >= config.minGap || gap < -1.5) continue;
+              if (!ringed && (rest?.gap ?? gap) <= 2 && joined(first, second, related2.axis))
+                continue;
+              const field = (element) => focusable(element) && ["input", "textarea"].includes(element.tag);
+              if (!ringed && !(isBounded(first) && isBounded(second)) && !(field(first) && isBounded(second)) && !(field(second) && isBounded(first)))
+                continue;
+              const key3 = [first.selector, second.selector].sort().join("\0");
+              if (seen.has(key3)) continue;
+              seen.add(key3);
+              const measured2 = round(Math.max(0, gap));
+              const parent = sharedParent(first, second);
+              candidates.push({
+                category: this.id,
+                severity: gap <= 0.5 ? "major" : "minor",
+                rule: ringed ? "idiom:focus-ring-collision" : "idiom:adjacent-elements-touch",
+                selectorHint: first.selector,
+                explanation: ringed ? `With focus, the ring of ${first.signals.focused ? first.selector : second.selector} comes within ${measured2}px of ${first.signals.focused ? second.selector : first.selector} in ${parent} (minimum ${config.minGap}px).` : `${first.selector} and ${second.selector} sit ${measured2}px apart ${related2.axis === "horizontal" ? "side by side" : "stacked"} in ${parent}; neighbouring controls need at least ${config.minGap}px between them.`,
+                acceptance: [
+                  `${first.selector} and ${second.selector} are separated by at least ${config.minGap}px, including any focus ring.`
+                ],
+                verification: verify(this.id, {
+                  selector: first.selector,
+                  neighbour: second.selector,
+                  minimum: config.minGap,
+                  parent
+                })
+              });
+            }
           }
         }
-        return ran(this.id, candidates);
+        return gate.result(ran(this.id, candidates));
       }
     };
   }
@@ -4362,6 +4542,7 @@ var clippedTextCheck;
 var init_clipped_text = __esm({
   "src/checks/clipped-text.ts"() {
     "use strict";
+    init_painted();
     init_shared();
     clippedTextCheck = {
       id: "clipped-text",
@@ -4374,33 +4555,34 @@ var init_clipped_text = __esm({
             this.id,
             "observations predate clipped-text signals (recapture)"
           );
-        const candidates = observation.clippedText.map(
-          (clip2) => {
-            const owner2 = clip2.owner === clip2.selector ? "its own box" : clip2.owner;
-            const overflow = [
-              clip2.overflow.x > 0 ? `${clip2.overflow.x}px horizontally` : "",
-              clip2.overflow.y > 0 ? `${clip2.overflow.y}px vertically` : ""
-            ].filter(Boolean).join(" and ");
-            const lines2 = clip2.lines > 1 || clip2.visibleLines !== clip2.lines ? ` ${clip2.visibleLines} of ${clip2.lines} lines are readable;` : "";
-            return {
-              category: this.id,
-              severity: "major",
-              rule: "idiom:text-clipped",
-              selectorHint: clip2.selector,
-              explanation: `The text of ${clip2.selector} runs ${overflow} past ${owner2}, which hides it;${lines2} ${describeCut(clip2)}, and no ellipsis is shown.`,
-              acceptance: [
-                `${clip2.selector} fits its box, or truncates with an ellipsis and exposes the full text (title or tooltip).`
-              ],
-              verification: verify(this.id, {
-                selector: clip2.selector,
-                owner: clip2.owner,
-                axis: clip2.axis,
-                cut: clip2.cut
-              })
-            };
-          }
-        );
-        return ran(this.id, candidates);
+        const gate = paintedGate(tuple, ["idiom:text-clipped"]);
+        const candidates = observation.clippedText.filter(
+          (clip2) => gate.allows("idiom:text-clipped", clip2.selector, clip2.owner)
+        ).map((clip2) => {
+          const owner2 = clip2.owner === clip2.selector ? "its own box" : clip2.owner;
+          const overflow = [
+            clip2.overflow.x > 0 ? `${clip2.overflow.x}px horizontally` : "",
+            clip2.overflow.y > 0 ? `${clip2.overflow.y}px vertically` : ""
+          ].filter(Boolean).join(" and ");
+          const lines2 = clip2.lines > 1 || clip2.visibleLines !== clip2.lines ? ` ${clip2.visibleLines} of ${clip2.lines} lines are readable;` : "";
+          return {
+            category: this.id,
+            severity: "major",
+            rule: "idiom:text-clipped",
+            selectorHint: clip2.selector,
+            explanation: `The text of ${clip2.selector} runs ${overflow} past ${owner2}, which hides it;${lines2} ${describeCut(clip2)}, and no ellipsis is shown.`,
+            acceptance: [
+              `${clip2.selector} fits its box, or truncates with an ellipsis and exposes the full text (title or tooltip).`
+            ],
+            verification: verify(this.id, {
+              selector: clip2.selector,
+              owner: clip2.owner,
+              axis: clip2.axis,
+              cut: clip2.cut
+            })
+          };
+        });
+        return gate.result(ran(this.id, candidates));
       }
     };
   }
@@ -4569,7 +4751,7 @@ var init_component_size = __esm({
             )
           ];
           const specified = axis === "height" ? `${component.height}px high (\xB1${round(allowHeight)}px)` : axis === "width" ? `${component.width}px wide (\xB1${round(allowWidth)}px)` : `${component.width}\xD7${component.height}px (\xB1${round(allowWidth)}\xD7${round(allowHeight)}px)`;
-          const target = axis === "height" ? `${component.height}px high` : axis === "width" ? `${component.width}px wide` : `${component.width}\xD7${component.height}px`;
+          const target2 = axis === "height" ? `${component.height}px high` : axis === "width" ? `${component.width}px wide` : `${component.width}\xD7${component.height}px`;
           const source = component.inferred === void 0 ? "" : ` (inferred from ${component.inferred.source})`;
           candidates.push({
             category: this.id,
@@ -4578,7 +4760,7 @@ var init_component_size = __esm({
             selectorHint: first.selector,
             explanation: `${off.length} of ${component.rects.length} "${component.name}" elements render at ${sizes.join(", ")}px; the design specifies ${specified}${source}.`,
             acceptance: [
-              `Every "${component.name}" (${component.selector}) renders within tolerance of ${target}.`
+              `Every "${component.name}" (${component.selector}) renders within tolerance of ${target2}.`
             ],
             verification: verify(this.id, {
               component: component.name,
@@ -4937,6 +5119,19 @@ function hasVisibleLabel(control, elements) {
     )
   );
 }
+function siblingIdentity(control, elements) {
+  const role = control.signals.role;
+  const button = control.tag === "button" || role === "button";
+  let family;
+  if (control.tag === "select") family = "native-select";
+  else if (role === "combobox") {
+    if (button && !hasVisibleLabel(control, elements)) return void 0;
+    family = "combobox";
+  } else if (button && control.signals.haspopup?.toLowerCase() === "listbox" && hasVisibleLabel(control, elements))
+    family = "listbox-trigger";
+  else return void 0;
+  return JSON.stringify([family, control.tag, role]);
+}
 function chevronOf(control, elements) {
   const candidates = graphicsIn(
     control,
@@ -5018,6 +5213,7 @@ var ANATOMY_TOLERANCE, chevronGlyphs, controlAnatomyCheck;
 var init_control_anatomy = __esm({
   "src/checks/control-anatomy.ts"() {
     "use strict";
+    init_painted();
     init_shared();
     ANATOMY_TOLERANCE = 1;
     chevronGlyphs = /* @__PURE__ */ new Set(["\u25BE", "\u25BC", "\u2304", "\u02C5", "\u2228"]);
@@ -5028,6 +5224,7 @@ var init_control_anatomy = __esm({
         if ("reason" in observed) return unavailable(this.id, observed.reason);
         const observation = tuple.observations;
         const elements = observed.elements;
+        const gate = paintedGate(tuple, ["idiom:sibling-select-inconsistent"]);
         const bySelector = new Map(
           elements.map((element) => [element.selector, element])
         );
@@ -5131,34 +5328,49 @@ var init_control_anatomy = __esm({
             })
           });
         }
-        const byParent = /* @__PURE__ */ new Map();
+        const paintedElements = elements.filter(isElementPainted);
+        const siblingChevrons = /* @__PURE__ */ new Map();
+        const byIdentity = /* @__PURE__ */ new Map();
         for (const select of selects) {
-          const key3 = select.ancestorSelectors[0] ?? "";
-          byParent.set(key3, [...byParent.get(key3) ?? [], select]);
+          const identity7 = siblingIdentity(select, elements);
+          if (identity7 === void 0) continue;
+          if (!gate.allows("idiom:sibling-select-inconsistent", select)) continue;
+          byIdentity.set(identity7, [...byIdentity.get(identity7) ?? [], select]);
+          for (const graphic of graphicsIn(select, elements))
+            gate.allows("idiom:sibling-select-inconsistent", graphic);
+          const mark = chevronOf(select, paintedElements);
+          if (mark !== void 0) siblingChevrons.set(select, mark);
         }
         const siblingGroups = [];
-        const byGrandparent = /* @__PURE__ */ new Map();
-        for (const [container, members] of byParent) {
-          if (members.length > 1) {
-            siblingGroups.push({ container, members });
-            continue;
+        for (const peers of byIdentity.values()) {
+          const byParent = /* @__PURE__ */ new Map();
+          for (const select of peers) {
+            const key3 = select.ancestorSelectors[0] ?? "";
+            byParent.set(key3, [...byParent.get(key3) ?? [], select]);
           }
-          const [only] = members;
-          const grandparent = only?.ancestorSelectors[1];
-          if (only === void 0 || grandparent === void 0) continue;
-          byGrandparent.set(grandparent, [
-            ...byGrandparent.get(grandparent) ?? [],
-            only
-          ]);
+          const byGrandparent = /* @__PURE__ */ new Map();
+          for (const [container, members] of byParent) {
+            if (members.length > 1) {
+              siblingGroups.push({ container, members });
+              continue;
+            }
+            const [only] = members;
+            const grandparent = only?.ancestorSelectors[1];
+            if (only === void 0 || grandparent === void 0) continue;
+            byGrandparent.set(grandparent, [
+              ...byGrandparent.get(grandparent) ?? [],
+              only
+            ]);
+          }
+          for (const [container, members] of byGrandparent)
+            if (members.length > 1) siblingGroups.push({ container, members });
         }
-        for (const [container, members] of byGrandparent)
-          if (members.length > 1) siblingGroups.push({ container, members });
         const domOrder = (left, right) => left.structuralPath.localeCompare(right.structuralPath);
         for (const { container, members: all } of siblingGroups) {
           const middle = median(all.map((member) => member.rect.height));
           const members = all.filter((member) => Math.abs(member.rect.height - middle) <= 2).sort(domOrder);
           if (members.length < 2) continue;
-          const construction = (member) => nativeChevron(member) ? "native" : chevrons.get(member)?.source ?? "unmeasured";
+          const construction = (member) => nativeChevron(member) ? "native" : siblingChevrons.get(member)?.source ?? "unmeasured";
           const properties = [
             {
               property: "paddingLeft",
@@ -5179,14 +5391,14 @@ var init_control_anatomy = __esm({
               css: "chevron width",
               tolerance: 1,
               sameConstruction: false,
-              value: (member) => chevrons.get(member)?.rect?.width
+              value: (member) => siblingChevrons.get(member)?.rect?.width
             },
             {
               property: "chevronHeight",
               css: "chevron height",
               tolerance: 1,
               sameConstruction: false,
-              value: (member) => chevrons.get(member)?.rect?.height
+              value: (member) => siblingChevrons.get(member)?.rect?.height
             }
           ];
           const comparisons = properties.flatMap((entry) => {
@@ -5255,7 +5467,7 @@ var init_control_anatomy = __esm({
             reason: `${unmeasured} select ${unmeasured === 1 ? "chevron" : "chevrons"} could not be measured (pseudo-element or unparsed background)`
           }
         };
-        return { coverage, candidates };
+        return gate.result({ coverage, candidates });
       }
     };
   }
@@ -5318,11 +5530,34 @@ function escapePattern(term) {
 function words(text2) {
   return text2.split(/\s+/).filter(Boolean);
 }
-var camelAllow, camelToken, dottedToken, slashToken, slashAllow, xOnX, doubled, localePairs, canadianBritish, copyLintCheck;
+function normalizedTitle(text2) {
+  return text2.replace(/\s+/g, " ").trim().replace(/^["'“”‘’«»]+\s*|\s*["'“”‘’«»]+$/gu, "");
+}
+function capitalisedName(text2) {
+  let capitals = 0;
+  for (const word of words(text2)) {
+    if (!/^[\p{L}\p{M}]+(?:['’‐‑-][\p{L}\p{M}]+)*$/u.test(word)) return false;
+    if (/^[\p{Lu}\p{Lt}]/u.test(word)) capitals += 1;
+    else if (!titleConnectors.has(word)) return false;
+  }
+  return capitals >= 2;
+}
+function pageDestination(href) {
+  const value = href?.trim();
+  if (!value || value.startsWith("#")) return false;
+  try {
+    const url = new URL(value, "https://idiom.invalid/");
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+var camelAllow, camelToken, dottedToken, slashToken, slashAllow, xOnX, doubled, localePairs, canadianBritish, titleConnectors, copyLintCheck;
 var init_copy_lint = __esm({
   "src/checks/copy-lint.ts"() {
     "use strict";
     init_copy_policy();
+    init_painted();
     init_shared();
     camelAllow = /* @__PURE__ */ new Set([
       "iPhone",
@@ -5404,11 +5639,29 @@ var init_copy_lint = __esm({
       "modelling",
       "labelled"
     ]);
+    titleConnectors = /* @__PURE__ */ new Set([
+      "at",
+      "of",
+      "the",
+      "for",
+      "on",
+      "in",
+      "and",
+      "to",
+      "a",
+      "an",
+      "by",
+      "with"
+    ]);
     copyLintCheck = {
       id: "copy-lint",
       run({ tuple, config }) {
         const observed = signalledElements(tuple);
         if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const gate = paintedGate(tuple, [
+          "idiom:mixed-label-casing",
+          "idiom:mixed-locale-spelling"
+        ]);
         const candidates = [];
         const seen = /* @__PURE__ */ new Set();
         const report = (rule, selector, explanation, acceptance, severity = "minor", params = {}, fingerprintHint) => {
@@ -5469,6 +5722,64 @@ var init_copy_lint = __esm({
             `\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`
           )
         }));
+        const properNouns = (config.copy.properNouns ?? []).map(
+          (noun2) => new RegExp(
+            `(?<![\\p{L}\\p{N}])${noun2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`,
+            "gu"
+          )
+        );
+        const comparedWords = (text2) => {
+          const named = properNouns.flatMap(
+            (pattern) => [...text2.matchAll(pattern)].map(
+              (match) => [match.index, match.index + match[0].length]
+            )
+          );
+          return [...text2.matchAll(/\S+/g)].slice(1).filter(
+            (match) => !named.some(
+              ([start, end]) => match.index < end && match.index + match[0].length > start
+            )
+          ).map((match) => match[0]);
+        };
+        const maskProperNouns = (text2) => properNouns.reduce(
+          (masked, pattern) => masked.replace(pattern, (match) => " ".repeat(match.length)),
+          text2
+        );
+        const byPath = new Map(
+          (tuple.observations?.version === 2 ? tuple.observations.elements : []).map((element) => [element.structuralPath, element])
+        );
+        const ancestry = (path) => {
+          const chain = [];
+          for (let end = path.length; end > 0; end = path.lastIndexOf("/", end - 1)) {
+            const element = byPath.get(path.slice(0, end));
+            if (element !== void 0) chain.push(element);
+          }
+          return chain;
+        };
+        const anchorEvidence = (path) => {
+          const chain = ancestry(path);
+          const anchorIndex = chain.findIndex((element) => element.tag === "a");
+          const anchor = chain[anchorIndex];
+          if (anchor === void 0 || !pageDestination(anchor.signals?.href))
+            return void 0;
+          return {
+            label: normalizedTitle(anchor.text),
+            title: normalizedTitle(
+              anchor.signals?.title ?? anchor.attributes.title ?? ""
+            ),
+            cited: chain.slice(anchorIndex + 1).some((element) => element.tag === "cite")
+          };
+        };
+        const linkedName = (path) => {
+          const evidence = anchorEvidence(path);
+          if (evidence === void 0 || !capitalisedName(evidence.label))
+            return false;
+          return evidence.title !== "" && evidence.title === evidence.label || evidence.cited;
+        };
+        const linkedTitle = (path) => {
+          const evidence = anchorEvidence(path);
+          if (evidence === void 0) return false;
+          return evidence.cited || evidence.title !== "" && words(evidence.label).length >= 2 && evidence.title.toLocaleLowerCase() === evidence.label.toLocaleLowerCase() || evidence.title !== "" && capitalisedName(evidence.label);
+        };
         const usage = /* @__PURE__ */ new Map();
         for (const element of copy2) {
           const text2 = element.directText.replace(/\s+/g, " ").trim();
@@ -5541,12 +5852,15 @@ var init_copy_lint = __esm({
                 `"${text2}" (${element.selector}) exposes the internal schema word "${entry.word}".`,
                 `${element.selector} describes the thing in product language, not as "${entry.word}".`
               );
+          const localeEligible = gate.allows("idiom:mixed-locale-spelling", element) && !linkedTitle(element.structuralPath);
+          const localeText = maskProperNouns(text2);
           for (const [gb, us] of localePairs) {
+            if (!localeEligible) continue;
             if (config.copy.locale !== void 0) {
               const preferred = preferredSpelling(config.copy.locale, gb, us);
               if (preferred === void 0) continue;
               const incorrect = preferred === gb ? us : gb;
-              const match = text2.match(new RegExp(`\\b${incorrect}\\b`, "i"));
+              const match = localeText.match(new RegExp(`\\b${incorrect}\\b`, "i"));
               if (match) {
                 const replacement = matchCase(match[0], preferred);
                 report(
@@ -5565,7 +5879,7 @@ var init_copy_lint = __esm({
               continue;
             }
             const pairKey = us;
-            const lower = text2.toLowerCase();
+            const lower = localeText.toLowerCase();
             const found = (word) => new RegExp(`\\b${word}\\b`).test(lower);
             const record2 = usage.get(pairKey) ?? { gb: [], us: [] };
             if (found(gb)) record2.gb.push(`${element.selector}|${gb}|${text2}`);
@@ -5586,35 +5900,6 @@ var init_copy_lint = __esm({
             `${selector} uses the ${locale} spelling.`
           );
         }
-        const properNouns = (config.copy.properNouns ?? []).map(
-          (noun2) => new RegExp(
-            `(?<![\\p{L}\\p{N}])${noun2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`,
-            "gu"
-          )
-        );
-        const comparedWords = (text2) => {
-          const named = properNouns.flatMap(
-            (pattern) => [...text2.matchAll(pattern)].map(
-              (match) => [match.index, match.index + match[0].length]
-            )
-          );
-          return [...text2.matchAll(/\S+/g)].slice(1).filter(
-            (match) => !named.some(
-              ([start, end]) => match.index < end && match.index + match[0].length > start
-            )
-          ).map((match) => match[0]);
-        };
-        const byPath = new Map(
-          (tuple.observations?.version === 2 ? tuple.observations.elements : []).map((element) => [element.structuralPath, element])
-        );
-        const ancestry = (path) => {
-          const chain = [];
-          for (let end = path.length; end > 0; end = path.lastIndexOf("/", end - 1)) {
-            const element = byPath.get(path.slice(0, end));
-            if (element !== void 0) chain.push(element);
-          }
-          return chain;
-        };
         const collectionRoles = /* @__PURE__ */ new Set([
           "list",
           "listitem",
@@ -5641,6 +5926,8 @@ var init_copy_lint = __esm({
             continue;
           if (element.styles.textTransform !== "none") continue;
           if (namedInCollection(element.structuralPath)) continue;
+          if (!gate.allows("idiom:mixed-label-casing", element)) continue;
+          if (linkedName(element.structuralPath)) continue;
           const key3 = [
             element.stableIslandPath,
             element.tag,
@@ -5679,7 +5966,7 @@ var init_copy_lint = __esm({
               );
           }
         }
-        return ran(this.id, candidates);
+        return gate.result(ran(this.id, candidates));
       }
     };
   }
@@ -5824,6 +6111,7 @@ var strongPhrase, weakPhrase, excludedTags2, deadAffordanceCheck;
 var init_dead_affordance = __esm({
   "src/checks/dead-affordance.ts"() {
     "use strict";
+    init_painted();
     init_shared();
     strongPhrase = /^(?:view|see|learn|read|open|show|browse|explore|visit|go to|manage|edit)\s+[\p{L}][\p{L}\s'’-]{0,40}$|^(?:terms(?: (?:of (?:service|use)|and conditions))?|privacy(?: policy)?|learn more|read more|see all|view all|more info)$/iu;
     weakPhrase = /^(?:help(?: cent(?:er|re))?|support|docs|documentation|contact(?: us)?|faq|details)$/i;
@@ -5851,9 +6139,13 @@ var init_dead_affordance = __esm({
         const observed = signalledElements(tuple);
         if ("reason" in observed) return unavailable(this.id, observed.reason);
         const insideInteractive = interactiveAncestry(observed.elements);
+        const insideIllustration = illustrationFrames(
+          tuple.observations?.version === 2 ? tuple.observations.elements : []
+        );
         const byselector = new Map(
           observed.elements.map((element) => [element.selector, element])
         );
+        const gate = paintedGate(tuple, ["idiom:dead-link-text"]);
         const candidates = [];
         for (const element of observed.elements) {
           if (isVisuallyHidden(element)) continue;
@@ -5890,6 +6182,7 @@ var init_dead_affordance = __esm({
             continue;
           }
           if (insideInteractive(element) || excludedTags2.has(element.tag)) continue;
+          if (insideIllustration(element) !== void 0) continue;
           const text2 = element.directText.trim();
           if (text2 === "" || text2.split(/\s+/).length > 6) continue;
           if (element.text.trim() !== text2) continue;
@@ -5897,6 +6190,7 @@ var init_dead_affordance = __esm({
           const weak = !strong && weakPhrase.test(text2);
           if (!strong && !weak) continue;
           const parent = byselector.get(element.ancestorSelectors[0] ?? "");
+          if (!gate.allows("idiom:dead-link-text", element, parent)) continue;
           const linkStyled = element.styles.textDecorationLine.includes("underline") || element.signals.cursor === "pointer" || parent !== void 0 && isPainted(element.styles.color) && (() => {
             const own = parseColor(element.styles.color);
             const theirs = parseColor(parent.styles.color);
@@ -5916,7 +6210,7 @@ var init_dead_affordance = __esm({
             verification: verify(this.id, { selector: element.selector })
           });
         }
-        return ran(this.id, candidates);
+        return gate.result(ran(this.id, candidates));
       }
     };
   }
@@ -6028,7 +6322,7 @@ var init_evidence = __esm({
 function regionCandidates(regions) {
   return regions.regions.map((region) => {
     const { x, y, width, height } = region.rect;
-    const target = region.owner ?? region.elements[0] ?? "body";
+    const target2 = region.owner ?? region.elements[0] ?? "body";
     const covers = region.owner ? `\`${region.owner}\`` : region.elements.length ? region.elements.map((selector) => `\`${selector}\``).join(", ") : "an area with no single owning element";
     const changedArea = Math.round(region.changedCells / region.cells * 1e3) / 1e3;
     const offset2 = `${regions.offset >= 0 ? "+" : ""}${regions.offset}`;
@@ -6036,7 +6330,7 @@ function regionCandidates(regions) {
       category: "design-drift",
       severity: "minor",
       rule: "idiom:design-drift",
-      selectorHint: target,
+      selectorHint: target2,
       fingerprintHint: region.owner ? `region:${region.owner}` : `region:${x >> 4},${y >> 4},${width >> 4},${height >> 4}`,
       explanation: `Visible difference from the design image over ${covers}, at ${x},${y} ${width}\xD7${height} CSS px (${Math.round(changedArea * 100)}% of cells changed, design offset ${offset2} px).`,
       fix: `Compare the paired crops and bring ${region.owner ? `\`${region.owner}\`` : "this area"} in line with the design image, or accept this departure through a normal decision.`,
@@ -6064,7 +6358,7 @@ function regionCandidates(regions) {
       ],
       verification: {
         check: "design-drift",
-        params: { selector: target, region: region.id }
+        params: { selector: target2, region: region.id }
       }
     };
   });
@@ -6186,10 +6480,10 @@ function analyse(tuple) {
       (candidate2) => candidate2.ancestorSelectors.includes(dialog.selector) && !isVisuallyHidden(candidate2)
     );
     const labels = dialog.labelledBy.flatMap((selector) => {
-      const target = members.find(
+      const target2 = members.find(
         (candidate2) => candidate2.selector === selector
       );
-      return target === void 0 || isVisuallyHidden(target) ? [] : [target];
+      return target2 === void 0 || isVisuallyHidden(target2) ? [] : [target2];
     });
     const headings = [
       ...new Map(
@@ -6636,18 +6930,58 @@ var init_duplicate_entry = __esm({
 });
 
 // src/checks/responsive-break.ts
-function reportsInteractiveOverlap(element, other, narrowViewport) {
-  return narrowViewport && element.visible && element.interactive && !element.outOfFlow && !other.outOfFlow && element.hitTestWith.includes(other.selector) && !element.ancestorSelectors.includes(other.selector) && !other.ancestorSelectors.includes(element.selector);
+function visibleBorder(width, color) {
+  return px(width) > 0 && (parseColor(color)?.a ?? 1) > 0;
 }
-var responsiveBreakCheck;
+function radius2(value) {
+  return px(value.split(" ")[0]);
+}
+function joinedControls(a, b) {
+  const x1 = Math.max(a.rect.x, b.rect.x);
+  const x2 = Math.min(a.rect.x + a.rect.width, b.rect.x + b.rect.width);
+  const y1 = Math.max(a.rect.y, b.rect.y);
+  const y2 = Math.min(a.rect.y + a.rect.height, b.rect.y + b.rect.height);
+  const width = x2 - x1;
+  const height = y2 - y1;
+  if (width <= 0 || height <= 0) return false;
+  const horizontal = width <= height;
+  const [leading, trailing] = (horizontal ? a.rect.x <= b.rect.x : a.rect.y <= b.rect.y) ? [a, b] : [b, a];
+  const thickness = horizontal ? width : height;
+  const span2 = horizontal ? height : width;
+  const shorter = horizontal ? Math.min(a.rect.height, b.rect.height) : Math.min(a.rect.width, b.rect.width);
+  if (thickness > joinedOverlapAllowance + 0.05 || span2 < shorter / 2)
+    return false;
+  const lead2 = leading.styles;
+  const trail = trailing.styles;
+  const shared = horizontal ? visibleBorder(lead2.borderRightWidth, lead2.borderRightColor) && visibleBorder(trail.borderLeftWidth, trail.borderLeftColor) : visibleBorder(lead2.borderBottomWidth, lead2.borderBottomColor) && visibleBorder(trail.borderTopWidth, trail.borderTopColor);
+  const corners = horizontal ? [
+    lead2.borderTopRightRadius,
+    lead2.borderBottomRightRadius,
+    trail.borderTopLeftRadius,
+    trail.borderBottomLeftRadius
+  ] : [
+    lead2.borderBottomLeftRadius,
+    lead2.borderBottomRightRadius,
+    trail.borderTopLeftRadius,
+    trail.borderTopRightRadius
+  ];
+  return shared && corners.every((corner) => radius2(corner) < 2);
+}
+function reportsInteractiveOverlap(element, other, narrowViewport) {
+  return isElementPainted(element) && isElementPainted(other) && narrowViewport && element.visible && element.interactive && !element.outOfFlow && !other.outOfFlow && element.hitTestWith.includes(other.selector) && !element.ancestorSelectors.includes(other.selector) && !other.ancestorSelectors.includes(element.selector) && !joinedControls(element, other);
+}
+var joinedOverlapAllowance, responsiveBreakCheck;
 var init_responsive_break = __esm({
   "src/checks/responsive-break.ts"() {
     "use strict";
+    init_painted();
     init_shared();
+    joinedOverlapAllowance = 1;
     responsiveBreakCheck = {
       id: "responsive-break",
       run({ tuple, narrowViewport }) {
-        if (!narrowViewport) return ran(this.id, []);
+        const gate = paintedGate(tuple, ["idiom:interactive-overlap"]);
+        if (!narrowViewport) return gate.result(ran(this.id, []));
         const observation = tuple.observations;
         if (observation === void 0)
           return unavailable(this.id, "observations.json is unavailable");
@@ -6661,6 +6995,8 @@ var init_responsive_break = __esm({
             continue;
           for (const selector of element.hitTestWith) {
             const other = bySelector.get(selector);
+            if (other !== void 0 && !gate.allows("idiom:interactive-overlap", element, other))
+              continue;
             if (other === void 0 || !reportsInteractiveOverlap(element, other, narrowViewport))
               continue;
             const pair = [element.selector, selector].sort().join(" | ");
@@ -6682,7 +7018,7 @@ var init_responsive_break = __esm({
             });
           }
         }
-        return ran(this.id, candidates);
+        return gate.result(ran(this.id, candidates));
       }
     };
   }
@@ -6696,6 +7032,7 @@ var elementOverlapCheck;
 var init_element_overlap = __esm({
   "src/checks/element-overlap.ts"() {
     "use strict";
+    init_painted();
     init_responsive_break();
     init_shared();
     elementOverlapCheck = {
@@ -6709,6 +7046,7 @@ var init_element_overlap = __esm({
             this.id,
             "observations predate overlap signals (recapture)"
           );
+        const gate = paintedGate(tuple, ["idiom:elements-overlap"]);
         const bySelector = new Map(
           observation.elements.map((element) => [element.selector, element])
         );
@@ -6717,6 +7055,7 @@ var init_element_overlap = __esm({
           const a = bySelector.get(overlap.a);
           const b = bySelector.get(overlap.b);
           if (a === void 0 || b === void 0) continue;
+          if (!gate.allows("idiom:elements-overlap", a, b)) continue;
           if (reportsInteractiveOverlap(a, b, narrowViewport) || reportsInteractiveOverlap(b, a, narrowViewport))
             continue;
           const interactive = overlap.kinds.filter(
@@ -6733,11 +7072,12 @@ var init_element_overlap = __esm({
           const area = overlap.rect.width * overlap.rect.height;
           const width = round(overlap.rect.width);
           const height = round(overlap.rect.height);
-          const evidence = overlap.samples === 0 ? " (below the fold, geometry only)" : ` (${overlap.hits}/${overlap.samples} hit-test points)`;
+          const geometryOnly = overlap.samples === 0;
+          const evidence = geometryOnly ? " (below the fold, geometry only)" : ` (${overlap.hits}/${overlap.samples} hit-test points)`;
           const partial = overlap.partial.length === 0 ? "" : `; ${overlap.partial.join(" and ")} ${overlap.partial.length === 1 ? "is" : "are"} only partly visible`;
           candidates.push({
             category: this.id,
-            severity: interactive > 0 || smaller > 0 && area / smaller >= 0.25 ? "major" : "minor",
+            severity: !geometryOnly && (interactive > 0 || smaller > 0 && area / smaller >= 0.25) ? "major" : "minor",
             rule: "idiom:elements-overlap",
             selectorHint: overlap.a,
             fingerprintHint: `${overlap.a} | ${overlap.b}`,
@@ -6752,7 +7092,7 @@ var init_element_overlap = __esm({
             })
           });
         }
-        return ran(this.id, candidates);
+        return gate.result(ran(this.id, candidates));
       }
     };
   }
@@ -7642,16 +7982,38 @@ var init_group_invariants = __esm({
   }
 });
 
+// src/document.ts
+function classifyDocument(contentType) {
+  const mime = contentType?.split(";", 1)[0]?.trim().toLowerCase();
+  if (!mime) return "unknown";
+  return mime === "text/html" || mime === "application/xhtml+xml" ? "html" : "non-html";
+}
+var init_document = __esm({
+  "src/document.ts"() {
+    "use strict";
+  }
+});
+
 // src/checks/heading-structure.ts
 var axeHeadingRules, headingStructureCheck;
 var init_heading_structure = __esm({
   "src/checks/heading-structure.ts"() {
     "use strict";
+    init_document();
     init_shared();
     axeHeadingRules = /* @__PURE__ */ new Set(["heading-order", "page-has-heading-one"]);
     headingStructureCheck = {
       id: "heading-structure",
       run({ tuple }) {
+        if (classifyDocument(tuple.observations?.document.contentType) === "non-html")
+          return {
+            candidates: [],
+            coverage: {
+              check: this.id,
+              status: "skipped",
+              reason: "Heading structure is not applicable to a non-HTML document."
+            }
+          };
         if (tuple.observations === void 0 && tuple.axe === void 0) {
           return unavailable(
             this.id,
@@ -7711,7 +8073,7 @@ var init_heading_structure = __esm({
         for (let index = 1; index < headings.length; index += 1) {
           const previous = headings[index - 1];
           const heading = headings[index];
-          if (previous === void 0 || heading === void 0 || heading.level <= previous.level + 1 || axeSelectors.has(heading.selector) || (heading.axeTargets ?? []).some((target) => axeSelectors.has(target)))
+          if (previous === void 0 || heading === void 0 || heading.level <= previous.level + 1 || axeSelectors.has(heading.selector) || (heading.axeTargets ?? []).some((target2) => axeSelectors.has(target2)))
             continue;
           candidates.push({
             category: this.id,
@@ -7732,12 +8094,20 @@ var init_heading_structure = __esm({
 });
 
 // src/checks/image-distortion.ts
-var imageDistortionCheck;
+function distortionPixelError(record2) {
+  const { width: w, height: h } = record2.rendered;
+  const { naturalWidth: W, naturalHeight: H } = record2;
+  if (!(w > 0 && h > 0 && W > 0 && H > 0)) return 0;
+  return Math.abs(w * H - h * W) / (W + H);
+}
+var minVisibleDistortionPx, imageDistortionCheck;
 var init_image_distortion = __esm({
   "src/checks/image-distortion.ts"() {
     "use strict";
     init_project();
+    init_painted();
     init_shared();
+    minVisibleDistortionPx = 1;
     imageDistortionCheck = {
       id: "image-distortion",
       run({ tuple, config }) {
@@ -7750,8 +8120,9 @@ var init_image_distortion = __esm({
             "image render evidence is unavailable (recapture with this version)"
           );
         const seen = /* @__PURE__ */ new Set();
-        const candidates = scan.records.filter(
-          (record2) => !record2.broken && record2.objectFit === "fill" && record2.distortion > settings.distortionTolerance && !seen.has(record2.selector) && seen.add(record2.selector) !== void 0
+        const gate = paintedGate(tuple, ["idiom:image-distorted"]);
+        const candidates = scan.records.filter((record2) => gate.allows("idiom:image-distorted", record2.selector)).filter(
+          (record2) => !record2.broken && record2.objectFit === "fill" && record2.distortion > settings.distortionTolerance && distortionPixelError(record2) >= minVisibleDistortionPx && !seen.has(record2.selector) && seen.add(record2.selector) !== void 0
         ).map((record2) => {
           const size3 = `${Math.round(record2.rendered.width)}\xD7${Math.round(record2.rendered.height)}`;
           const natural = `${record2.naturalWidth}\xD7${record2.naturalHeight}`;
@@ -7770,7 +8141,7 @@ var init_image_distortion = __esm({
             })
           };
         });
-        return scanResult(this.id, candidates, scan);
+        return gate.result(scanResult(this.id, candidates, scan));
       }
     };
   }
@@ -8015,6 +8386,7 @@ var init_line_length = __esm({
   "src/checks/line-length.ts"() {
     "use strict";
     init_project();
+    init_painted();
     init_shared();
     lineLengthCheck = {
       id: "line-length",
@@ -8027,14 +8399,15 @@ var init_line_length = __esm({
             this.id,
             "line length evidence is unavailable (recapture with this version)"
           );
-        const candidates = scan.records.filter((record2) => record2.chars > settings.max).map((record2) => ({
+        const gate = paintedGate(tuple, ["idiom:line-too-long"]);
+        const candidates = scan.records.filter((record2) => gate.allows("idiom:line-too-long", record2.selector)).filter((record2) => record2.lines > 1 && record2.chars > settings.max).map((record2) => ({
           category: this.id,
           severity: "minor",
           rule: "idiom:line-too-long",
           selectorHint: record2.selector,
-          explanation: `${record2.selector} runs about ${Math.round(record2.chars)} characters per line (${Math.round(record2.width)}px wide) at ${tuple.width}px; keep body text at or under ${settings.max}.`,
+          explanation: `${record2.selector} has a rendered line of ${record2.chars} characters (widest rendered text line: ${Math.round(record2.width)}px) at ${tuple.width}px; keep body text at or under ${settings.max}.`,
           acceptance: [
-            `Lines in ${record2.selector} hold at most about ${settings.max} characters at ${tuple.width}px (for example max-width: 65ch).`
+            `Lines in ${record2.selector} hold at most ${settings.max} characters at ${tuple.width}px (for example max-width: 65ch).`
           ],
           verification: verify(this.id, {
             selector: record2.selector,
@@ -8042,7 +8415,7 @@ var init_line_length = __esm({
             viewportWidth: tuple.width
           })
         }));
-        return scanResult(this.id, candidates, scan);
+        return gate.result(scanResult(this.id, candidates, scan));
       }
     };
   }
@@ -8224,19 +8597,19 @@ function parityOutliers(light, dark, ignored) {
   const surfaces = [...matched.values()].filter(surface);
   const outliers = [];
   let compared = 0;
-  for (const target of surfaces) {
-    const container = containers.get(target.path);
-    if (container === void 0 || isIgnored(target)) continue;
+  for (const target2 of surfaces) {
+    const container = containers.get(target2.path);
+    if (container === void 0 || isIgnored(target2)) continue;
     const contextDirection = direction(container);
     if (contextDirection === void 0 || contextDirection === 0) continue;
-    const own = direction(target);
+    const own = direction(target2);
     if (own === void 0) continue;
-    const interactive = target.light.element.interactive;
-    const reference3 = target.light.luminance;
+    const interactive = target2.light.element.interactive;
+    const reference3 = target2.light.luminance;
     const peers = surfaces.filter(
-      (peer) => peer !== target && containers.get(peer.path) === container && !related(peer.path, target.path) && peer.light.element.interactive === interactive && direction(peer) !== void 0 && Math.abs(peer.light.luminance - reference3) <= PEER_LUMINANCE_WINDOW
+      (peer) => peer !== target2 && containers.get(peer.path) === container && !related(peer.path, target2.path) && peer.light.element.interactive === interactive && direction(peer) !== void 0 && Math.abs(peer.light.luminance - reference3) <= PEER_LUMINANCE_WINDOW
     ).sort(
-      (left, right) => edgeDistance(target.light.element.rect, left.light.element.rect) - edgeDistance(target.light.element.rect, right.light.element.rect) || left.path.localeCompare(right.path)
+      (left, right) => edgeDistance(target2.light.element.rect, left.light.element.rect) - edgeDistance(target2.light.element.rect, right.light.element.rect) || left.path.localeCompare(right.path)
     ).slice(0, MAX_PEERS).map((peer) => ({
       ...peer,
       flipped: direction(peer) === contextDirection
@@ -8246,11 +8619,11 @@ function parityOutliers(light, dark, ignored) {
     if (own === contextDirection) continue;
     const flipped = peers.filter((peer) => peer.flipped).length;
     if (flipped * 2 <= peers.length) continue;
-    const disagrees = (scheme) => target[scheme].luminance >= FLIP_CROSSING !== container[scheme].luminance >= FLIP_CROSSING;
+    const disagrees = (scheme) => target2[scheme].luminance >= FLIP_CROSSING !== container[scheme].luminance >= FLIP_CROSSING;
     outliers.push({
-      path: target.path,
+      path: target2.path,
       owner: disagrees("light") && !disagrees("dark") ? "light" : "dark",
-      target,
+      target: target2,
       container,
       peers,
       direction: contextDirection
@@ -8266,8 +8639,8 @@ function parityOutliers(light, dark, ignored) {
   };
 }
 function parityCandidate(outlier, light, dark) {
-  const { target, container, peers } = outlier;
-  const owner2 = target[outlier.owner].element;
+  const { target: target2, container, peers } = outlier;
+  const owner2 = target2[outlier.owner].element;
   const lum = (side) => round(side.luminance, 3);
   const flipped = peers.filter((peer) => peer.flipped);
   const way = outlier.direction < 0 ? "darkens" : "lightens";
@@ -8276,16 +8649,16 @@ function parityCandidate(outlier, light, dark) {
     severity: "major",
     rule: "idiom:background-scheme-parity",
     selectorHint: owner2.selector,
-    fingerprintHint: `scheme-parity:${target.path}`,
-    explanation: `${owner2.selector} keeps a ${lum(target.light) >= FLIP_CROSSING ? "light" : "dark"} background in both schemes (luminance ${lum(target.light)} light, ${lum(target.dark)} dark) while its container ${container.light.element.selector} ${way} (${lum(container.light)} \u2192 ${lum(container.dark)}) and ${flipped.length} of ${peers.length} comparable neighbours follow it (${flipped.slice(0, 3).map((peer) => peer.light.element.selector).join(", ")}).`,
+    fingerprintHint: `scheme-parity:${target2.path}`,
+    explanation: `${owner2.selector} keeps a ${lum(target2.light) >= FLIP_CROSSING ? "light" : "dark"} background in both schemes (luminance ${lum(target2.light)} light, ${lum(target2.dark)} dark) while its container ${container.light.element.selector} ${way} (${lum(container.light)} \u2192 ${lum(container.dark)}) and ${flipped.length} of ${peers.length} comparable neighbours follow it (${flipped.slice(0, 3).map((peer) => peer.light.element.selector).join(", ")}).`,
     acceptance: [
       `${owner2.selector} changes scheme with its surroundings: in ${outlier.owner} mode its background sits on the same side of luminance ${FLIP_CROSSING} as ${container.light.element.selector}.`
     ],
     verification: verify("luminance-parity", {
       rule: "background-scheme-parity",
-      path: target.path,
+      path: target2.path,
       schemes: ["light", "dark"],
-      target: { light: lum(target.light), dark: lum(target.dark) },
+      target: { light: lum(target2.light), dark: lum(target2.dark) },
       container: {
         path: container.path,
         light: lum(container.light),
@@ -8698,7 +9071,7 @@ var init_mirrored_control = __esm({
         const unavailablePairs = [];
         const candidates = [];
         let compared = 0;
-        const resolve55 = (pair, selector) => {
+        const resolve56 = (pair, selector) => {
           const matches = marks.get(selector);
           if (matches === void 0) {
             notes.push(
@@ -8712,8 +9085,8 @@ var init_mirrored_control = __esm({
           return element;
         };
         for (const pair of config.mirrored) {
-          const a = resolve55(pair, pair.a);
-          const b = resolve55(pair, pair.b);
+          const a = resolve56(pair, pair.a);
+          const b = resolve56(pair, pair.b);
           if (a === void 0 || b === void 0) continue;
           const pairUnavailable = (reason2) => {
             unavailablePairs.push(`"${pair.name}": ${reason2}`);
@@ -9303,10 +9676,10 @@ var init_motion = __esm({
             const surface = change.ownerName || change.name || change.tag;
             const identity7 = `${change.ownerSelector}|${change.direction}`;
             const visible2 = observation?.elements.filter((e) => e.visible) ?? [];
-            const target = visible2.find((e) => e.selector === change.ownerSelector) ?? visible2.find(
+            const target2 = visible2.find((e) => e.selector === change.ownerSelector) ?? visible2.find(
               (e) => e.selector === action.selector || "structuralPath" in e && e.structuralPath === action.selector
             );
-            const selectorHint = target?.selector ?? (action.source === "web-step" ? action.selector : change.ownerSelector);
+            const selectorHint = target2?.selector ?? (action.source === "web-step" ? action.selector : change.ownerSelector);
             const emit = (rule, explanation, effect, params, major = false) => {
               const key3 = `${identity7}|${rule}|${effect}`;
               if (seen.has(key3)) return;
@@ -9480,12 +9853,14 @@ var init_native_control = __esm({
 });
 
 // src/checks/orphan-word.ts
-var orphanWordCheck;
+var minInkShare, orphanWordCheck;
 var init_orphan_word = __esm({
   "src/checks/orphan-word.ts"() {
     "use strict";
     init_project();
+    init_painted();
     init_shared();
+    minInkShare = 0.02;
     orphanWordCheck = {
       id: "orphan-word",
       run({ tuple, config }) {
@@ -9498,7 +9873,13 @@ var init_orphan_word = __esm({
             "orphan word evidence is unavailable (recapture with this version)"
           );
         const seen = /* @__PURE__ */ new Set();
-        const candidates = scan.records.filter((record2) => {
+        const gate = paintedGate(tuple, ["idiom:orphan-word"]);
+        let inkSkipped = 0;
+        const candidates = scan.records.filter((record2) => gate.allows("idiom:orphan-word", record2.selector)).filter((record2) => {
+          const blank = record2.ink?.status === "measured" && record2.ink.share < minInkShare;
+          if (blank) inkSkipped += 1;
+          return !blank;
+        }).filter((record2) => {
           if ([...record2.word].length > settings.maxChars) return false;
           if (seen.has(record2.selector)) return false;
           seen.add(record2.selector);
@@ -9514,10 +9895,18 @@ var init_orphan_word = __esm({
           ],
           verification: verify(this.id, {
             selector: record2.selector,
-            viewportWidth: tuple.width
+            viewportWidth: tuple.width,
+            ...record2.rect === void 0 ? {} : { rect: record2.rect }
           })
         }));
-        return scanResult(this.id, candidates, scan);
+        const result2 = gate.result(scanResult(this.id, candidates, scan));
+        return inkSkipped === 0 ? result2 : {
+          ...result2,
+          coverage: {
+            ...result2.coverage,
+            inkSkipped: { "idiom:orphan-word": inkSkipped }
+          }
+        };
       }
     };
   }
@@ -9548,6 +9937,7 @@ var mediaTags, overflowClipCheck;
 var init_overflow_clip = __esm({
   "src/checks/overflow-clip.ts"() {
     "use strict";
+    init_painted();
     init_shared();
     mediaTags = /* @__PURE__ */ new Set(["iframe", "img", "video", "canvas"]);
     overflowClipCheck = {
@@ -9556,6 +9946,7 @@ var init_overflow_clip = __esm({
         const observation = tuple.observations;
         if (observation === void 0)
           return unavailable(this.id, "observations.json is unavailable");
+        const gate = paintedGate(tuple, ["idiom:element-content-clipped"]);
         const candidates = [];
         const documentHorizontallyOverflows = observation.document.scrollWidth > observation.document.clientWidth + 1;
         if (documentHorizontallyOverflows) {
@@ -9596,27 +9987,53 @@ var init_overflow_clip = __esm({
             });
             continue;
           }
+          const ownerPainted = gate.allows(
+            "idiom:element-content-clipped",
+            element
+          );
+          if (element.paintedContent !== void 0) {
+            let hiddenContributor = false;
+            for (const selector of element.paintedContent.selectors)
+              if (!gate.allows("idiom:element-content-clipped", selector))
+                hiddenContributor = true;
+            const size3 = element.paintedContent;
+            if (hiddenContributor && !(horizontal && size3.width > element.clientWidth + 1) && !(vertical && size3.height > element.clientHeight + (singleLine ? 2 : 1)))
+              continue;
+          }
+          if (!ownerPainted) continue;
           if (ownText(element) === "") {
             const crop = "attributes" in element && element.attributes["data-idiom-crop"] !== void 0;
-            const children = childrenOf(element, observation.elements);
+            const children = childrenOf(
+              element,
+              observation.elements.filter(isElementPainted)
+            );
             if (crop || children.length > 0 && children.every(
-              (child) => isMediaContent(child, observation.elements)
+              (child) => isMediaContent(
+                child,
+                observation.elements.filter(isElementPainted)
+              )
             ))
               continue;
           }
+          const clipped = element.paintedContent?.clipped;
+          if (clipped !== void 0 && clipped.text.length === 0 && clipped.interactive.length === 0)
+            continue;
+          const cutText = clipped?.text[0];
+          const cutControl = clipped?.interactive[0];
+          const cut = cutText !== void 0 ? `, cutting off text in ${cutText}` : cutControl !== void 0 ? `, cutting off ${cutControl}` : "";
           candidates.push({
             category: this.id,
             severity: "major",
             rule: "idiom:element-content-clipped",
             selectorHint: element.selector,
-            explanation: `${element.selector} clips ${horizontal ? "horizontal" : "vertical"} content by ${measured2} (${element.scrollWidth}\xD7${element.scrollHeight}px content in ${element.clientWidth}\xD7${element.clientHeight}px).`,
+            explanation: `${element.selector} clips ${horizontal ? "horizontal" : "vertical"} content by ${measured2} (${element.scrollWidth}\xD7${element.scrollHeight}px content in ${element.clientWidth}\xD7${element.clientHeight}px)${cut}.`,
             acceptance: [
               `${element.selector} exposes all of its rendered content without clipping.`
             ],
             verification: verify(this.id, { selector: element.selector })
           });
         }
-        return ran(this.id, candidates);
+        return gate.result(ran(this.id, candidates));
       }
     };
   }
@@ -10526,7 +10943,34 @@ function paintedSides(element) {
     ([side, width, color]) => px(width) > 0 && isPainted(color) ? [{ side, width: px(width), color }] : []
   );
 }
+function hasVisibleShadow(value) {
+  const shadow = (value ?? "").trim();
+  if (shadow === "" || shadow === "none") return false;
+  const layers = [];
+  let depth = 0;
+  let current = "";
+  for (const character of shadow) {
+    if (character === "(") depth += 1;
+    if (character === ")") depth -= 1;
+    if (character === "," && depth === 0) {
+      layers.push(current);
+      current = "";
+    } else current += character;
+  }
+  layers.push(current);
+  return layers.some((layer) => {
+    const color = layer.match(
+      /(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^)]*\)/i
+    )?.[0] ?? layer.match(/#[0-9a-f]{3,8}\b/i)?.[0] ?? layer.replace(/-?\d*\.?\d+[a-z%]*/gi, "").replace(/\binset\b/gi, "").trim();
+    const painted3 = color === "" || isPainted(color);
+    const lengths = (layer.replace(/\([^)]*\)/g, "").match(/-?\d*\.?\d+px/g) ?? []).map((length) => Number.parseFloat(length));
+    return painted3 && lengths.some((length) => length !== 0);
+  });
+}
 function dividerSide(element) {
+  const display = element.styles.display ?? "";
+  if (display === "inline" || inlineTextTags.has(element.tag) || display.startsWith("inline") && element.directText !== "")
+    return void 0;
   const sides = paintedSides(element);
   const [only] = sides;
   if (sides.length !== 1 || only === void 0 || only.width > 2)
@@ -10553,6 +10997,25 @@ function defaultRole(element, insideControl, skip) {
     if (dividerSide(element) !== void 0) return "divider";
   }
   return void 0;
+}
+function headingWrappers(elements) {
+  const bySelector = new Map(
+    elements.map((element) => [element.selector, element])
+  );
+  const wrappers = /* @__PURE__ */ new Set();
+  for (const heading of elements.filter(isHeading))
+    for (const selector of heading.ancestorSelectors) {
+      const ancestor = bySelector.get(selector);
+      if (ancestor !== void 0 && heading.rect.height >= 0.5 * ancestor.rect.height)
+        wrappers.add(selector);
+    }
+  return wrappers;
+}
+function dividerKind(element, wrappers) {
+  if (isHeading(element) || wrappers.has(element.selector)) return "heading";
+  if (tableTags.has(element.tag) || tableRoles.has(element.signals.role))
+    return "table";
+  return "rule";
 }
 function radiusOf(element) {
   const { width, height } = element.rect;
@@ -10703,6 +11166,7 @@ function scaleMeasurements(tuple, elements, config, notes) {
       (element) => controlRoles.has(element.signals.role) || element.interactive && !compositeRoles.has(element.signals.role)
     ).map((element) => element.selector)
   );
+  const wrappers = headingWrappers(elements);
   const results = [];
   for (const element of [...elements].sort(
     (left, right) => left.structuralPath.localeCompare(right.structuralPath)
@@ -10724,16 +11188,17 @@ function scaleMeasurements(tuple, elements, config, notes) {
       role,
       value,
       label: label2(property, value),
-      circle: value.kind === "full" && Math.abs(element.rect.width - element.rect.height) <= 1
+      circle: value.kind === "full" && Math.abs(element.rect.width - element.rect.height) <= 1,
+      ...role === "divider" ? { dividerKind: dividerKind(element, wrappers) } : {}
     });
     if (role === "control" && element.signals.lineCount <= 1)
       push("height", {
         kind: "px",
         px: Math.round(element.rect.height * 2) / 2
       });
-    if (role !== "divider" && (isBounded(element) || element.styles.boxShadow !== "none")) {
-      const radius3 = radiusOf(element);
-      if (radius3 !== void 0) push("radius", radius3);
+    if (role !== "divider" && (isBounded(element) || hasVisibleShadow(element.styles.boxShadow))) {
+      const radius4 = radiusOf(element);
+      if (radius4 !== void 0) push("radius", radius4);
     }
     if (role === "control" && element.authoredProperties?.includes("boxShadow") && !element.signals.focused && element.styles.boxShadow !== "none")
       push("shadow", {
@@ -10799,8 +11264,20 @@ function analyse2(tuples, config) {
     const observed = signalledElements(tuple);
     if ("reason" in observed) continue;
     const tupleNotes = [];
+    const raw = scaleMeasurements(tuple, observed.elements, config, tupleNotes);
+    const painted3 = scaleMeasurements(
+      tuple,
+      observed.elements.filter(isElementPainted),
+      config,
+      []
+    );
     observations.push(
-      ...scaleMeasurements(tuple, observed.elements, config, tupleNotes)
+      ...raw.filter(
+        (measurement) => declaredScale(config, measurement.property, measurement.role).length > 0
+      ),
+      ...painted3.filter(
+        (measurement) => declaredScale(config, measurement.property, measurement.role).length === 0
+      )
     );
     notes.set(tuple, tupleNotes);
   }
@@ -10831,7 +11308,7 @@ function analyse2(tuples, config) {
       continue;
     }
     const surface = observation.value.kind === "color" ? observation.value.surface : "";
-    const cohort = `${observation.property}\0${observation.role}\0${observation.tuple.width}x${observation.tuple.height}\0${surface}`;
+    const cohort = `${observation.property}\0${observation.role}\0${observation.dividerKind ?? ""}\0${observation.tuple.width}x${observation.tuple.height}\0${observation.tuple.colorScheme ?? ""}\0${surface}`;
     cohorts.set(cohort, [...cohorts.get(cohort) ?? [], observation]);
   }
   for (const [, cohort] of [...cohorts].sort(
@@ -10946,10 +11423,11 @@ function candidateFor(group) {
     ]
   };
 }
-var configuredOrder, excludedInputTypes, controlRoles, compositeRoles, analyses2, plural, scaleConformanceCheck;
+var configuredOrder, excludedInputTypes, inlineTextTags, controlRoles, compositeRoles, headingTags, tableTags, tableRoles, isHeading, analyses2, plural, scaleConformanceCheck;
 var init_scale_conformance = __esm({
   "src/checks/scale-conformance.ts"() {
     "use strict";
+    init_painted();
     init_shared();
     init_spacing_scale();
     configuredOrder = [
@@ -10967,6 +11445,7 @@ var init_scale_conformance = __esm({
       "file",
       "hidden"
     ]);
+    inlineTextTags = /* @__PURE__ */ new Set(["abbr", "acronym", "dfn"]);
     controlRoles = /* @__PURE__ */ new Set([
       "button",
       "combobox",
@@ -10975,6 +11454,27 @@ var init_scale_conformance = __esm({
       "option"
     ]);
     compositeRoles = /* @__PURE__ */ new Set(["tablist", "listbox", "menu"]);
+    headingTags = /* @__PURE__ */ new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
+    tableTags = /* @__PURE__ */ new Set([
+      "table",
+      "caption",
+      "thead",
+      "tbody",
+      "tfoot",
+      "tr",
+      "td",
+      "th"
+    ]);
+    tableRoles = /* @__PURE__ */ new Set([
+      "table",
+      "grid",
+      "row",
+      "cell",
+      "gridcell",
+      "columnheader",
+      "rowheader"
+    ]);
+    isHeading = (element) => headingTags.has(element.tag) || element.signals.role === "heading";
     analyses2 = /* @__PURE__ */ new WeakMap();
     plural = (count, singular2, many = `${singular2}s`) => count === 1 ? singular2 : many;
     scaleConformanceCheck = {
@@ -10986,6 +11486,15 @@ var init_scale_conformance = __esm({
           tuples?.includes(tuple) ? tuples : [tuple],
           config
         );
+        const gate = paintedGate(tuple, ["idiom:scale-outlier"]);
+        for (const measurement of scaleMeasurements(
+          tuple,
+          observed.elements,
+          config,
+          []
+        ))
+          if (declaredScale(config, measurement.property, measurement.role).length === 0)
+            gate.allows("idiom:scale-outlier", measurement.element);
         const notes = [...analysis.notes.get(tuple) ?? []];
         if (config.scales.spacing?.length && (tuple.observations?.version !== 2 || tuple.observations.elements.some(
           (e) => e.visible && e.authoredProperties === void 0
@@ -11003,6 +11512,7 @@ var init_scale_conformance = __esm({
         return {
           coverage: {
             check: this.id,
+            ...gate.coverage(),
             status: "ran",
             ...notes.length === 0 ? {} : { reason: notes.join("; ") }
           },
@@ -11048,6 +11558,7 @@ var families, selectedStateCheck;
 var init_selected_state = __esm({
   "src/checks/selected-state.ts"() {
     "use strict";
+    init_painted();
     init_shared();
     families = {
       bg: "background",
@@ -11079,6 +11590,7 @@ var init_selected_state = __esm({
             this.id,
             "observations predate selection-group signals (recapture)"
           );
+        const gate = paintedGate(tuple, ["idiom:selected-state-invisible"]);
         const threshold = config.selectedState.minColorDelta;
         const elements = new Map(
           observation.elements.map((element) => [element.selector, element])
@@ -11095,9 +11607,14 @@ var init_selected_state = __esm({
         for (const group of observation.selectionGroups) {
           const members = group.members.filter(shown);
           if (members.length < 2) continue;
+          for (const member of members)
+            gate.allows(
+              "idiom:selected-state-invisible",
+              member.selector,
+              ...member.decorationOwners ?? []
+            );
           const selected2 = members.filter((member) => member.selected);
-          const unselected = members.filter((member) => !member.selected);
-          const native = members.every((member) => member.source === "checked");
+          const nativeRadio = group.memberRole === "radio" && members.every((member) => member.source === "checked");
           const label3 = `${group.container} (${members.slice(0, 4).map(nameOf).join(", ")}${members.length > 4 ? ", \u2026" : ""})`;
           const emit = (suffix, severity, selectorHint, explanation, acceptance) => candidates.push({
             category: this.id,
@@ -11112,12 +11629,12 @@ var init_selected_state = __esm({
             })
           });
           if (selected2.length === 0) {
-            const selectable = native || !["listbox", "toolbar"].includes(group.role) && (["tablist", "radiogroup"].includes(group.role) || ["", "group"].includes(group.role) && members.every(
+            const selectable = group.memberRole !== "checkbox" && (nativeRadio || !["listbox", "toolbar"].includes(group.role) && (["tablist", "radiogroup"].includes(group.role) || ["", "group"].includes(group.role) && members.every(
               (member) => Object.hasOwn(
                 elements.get(member.control)?.attributes ?? {},
                 member.source
               )
-            ));
+            )));
             if (selectable)
               emit(
                 "none",
@@ -11138,16 +11655,24 @@ var init_selected_state = __esm({
             );
             continue;
           }
-          if (unselected.length === 0) continue;
+          const visual = members.filter(
+            (member) => gate.allows("idiom:selected-state-invisible", member.selector)
+          ).map((member) => ({
+            ...member,
+            decoration: member.paintedDecoration ?? member.decoration
+          }));
+          const visualSelected = visual.filter((member) => member.selected);
+          const visualUnselected = visual.filter((member) => !member.selected);
+          if (visualUnselected.length === 0) continue;
           const keys = new Set(
-            members.flatMap((member) => Object.keys(member.decoration))
+            visual.flatMap((member) => Object.keys(member.decoration))
           );
           const compared = /* @__PURE__ */ new Set();
-          const invisible = selected2.find((member) => {
+          const invisible = visualSelected.find((member) => {
             if (member.nativeIndicator) return false;
             for (const key3 of keys) {
-              const baseline = unselected[0]?.decoration[key3];
-              if (unselected.some(
+              const baseline = visualUnselected[0]?.decoration[key3];
+              if (visualUnselected.some(
                 (other) => differs(key3, baseline, other.decoration[key3], threshold)
               ))
                 continue;
@@ -11162,11 +11687,11 @@ var init_selected_state = __esm({
               "invisible",
               "major",
               invisible.selector,
-              `the selected option ${nameOf(invisible)} in ${label3} looks the same as the other ${unselected.length} of ${members.length} options; compared ${[...compared].sort().join(", ") || "no shared properties"}.`,
+              `the selected option ${nameOf(invisible)} in ${label3} looks the same as the other ${visualUnselected.length} of ${visual.length} options; compared ${[...compared].sort().join(", ") || "no shared properties"}.`,
               "The selected option differs visibly from its siblings (border, background, outline, box-shadow, or an indicator), not only by ARIA state."
             );
         }
-        return ran(this.id, candidates);
+        return gate.result(ran(this.id, candidates));
       }
     };
   }
@@ -11789,6 +12314,45 @@ function inputClass(tuple, observation, settings) {
     return { kind: "touch", minimum: settings.coarse };
   return { kind: "fine", minimum: settings.fine };
 }
+function target(element, minimum) {
+  const regions = [
+    element.rect,
+    ...(element.targetSizeLabels ?? []).flatMap((label3) => label3.rects)
+  ];
+  const left = Math.min(...regions.map((rect2) => rect2.x));
+  const right = Math.max(...regions.map((rect2) => rect2.x + rect2.width));
+  const top = Math.min(...regions.map((rect2) => rect2.y));
+  const bottom = Math.max(...regions.map((rect2) => rect2.y + rect2.height));
+  return {
+    element,
+    regions,
+    x: (left + right) / 2,
+    y: (top + bottom) / 2,
+    sized: regions.some(
+      (rect2) => rect2.width >= minimum && rect2.height >= minimum
+    )
+  };
+}
+function sufficientlySpaced(candidate2, targets) {
+  return targets.every((other) => {
+    if (other === candidate2) return true;
+    if (!other.sized && Math.hypot(candidate2.x - other.x, candidate2.y - other.y) < 24 - 1e-9)
+      return false;
+    return other.regions.every((rect2) => {
+      const dx = Math.max(
+        rect2.x - candidate2.x,
+        0,
+        candidate2.x - rect2.x - rect2.width
+      );
+      const dy = Math.max(
+        rect2.y - candidate2.y,
+        0,
+        candidate2.y - rect2.y - rect2.height
+      );
+      return Math.hypot(dx, dy) >= 12 - 1e-9;
+    });
+  });
+}
 var defaultTargetSize, targetSizeCheck;
 var init_target_size = __esm({
   "src/checks/target-size.ts"() {
@@ -11805,18 +12369,28 @@ var init_target_size = __esm({
         const applied = inputClass(tuple, observation, settings);
         const minimum = applied.minimum;
         const label3 = applied.kind === "narrow" ? `narrower than ${settings.narrowBelow}px, minimum ${minimum}` : applied.kind === "touch" ? `touch, minimum ${minimum}` : `fine pointer, minimum ${minimum}`;
+        const spacing = applied.kind === "fine" && minimum === 24;
+        const eligible = observation.elements.filter(
+          (element) => element.visible && !isVisuallyHidden(element) && element.painted?.value !== false && element.interactive && element.enabled && element.rect.x + element.rect.width > 0 && element.rect.x < observation.viewport.width
+        );
+        const ownedLabels = new Set(
+          eligible.flatMap(
+            (element) => (element.targetSizeLabels ?? []).map((label4) => label4.selector)
+          )
+        );
+        const targets = eligible.filter((element) => !ownedLabels.has(element.selector)).map((element) => target(element, minimum));
         return ran(
           this.id,
-          observation.elements.filter(
-            (element) => element.visible && !isVisuallyHidden(element) && element.interactive && element.enabled && element.inlineTextTarget !== true && element.rect.x + element.rect.width > 0 && element.rect.x < observation.viewport.width && (element.rect.width < minimum || element.rect.height < minimum)
-          ).map((element) => ({
+          targets.filter(
+            (candidate2) => !candidate2.element.inlineTextTarget && !candidate2.sized && !(spacing && sufficientlySpaced(candidate2, targets))
+          ).map(({ element }) => ({
             category: this.id,
             severity: "minor",
             rule: "idiom:minimum-target-size",
             selectorHint: element.selector,
-            explanation: `${element.selector} is ${Math.round(element.rect.width)}\xD7${Math.round(element.rect.height)} at ${tuple.viewport} (${label3}); interactive targets here must be at least ${minimum}\xD7${minimum} CSS pixels.`,
+            explanation: `${element.selector} is ${Math.round(element.rect.width)}\xD7${Math.round(element.rect.height)} at ${tuple.viewport} (${label3}); ${element.targetSizeLabels?.some((label4) => label4.rects.length > 0) ? "neither its input nor any recorded clickable label fragment contains" : "its hit area does not contain"} a ${minimum}\xD7${minimum} CSS pixel square${spacing ? " and its 24px circle overlaps another target or undersized target circle" : ""}.`,
             acceptance: [
-              `${element.selector} has a rendered hit area of at least ${minimum}\xD7${minimum} CSS pixels at ${tuple.viewport}.`
+              `${element.selector} has a clickable region containing a ${minimum}\xD7${minimum} CSS pixel square${spacing ? " or sufficient spacing for its 24px circle to avoid other targets and undersized target circles" : ""} at ${tuple.viewport}.`
             ],
             verification: verify(this.id, {
               selector: element.selector,
@@ -11831,10 +12405,32 @@ var init_target_size = __esm({
 });
 
 // src/checks/text-centering.ts
+function measuredBox(element) {
+  const { rect: rect2, styles } = element;
+  const top = px(styles.borderTopWidth) > 0 && isPainted(styles.borderTopColor);
+  const bottom = px(styles.borderBottomWidth) > 0 && isPainted(styles.borderBottomColor);
+  if (!isPainted(styles.backgroundColor) && top !== bottom) {
+    const insetTop = px(styles.borderTopWidth) + px(styles.paddingTop);
+    const insetBottom = px(styles.borderBottomWidth) + px(styles.paddingBottom);
+    return {
+      top: rect2.y + insetTop,
+      height: rect2.height - insetTop - insetBottom,
+      basis: "content",
+      ruleSide: top ? "top" : "bottom"
+    };
+  }
+  return {
+    top: rect2.y,
+    height: rect2.height,
+    basis: "border",
+    ruleSide: void 0
+  };
+}
 var labelOf, textCenteringCheck;
 var init_text_centering = __esm({
   "src/checks/text-centering.ts"() {
     "use strict";
+    init_painted();
     init_shared();
     labelOf = (element) => element.signals.labelInk ?? {
       text: element.text.trim(),
@@ -11847,11 +12443,16 @@ var init_text_centering = __esm({
       run({ tuple, config }) {
         const observed = signalledElements(tuple);
         if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const gate = paintedGate(tuple, ["idiom:label-off-centre"]);
+        const elements = gate.filter(
+          "idiom:label-off-centre",
+          observed.elements.filter(isBounded)
+        );
         const bounded2 = new Set(
-          observed.elements.filter(isBounded).map((element) => element.selector)
+          elements.filter(isBounded).map((element) => element.selector)
         );
         const groups = /* @__PURE__ */ new Map();
-        for (const element of observed.elements) {
+        for (const element of elements) {
           if (isVisuallyHidden(element) || !isBounded(element)) continue;
           if (["input", "select", "textarea", "html", "body", "img", "svg"].includes(
             element.tag
@@ -11867,11 +12468,13 @@ var init_text_centering = __esm({
           const height = element.rect.height;
           if (height < 12 || height > 64 || height > label3.textRect.height * 3.2)
             continue;
-          const inner = observed.elements.some(
+          const inner = elements.some(
             (other) => other !== element && bounded2.has(other.selector) && other.ancestorSelectors.includes(element.selector) && labelOf(other).text === text2
           );
           if (inner) continue;
-          const centre = element.rect.y + height / 2;
+          const box = measuredBox(element);
+          if (box.height <= 0) continue;
+          const centre = box.top + box.height / 2;
           const offset2 = label3.inkCenterY - centre;
           if (Math.abs(offset2) <= config.centeringTolerance) continue;
           const key3 = [
@@ -11881,6 +12484,9 @@ var init_text_centering = __esm({
             element.styles.paddingTop,
             element.styles.paddingBottom,
             Math.round(height),
+            box.basis,
+            Math.round(box.height),
+            box.ruleSide,
             Math.round(offset2 * 2) / 2
           ].join("|");
           const group = groups.get(key3);
@@ -11889,7 +12495,9 @@ var init_text_centering = __esm({
               offset: offset2,
               selectors: [element.selector],
               text: text2,
-              height
+              height: box.height,
+              basis: box.basis,
+              ruleSide: box.ruleSide
             });
           else group.selectors.push(element.selector);
         }
@@ -11899,14 +12507,16 @@ var init_text_centering = __esm({
           if (first === void 0) continue;
           const direction = group.offset > 0 ? "below" : "above";
           const more = group.selectors.length > 1 ? ` (${group.selectors.length} elements share this geometry: ${group.selectors.slice(0, 4).join(", ")}${group.selectors.length > 4 ? ", \u2026" : ""})` : "";
+          const boxDescription = group.basis === "content" ? `content box inside its ${group.ruleSide} rule` : "box";
+          const acceptanceBox = group.basis === "content" ? "content box" : "box";
           candidates.push({
             category: this.id,
             severity: "minor",
             rule: "idiom:label-off-centre",
             selectorHint: first,
-            explanation: `The label "${group.text}" in ${first} sits ${round(Math.abs(group.offset))}px ${direction} the vertical centre of its ${Math.round(group.height)}px box (tolerance ${config.centeringTolerance}px)${more}.`,
+            explanation: `The label "${group.text}" in ${first} sits ${round(Math.abs(group.offset))}px ${direction} the vertical centre of its ${Math.round(group.height)}px ${boxDescription} (tolerance ${config.centeringTolerance}px)${more}.`,
             acceptance: [
-              `The label's ink centre in ${first} is within ${config.centeringTolerance}px of the box's vertical centre (balance padding-top/bottom or line-height).`
+              `The label's ink centre in ${first} is within ${config.centeringTolerance}px of the ${acceptanceBox}'s vertical centre (balance padding-top/bottom or line-height).`
             ],
             verification: verify(this.id, {
               selector: first,
@@ -11914,7 +12524,7 @@ var init_text_centering = __esm({
             })
           });
         }
-        return ran(this.id, candidates);
+        return gate.result(ran(this.id, candidates));
       }
     };
   }
@@ -13319,7 +13929,7 @@ var init_dynamic_schema = __esm({
 
 // src/checks/artifact-schema.ts
 import { z as z13 } from "zod";
-var finite, dimension3, rectSchema, stylesSchema, expandedStylesSchema, elementSchema, motionStylesSchema, motionSampleSchema, motionEffectSchema, motionArtifactSchema, rgbSchema, alphaSchema, unavailablePaintSchema, paintColorSchema, paintSchema, pointSchema, edgeBase, frameEdgeSchema, explanationTextSchema, explanationArtifactSchema, signalsSchema, probeCollectionSchema, probeSchema, componentSchema, invariantObservationSchema, selectionGroupSchema, dialogSchema, overlapKind, overlapSchema, clippedTextSchema, fieldGroupSchema, emptyRegionsSchema, mediaBandSchema, mediaFrameSchema, collectionSchema, progressArtifactSchema, styleSourceSchema, elementV2Schema, headingSchema, tokenSchema, observationCommon, observationArtifactV1Schema, identifier, offset, bandEdgeSchema, wordFragmentSchema, wordBreakSchema, geometryScan, failedRequestSchema, fontObservationSchema, linkResultSchema, linkSchema, focusVisibleSchema, lineLengthSchema, orphanWordSchema, imageRenderSchema, layoutShiftSchema, visibilityGeometrySchema, shellVisibilitySchema, observationArtifactV2Schema, observationArtifactSchema;
+var finite, dimension3, rectSchema, stylesSchema, expandedStylesSchema, elementSchema, motionStylesSchema, motionSampleSchema, motionEffectSchema, motionArtifactSchema, rgbSchema, alphaSchema, unavailablePaintSchema, paintColorSchema, paintSchema, pointSchema, edgeBase, frameEdgeSchema, explanationTextSchema, explanationArtifactSchema, signalsSchema, probeCollectionSchema, probeSchema, componentSchema, invariantObservationSchema, selectionGroupSchema, dialogSchema, overlapKind, overlapSchema, clippedTextSchema, fieldGroupSchema, emptyRegionsSchema, mediaBandSchema, mediaFrameSchema, collectionSchema, progressArtifactSchema, styleSourceSchema, elementV2Schema, headingSchema, tokenSchema, observationCommon, observationArtifactV1Schema, identifier, offset, bandEdgeSchema, wordFragmentSchema, wordBreakSchema, geometryScan, failedRequestSchema, fontObservationSchema, linkResultSchema, linkSchema, focusVisibleSchema, lineLengthSchema, orphanWordSchema, imageRenderSchema, layoutShiftSchema, visibilityGeometrySchema, shellVisibilitySchema, sizeSchema, screenshotGeometrySchema, observationArtifactV2Schema, observationArtifactSchema;
 var init_artifact_schema = __esm({
   "src/checks/artifact-schema.ts"() {
     "use strict";
@@ -13343,6 +13953,7 @@ var init_artifact_schema = __esm({
       outlineWidth: z13.string(),
       outlineStyle: z13.string().optional(),
       outlineOffset: z13.string().optional(),
+      userSelect: z13.string().optional(),
       textOverflow: z13.string().optional(),
       fill: z13.string(),
       stroke: z13.string(),
@@ -13394,6 +14005,24 @@ var init_artifact_schema = __esm({
       tag: z13.string().min(1),
       text: z13.string(),
       visible: z13.boolean(),
+      painted: z13.discriminatedUnion("value", [
+        z13.object({ value: z13.literal(true) }).strict(),
+        z13.object({
+          value: z13.literal(false),
+          reason: z13.string().min(1),
+          boundary: z13.string().min(1).optional()
+        }).strict()
+      ]).optional(),
+      paintedContent: z13.object({
+        selectors: z13.array(z13.string()),
+        width: dimension3,
+        height: dimension3,
+        clipped: z13.object({
+          text: z13.array(z13.string()),
+          interactive: z13.array(z13.string()),
+          marquee: z13.array(z13.string())
+        }).strict().optional()
+      }).strict().optional(),
       interactive: z13.boolean(),
       enabled: z13.boolean(),
       headingLevel: z13.number().int().min(1).max(6).optional(),
@@ -13404,6 +14033,12 @@ var init_artifact_schema = __esm({
       clientHeight: dimension3,
       outOfFlow: z13.boolean(),
       inlineTextTarget: z13.boolean().optional(),
+      targetSizeLabels: z13.array(
+        z13.object({
+          selector: z13.string().min(1),
+          rects: z13.array(rectSchema)
+        }).strict()
+      ).optional(),
       ancestorSelectors: z13.array(z13.string()),
       authoredProperties: z13.array(z13.string()).optional(),
       styles: stylesSchema,
@@ -13813,7 +14448,9 @@ var init_artifact_schema = __esm({
             "checked"
           ]),
           nativeIndicator: z13.boolean(),
-          decoration: z13.record(z13.string(), z13.string())
+          decoration: z13.record(z13.string(), z13.string()),
+          paintedDecoration: z13.record(z13.string(), z13.string()).optional(),
+          decorationOwners: z13.array(z13.string()).optional()
         }).strict()
       )
     }).strict();
@@ -13989,6 +14626,7 @@ var init_artifact_schema = __esm({
     observationCommon = {
       viewport: z13.object({ width: finite.positive(), height: finite.positive() }).strict(),
       document: z13.object({
+        contentType: z13.string().trim().min(1).optional(),
         scrollWidth: dimension3,
         scrollHeight: dimension3,
         clientWidth: dimension3,
@@ -14102,7 +14740,16 @@ var init_artifact_schema = __esm({
       selector: identifier,
       word: z13.string().min(1),
       lines: z13.number().int().min(2),
-      text: z13.string().max(160)
+      text: z13.string().max(160),
+      rect: rectSchema.optional(),
+      lastLine: rectSchema.optional(),
+      ink: z13.discriminatedUnion("status", [
+        z13.object({
+          status: z13.literal("measured"),
+          share: z13.number().min(0).max(1)
+        }).strict(),
+        z13.object({ status: z13.literal("unavailable"), reason: z13.string() }).strict()
+      ]).optional()
     }).strict();
     imageRenderSchema = z13.object({
       selector: identifier,
@@ -14172,6 +14819,22 @@ var init_artifact_schema = __esm({
         }).strict()
       )
     }).strict();
+    sizeSchema = z13.object({ width: dimension3, height: dimension3 }).strict();
+    screenshotGeometrySchema = z13.object({
+      strategy: z13.enum(["viewport", "full-page", "tiled"]),
+      scale: finite.positive(),
+      width: dimension3,
+      height: dimension3,
+      tiles: z13.number().int().positive().optional(),
+      drift: z13.object({ observed: sizeSchema, captured: sizeSchema }).strict().optional(),
+      rects: z13.record(z13.string().min(1), rectSchema).optional()
+    }).strict().refine(
+      (value) => value.tiles === void 0 || value.strategy === "tiled",
+      "tiles are recorded only for tiled screenshots"
+    ).refine(
+      (value) => value.rects === void 0 || value.drift !== void 0,
+      "screenshot rects are recorded only when layout drifted"
+    );
     observationArtifactV2Schema = z13.object({
       version: z13.literal(2),
       rootFontSize: finite.positive().optional(),
@@ -14255,7 +14918,8 @@ var init_artifact_schema = __esm({
       lineLengths: geometryScan(lineLengthSchema).optional(),
       orphanWords: geometryScan(orphanWordSchema).optional(),
       imageRenders: geometryScan(imageRenderSchema).optional(),
-      layoutShift: layoutShiftSchema.optional()
+      layoutShift: layoutShiftSchema.optional(),
+      screenshot: screenshotGeometrySchema.optional()
     }).strict();
     observationArtifactSchema = z13.discriminatedUnion("version", [
       observationArtifactV1Schema,
@@ -14270,7 +14934,7 @@ function normalise2(png, scale) {
   const height = Math.max(1, Math.floor(png.height / scale + 1e-6));
   if (Number.isInteger(scale)) return normaliseWhole(png, scale, width, height);
   const across = new Float32Array(width * png.height * 3);
-  const spans = (target, limit) => Array.from({ length: target }, (_, index) => {
+  const spans = (target2, limit) => Array.from({ length: target2 }, (_, index) => {
     const start = index * scale, end = Math.min(limit, (index + 1) * scale);
     const parts = [];
     for (let source = Math.floor(start); source < end; source++) {
@@ -15039,8 +15703,8 @@ function neutral(width, height) {
   }
   return image2;
 }
-function copy(source, target, x, y) {
-  PNG2.bitblt(source, target, 0, 0, source.width, source.height, x, y);
+function copy(source, target2, x, y) {
+  PNG2.bitblt(source, target2, 0, 0, source.width, source.height, x, y);
 }
 function drawLabel(image2, label3, startX, panelWidth, top = 0) {
   let x = startX + 8;
@@ -15978,20 +16642,20 @@ function deriveVerificationLocus(tuple, selectorHint) {
     (element) => matchesHint(element, selectorHint)
   );
   if (targets.length !== 1) return void 0;
-  const target = targets[0];
+  const target2 = targets[0];
   const bySelector = /* @__PURE__ */ new Map();
   for (const element of visible2) {
     const list5 = bySelector.get(element.selector) ?? [];
     list5.push(element);
     bySelector.set(element.selector, list5);
   }
-  const region = target.ancestorSelectors.map((selector) => bySelector.get(selector) ?? []).find((matches) => matches.length === 1)?.[0];
+  const region = target2.ancestorSelectors.map((selector) => bySelector.get(selector) ?? []).find((matches) => matches.length === 1)?.[0];
   if (region === void 0) return void 0;
   const regionV2 = region;
-  const relativePath2 = target.structuralPath !== void 0 && regionV2.structuralPath !== void 0 ? target.structuralPath.slice(regionV2.structuralPath.length).replace(/^\//, "") || "." : target.selector;
+  const relativePath2 = target2.structuralPath !== void 0 && regionV2.structuralPath !== void 0 ? target2.structuralPath.slice(regionV2.structuralPath.length).replace(/^\//, "") || "." : target2.selector;
   return verificationLocusSchema.parse({
     version: 1,
-    target: { selector: target.selector, signature: identity6(target) },
+    target: { selector: target2.selector, signature: identity6(target2) },
     region: { selector: region.selector, signature: identity6(region) },
     relativePath: relativePath2
   });
@@ -16550,7 +17214,7 @@ var init_version = __esm({
     "use strict";
     SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
     IDIOM_VERSION = readPackageVersion();
-    IDIOM_BUILD_COMMIT = true ? "af195ae3ce6fd2a8cf0906c6c52b07c10e72adef" : "unknown";
+    IDIOM_BUILD_COMMIT = true ? "cf4be569e679c472dd173023dae051b742fe7dc1" : "unknown";
     IDIOM_VERSION_DISPLAY = `${IDIOM_VERSION} (${IDIOM_BUILD_COMMIT.slice(0, 7)})`;
   }
 });
@@ -16667,11 +17331,11 @@ async function recordPixelBaselines(directory, runDirectory, tuples) {
   for (const tuple of tuples) {
     if (tuple.screenshotPath === void 0) continue;
     const name = pixelBaselineName(tupleCoordinate2(tuple));
-    const target = join6(directory, name);
-    const temporary = `${target}.${randomUUID2()}.tmp`;
+    const target2 = join6(directory, name);
+    const temporary = `${target2}.${randomUUID2()}.tmp`;
     try {
       await copyFile(join6(runDirectory, tuple.screenshotPath), temporary);
-      await rename2(temporary, target);
+      await rename2(temporary, target2);
     } finally {
       await rm2(temporary, { force: true });
     }
@@ -17090,13 +17754,13 @@ async function extractCss(root, paths, options = {}) {
             node.params
           );
           if (match && /\.css$/i.test(match[1] ?? "") && !/^(?:[a-z]+:|\/\/)/i.test(match[1] ?? "")) {
-            const target = resolve5(
+            const target2 = resolve5(
               dirname2(resolve5(root, path)),
               match[1]
             );
             try {
               await visit(
-                relative4(root, target),
+                relative4(root, target2),
                 uncertain || (match[2] ?? "").trim() !== "",
                 cascade
               );
@@ -17234,11 +17898,11 @@ function inlineDeclarations(tokens2) {
       if (!/^\{[^{}]+\}$/.test(value)) return value;
       const key3 = value.slice(1, -1);
       if (trail.includes(key3)) throw new Error("Cyclic token alias");
-      const target = applicable.find(
+      const target2 = applicable.find(
         (t) => t.source.path === token.source.path && t.source.key === key3
       );
-      if (!target) throw new Error(`Missing token alias target: ${key3}`);
-      return walk2(target.value, [...trail, key3]);
+      if (!target2) throw new Error(`Missing token alias target: ${key3}`);
+      return walk2(target2.value, [...trail, key3]);
     };
     try {
       return {
@@ -17539,7 +18203,7 @@ async function sampleLiveness(page, declaration) {
         before: painted3(el) ? text2(el) : ""
       }));
       if (pending.length)
-        await new Promise((resolve55) => setTimeout(resolve55, 1500));
+        await new Promise((resolve56) => setTimeout(resolve56, 1500));
       const elapsedMs = performance.now() - started;
       for (const { el, before, ...meta } of pending) {
         const reason = !el.isConnected ? "target detached or replaced" : !painted3(el) ? "target hidden or unmeasurable" : !before ? "first sample empty or hidden" : !text2(el) ? "second sample empty" : void 0;
@@ -17728,7 +18392,68 @@ function installVisibilityDom(query) {
       };
     return { ...base, visible: visible2, rendered: true };
   };
+  const painted3 = (element) => {
+    const hidden = (reason, boundary) => ({
+      value: false,
+      reason,
+      boundary: name(boundary)
+    });
+    for (let current = element; current; current = current.parentElement) {
+      const style = getComputedStyle(current);
+      if (style.display === "none") return hidden("display-none", current);
+      if (["hidden", "collapse"].includes(style.visibility))
+        return hidden(`visibility-${style.visibility}`, current);
+      if (style.contentVisibility === "hidden")
+        return hidden("content-visibility-hidden", current);
+      if (Number(style.opacity) === 0) return hidden("opacity-0", current);
+      if (current !== element && current instanceof HTMLDetailsElement && !current.open) {
+        const summary = [...current.children].find(
+          (child) => child.tagName === "SUMMARY"
+        );
+        if (!summary?.contains(element))
+          return hidden("closed-details", current);
+      }
+    }
+    let fragments = [...element.getClientRects()].map(box).filter((r) => r.width > 0 && r.height > 0);
+    if (fragments.length === 0) return hidden("zero-area", element);
+    let escaping;
+    for (let current = element; current; current = current.parentElement) {
+      const boundary = current;
+      const style = getComputedStyle(boundary);
+      if (escaping && (containsFixed(style) || escaping === "absolute" && style.position !== "static"))
+        escaping = void 0;
+      if (!escaping && style.display !== "contents") {
+        if (current !== element && current !== document.documentElement && (current !== document.body || getComputedStyle(document.documentElement).overflowX !== "visible" || getComputedStyle(document.documentElement).overflowY !== "visible") && current !== document.scrollingElement) {
+          const x = ["hidden", "clip", "auto", "scroll"].includes(
+            style.overflowX
+          );
+          const y = ["hidden", "clip", "auto", "scroll"].includes(
+            style.overflowY
+          );
+          if (x || y)
+            fragments = fragments.map(
+              (r) => intersect2(r, client(boundary), x, y)
+            );
+        }
+        if (style.clip !== "auto" && ["absolute", "fixed"].includes(style.position) || style.clipPath.startsWith("inset("))
+          fragments = fragments.map(
+            (r) => intersect2(
+              r,
+              paintClip(boundary, box(boundary.getBoundingClientRect()))
+            )
+          );
+        fragments = fragments.filter((r) => r.width > 0 && r.height > 0);
+        if (fragments.length === 0)
+          return hidden(`clipped-by ${name(current)}`, current);
+      }
+      if (style.position === "fixed") escaping = "fixed";
+      else if (style.position === "absolute" && escaping !== "fixed")
+        escaping = "absolute";
+    }
+    return { value: true };
+  };
   window.__idiomVisibility = {
+    painted: painted3,
     measure: measure2,
     client,
     extent: (element, stop) => {
@@ -17758,14 +18483,14 @@ function installVisibilityDom(query) {
         };
       boundary = boundaries2[0];
     }
-    const target = targets[0];
-    if (!target)
+    const target2 = targets[0];
+    if (!target2)
       return {
         visible: false,
         reason: "target missing",
         boundary: selector
       };
-    const result2 = window.__idiomVisibility.measure(target, boundary);
+    const result2 = window.__idiomVisibility.measure(target2, boundary);
     return {
       visible: result2.rendered && result2.visible.width > 0 && result2.visible.height > 0,
       ...result2.reason ? { reason: result2.reason } : {},
@@ -17874,10 +18599,10 @@ function extractAxeHeadingTargets(value) {
       continue;
     for (const node of record2.nodes) {
       if (node === null || typeof node !== "object") continue;
-      const target = node.target;
-      if (Array.isArray(target) && target.length === 1 && typeof target[0] === "string")
-        targets.add(target[0]);
-      else if (typeof target === "string") targets.add(target);
+      const target2 = node.target;
+      if (Array.isArray(target2) && target2.length === 1 && typeof target2[0] === "string")
+        targets.add(target2[0]);
+      else if (typeof target2 === "string") targets.add(target2);
     }
   }
   return [...targets].sort();
@@ -17957,8 +18682,8 @@ async function normalizeTokenDeclarations(page, tokens2) {
       first.probe.style.borderTopLeftRadius = "";
       first.probe.style.borderTopLeftRadius = value;
       if (first.probe.style.borderTopLeftRadius !== "") {
-        const radius3 = getComputedStyle(first.probe).borderTopLeftRadius;
-        if (radius3 !== "0px") normalized.add(radius3);
+        const radius4 = getComputedStyle(first.probe).borderTopLeftRadius;
+        if (radius4 !== "0px") normalized.add(radius4);
       }
     }
     first.parent.remove();
@@ -17982,6 +18707,25 @@ async function normalizeTokenDeclarations(page, tokens2) {
   };
 }
 async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) {
+  const snapshot2 = await page.evaluate(() => ({
+    viewport: { width: innerWidth, height: innerHeight },
+    document: {
+      contentType: document.contentType,
+      scrollWidth: document.documentElement?.scrollWidth ?? 0,
+      scrollHeight: document.documentElement?.scrollHeight ?? 0,
+      clientWidth: document.documentElement?.clientWidth ?? 0,
+      clientHeight: document.documentElement?.clientHeight ?? 0
+    }
+  }));
+  if (classifyDocument(snapshot2.document.contentType) === "non-html")
+    return {
+      version: 2,
+      ...snapshot2,
+      elements: [],
+      headings: [],
+      maskMembership: [],
+      tokens: { status: "not-configured" }
+    };
   const liveness = observeOptions.liveness ? await sampleLiveness(page, observeOptions.liveness) : void 0;
   const normalizedTokens = tokens2.status === "not-configured" || "normalizedValues" in tokens2 ? tokens2 : await normalizeTokenDeclarations(page, tokens2);
   const axeHeadingTargets = extractAxeHeadingTargets(axe);
@@ -18304,6 +19048,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         "translate",
         "disabled",
         "hidden",
+        "inert",
         "open",
         "readonly",
         "required",
@@ -18432,7 +19177,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           firstRect: rects[0]
         };
       };
-      const measureInk = (firstText, firstRect, content, glyph2) => {
+      const measureInk2 = (firstText, firstRect, content, glyph2) => {
         if (measureCanvas === null) return void 0;
         const parent = firstText.parentElement;
         const style = getComputedStyle(parent);
@@ -18454,7 +19199,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         let inkCenterY;
         if (lines2.lineCount === 1 && lines2.firstText !== void 0) {
           const content = (element.textContent ?? "").replace(/\s+/g, " ").trim();
-          inkCenterY = measureInk(
+          inkCenterY = measureInk2(
             lines2.firstText,
             lines2.firstRect,
             content,
@@ -18476,14 +19221,14 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         }
         return visible2;
       };
-      const graphemes = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(void 0, { granularity: "grapheme" }) : void 0;
+      const graphemes2 = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(void 0, { granularity: "grapheme" }) : void 0;
       const labelInk = (element) => {
         const lines2 = measureLines(element, visibleTextParent);
         const text2 = lines2.texts.join("").replace(/\s+/g, " ").trim();
         if (lines2.textRect === void 0 || text2 === "")
           return { text: text2.slice(0, 120), lineCount: 0 };
-        const glyph2 = graphemes !== void 0 && [...graphemes.segment(text2)].length === 1 && !/[\p{L}\p{N}]/u.test(text2);
-        const inkCenterY = lines2.lineCount === 1 && lines2.firstText !== void 0 ? measureInk(lines2.firstText, lines2.firstRect, text2, glyph2) : void 0;
+        const glyph2 = graphemes2 !== void 0 && [...graphemes2.segment(text2)].length === 1 && !/[\p{L}\p{N}]/u.test(text2);
+        const inkCenterY = lines2.lineCount === 1 && lines2.firstText !== void 0 ? measureInk2(lines2.firstText, lines2.firstRect, text2, glyph2) : void 0;
         return {
           text: text2.slice(0, 120),
           lineCount: lines2.lineCount,
@@ -18517,10 +19262,10 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         nativeDisabled: element.matches(":disabled"),
         visibleText: explanationDom.text(element, true),
         descriptions: (element.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean).flatMap((id2) => {
-          const target = document.getElementById(id2);
-          if (target === null) return [];
-          const text2 = explanationDom.text(target);
-          return text2 === "" ? [] : [{ selector: selectorFor(target), text: text2 }];
+          const target2 = document.getElementById(id2);
+          if (target2 === null) return [];
+          const text2 = explanationDom.text(target2);
+          return text2 === "" ? [] : [{ selector: selectorFor(target2), text: text2 }];
         })
       });
       const renderedContent = (element) => {
@@ -19345,7 +20090,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         image2.src = url;
         await Promise.race([
           image2.decode().catch(() => void 0),
-          new Promise((resolve56) => setTimeout(resolve56, 500))
+          new Promise((resolve57) => setTimeout(resolve57, 500))
         ]);
         return { width: image2.naturalWidth, height: image2.naturalHeight };
       };
@@ -19475,6 +20220,108 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
       for (const { mark, elements } of markMatches)
         if (mark.purpose === "primary-action")
           for (const element of elements) primaryMarked.add(element);
+      const paintedFacts = /* @__PURE__ */ new Map();
+      const paintedOf = (element) => {
+        let fact = paintedFacts.get(element);
+        if (fact === void 0) {
+          fact = window.__idiomVisibility.painted(element);
+          paintedFacts.set(element, fact);
+        }
+        return fact;
+      };
+      const targetSizeLabels = (input) => {
+        if (input.matches(":disabled") || input.getAttribute("aria-disabled") === "true")
+          return [];
+        const box = (rect2) => ({
+          x: rect2.x,
+          y: rect2.y,
+          width: rect2.width,
+          height: rect2.height
+        });
+        const intersect2 = (a, b) => {
+          const x = Math.max(a.x, b.x), y = Math.max(a.y, b.y);
+          return {
+            x,
+            y,
+            width: Math.max(0, Math.min(a.x + a.width, b.x + b.width) - x),
+            height: Math.max(0, Math.min(a.y + a.height, b.y + b.height) - y)
+          };
+        };
+        const subtract = (a, b) => {
+          const overlap = intersect2(a, b);
+          if (overlap.width <= 0 || overlap.height <= 0) return [a];
+          return [
+            { x: a.x, y: a.y, width: a.width, height: overlap.y - a.y },
+            {
+              x: a.x,
+              y: overlap.y + overlap.height,
+              width: a.width,
+              height: a.y + a.height - overlap.y - overlap.height
+            },
+            {
+              x: a.x,
+              y: overlap.y,
+              width: overlap.x - a.x,
+              height: overlap.height
+            },
+            {
+              x: overlap.x + overlap.width,
+              y: overlap.y,
+              width: a.x + a.width - overlap.x - overlap.width,
+              height: overlap.height
+            }
+          ].filter((rect2) => rect2.width > 0 && rect2.height > 0);
+        };
+        return [...input.labels ?? []].filter((label3) => label3.control === input).flatMap((label3) => {
+          if (!isVisibleContent(label3) || !paintedOf(label3).value || label3.closest("[inert]") || input.closest("[inert]"))
+            return [];
+          let rects = [...label3.getClientRects()].map(box).filter((rect2) => rect2.width > 0 && rect2.height > 0);
+          let current = label3;
+          while (current !== null) {
+            const style = getComputedStyle(current);
+            if (style.pointerEvents === "none" || style.clipPath !== "none" || style.clip !== "auto" || style.transform !== "none" || style.rotate !== "none" || style.scale !== "none" || style.translate !== "none" || style.zoom !== "1" && style.zoom !== "normal")
+              return [];
+            if (style.display !== "contents") {
+              const bounds = current.getBoundingClientRect();
+              const html = current;
+              const contained5 = /\b(paint|strict|content)\b/.test(
+                style.contain
+              );
+              const clipX = contained5 || ["hidden", "clip", "scroll", "auto"].includes(
+                style.overflowX
+              );
+              const clipY = current !== document.documentElement && (contained5 || ["hidden", "clip", "scroll", "auto"].includes(
+                style.overflowY
+              ));
+              rects = rects.map(
+                (rect2) => intersect2(rect2, {
+                  x: clipX ? bounds.x + html.clientLeft : rect2.x,
+                  y: clipY ? bounds.y + html.clientTop : rect2.y,
+                  width: clipX ? html.clientWidth : rect2.width,
+                  height: clipY ? html.clientHeight : rect2.height
+                })
+              ).filter((rect2) => rect2.width > 0 && rect2.height > 0);
+            }
+            current = current.parentElement;
+          }
+          for (const descendant of label3.querySelectorAll("*")) {
+            if (descendant === input || !(isInteractive(descendant) || descendant.matches(
+              "audio[controls], video[controls], iframe, embed, object, [contenteditable]"
+            )))
+              continue;
+            for (const rect2 of descendant.getClientRects())
+              rects = rects.flatMap(
+                (fragment) => subtract(fragment, box(rect2))
+              );
+          }
+          const unique4 = new Map(
+            rects.map((rect2) => [JSON.stringify(rect2), rect2])
+          );
+          return [
+            { selector: selectorFor(label3), rects: [...unique4.values()] }
+          ];
+        });
+      };
       const observed = all.map((element) => {
         const html = element;
         const styles = getComputedStyle(element);
@@ -19623,6 +20470,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             tag,
             text: (html.innerText ?? element.textContent ?? "").trim().slice(0, 500),
             visible: visible2,
+            painted: paintedOf(element),
             interactive: interactive2,
             enabled: !html.disabled && element.getAttribute("aria-disabled") !== "true",
             ...heading === void 0 ? {} : { headingLevel: heading },
@@ -19637,6 +20485,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             clientWidth: html.clientWidth,
             clientHeight: html.clientHeight,
             outOfFlow,
+            ...element instanceof HTMLInputElement && ["checkbox", "radio"].includes(element.type) ? { targetSizeLabels: targetSizeLabels(element) } : {},
             inlineTextTarget: tag === "a" && styles.display === "inline" && [
               styles.paddingTop,
               styles.paddingRight,
@@ -19675,6 +20524,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               outlineWidth: styles.outlineWidth,
               outlineStyle: styles.outlineStyle,
               outlineOffset: styles.outlineOffset,
+              userSelect: styles.userSelect || styles.webkitUserSelect,
               textOverflow: styles.textOverflow,
               fill: styles.fill,
               stroke: styles.stroke,
@@ -19871,22 +20721,43 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         top: rect2.top + rect2.height * 0.2,
         bottom: rect2.bottom - rect2.height * 0.2
       });
+      const tooltipLayerClasses = [
+        "recharts-tooltip-wrapper",
+        "apexcharts-tooltip",
+        "highcharts-tooltip",
+        "chartjs-tooltip",
+        "vega-tooltip",
+        "c3-tooltip-container",
+        "nvtooltip",
+        "google-visualization-tooltip",
+        "visx-tooltip"
+      ];
       const layerRoot = (element) => {
+        let passive;
         for (let current = element; current !== null; current = current.parentElement) {
           const role = current.getAttribute("role") ?? "";
-          const position = getComputedStyle(current).position;
+          const style = getComputedStyle(current);
+          if (passive !== void 0 && style.pointerEvents !== "none")
+            return passive;
+          const position = style.position;
           const box = current.getBoundingClientRect();
           const absolutePanel = position === "absolute" && !isInteractive(current) && current.children.length > 0 && box.width >= 120 && box.height >= 120;
+          const tooltipLayer = current.id === "vg-tooltip-element" || tooltipLayerClasses.some(
+            (name) => current.classList.contains(name)
+          );
           if (["dialog", "alertdialog", "menu", "listbox", "tooltip"].includes(
             role
-          ) || current.tagName.toLowerCase() === "dialog" || position === "fixed" || absolutePanel)
+          ) || current.tagName.toLowerCase() === "dialog" || position === "fixed" || tooltipLayer)
             return current;
+          if (position === "absolute" && !isInteractive(current) && style.pointerEvents === "none")
+            passive = current;
+          else if (absolutePanel) return current;
           try {
             if (current.matches(":popover-open")) return current;
           } catch {
           }
         }
-        return document.documentElement;
+        return passive ?? document.documentElement;
       };
       const interactiveElements = new Set(
         interactive.map((entry) => entry.element)
@@ -20096,6 +20967,158 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         };
         return inside3(marker);
       };
+      const tickerTracks = /* @__PURE__ */ new WeakMap();
+      const repeatedTrack = (track) => {
+        const normalize2 = (text2) => text2.replace(/\s+/g, " ").trim();
+        const runs = [...track.childNodes].map((node) => normalize2(node.textContent ?? "")).filter(Boolean);
+        for (let period = 1; period <= runs.length / 2; period += 1) {
+          if (runs.length % period !== 0) continue;
+          if (runs.every((run2, index) => run2 === runs[index % period]))
+            return true;
+        }
+        const words2 = normalize2(track.textContent ?? "").split(" ");
+        for (let period = 2; period <= words2.length / 2; period += 1) {
+          if (words2.length % period !== 0) continue;
+          if (words2.every((word, index) => word === words2[index % period]))
+            return true;
+        }
+        return false;
+      };
+      const translatingTrack = (track) => {
+        const cached = tickerTracks.get(track);
+        if (cached !== void 0) return cached;
+        let translates = false;
+        const trackStyle = getComputedStyle(track);
+        if (trackStyle.rotate === "none" && trackStyle.scale === "none" && repeatedTrack(track)) {
+          for (const animation of track.getAnimations()) {
+            const effect = animation.effect;
+            if (animation.playState !== "running" || animation.playbackRate === 0 || !(effect instanceof KeyframeEffect) || effect.target !== track || effect.pseudoElement !== null || effect.composite !== "replace" || (effect.iterationComposite ?? "replace") !== "replace" || effect.getComputedTiming().progress === null || !(Number(effect.getComputedTiming().duration) > 0))
+              continue;
+            const frames2 = effect.getKeyframes();
+            if (["rotate", "scale"].some(
+              (property) => new Set(
+                frames2.map((frame) => String(frame[property] ?? "none"))
+              ).size > 1
+            ))
+              continue;
+            const width = track.offsetWidth;
+            const height = track.offsetHeight;
+            const matrices = [];
+            try {
+              for (const frame of frames2) {
+                if ((frame.composite ?? "auto") !== "auto" && frame.composite !== "replace")
+                  throw new Error("composite");
+                const resolve57 = (value) => value.replace(
+                  /translate(X|Y|3d)?\(([^)]+)\)/gi,
+                  (_all, axis, args) => {
+                    const parts = args.split(/[,\s]+/).filter(Boolean).map(
+                      (part, index) => part.endsWith("%") ? `${Number.parseFloat(part) * (axis?.toLowerCase() === "y" || index === 1 ? height : width) / 100}px` : part
+                    );
+                    return `translate${axis ?? ""}(${parts.join(",")})`;
+                  }
+                );
+                const transform = String(frame.transform ?? "none");
+                let matrix = new DOMMatrix(
+                  transform === "none" ? void 0 : resolve57(transform)
+                );
+                if (frame.translate !== void 0 && frame.translate !== "none") {
+                  const parts = String(frame.translate).trim().split(/\s+/);
+                  if (parts.length > 3) throw new Error("translate");
+                  const values = parts.map((part, index) => {
+                    if (!/^-?(?:\d*\.)?\d+(?:px|%)?$/.test(part))
+                      throw new Error("unresolved translate");
+                    return Number.parseFloat(part) * (part.endsWith("%") ? (index === 1 ? height : width) / 100 : 1);
+                  });
+                  matrix = new DOMMatrix().translate(values[0] ?? 0, values[1] ?? 0, values[2] ?? 0).multiply(matrix);
+                }
+                matrices.push(matrix);
+              }
+              const first = matrices[0];
+              const linear = (m) => [
+                m.m11,
+                m.m12,
+                m.m13,
+                m.m14,
+                m.m21,
+                m.m22,
+                m.m23,
+                m.m24,
+                m.m31,
+                m.m32,
+                m.m33,
+                m.m34,
+                m.m44
+              ];
+              if (first !== void 0 && matrices.length > 1 && matrices.every(
+                (m) => linear(m).every(
+                  (v, i) => Number.isFinite(v) && Math.abs(v - (linear(first)[i] ?? NaN)) < 1e-6
+                )
+              ) && matrices.some((m) => Math.abs(m.m41 - first.m41) > 0.01))
+                translates = true;
+            } catch {
+            }
+          }
+        }
+        tickerTracks.set(track, translates);
+        return translates;
+      };
+      const tickerAt = (element, owner2) => {
+        if (owner2 === void 0 || owner2 === element) return false;
+        for (let track = element; track !== null && track !== owner2; track = track.parentElement) {
+          if (!translatingTrack(track)) continue;
+          let supported = true;
+          for (let ancestor = track.parentElement; ancestor !== null; ancestor = ancestor.parentElement) {
+            const style = getComputedStyle(ancestor);
+            try {
+              const matrix = new DOMMatrix(
+                style.transform === "none" ? void 0 : style.transform
+              );
+              if (!matrix.is2D || matrix.a !== 1 || matrix.b !== 0 || matrix.c !== 0 || matrix.d !== 1 || style.rotate !== "none" || style.scale !== "none")
+                supported = false;
+            } catch {
+              supported = false;
+            }
+          }
+          if (supported) return true;
+        }
+        return false;
+      };
+      const containedTextInk = (element, lines2, box, overruns, complete) => {
+        if (measureCanvas === null || !complete || lines2.length === 0)
+          return false;
+        const style = getComputedStyle(element);
+        if (lines2.some((line) => /[^\u0020-\u007e]/.test(line.text)) || element.closest("[lang]")?.getAttribute("lang")?.match(/^(tr|az|lt)(-|$)/i))
+          return false;
+        if (style.writingMode !== "horizontal-tb" || style.direction !== "ltr" || !["none", "uppercase", "lowercase"].includes(style.textTransform) || style.fontVariantCaps !== "normal")
+          return false;
+        for (let current = element; current !== null; current = current.parentElement) {
+          const ancestor = getComputedStyle(current);
+          if (ancestor.zoom !== "1" && ancestor.zoom !== "normal" || ancestor.rotate !== "none" || ancestor.scale !== "none")
+            return false;
+          try {
+            const m = new DOMMatrix(
+              ancestor.transform === "none" ? void 0 : ancestor.transform
+            );
+            if (!m.is2D || m.a !== 1 || m.b !== 0 || m.c !== 0 || m.d !== 1)
+              return false;
+          } catch {
+            return false;
+          }
+        }
+        measureCanvas.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        return lines2.every((line) => {
+          const text2 = style.textTransform === "uppercase" ? line.text.toLocaleUpperCase() : style.textTransform === "lowercase" ? line.text.toLocaleLowerCase() : line.text;
+          const metrics = measureCanvas.measureText(text2);
+          const ascent = metrics.fontBoundingBoxAscent;
+          const descent = metrics.fontBoundingBoxDescent;
+          const inkAscent = metrics.actualBoundingBoxAscent;
+          const inkDescent = metrics.actualBoundingBoxDescent;
+          if (![ascent, descent, inkAscent, inkDescent].every(Number.isFinite) || ascent <= 0 || descent <= 0 || Math.abs(line.bottom - line.top - ascent - descent) > 1 || overruns.some((overrun) => overrun > 1 && overrun >= descent))
+            return false;
+          const baseline = line.top + (line.bottom - line.top - ascent - descent) / 2 + ascent;
+          return baseline - inkAscent >= box.top - 0.05 && baseline + inkDescent <= box.bottom + 0.05;
+        });
+      };
       const clippedText = [];
       for (const { element, value } of observed) {
         if (!value.visible || value.directText === "" || element === document.body || ["input", "textarea", "select", "option"].includes(value.tag))
@@ -20141,10 +21164,13 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         const bands = fragments.map(inkBand);
         const minTop = Math.min(...bands.map((band) => band.top));
         const maxBottom = Math.max(...bands.map((band) => band.bottom));
-        const xClip = [
+        const xClips = [
           { edge: "left", pixels: box.left - minLeft },
           { edge: "right", pixels: maxRight - box.right }
-        ].filter((cut2) => cut2.pixels > 1 && !ellipsisAt(cut2.edge)).sort((a, b) => b.pixels - a.pixels)[0];
+        ].filter(
+          (cut2) => cut2.pixels > 1 && !ellipsisAt(cut2.edge) && !tickerAt(element, clip2.hiddenOwners[cut2.edge])
+        ).sort((a, b) => b.pixels - a.pixels);
+        const xClip = xClips[0];
         const yClip = [
           { edge: "top", pixels: box.top - minTop },
           { edge: "bottom", pixels: maxBottom - box.bottom }
@@ -20154,6 +21180,11 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         if (overflowX <= 1 && overflowY <= 1) continue;
         const characters = [];
         let walked = 0;
+        const inkLines = [];
+        const textLength = [...element.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).reduce(
+          (length, node) => length + (node.textContent?.length ?? 0),
+          0
+        );
         for (const node of element.childNodes) {
           if (node.nodeType !== Node.TEXT_NODE) continue;
           const content = node.textContent ?? "";
@@ -20173,12 +21204,26 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
                 });
               continue;
             }
+            if (rect2.width > 0 && rect2.height > 0) {
+              const line = inkLines.find(
+                (line2) => Math.abs(line2.top - rect2.top) < 0.05 && Math.abs(line2.bottom - rect2.bottom) < 0.05
+              );
+              if (line === void 0)
+                inkLines.push({
+                  top: rect2.top,
+                  bottom: rect2.bottom,
+                  text: character
+                });
+              else line.text += character;
+            }
             const cx = rect2.left + rect2.width / 2;
             const cy = rect2.top + rect2.height / 2;
-            const outsideX = cx < box.left || cx > box.right;
+            const outsideX = xClips.some(
+              (cut2) => cut2.edge === "left" ? cx < box.left : cx > box.right
+            );
             characters.push({
               character,
-              inside: !outsideX && cy >= box.top && cy <= box.bottom,
+              inside: cx >= box.left && cx <= box.right && cy >= box.top && cy <= box.bottom,
               outsideX
             });
           }
@@ -20218,7 +21263,13 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         const shown = lineCentres.filter(
           (line) => fractionY(line) >= 0.5 && (visibleWidth2(line) >= 32 || visibleWidth2(line) >= (line.right - line.left) * 0.5)
         );
-        const yCut = overflowY > 1 && lineCentres.some((line) => fractionY(line) < 0.85);
+        const yCut = overflowY > 1 && lineCentres.some((line) => fractionY(line) < 0.85) && !(shown.length === lineCentres.length && containedTextInk(
+          element,
+          inkLines,
+          box,
+          [box.top - minTop, maxBottom - box.bottom],
+          walked === textLength && inkLines.length === lineCentres.length
+        ));
         const xCut = overflowX > 1;
         if (!xCut && !yCut) continue;
         if (shown.length === 0) continue;
@@ -20285,15 +21336,15 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           container = container.parentElement;
         if (container === null) continue;
         const helpers = [];
-        const addHelper = (target) => {
-          if (target !== label3 && !target.contains(control) && renderedPaths.has(target) && isVisibleContent(target) && !helpers.some(
-            (helper) => helper.contains(target) || target.contains(helper)
+        const addHelper = (target2) => {
+          if (target2 !== label3 && !target2.contains(control) && renderedPaths.has(target2) && isVisibleContent(target2) && !helpers.some(
+            (helper) => helper.contains(target2) || target2.contains(helper)
           ))
-            helpers.push(target);
+            helpers.push(target2);
         };
         for (const id2 of (control.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean)) {
-          const target = document.getElementById(id2);
-          if (target !== null && container.contains(target)) addHelper(target);
+          const target2 = document.getElementById(id2);
+          if (target2 !== null && container.contains(target2)) addHelper(target2);
         }
         let branch = control;
         let walkedSiblings = 0;
@@ -20385,7 +21436,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         if (alpha === void 0) return 1;
         return alpha.endsWith("%") ? Number.parseFloat(alpha) / 100 : Number.parseFloat(alpha);
       };
-      const decorationOf = (representative) => {
+      const decorationOf = (representative, supplemental, control, onlyPainted = false) => {
         const decoration = {};
         const svgPaints = (element, style) => element instanceof SVGGraphicsElement && ![
           "svg",
@@ -20480,7 +21531,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         };
         recordPseudos(representative, "");
         const descendants = [...representative.querySelectorAll("*")].filter(
-          (element) => renderedPaths.has(element)
+          (element) => renderedPaths.has(element) && (!onlyPainted || paintedOf(element).value)
         );
         let paintedDescendants = 0;
         for (const element of descendants) {
@@ -20501,46 +21552,119 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           paintedDescendants += 1;
         }
         decoration.descendants = String(paintedDescendants);
+        let indicators = 0;
+        for (const element of supplemental.flatMap((root2) => [
+          root2,
+          ...root2.querySelectorAll("*")
+        ])) {
+          if (element === control || representative.contains(element) || !renderedPaths.has(element) || !isVisibleContent(element) || onlyPainted && !paintedOf(element).value)
+            continue;
+          const style = getComputedStyle(element);
+          const rect2 = element.getBoundingClientRect();
+          const graphic = svgPaints(element, style);
+          const paints = rect2.width > 0 && rect2.height > 0 && (boxPaints(style) || graphic || element instanceof HTMLImageElement && element.complete && element.naturalWidth > 0);
+          const prefix = `indicator${indicators}`;
+          const emit = indicators < 6;
+          const pseudos = recordPseudos(element, `${prefix}.`, emit);
+          if (!paints && !pseudos) continue;
+          if (paints && emit) record2(`${prefix}.self`, style, false, graphic);
+          indicators += 1;
+        }
         return decoration;
       };
       const groupContainers = "[role=radiogroup],[role=tablist],[role=listbox],[role=toolbar],[role=group],[role=menu],[role=grid]";
+      const primaryControl = "input:not([type=hidden]),select,textarea,button,summary,a[href],[onclick],[tabindex],[contenteditable=true],[role=radio],[role=checkbox],[role=switch],[role=button],[role=link],[role=tab],[role=option],[role=menuitem]";
+      const ignoredMirror = (element) => element.closest("[aria-hidden=true],[inert]") !== null;
+      const indicatorRoots = (control, representative) => {
+        if (!(control instanceof HTMLInputElement)) return [];
+        const label3 = [...control.labels ?? []].find(
+          (candidate2) => candidate2 === representative || renderedPaths.has(candidate2) && isVisibleContent(candidate2)
+        );
+        if (label3 === void 0) return [];
+        let wrapper = label3;
+        while (wrapper !== null && !wrapper.contains(control))
+          wrapper = wrapper.parentElement;
+        if (wrapper === null || wrapper.matches(`form,fieldset,body,html,${groupContainers}`) || [...wrapper.querySelectorAll(primaryControl)].some(
+          (candidate2) => candidate2 !== control && !ignoredMirror(candidate2)
+        ))
+          return [];
+        if (representative === wrapper) return [];
+        if (representative === label3) {
+          const roots = [];
+          const visit = (parent) => {
+            for (const child of parent.children) {
+              if (child === representative || child === control) continue;
+              if (child.contains(representative) || child.contains(control))
+                visit(child);
+              else roots.push(child);
+            }
+          };
+          visit(wrapper);
+          return roots;
+        }
+        return [wrapper];
+      };
       const selectionGroupMap = /* @__PURE__ */ new Map();
       const nativeRadioGroups = /* @__PURE__ */ new Map();
+      const checkboxGroups = /* @__PURE__ */ new Map();
       for (const element of all) {
         const role = implicitRole(element);
-        const stateAttribute = ["aria-selected", "aria-checked", "aria-pressed"].find((name) => element.hasAttribute(name));
-        const nativeRadio = element instanceof HTMLInputElement && element.type === "radio";
-        if (!nativeRadio && !["radio", "tab", "option", "menuitemradio"].includes(role) && (stateAttribute === void 0 || ["checkbox", "switch", "menuitemcheckbox"].includes(role)))
+        const stateAttribute = (["radio", "checkbox"].includes(role) ? ["aria-checked"] : ["aria-selected", "aria-checked", "aria-pressed"]).find((name) => element.hasAttribute(name));
+        const nativeInput = element instanceof HTMLInputElement && ["radio", "checkbox"].includes(element.type) ? element : void 0;
+        const nativeRadio = nativeInput?.type === "radio";
+        const checkbox = role === "checkbox";
+        if (["switch", "menuitemcheckbox"].includes(role)) continue;
+        if (nativeInput === void 0 && !["radio", "checkbox", "tab", "option", "menuitemradio"].includes(
+          role
+        ) && stateAttribute === void 0)
           continue;
-        if (element.closest("[aria-hidden=true],[inert]") !== null) continue;
+        if (ignoredMirror(element)) continue;
         let representative;
         const rect2 = element.getBoundingClientRect();
-        if (renderedPaths.has(element) && rect2.width > 1 && rect2.height > 1)
+        if (renderedPaths.has(element) && rect2.width > 1 && rect2.height > 1 && // Keep ARIA peers in the validity domain even when scrolled out
+        // of an overflow clip. Only native inputs need this extra guard
+        // before using their own box (and the native-indicator exemption).
+        (nativeInput === void 0 || isVisibleContent(element) && paintedOf(element).value))
           representative = element;
-        else if (nativeRadio)
-          representative = [...element.labels ?? []].find(
-            (label3) => renderedPaths.has(label3)
+        else if (nativeInput !== void 0)
+          representative = [...nativeInput.labels ?? []].find(
+            (label3) => renderedPaths.has(label3) && isVisibleContent(label3)
           );
         if (representative === void 0) continue;
-        const source = nativeRadio ? "checked" : stateAttribute ?? (["tab", "option"].includes(role) ? "aria-selected" : "aria-checked");
-        const selected2 = nativeRadio ? element.checked : stateAttribute !== void 0 && element.getAttribute(stateAttribute) === "true";
+        const source = nativeInput !== void 0 ? "checked" : stateAttribute ?? (["tab", "option"].includes(role) ? "aria-selected" : "aria-checked");
+        const selected2 = nativeInput !== void 0 ? nativeInput.checked : stateAttribute !== void 0 && element.getAttribute(stateAttribute) === "true";
         let container = element.parentElement?.closest(groupContainers) ?? null;
         if (container?.getAttribute("role") === "group")
           container = container.parentElement?.closest(
             "[role=listbox],[role=menu],[role=tablist],[role=radiogroup],[role=grid]"
           ) ?? container;
         let nativePeers;
-        if (nativeRadio) {
-          if (element.name === "") continue;
-          const formGroups = nativeRadioGroups.get(element.form) ?? /* @__PURE__ */ new Map();
-          nativeRadioGroups.set(element.form, formGroups);
-          const peers = formGroups.get(element.name) ?? [];
+        if (checkbox) {
+          container = element.parentElement?.closest("fieldset,[role=group]") ?? null;
+          if (container === null) continue;
+          const peers = [...container.querySelectorAll(primaryControl)].filter(
+            (candidate2) => !ignoredMirror(candidate2) && candidate2.parentElement?.closest("fieldset,[role=group]") === container
+          );
+          if (peers.length < 2 || peers.some((peer) => implicitRole(peer) !== "checkbox"))
+            continue;
+          let identity7 = checkboxGroups.get(container);
+          if (identity7 === void 0) {
+            identity7 = [];
+            checkboxGroups.set(container, identity7);
+          }
+          nativePeers = identity7;
+        }
+        if (nativeRadio && nativeInput !== void 0) {
+          if (nativeInput.name === "") continue;
+          const formGroups = nativeRadioGroups.get(nativeInput.form) ?? /* @__PURE__ */ new Map();
+          nativeRadioGroups.set(nativeInput.form, formGroups);
+          const peers = formGroups.get(nativeInput.name) ?? [];
           if (peers.length === 0) {
             for (const candidate2 of document.querySelectorAll(
-              `input[type=radio][name="${CSS.escape(element.name)}"]`
+              `input[type=radio][name="${CSS.escape(nativeInput.name)}"]`
             ))
-              if (candidate2.form === element.form) peers.push(candidate2);
-            formGroups.set(element.name, peers);
+              if (candidate2.form === nativeInput.form) peers.push(candidate2);
+            formGroups.set(nativeInput.name, peers);
           }
           nativePeers = peers;
           let ancestor = element.parentElement;
@@ -20558,20 +21682,34 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           native: nativeRadio,
           members: []
         };
+        const supplemental = indicatorRoots(element, representative);
         group.members.push({
           selector: selectorFor(representative),
           control: selectorFor(element),
           selected: selected2,
           source,
-          nativeIndicator: representative === element && nativeRadio && getComputedStyle(element).appearance !== "none",
-          decoration: decorationOf(representative)
+          nativeIndicator: representative === element && nativeInput !== void 0 && getComputedStyle(element).appearance !== "none",
+          decoration: decorationOf(representative, supplemental, element),
+          paintedDecoration: decorationOf(
+            representative,
+            supplemental,
+            element,
+            true
+          ),
+          decorationOwners: [
+            ...representative.querySelectorAll("*"),
+            ...supplemental.flatMap((root2) => [
+              root2,
+              ...root2.querySelectorAll("*")
+            ])
+          ].filter((owner2) => owner2 !== element && renderedPaths.has(owner2)).map(selectorFor)
         });
         selectionGroupMap.set(groupKey, group);
       }
       const selectionGroups = [...selectionGroupMap.values()].filter((group) => group.members.length >= 2).map(({ container, native, ...group }) => ({
         container: selectorFor(container),
         ...group,
-        single: native || group.role === "radiogroup" || group.memberRole === "radio" || (["grid", "listbox", "tablist"].includes(group.role) ? container.getAttribute("aria-multiselectable") !== "true" : group.memberRole === "tab")
+        single: group.memberRole !== "checkbox" && (native || group.role === "radiogroup" || group.memberRole === "radio" || (["grid", "listbox", "tablist"].includes(group.role) ? container.getAttribute("aria-multiselectable") !== "true" : group.memberRole === "tab"))
       }));
       const dialogs = all.filter(
         (element) => renderedPaths.has(element) && ["dialog", "alertdialog"].includes(implicitRole(element))
@@ -20582,8 +21720,8 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         } catch {
         }
         const labelledBy = (dialog.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean).flatMap((id2) => {
-          const target = document.getElementById(id2);
-          return target !== null && renderedPaths.has(target) ? [selectorFor(target)] : [];
+          const target2 = document.getElementById(id2);
+          return target2 !== null && renderedPaths.has(target2) ? [selectorFor(target2)] : [];
         });
         const submit = [
           ...dialog.querySelectorAll(
@@ -20664,7 +21802,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
       ]);
       const interactiveSelector = "a[href], button, input, select, textarea, summary, [role=button], [role=link], [role=menuitem], [role=checkbox], [role=switch], [role=tab]";
       const textless = (element) => (element.textContent ?? "").trim() === "" && !element.matches(interactiveSelector) && element.querySelector(interactiveSelector) === null;
-      const resolve55 = (pool, words2) => {
+      const resolve56 = (pool, words2) => {
         const counts = /* @__PURE__ */ new Map();
         for (const element of pool)
           for (const token2 of element.classList)
@@ -20696,10 +21834,10 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         };
       };
       for (const spec of inferredInput) {
-        let { selector, matches } = resolve55(rendered, spec.words);
+        let { selector, matches } = resolve56(rendered, spec.words);
         let matchedBy;
         if (matches.length === 0 && spec.words.length > 1 && shapeHeads.has(spec.words.at(-1) ?? "")) {
-          const looser = resolve55(
+          const looser = resolve56(
             rendered.filter(textless),
             spec.words.slice(0, -1)
           );
@@ -21666,7 +22804,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
       }
       const viewportIntersections = /* @__PURE__ */ new Map();
       if (dialogControls.length > 0)
-        await new Promise((resolve56) => {
+        await new Promise((resolve57) => {
           const pending = new Set(dialogControls.map(({ element }) => element));
           const observer = new IntersectionObserver((entries) => {
             for (const entry of entries) {
@@ -21677,12 +22815,12 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             if (pending.size === 0) {
               clearTimeout(timeout);
               observer.disconnect();
-              resolve56();
+              resolve57();
             }
           });
           const timeout = setTimeout(() => {
             observer.disconnect();
-            resolve56();
+            resolve57();
           }, 1e3);
           for (const element of pending) observer.observe(element);
         });
@@ -21690,7 +22828,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         [...document.querySelectorAll("img")].map(async (image2) => {
           await Promise.race([
             image2.decode().catch(() => void 0),
-            new Promise((resolve56) => setTimeout(resolve56, 500))
+            new Promise((resolve57) => setTimeout(resolve57, 500))
           ]);
           const rect2 = image2.getBoundingClientRect();
           const styles = getComputedStyle(image2);
@@ -21877,7 +23015,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             records
           };
         }
-        const graphemes2 = new Intl.Segmenter(void 0, {
+        const graphemes3 = new Intl.Segmenter(void 0, {
           granularity: "grapheme"
         });
         let work = 0;
@@ -22034,7 +23172,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               reasons.add("Line-clamped word measurement is incomplete");
               continue;
             }
-            const chars = [...graphemes2.segment(segment.segment)];
+            const chars = [...graphemes3.segment(segment.segment)];
             for (let i = 1; i < chars.length; i++) {
               const a = chars[i - 1], b = chars[i];
               if (!a || !b || /[\u00ad\-\u2010\u2011]/u.test(a.segment + b.segment))
@@ -22100,7 +23238,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             entries: []
           };
         const collected = [];
-        await new Promise((resolve56) => {
+        await new Promise((resolve57) => {
           const observer = new PerformanceObserver((list5) => {
             collected.push(...list5.getEntries());
             finish();
@@ -22113,7 +23251,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             clearTimeout(timer);
             collected.push(...observer.takeRecords());
             observer.disconnect();
-            resolve56();
+            resolve57();
           };
           observer.observe({ type: "layout-shift", buffered: true });
         });
@@ -22146,7 +23284,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           };
         await Promise.race([
           document.fonts.ready,
-          new Promise((resolve56) => setTimeout(resolve56, 3e3))
+          new Promise((resolve57) => setTimeout(resolve57, 3e3))
         ]);
         const unquote = (value) => value.trim().replace(/^["']|["']$/g, "").trim().toLowerCase();
         const urlsByFamily = /* @__PURE__ */ new Map();
@@ -22311,59 +23449,148 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
       })() : void 0;
       const lineLengths = craftInput.lineLength ? (() => {
         const records = [];
-        let capped = false;
+        const reasons = /* @__PURE__ */ new Set();
+        const graphemes3 = new Intl.Segmenter(void 0, {
+          granularity: "grapheme"
+        });
+        const range = document.createRange();
+        let work = 0;
         for (const paragraph of document.querySelectorAll("p")) {
-          const text2 = (paragraph.textContent ?? "").replace(/\s+/g, " ").trim();
-          if (text2.length < 20) continue;
           if (!craftVisible(paragraph)) continue;
           const style = getComputedStyle(paragraph);
           if (style.writingMode !== "horizontal-tb") continue;
-          const range = document.createRange();
-          range.selectNodeContents(paragraph);
-          const lines2 = [];
-          for (const rect2 of range.getClientRects()) {
-            if (rect2.width <= 0 || rect2.height <= 0) continue;
-            const line = lines2.find(
-              (candidate2) => Math.min(candidate2.bottom, rect2.bottom) - Math.max(candidate2.top, rect2.top) > Math.min(candidate2.bottom - candidate2.top, rect2.height) / 2
+          if (records.length >= 200 || work >= 1e5) {
+            reasons.add(
+              records.length >= 200 ? "Line length record limit (200) reached" : "Line length character range work limit (100000) reached"
             );
-            if (line === void 0)
-              lines2.push({
-                top: rect2.top,
-                bottom: rect2.bottom,
-                left: rect2.left,
-                right: rect2.right
-              });
-            else {
-              line.left = Math.min(line.left, rect2.left);
-              line.right = Math.max(line.right, rect2.right);
-            }
-          }
-          if (lines2.length === 0) continue;
-          const width = Math.max(
-            ...lines2.map((line) => line.right - line.left)
-          );
-          const charWidth = lines2.reduce((sum, line) => sum + line.right - line.left, 0) / text2.length;
-          if (!(charWidth > 0)) continue;
-          const chars = Math.round(width / charWidth);
-          if (chars <= 45) continue;
-          if (records.length >= 200) {
-            capped = true;
             break;
           }
+          const glyphs = [];
+          const walker = document.createTreeWalker(
+            paragraph,
+            NodeFilter.SHOW_TEXT
+          );
+          let nodes = 0;
+          let length = 0;
+          let text2 = "";
+          let incomplete = false;
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (nodes >= 2e3 || length + (node.nodeValue?.length ?? 0) > 2e4) {
+              reasons.add(
+                nodes >= 2e3 ? "Line length text node limit (2000) reached" : "Line length paragraph text limit (20000 UTF-16 units) reached"
+              );
+              incomplete = true;
+              break;
+            }
+            nodes++;
+            const value = node.nodeValue ?? "";
+            length += value.length;
+            const parent = node.parentElement;
+            if (!parent || !isVisibleContent(parent, false)) continue;
+            if (getComputedStyle(parent).writingMode !== "horizontal-tb") {
+              reasons.add(
+                "Line length descendant writing mode is unsupported"
+              );
+              incomplete = true;
+              break;
+            }
+            text2 += value;
+            for (const { segment, index } of graphemes3.segment(value)) {
+              if (work >= 1e5) {
+                reasons.add(
+                  "Line length character range work limit (100000) reached"
+                );
+                incomplete = true;
+                break;
+              }
+              work++;
+              range.setStart(node, index);
+              range.setEnd(node, index + segment.length);
+              const boxes = [...range.getClientRects()].filter(
+                (rect2) => rect2.width > 0.01 && rect2.height > 0
+              );
+              if (!boxes.length) continue;
+              const first = boxes[0];
+              if (!first) continue;
+              if (boxes.some(
+                (box) => Math.min(box.bottom, first.bottom) - Math.max(box.top, first.top) <= 0.5
+              )) {
+                reasons.add(
+                  "Line length grapheme spans incompatible line bands"
+                );
+                incomplete = true;
+                break;
+              }
+              glyphs.push({
+                top: first.top,
+                bottom: first.bottom,
+                left: Math.min(...boxes.map((box) => box.left)),
+                right: Math.max(...boxes.map((box) => box.right)),
+                space: /^\s+$/u.test(segment),
+                id: work
+              });
+            }
+            if (incomplete) break;
+          }
+          if (incomplete) continue;
+          text2 = text2.replace(/\s+/g, " ").trim();
+          if (text2.length < 20 || !glyphs.length) continue;
+          const bands = [];
+          glyphs.sort(
+            (a, b) => a.bottom - a.top - (b.bottom - b.top) || a.top - b.top
+          );
+          for (const glyph2 of glyphs) {
+            const matches = bands.filter(
+              (band2) => Math.min(band2.bottom, glyph2.bottom) - Math.max(band2.top, glyph2.top) > Math.min(band2.bottom - band2.top, glyph2.bottom - glyph2.top) / 2 - 0.5
+            );
+            if (matches.length > 1) {
+              reasons.add(
+                "Line length overlapping text line bands are ambiguous"
+              );
+              incomplete = true;
+              break;
+            }
+            const band = matches[0];
+            if (band) {
+              band.top = Math.max(band.top, glyph2.top);
+              band.bottom = Math.min(band.bottom, glyph2.bottom);
+              band.glyphs.push(glyph2);
+            } else
+              bands.push({
+                top: glyph2.top,
+                bottom: glyph2.bottom,
+                glyphs: [glyph2]
+              });
+          }
+          if (incomplete) continue;
+          const lines2 = bands.flatMap((band) => {
+            const ink = band.glyphs.filter((glyph2) => !glyph2.space);
+            if (!ink.length) return [];
+            const left = Math.min(...ink.map((glyph2) => glyph2.left));
+            const right = Math.max(...ink.map((glyph2) => glyph2.right));
+            const counted = band.glyphs.filter(
+              (glyph2) => !glyph2.space || (style.direction === "rtl" ? glyph2.right > left + 0.5 : glyph2.left < right - 0.5)
+            );
+            return [
+              {
+                chars: new Set(counted.map((glyph2) => glyph2.id)).size,
+                width: Math.max(...counted.map((glyph2) => glyph2.right)) - Math.min(...counted.map((glyph2) => glyph2.left))
+              }
+            ];
+          });
+          if (!lines2.length) continue;
+          const width = Math.max(...lines2.map((line) => line.width));
+          const charWidth = lines2.reduce((sum, line) => sum + line.width, 0) / lines2.reduce((sum, line) => sum + line.chars, 0);
           records.push({
             selector: geometrySelector(paragraph),
-            chars,
+            chars: Math.max(...lines2.map((line) => line.chars)),
             width: Math.round(width * 100) / 100,
-            charWidth: Math.round(charWidth * 1e3) / 1e3,
+            charWidth: Math.max(1e-3, Math.round(charWidth * 1e3) / 1e3),
             lines: lines2.length,
             text: text2.slice(0, 160)
           });
         }
-        return capped ? {
-          status: "partial",
-          reason: "Line length record limit (200) reached",
-          records
-        } : { status: "ran", records };
+        return reasons.size ? { status: "partial", reason: [...reasons].join("; "), records } : { status: "ran", records };
       })() : void 0;
       const orphanWords = craftInput.orphanWord ? (() => {
         const records = [];
@@ -22378,9 +23605,23 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             'h1,h2,h3,h4,h5,h6,[role="heading"][aria-level],button,[role="button"],a[href]'
           )
         ].filter(
-          (element) => (element.tagName !== "A" || buttonLikeLink(element)) && craftVisible(element)
+          (element) => (
+            // Like links, an inline button is running copy (role="button"
+            // sentences), not a label: its last line continues with the
+            // text that follows. Headings stay display text when inline.
+            (element.matches('h1,h2,h3,h4,h5,h6,[role="heading"]') || getComputedStyle(element).display !== "inline") && (element.tagName !== "A" || buttonLikeLink(element)) && craftVisible(element)
+          )
         );
         const ownerSet = new Set(owners);
+        const paintedParents = /* @__PURE__ */ new Map();
+        const orphanPainted = (element) => {
+          if (!paintedParents.has(element))
+            paintedParents.set(
+              element,
+              window.__idiomVisibility?.painted(element).value
+            );
+          return paintedParents.get(element);
+        };
         let segmenter;
         try {
           segmenter = new Intl.Segmenter(
@@ -22408,6 +23649,10 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           for (let element = owner2; element && element !== document.body; element = element.parentElement)
             if (hasActiveLineClamp(element)) clamped = true;
           if (clamped) continue;
+          const clip2 = window.__idiomVisibility?.extent(
+            owner2,
+            document.documentElement
+          );
           const words2 = [];
           const walker = document.createTreeWalker(
             owner2,
@@ -22421,6 +23666,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               nearest = nearest.parentElement;
             if (nearest !== owner2) continue;
             if (!craftVisible(parent)) continue;
+            if (orphanPainted(parent) === false) continue;
             const value = node.textContent ?? "";
             for (const segment of segmenter.segment(value)) {
               if (!segment.isWordLike) continue;
@@ -22429,12 +23675,14 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               range.setStart(node, segment.index);
               range.setEnd(node, segment.index + segment.segment.length);
               const rect2 = [...range.getClientRects()].find(
-                (r) => r.width > 0 && r.height > 0
+                (r) => r.width > 0 && r.height > 0 && (clip2 === void 0 || r.right > clip2.x && r.left < clip2.x + clip2.width && r.bottom > clip2.y && r.top < clip2.y + clip2.height)
               );
               if (rect2)
                 words2.push({
                   word: segment.segment,
+                  left: rect2.left,
                   top: rect2.top,
+                  width: rect2.width,
                   height: rect2.height
                 });
             }
@@ -22450,12 +23698,27 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           }
           const last = lines2.at(-1);
           if (lines2.length < 2 || !last || last.length !== 1) continue;
-          const word = (last[0]?.word ?? "").replace(/[\p{P}]+$/u, "");
-          if (word === "") continue;
+          const stranded = last[0];
+          const word = (stranded?.word ?? "").replace(/[\p{P}]+$/u, "");
+          if (!stranded || word === "") continue;
+          const left = Math.min(...words2.map((w) => w.left));
+          const top = Math.min(...words2.map((w) => w.top));
           records.push({
             selector: geometrySelector(owner2),
             word,
             lines: lines2.length,
+            rect: {
+              x: left,
+              y: top,
+              width: Math.max(...words2.map((w) => w.left + w.width)) - left,
+              height: Math.max(...words2.map((w) => w.top + w.height)) - top
+            },
+            lastLine: {
+              x: stranded.left,
+              y: stranded.top,
+              width: stranded.width,
+              height: stranded.height
+            },
             text: clipText(
               owner2 instanceof HTMLElement ? owner2.innerText : owner2.textContent ?? "",
               160
@@ -22481,7 +23744,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
                 () => false
               ),
               new Promise(
-                (resolve56) => setTimeout(() => resolve56(void 0), 1500)
+                (resolve57) => setTimeout(() => resolve57(void 0), 1500)
               )
             ]);
             const style = getComputedStyle(image2);
@@ -22611,6 +23874,98 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           };
         }
       }
+      const establishesFixedBlock = (s) => s.transform !== "none" || s.perspective !== "none" || [s.translate, s.rotate, s.scale].some((v) => v && v !== "none") || s.filter !== "none" || s.backdropFilter !== "" && s.backdropFilter !== "none" || /\b(layout|paint|strict|content)\b/.test(s.contain) || /\b(transform|translate|rotate|scale|perspective|filter|backdrop-filter|contain)\b/.test(
+        s.willChange
+      ) || ["auto", "hidden"].includes(s.contentVisibility);
+      const containingBoxes = (el, owner2) => {
+        const boxes = [];
+        let escaping;
+        for (let current = el; current; current = current.parentElement) {
+          const s = getComputedStyle(current);
+          if (escaping && (establishesFixedBlock(s) || escaping === "absolute" && s.position !== "static"))
+            escaping = void 0;
+          if (current === owner2) return escaping ? void 0 : boxes;
+          if (current !== el && !escaping && s.display !== "contents")
+            boxes.push(current);
+          if (s.position === "fixed") escaping = "fixed";
+          else if (s.position === "absolute" && escaping !== "fixed")
+            escaping = "absolute";
+        }
+        return void 0;
+      };
+      const visibleRects = (el, rects, owner2) => {
+        const boxes = containingBoxes(el, owner2);
+        if (boxes === void 0) return void 0;
+        let result2 = rects.map((r) => ({ x: r.x, y: r.y, width: r.width, height: r.height })).filter((r) => r.width > 0 && r.height > 0);
+        for (const box of boxes) {
+          const s = getComputedStyle(box);
+          const scrolls = (axis) => ["auto", "scroll"].includes(axis);
+          if (scrolls(s.overflowX) || scrolls(s.overflowY)) return void 0;
+          const x = ["hidden", "clip"].includes(s.overflowX);
+          const y = ["hidden", "clip"].includes(s.overflowY);
+          if (!x && !y) continue;
+          const c = window.__idiomVisibility.client(box);
+          result2 = result2.map((r) => {
+            const left = x ? Math.max(r.x, c.x) : r.x;
+            const top = y ? Math.max(r.y, c.y) : r.y;
+            return {
+              x: left,
+              y: top,
+              width: x ? Math.min(r.x + r.width, c.x + c.width) - left : r.width,
+              height: y ? Math.min(r.y + r.height, c.y + c.height) - top : r.height
+            };
+          }).filter((r) => r.width > 0 && r.height > 0);
+        }
+        return result2;
+      };
+      const presentational = (el, owner2) => {
+        for (let current = el; current; current = current.parentElement) {
+          if (current.getAttribute("aria-hidden") === "true" || current.hasAttribute("inert"))
+            return true;
+          if (current === owner2) return false;
+        }
+        return false;
+      };
+      const marqueeVerdicts = /* @__PURE__ */ new Map();
+      const isMarquee = (el) => {
+        const known = marqueeVerdicts.get(el);
+        if (known !== void 0) return known;
+        let verdict = false;
+        try {
+          if (typeof el.getAnimations === "function")
+            verdict = el.getAnimations().some((animation) => {
+              const effect = animation.effect;
+              if (animation.playState !== "running" || !(effect instanceof KeyframeEffect) || typeof effect.getKeyframes !== "function" || effect.getComputedTiming().iterations !== Infinity)
+                return false;
+              return effect.getKeyframes().some(
+                (frame) => ["transform", "translate"].some(
+                  (property) => typeof frame[property] === "string" && frame[property] !== "none"
+                )
+              );
+            });
+        } catch {
+          verdict = false;
+        }
+        if (!verdict && getComputedStyle(el).transform !== "none") {
+          const seen = /* @__PURE__ */ new Set();
+          for (const child of el.children) {
+            const text2 = (child instanceof HTMLElement ? child.innerText : "").replace(/\s+/g, " ").trim();
+            if (text2 === "") continue;
+            if (seen.has(text2)) {
+              verdict = true;
+              break;
+            }
+            seen.add(text2);
+          }
+        }
+        marqueeVerdicts.set(el, verdict);
+        return verdict;
+      };
+      const marqueeTrack = (el, owner2) => {
+        for (let current = el; current && current !== owner2; current = current.parentElement)
+          if (isMarquee(current)) return current;
+        return void 0;
+      };
       return {
         version: 2,
         ...Number.parseFloat(getComputedStyle(root).fontSize) > 0 ? { rootFontSize: Number.parseFloat(getComputedStyle(root).fontSize) } : {},
@@ -22623,6 +23978,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           maxTouchPoints: navigator.maxTouchPoints
         },
         document: {
+          contentType: document.contentType,
           scrollWidth: root.scrollWidth,
           scrollHeight: root.scrollHeight,
           clientWidth: root.clientWidth,
@@ -22630,9 +23986,115 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         },
         elements: observed.map(({ element, value }) => {
           const viewportIntersection = viewportIntersections.get(element);
+          const style = getComputedStyle(element);
+          let paintedContent;
+          if ([style.overflowX, style.overflowY].some(
+            (axis) => ["hidden", "clip"].includes(axis)
+          ) && (element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1)) {
+            const origin = element.getBoundingClientRect();
+            const left = origin.x + element.clientLeft;
+            const top = origin.y + element.clientTop;
+            let right = left + element.clientWidth;
+            let bottom = top + element.clientHeight;
+            const selectors = [];
+            for (const contributor of [
+              element,
+              ...element.querySelectorAll("*")
+            ]) {
+              const text2 = [...contributor.childNodes].some(
+                (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim() !== ""
+              );
+              const media2 = [
+                "IMG",
+                "VIDEO",
+                "CANVAS",
+                "IFRAME",
+                "SVG"
+              ].includes(contributor.tagName);
+              const contributorStyle = getComputedStyle(contributor);
+              const decorated = alphaOf(contributorStyle.backgroundColor) > 0 || contributorStyle.backgroundImage !== "none" || contributorStyle.boxShadow !== "none" || ["top", "right", "bottom", "left"].some(
+                (side) => Number.parseFloat(
+                  contributorStyle.getPropertyValue(`border-${side}-width`)
+                ) > 0 && alphaOf(
+                  contributorStyle.getPropertyValue(`border-${side}-color`)
+                ) > 0
+              );
+              if (!text2 && !media2 && !decorated) continue;
+              selectors.push(selectorFor(contributor));
+              if (!paintedOf(contributor).value) continue;
+              const rects = [];
+              if (media2 || decorated)
+                rects.push(contributor.getBoundingClientRect());
+              if (text2)
+                for (const node of contributor.childNodes) {
+                  if (node.nodeType !== Node.TEXT_NODE) continue;
+                  const range = document.createRange();
+                  range.selectNodeContents(node);
+                  rects.push(...range.getClientRects());
+                }
+              for (const rect2 of rects) {
+                right = Math.max(right, rect2.right);
+                bottom = Math.max(bottom, rect2.bottom);
+              }
+            }
+            const clipsX = ["hidden", "clip"].includes(style.overflowX);
+            const clipsY = ["hidden", "clip"].includes(style.overflowY);
+            const clip2 = window.__idiomVisibility.client(element);
+            const clipped = {
+              text: [],
+              interactive: [],
+              marquee: []
+            };
+            const note = (list5, selector) => {
+              if (list5.length < 10 && !list5.includes(selector))
+                list5.push(selector);
+            };
+            for (const contributor of [
+              element,
+              ...element.querySelectorAll("*")
+            ]) {
+              const textNodes = [...contributor.childNodes].filter(
+                (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim() !== ""
+              );
+              const control = contributor !== element && isInteractive(contributor);
+              if (textNodes.length === 0 && !control) continue;
+              if (!paintedOf(contributor).value) continue;
+              if (presentational(contributor, element)) continue;
+              const rects = [];
+              if (control) rects.push(contributor.getBoundingClientRect());
+              else
+                for (const node of textNodes) {
+                  const range = document.createRange();
+                  range.selectNodeContents(node);
+                  rects.push(...range.getClientRects());
+                }
+              const visible2 = visibleRects(contributor, rects, element);
+              if (visible2 === void 0) continue;
+              const cut = visible2.some(
+                (r) => clipsX && (r.x < clip2.x - 1 || r.x + r.width > clip2.x + clip2.width + 1) || clipsY && (r.y < clip2.y - 1 || r.y + r.height > clip2.y + clip2.height + 1)
+              );
+              if (!cut) continue;
+              const track = marqueeTrack(contributor, element);
+              if (track !== void 0) {
+                note(clipped.marquee, selectorFor(track));
+                continue;
+              }
+              note(
+                control ? clipped.interactive : clipped.text,
+                selectorFor(contributor)
+              );
+            }
+            paintedContent = {
+              selectors,
+              width: Math.max(0, right - origin.x - element.clientLeft),
+              height: Math.max(0, bottom - origin.y - element.clientTop),
+              clipped
+            };
+          }
           const edges2 = frameEdges.get(element);
-          return value.signals === void 0 || viewportIntersection === void 0 && edges2 === void 0 ? value : {
-            ...value,
+          const enriched = paintedContent === void 0 ? value : { ...value, paintedContent };
+          return value.signals === void 0 || viewportIntersection === void 0 && edges2 === void 0 ? enriched : {
+            ...enriched,
             signals: {
               ...value.signals,
               ...viewportIntersection === void 0 ? {} : { viewportIntersection },
@@ -22646,9 +24108,9 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               selector: entry.value.selector,
               level: entry.value.headingLevel,
               text: entry.value.text,
-              axeTargets: axeTargets.filter((target) => {
+              axeTargets: axeTargets.filter((target2) => {
                 try {
-                  return entry.element.matches(target);
+                  return entry.element.matches(target2);
                 } catch {
                   return false;
                 }
@@ -22790,6 +24252,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
 var init_observe = __esm({
   "src/checks/observe.ts"() {
     "use strict";
+    init_document();
     init_errors();
     init_invariant();
     init_css();
@@ -23111,7 +24574,7 @@ async function fetchFigmaFrame(ref, options) {
     variables: status,
     link: figmaNodeLink(ref.fileKey, nodeId)
   };
-  const target = join9(root, safe(version)), staging = join9(root, `.staging-${randomUUID3()}`);
+  const target2 = join9(root, safe(version)), staging = join9(root, `.staging-${randomUUID3()}`);
   await mkdir4(staging, { recursive: true });
   try {
     await writeFile4(join9(staging, "nodes.json"), json2(entry.document));
@@ -23119,8 +24582,8 @@ async function fetchFigmaFrame(ref, options) {
     if (variables)
       await writeFile4(join9(staging, "variables.json"), json2(variables));
     await writeFile4(join9(staging, "meta.json"), json2(meta));
-    await rm3(target, { recursive: true, force: true });
-    await rename3(staging, target);
+    await rm3(target2, { recursive: true, force: true });
+    await rename3(staging, target2);
   } finally {
     await rm3(staging, { recursive: true, force: true });
   }
@@ -23131,7 +24594,7 @@ async function fetchFigmaFrame(ref, options) {
     document: figmaNodeSchema.parse(entry.document),
     png,
     variables,
-    cacheDirectory: target
+    cacheDirectory: target2
   };
 }
 async function fetchFigmaVariables(ref, options) {
@@ -24990,6 +26453,7 @@ async function writeTupleArtifacts(options) {
       };
   }
   const design = designs[0];
+  const shot = result2?.observations?.version === 2 ? result2.observations.screenshot : void 0;
   const metadata2 = {
     ...design === void 0 ? {} : { design },
     ...several ? { designs } : {},
@@ -25060,7 +26524,17 @@ async function writeTupleArtifacts(options) {
       release: release()
     },
     browserVersion: tuple.runtimeVersion ?? options.browserVersion,
-    toolVersion: IDIOM_VERSION
+    toolVersion: IDIOM_VERSION,
+    ...shot === void 0 ? {} : {
+      screenshot: {
+        strategy: shot.strategy,
+        scale: shot.scale,
+        width: shot.width,
+        height: shot.height,
+        ...shot.tiles === void 0 ? {} : { tiles: shot.tiles },
+        ...shot.drift === void 0 ? {} : { drift: shot.drift }
+      }
+    }
   };
   await writeFile6(join11(directory, "metadata.json"), json3(metadata2));
 }
@@ -25273,10 +26747,10 @@ function deadlinePage(page, deadline) {
     "isChecked",
     "screenshot"
   ]);
-  const wrap = (target) => {
-    const existing = cache.get(target);
+  const wrap = (target2) => {
+    const existing = cache.get(target2);
     if (existing) return existing;
-    const proxy = new Proxy(target, {
+    const proxy = new Proxy(target2, {
       get(object2, key3) {
         const value = Reflect.get(object2, key3, object2);
         if (["mouse", "keyboard", "touchscreen"].includes(String(key3)))
@@ -25330,12 +26804,12 @@ function deadlinePage(page, deadline) {
         };
       }
     });
-    cache.set(target, proxy);
+    cache.set(target2, proxy);
     return proxy;
   };
   const dispose = () => {
-    for (const { target, event, listener } of listeners.splice(0))
-      target.off(event, listener);
+    for (const { target: target2, event, listener } of listeners.splice(0))
+      target2.off(event, listener);
     deadline.signal.removeEventListener("abort", dispose);
   };
   deadline.signal.addEventListener("abort", dispose, { once: true });
@@ -25411,7 +26885,7 @@ var init_deadline = __esm({
       }
       async run(work) {
         this.check();
-        return new Promise((resolve55, reject) => {
+        return new Promise((resolve56, reject) => {
           const abort = () => {
             this.signal.removeEventListener("abort", abort);
             reject(this.signal.reason);
@@ -25423,7 +26897,7 @@ var init_deadline = __esm({
           }).then(
             (value) => {
               this.check();
-              resolve55(value);
+              resolve56(value);
             },
             (error) => {
               this.check();
@@ -25517,11 +26991,11 @@ async function sampleExplanation(options) {
     });
     let reason;
     try {
-      const target = page.locator(candidate2.selector).first();
-      if (trigger === "hover") await target.hover({ timeout: 1500 });
+      const target2 = page.locator(candidate2.selector).first();
+      if (trigger === "hover") await target2.hover({ timeout: 1500 });
       else {
-        await target.focus({ timeout: 1500 });
-        if (!await target.evaluate(
+        await target2.focus({ timeout: 1500 });
+        if (!await target2.evaluate(
           (element) => element === document.activeElement
         ))
           reason = "control did not receive focus";
@@ -25650,12 +27124,12 @@ var init_explanations = __esm({
                 snapshot2().map((tip) => [tip.selector, tip.text])
               );
               const samples = /* @__PURE__ */ new Map();
-              const controlFor = (target) => target instanceof Element ? target.closest(
+              const controlFor = (target2) => target2 instanceof Element ? target2.closest(
                 'button, summary, a[href], [role="button"], [role="link"]'
               ) : null;
-              const begin = (target, trigger) => {
-                const control = controlFor(target);
-                if (!control || trigger === "focus" && control !== target) return;
+              const begin = (target2, trigger) => {
+                const control = controlFor(target2);
+                if (!control || trigger === "focus" && control !== target2) return;
                 const selector = selectorFor(control);
                 const controlId = control === replayed && identity8 ? identity8.controlId : dom2.identity(control);
                 const key3 = `${controlId}:${trigger}`;
@@ -25691,8 +27165,8 @@ var init_explanations = __esm({
                   ].filter(Boolean).join(" ").split(/\s+/).filter(Boolean);
                   const linked = tips.filter(
                     (tip) => ids.some((id2) => {
-                      const target = document.getElementById(id2);
-                      return target === tip.element || target?.contains(tip.element);
+                      const target2 = document.getElementById(id2);
+                      return target2 === tip.element || target2?.contains(tip.element);
                     })
                   );
                   const changed = tips.filter(
@@ -25854,29 +27328,29 @@ async function diagnoseTouchReachability(page, declaration) {
         hover = { status: "unavailable", reason: firstLine(error) };
       }
       if (hover.status === "revealed")
-        for (const target of candidate2.focusTargets) {
+        for (const target2 of candidate2.focusTargets) {
           try {
             const result2 = await trial2(
               [
                 {
-                  selectors: [target.selector],
+                  selectors: [target2.selector],
                   classes: ["focus", "focus-within"]
                 },
-                { selectors: target.ancestors, classes: ["focus-within"] }
+                { selectors: target2.ancestors, classes: ["focus-within"] }
               ],
               candidate2.selector
             );
             if (result2.status === "revealed") {
-              focus = { status: "revealed", target: target.selector };
+              focus = { status: "revealed", target: target2.selector };
               break;
             }
             if (result2.status === "unavailable")
-              focus = { ...result2, target: target.selector };
+              focus = { ...result2, target: target2.selector };
           } catch (error) {
             focus = {
               status: "unavailable",
               reason: firstLine(error),
-              target: target.selector
+              target: target2.selector
             };
           }
         }
@@ -26310,7 +27784,7 @@ function createLinkChecker(options) {
       active++;
       return;
     }
-    await new Promise((resolve56) => waiting.push(resolve56));
+    await new Promise((resolve57) => waiting.push(resolve57));
   };
   const release2 = () => {
     const next = waiting.shift();
@@ -26365,7 +27839,7 @@ function createLinkChecker(options) {
       release2();
     }
   };
-  const resolve55 = (link) => {
+  const resolve56 = (link) => {
     if (!link.sameOrigin && !options.external)
       return Promise.resolve({
         status: "unchecked",
@@ -26386,7 +27860,7 @@ function createLinkChecker(options) {
   return {
     async check(records) {
       const checked = await Promise.all(
-        records.map(async (link) => ({ ...link, result: await resolve55(link) }))
+        records.map(async (link) => ({ ...link, result: await resolve56(link) }))
       );
       return checked.some(
         (link) => link.result.status === "unchecked" && link.result.reason === budgetReason
@@ -26629,8 +28103,8 @@ var init_motion2 = __esm({
                   const effect = animation.effect;
                   if (!(effect instanceof KeyframeEffect) || !(effect.target instanceof Element))
                     continue;
-                  const target = effect.target;
-                  const entry = entries.get(target);
+                  const target2 = effect.target;
+                  const entry = entries.get(target2);
                   if (!entry) continue;
                   const frames = effect.getKeyframes();
                   const properties = [
@@ -26639,9 +28113,9 @@ var init_motion2 = __esm({
                     (key3) => relevant.test(key3) && new Set(frames.map((frame2) => JSON.stringify(frame2[key3]))).size > 1
                   );
                   if (properties.length === 0) continue;
-                  const isOwner = target === entry.owner;
+                  const isOwner = target2 === entry.owner;
                   if (!isOwner) {
-                    const box = target.getBoundingClientRect();
+                    const box = target2.getBoundingClientRect();
                     const ownerBox = entry.owner.getBoundingClientRect();
                     if (box.width * box.height < ownerBox.width * ownerBox.height * 0.5)
                       continue;
@@ -26844,8 +28318,8 @@ var init_motion2 = __esm({
                 if (failure3) throw new Error(failure3);
                 await this.page.evaluate(
                   () => new Promise(
-                    (resolve55) => requestAnimationFrame(
-                      () => requestAnimationFrame(() => resolve55())
+                    (resolve56) => requestAnimationFrame(
+                      () => requestAnimationFrame(() => resolve56())
                     )
                   )
                 );
@@ -26901,6 +28375,78 @@ var init_motion2 = __esm({
         };
       }
     };
+  }
+});
+
+// src/capture/animation-settle.ts
+async function settleAnimations(page, milliseconds = 1500, signal, checkpoint) {
+  const deadline = performance.now() + milliseconds;
+  let hadAnimations = false;
+  for (; ; ) {
+    signal?.throwIfAborted();
+    const remaining = Math.max(0, deadline - performance.now());
+    const round4 = await page.evaluate(
+      async (waitMs) => {
+        if (typeof document.getAnimations !== "function")
+          return { had: false, active: false, finite: false };
+        const active = () => document.getAnimations().filter(
+          (animation) => animation.pending || !["finished", "idle"].includes(animation.playState)
+        );
+        const animations = active();
+        const finite2 = animations.filter(
+          (animation) => animation.playState !== "paused" && animation.playbackRate !== 0 && Number.isFinite(animation.effect?.getComputedTiming().endTime)
+        );
+        if (finite2.length === 0 || waitMs === 0)
+          return {
+            had: document.getAnimations().length > 0 || animations.length > 0,
+            active: animations.length > 0,
+            finite: finite2.length > 0
+          };
+        let timer;
+        let frame;
+        let disposed = false;
+        try {
+          await Promise.race([
+            Promise.all(
+              finite2.map(
+                (animation) => animation.finished.catch(() => void 0)
+              )
+            ).then(
+              () => new Promise((resolve56) => {
+                if (disposed) return resolve56();
+                frame = requestAnimationFrame(() => resolve56());
+              })
+            ),
+            new Promise((resolve56) => {
+              timer = setTimeout(resolve56, waitMs);
+            })
+          ]);
+        } finally {
+          disposed = true;
+          clearTimeout(timer);
+          if (frame !== void 0) cancelAnimationFrame(frame);
+        }
+        const current = active();
+        return {
+          had: document.getAnimations().length > 0 || animations.length > 0,
+          active: current.length > 0,
+          finite: current.some(
+            (animation) => animation.playState !== "paused" && animation.playbackRate !== 0 && Number.isFinite(animation.effect?.getComputedTiming().endTime)
+          )
+        };
+      },
+      Math.min(50, remaining)
+    );
+    signal?.throwIfAborted();
+    await checkpoint?.();
+    hadAnimations ||= round4?.had === true;
+    if (!round4?.finite || performance.now() >= deadline)
+      return { hadAnimations, unresolved: round4?.finite === true };
+  }
+}
+var init_animation_settle = __esm({
+  "src/capture/animation-settle.ts"() {
+    "use strict";
   }
 });
 
@@ -27026,12 +28572,227 @@ function sampleMediaFrames(frames, decode2, viewportWidth, tolerance) {
     bands: measureBands(image2, frame.frame, scale, tolerance)
   }));
 }
-var maxSamples, solidShare;
+function screenshotScale(image2, viewport, documentWidth) {
+  const byViewport = image2.width / viewport.width;
+  if (documentWidth <= viewport.width) return byViewport;
+  return Math.abs(image2.height - viewport.height * byViewport) <= 1 ? byViewport : image2.width / documentWidth;
+}
+function measureInk(image2, rect2, scale, tolerance) {
+  const x0 = Math.max(0, Math.ceil(rect2.x * scale));
+  const y0 = Math.max(0, Math.ceil(rect2.y * scale));
+  const x1 = Math.min(image2.width, Math.floor((rect2.x + rect2.width) * scale));
+  const y1 = Math.min(image2.height, Math.floor((rect2.y + rect2.height) * scale));
+  if (x1 - x0 < 1 || y1 - y0 < 1)
+    return { status: "unavailable", reason: "rect outside screenshot" };
+  const columns = positions(x0, x1);
+  const allRows = positions(y0, y1);
+  const rows = allRows.length <= maxInkRows ? allRows : Array.from(
+    { length: maxInkRows },
+    (_, index) => allRows[Math.floor((index + 0.5) * allRows.length / maxInkRows)] ?? y0
+  );
+  const samples = [];
+  for (const y of rows)
+    for (const x of columns) {
+      const offset2 = (y * image2.width + x) * 4;
+      samples.push({
+        r: image2.data[offset2] ?? 0,
+        g: image2.data[offset2 + 1] ?? 0,
+        b: image2.data[offset2 + 2] ?? 0
+      });
+    }
+  const counts = /* @__PURE__ */ new Map();
+  for (const color of samples) {
+    const key3 = color.r << 16 | color.g << 8 | color.b;
+    const entry = counts.get(key3);
+    if (entry) entry.count += 1;
+    else counts.set(key3, { color, count: 1 });
+  }
+  let modal;
+  let best = 0;
+  for (const { color, count } of counts.values())
+    if (count > best) {
+      best = count;
+      modal = color;
+    }
+  if (modal === void 0)
+    return { status: "unavailable", reason: "rect outside screenshot" };
+  const mode = modal;
+  const inked = samples.filter(
+    (color) => channelDistance(color, mode) > tolerance
+  ).length;
+  return {
+    status: "measured",
+    share: Math.round(inked / samples.length * 1e4) / 1e4
+  };
+}
+function sampleOrphanInk(records, decode2, viewport, documentWidth, tolerance) {
+  if (!records.some((record2) => record2.lastLine !== void 0)) return records;
+  let image2;
+  try {
+    image2 = decode2();
+  } catch {
+    return records.map(
+      (record2) => record2.lastLine === void 0 ? record2 : {
+        ...record2,
+        ink: {
+          status: "unavailable",
+          reason: "screenshot could not be decoded"
+        }
+      }
+    );
+  }
+  const scale = screenshotScale(image2, viewport, documentWidth);
+  return records.map(
+    (record2) => record2.lastLine === void 0 ? record2 : {
+      ...record2,
+      ink: measureInk(image2, record2.lastLine, scale, tolerance)
+    }
+  );
+}
+var maxSamples, solidShare, maxInkRows;
 var init_media_bands = __esm({
   "src/capture/media-bands.ts"() {
     "use strict";
     maxSamples = 64;
     solidShare = 0.98;
+    maxInkRows = 16;
+  }
+});
+
+// src/capture/screenshot.ts
+import { PNG as PNG4 } from "pngjs";
+function tileHeightCss(scale) {
+  return Math.max(1, Math.floor(8192 / scale));
+}
+async function fullPageSize(page) {
+  return page.evaluate(() => {
+    const body = document.body;
+    const root = document.documentElement;
+    return {
+      width: Math.max(
+        body?.scrollWidth ?? 0,
+        root.scrollWidth,
+        body?.offsetWidth ?? 0,
+        root.offsetWidth,
+        body?.clientWidth ?? 0,
+        root.clientWidth
+      ),
+      height: Math.max(
+        body?.scrollHeight ?? 0,
+        root.scrollHeight,
+        body?.offsetHeight ?? 0,
+        root.offsetHeight,
+        body?.clientHeight ?? 0,
+        root.clientHeight
+      )
+    };
+  });
+}
+async function captureScreenshot(page, options) {
+  const [{ scale, innerWidth: innerWidth2, innerHeight: innerHeight2 }, size3] = await Promise.all([
+    page.evaluate(() => ({
+      scale: window.devicePixelRatio,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight
+    })),
+    fullPageSize(page)
+  ]);
+  if (options?.fullPage !== true)
+    return {
+      buffer: await page.screenshot(options),
+      geometry: {
+        strategy: "viewport",
+        scale,
+        width: innerWidth2,
+        height: innerHeight2
+      }
+    };
+  const { width, height } = size3;
+  if (Math.ceil(height * scale) <= MAX_SURFACE_PX || width * scale * height * scale * 4 > MAX_STITCH_BYTES)
+    return {
+      buffer: await page.screenshot(options),
+      geometry: { strategy: "full-page", scale, width, height }
+    };
+  const tile = tileHeightCss(scale);
+  let output;
+  let tiles = 0;
+  for (let y = 0; y < height; y += tile) {
+    const image2 = PNG4.sync.read(
+      await page.screenshot({
+        ...options,
+        clip: { x: 0, y, width, height: Math.min(tile, height - y) }
+      })
+    );
+    output ??= new PNG4({
+      width: image2.width,
+      height: Math.round(height * scale)
+    });
+    const top = Math.min(Math.round(y * scale), output.height);
+    const rows = Math.min(image2.height, output.height - top);
+    const columns = Math.min(image2.width, output.width);
+    if (rows > 0 && columns > 0)
+      PNG4.bitblt(image2, output, 0, 0, columns, rows, 0, top);
+    tiles += 1;
+  }
+  if (output === void 0)
+    return {
+      buffer: await page.screenshot(options),
+      geometry: { strategy: "full-page", scale, width, height }
+    };
+  return {
+    buffer: PNG4.sync.write(output),
+    geometry: { strategy: "tiled", scale, width, height, tiles }
+  };
+}
+async function screenshotRects(page, selectors) {
+  return page.evaluate((selectors2) => {
+    const rects = {};
+    for (const selector of selectors2) {
+      let matches;
+      try {
+        matches = [...document.querySelectorAll(selector)];
+      } catch {
+        continue;
+      }
+      const boxes = matches.map((element) => element.getBoundingClientRect()).filter((box) => box.width > 0 && box.height > 0);
+      if (boxes.length === 0) continue;
+      const left = Math.min(...boxes.map((box) => box.left));
+      const top = Math.min(...boxes.map((box) => box.top));
+      const right = Math.max(...boxes.map((box) => box.right));
+      const bottom = Math.max(...boxes.map((box) => box.bottom));
+      rects[selector] = {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top
+      };
+    }
+    return rects;
+  }, selectors);
+}
+function screenshotDrift(observed, captured) {
+  if (Math.abs(observed.width - captured.width) <= 1 && Math.abs(observed.height - captured.height) <= 1)
+    return void 0;
+  return {
+    observed: { width: observed.width, height: observed.height },
+    captured: { width: captured.width, height: captured.height }
+  };
+}
+async function withScreenshotGeometry(page, geometry, observed, selectors) {
+  const drift = observed === void 0 || geometry.strategy === "viewport" ? void 0 : screenshotDrift(observed, geometry);
+  if (drift === void 0) return geometry;
+  return {
+    ...geometry,
+    drift,
+    rects: await screenshotRects(page, [...new Set(selectors)])
+  };
+}
+var MAX_SURFACE_PX, MAX_STITCH_BYTES;
+var init_screenshot = __esm({
+  "src/capture/screenshot.ts"() {
+    "use strict";
+    MAX_SURFACE_PX = 16384;
+    MAX_STITCH_BYTES = 1024 ** 3;
   }
 });
 
@@ -27497,7 +29258,7 @@ var init_web_steps = __esm({
 });
 
 // src/capture/page.ts
-import { PNG as PNG4 } from "pngjs";
+import { PNG as PNG5 } from "pngjs";
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -27509,7 +29270,9 @@ async function collectPageEvidence(options) {
   let status;
   let dom2;
   let screenshot2;
+  let screenshotGeometry;
   let axe;
+  let nonHtml2 = false;
   let observations;
   let stage = options.reachStage;
   let failure3;
@@ -27529,7 +29292,24 @@ async function collectPageEvidence(options) {
     activity("settle");
     await options.page.waitForTimeout(options.settleMs);
     await options.healthGuard?.checkpoint();
-    if (options.observe?.designComparison) {
+    stage = "expectation";
+    activity("animation settle");
+    const animations = await settleAnimations(
+      options.page,
+      options.animationSettleMs ?? 1500,
+      options.signal,
+      () => options.healthGuard?.checkpoint() ?? Promise.resolve()
+    ).catch((error) => {
+      options.assertDestination?.();
+      throw error;
+    });
+    activity(stage);
+    options.assertDestination?.();
+    const documentType = await options.page.evaluate(() => ({
+      contentType: document.contentType
+    }));
+    nonHtml2 = classifyDocument(documentType.contentType) === "non-html";
+    if (!nonHtml2 && options.observe?.designComparison) {
       activity("design resources");
       await options.page.evaluate(async () => {
         let timer;
@@ -27558,10 +29338,9 @@ async function collectPageEvidence(options) {
       });
       options.signal?.throwIfAborted();
     }
-    stage = "expectation";
-    activity(stage);
-    options.assertDestination?.();
-    const bodyText = await options.page.locator("body").innerText();
+    const bodyText = nonHtml2 ? await options.page.evaluate(
+      () => (document.body ?? document.documentElement)?.textContent ?? ""
+    ) : await options.page.locator("body").innerText();
     if (options.statusExpectation !== void 0 && status !== options.statusExpectation) {
       mismatches.push({
         kind: "status",
@@ -27590,15 +29369,15 @@ async function collectPageEvidence(options) {
       }
     }
     const focus = options.state.focus;
-    if (focus !== void 0) {
-      const target = options.page.locator(focus).first();
-      if (await target.count() === 0) {
+    if (!nonHtml2 && focus !== void 0) {
+      const target2 = options.page.locator(focus).first();
+      if (await target2.count() === 0) {
         mismatches.push({ kind: "selector-present", expected: focus });
       } else {
         const window2 = await explanations?.start();
         let reason;
         try {
-          await target.focus();
+          await target2.focus();
           await options.page.waitForTimeout(50);
         } catch (error) {
           reason = "state focus failed";
@@ -27609,7 +29388,8 @@ async function collectPageEvidence(options) {
         }
       }
     }
-    if (options.observe?.touchReachability) await parkPointer(options.page);
+    if (!nonHtml2 && options.observe?.touchReachability)
+      await parkPointer(options.page);
     await options.healthGuard?.checkpoint();
     stage = "dom";
     activity(stage);
@@ -27617,10 +29397,15 @@ async function collectPageEvidence(options) {
     await options.healthGuard?.checkpoint();
     stage = "axe";
     activity(stage);
-    axe = await options.createAxe(options.page).analyze();
+    const axeDocument = await options.page.evaluate(() => ({
+      contentType: document.contentType
+    }));
+    nonHtml2 = classifyDocument(axeDocument.contentType) === "non-html";
+    axe = nonHtml2 ? { violations: [] } : await options.createAxe(options.page).analyze();
     await options.healthGuard?.checkpoint();
     stage = "observations";
     activity(stage);
+    const observedSize = nonHtml2 ? void 0 : await fullPageSize(options.page);
     observations = await observePage(
       options.page,
       options.tokens,
@@ -27628,6 +29413,8 @@ async function collectPageEvidence(options) {
       options.state.mask,
       options.observe
     );
+    nonHtml2 = classifyDocument(observations.document.contentType) === "non-html";
+    if (nonHtml2) axe = { violations: [] };
     await options.healthGuard?.checkpoint();
     if (observations.version === 2)
       observations = {
@@ -27656,7 +29443,7 @@ async function collectPageEvidence(options) {
         }
       };
     }
-    if (observations.version === 2 && observations.links !== void 0 && options.checkLinks !== void 0) {
+    if (!nonHtml2 && observations.version === 2 && observations.links !== void 0 && options.checkLinks !== void 0) {
       const scan = observations.links;
       const checked = await options.checkLinks(scan.records);
       observations = {
@@ -27679,20 +29466,69 @@ async function collectPageEvidence(options) {
     }
     stage = "screenshot";
     activity(stage);
-    screenshot2 = options.reuseScreenshot ?? await options.page.screenshot(options.screenshotOptions);
-    if (observations.version === 2 && observations.mediaFrames !== void 0 && observations.mediaFrames.length > 0) {
+    const reused = !animations.hadAnimations ? options.reuseScreenshot : void 0;
+    let geometry;
+    if (reused !== void 0) {
+      screenshot2 = reused;
+      geometry = options.reuseScreenshotGeometry;
+    } else {
+      const captured = await captureScreenshot(
+        options.page,
+        animations.unresolved ? { ...options.screenshotOptions, animations: "allow" } : options.screenshotOptions
+      );
+      screenshot2 = captured.buffer;
+      geometry = captured.geometry;
+    }
+    if (geometry !== void 0) {
+      const {
+        drift: _drift,
+        rects: _rects,
+        ...own
+      } = geometry;
+      screenshotGeometry = !nonHtml2 && observations.version === 2 ? await withScreenshotGeometry(
+        options.page,
+        own,
+        observedSize,
+        observations.elements.map((element) => element.selector)
+      ) : own;
+      if (observations.version === 2)
+        observations = { ...observations, screenshot: screenshotGeometry };
+    }
+    if (!nonHtml2 && observations.version === 2) {
       const image2 = screenshot2;
-      const tolerance = options.observe?.mediaFill?.tolerance ?? 8;
-      observations = {
-        ...observations,
-        mediaFill: { tolerance },
-        mediaFrames: sampleMediaFrames(
-          observations.mediaFrames,
-          () => PNG4.sync.read(image2),
-          observations.viewport.width,
-          tolerance
-        )
+      let decoded;
+      const decode2 = () => {
+        decoded ??= PNG5.sync.read(image2);
+        return decoded;
       };
+      if (observations.mediaFrames !== void 0 && observations.mediaFrames.length > 0) {
+        const tolerance = options.observe?.mediaFill?.tolerance ?? 8;
+        observations = {
+          ...observations,
+          mediaFill: { tolerance },
+          mediaFrames: sampleMediaFrames(
+            observations.mediaFrames,
+            decode2,
+            observations.viewport.width,
+            tolerance
+          )
+        };
+      }
+      const orphans = observations.orphanWords;
+      if (orphans !== void 0 && orphans.status !== "unavailable")
+        observations = {
+          ...observations,
+          orphanWords: {
+            ...orphans,
+            records: sampleOrphanInk(
+              orphans.records,
+              decode2,
+              observations.viewport,
+              observations.document.scrollWidth,
+              orphanInkTolerance
+            )
+          }
+        };
     }
     await options.healthGuard?.finish();
   } catch (error) {
@@ -27721,7 +29557,7 @@ async function collectPageEvidence(options) {
     if (failure3 === void 0) failure3 = error;
   }
   let probeBlocked;
-  if (failure3 === void 0 && options.observe?.touchReachability !== void 0 && observations?.version === 2) {
+  if (failure3 === void 0 && !nonHtml2 && options.observe?.touchReachability !== void 0 && observations?.version === 2) {
     const touchReachability = await diagnoseTouchReachability(
       options.page,
       options.observe.touchReachability
@@ -27735,7 +29571,7 @@ async function collectPageEvidence(options) {
       ...observations,
       probe: { status: "partial", reason: probeBlocked, results: [] }
     };
-  } else if (failure3 === void 0 && options.probe !== void 0 && observations?.version === 2) {
+  } else if (failure3 === void 0 && !nonHtml2 && options.probe !== void 0 && observations?.version === 2) {
     const probeStarted = clock();
     try {
       activity("probe");
@@ -27800,6 +29636,7 @@ async function collectPageEvidence(options) {
     status: status ?? null,
     dom: dom2,
     screenshot: screenshot2,
+    screenshotGeometry,
     console: records,
     axe,
     observations,
@@ -27808,15 +29645,20 @@ async function collectPageEvidence(options) {
     endedAt
   };
 }
+var orphanInkTolerance;
 var init_page = __esm({
   "src/capture/page.ts"() {
     "use strict";
     init_observe();
+    init_document();
+    init_animation_settle();
     init_explanations();
     init_media_bands();
     init_motion2();
+    init_screenshot();
     init_touch();
     init_web_steps();
+    orphanInkTolerance = 8;
   }
 });
 
@@ -28386,7 +30228,7 @@ async function readCounters(page) {
 async function primaryMutations(page, clicked) {
   return await page.evaluate((path) => {
     const scope = window;
-    const target = document.querySelector(path);
+    const target2 = document.querySelector(path);
     const active = document.activeElement;
     return (scope.__idiomRecords ?? []).filter((record2) => {
       if (record2.type !== "attributes") return true;
@@ -28394,7 +30236,7 @@ async function primaryMutations(page, clicked) {
       if (name !== "class" && name !== "style" && !name.startsWith("data-"))
         return true;
       const node = record2.target;
-      return !(node === target || active !== null && active !== document.body && node.contains(active));
+      return !(node === target2 || active !== null && active !== document.body && node.contains(active));
     }).length;
   }, clicked).catch(() => 1);
 }
@@ -28873,8 +30715,8 @@ async function clickAndObserve(page, path, waitMs, motion, name, respectControlI
     const focus = await page.evaluate((clicked) => {
       const active = document.activeElement;
       if (active === null || active === document.body) return false;
-      const target = document.querySelector(clicked);
-      return !(target !== null && (active === target || target.contains(active)));
+      const target2 = document.querySelector(clicked);
+      return !(target2 !== null && (active === target2 || target2.contains(active)));
     }, path).catch(() => false);
     if (focus) effects.add("focus");
     const opened = after.revealed.filter(
@@ -30105,7 +31947,7 @@ var init_progress = __esm({
       async start(identity7, options = {}) {
         const token = `${Date.now()}:${Math.random()}`;
         let failure3;
-        const target = options.waitForAction ? this.page.locator(identity7.selector) : void 0;
+        const target2 = options.waitForAction ? this.page.locator(identity7.selector) : void 0;
         try {
           await this.page.evaluate(
             ({ selector, token: token2, action, waitForAction }) => {
@@ -30169,8 +32011,8 @@ var init_progress = __esm({
               const infinite = (animation) => animation.effect?.getTiming().iterations === Infinity;
               const visibleInfinite = (animation) => {
                 if (!infinite(animation)) return false;
-                const target2 = animation.effect?.target;
-                return target2 instanceof Element && rendered(target2);
+                const target3 = animation.effect?.target;
+                return target3 instanceof Element && rendered(target3);
               };
               let animationBaseline = new WeakSet(
                 document.getAnimations().filter(visibleInfinite)
@@ -30192,7 +32034,7 @@ var init_progress = __esm({
                 if (trigger !== null && (action === "fill" || action === "select") && !trigger.matches("input, textarea, select") && !(trigger instanceof HTMLElement && trigger.isContentEditable)) {
                   dispatchTarget = trigger.closest("label")?.control ?? trigger;
                 }
-                const target2 = event.composedPath().find((node) => {
+                const target3 = event.composedPath().find((node) => {
                   if (!(node instanceof Element)) return false;
                   if (node === dispatchTarget) return true;
                   try {
@@ -30201,9 +32043,9 @@ var init_progress = __esm({
                     return false;
                   }
                 });
-                if (!target2) return;
+                if (!target3) return;
                 startedAt = performance.now();
-                trigger = target2;
+                trigger = target3;
                 progressBaseline = new WeakSet(
                   [...document.querySelectorAll(progressSelector)].filter(rendered)
                 );
@@ -30248,9 +32090,9 @@ var init_progress = __esm({
                 for (const animation of document.getAnimations()) {
                   if (!infinite(animation) || animationBaseline.has(animation))
                     continue;
-                  const target2 = animation.effect?.target;
-                  if (target2 instanceof Element && rendered(target2))
-                    return record2("spinner", target2);
+                  const target3 = animation.effect?.target;
+                  if (target3 instanceof Element && rendered(target3))
+                    return record2("spinner", target3);
                 }
                 for (const region of document.querySelectorAll(statusSelector)) {
                   if (!rendered(region)) continue;
@@ -30296,8 +32138,8 @@ var init_progress = __esm({
                   window.addEventListener(type, onAction, true);
               scope.__idiomProgress = {
                 token: token2,
-                bindTarget: (target2) => {
-                  if (startedAt === null) trigger = target2;
+                bindTarget: (target3) => {
+                  if (startedAt === null) trigger = target3;
                 },
                 read: () => ({
                   elapsed: startedAt === null ? null : performance.now() - startedAt,
@@ -30317,9 +32159,9 @@ var init_progress = __esm({
               waitForAction: options.waitForAction === true
             }
           );
-          if (target) {
+          if (target2) {
             const bindTarget = async () => {
-              await target.evaluate(
+              await target2.evaluate(
                 (element, token2) => {
                   const active = window.__idiomProgress;
                   if (active?.token === token2) active.bindTarget(element);
@@ -30329,7 +32171,7 @@ var init_progress = __esm({
               );
             };
             await bindTarget();
-            await this.page.addLocatorHandler(target, bindTarget, {
+            await this.page.addLocatorHandler(target2, bindTarget, {
               noWaitAfter: true
             });
           }
@@ -30341,8 +32183,8 @@ var init_progress = __esm({
           return active?.token === token2 ? active.read() : null;
         }, token);
         const dispose = async () => {
-          if (target)
-            await this.page.removeLocatorHandler(target).catch(() => void 0);
+          if (target2)
+            await this.page.removeLocatorHandler(target2).catch(() => void 0);
           await this.page.evaluate((token2) => {
             const active = window.__idiomProgress;
             if (active?.token === token2) active.dispose();
@@ -30532,22 +32374,22 @@ async function captureInContext(context2, tuple, runtime, linkChecker) {
       if (response.request().resourceType() === "font" && response.status() >= 400)
         recordFont(response.url(), `HTTP ${response.status()}`);
     });
-    const target = page;
+    const target2 = page;
     const screenshotOptions = deterministicScreenshotOptions(tuple.project);
     const explanations = tuple.project.checks.explanation === "visible" ? new ExplanationCollector(
-      target,
+      target2,
       "capture",
       tuple.project.checks.probe.waitMs
     ) : void 0;
     const motion = new MotionCollector(
-      target,
+      target2,
       tuple.project.checks.motion.selectors
     );
     const progress = new ProgressCollector(
-      target,
+      target2,
       tuple.project.checks.progressWithinMs
     );
-    const createRunner = (collect = false, activePage = target) => steps.length > 0 ? new WebStepRunner(
+    const createRunner = (collect = false, activePage = target2) => steps.length > 0 ? new WebStepRunner(
       activePage,
       health,
       screenshotOptions,
@@ -30558,19 +32400,20 @@ async function captureInContext(context2, tuple, runtime, linkChecker) {
       tuple.signal
     ) : void 0;
     const runner = createRunner(true);
-    const reach = async (active, activePage = target) => active === void 0 ? (await activePage.goto(tuple.navigationUrl))?.status() ?? null : active.reach(tuple.navigationUrl, steps, reachContext(tuple.state));
+    const reach = async (active, activePage = target2) => active === void 0 ? (await activePage.goto(tuple.navigationUrl))?.status() ?? null : active.reach(tuple.navigationUrl, steps, reachContext(tuple.state));
     return await collectPageEvidence({
       page,
       signal: tuple.signal,
       onActivity: tuple.onActivity,
       state: tuple.state,
       settleMs: tuple.state.settleMs ?? tuple.project.capture.settleMs,
+      animationSettleMs: tuple.project.capture.animationSettleMs,
       statusExpectation: tuple.state.expect.status ?? 200,
       reachStage: "navigation",
-      reach: () => tuple.designReference ? navigateDesign(target, tuple.designReference) : reach(runner),
+      reach: () => tuple.designReference ? navigateDesign(target2, tuple.designReference) : reach(runner),
       healthGuard: runner,
       assertDestination: "path" in tuple.state.expect && tuple.state.expect.path !== void 0 ? () => {
-        const actual = new URL(target.url());
+        const actual = new URL(target2.url());
         const expected = tuple.state.expect;
         const routePath = (path) => path.replace(/\/+$/, "") || "/";
         if (actual.origin !== new URL(tuple.navigationUrl).origin || routePath(actual.pathname) !== routePath(expected.path))
@@ -30587,6 +32430,7 @@ async function captureInContext(context2, tuple, runtime, linkChecker) {
       tokens: tuple.tokens ?? { status: "not-configured" },
       screenshotOptions: deterministicScreenshotOptions(tuple.project),
       reuseScreenshot: tuple.reuseScreenshot,
+      reuseScreenshotGeometry: tuple.reuseScreenshotGeometry,
       now: runtime.now,
       monotonicNow: runtime.monotonicNow,
       observe: tuple.designReference ? { designComparison: true } : {
@@ -30627,8 +32471,8 @@ async function captureInContext(context2, tuple, runtime, linkChecker) {
         const readonly = (route) => probeRequestAllowed(route.request()) ? route.fallback() : route.abort("blockedbyclient").catch(() => void 0);
         await context2.route("**/*", readonly);
         try {
-          await target.route("**/*", readonly);
-          return await sweepFocusVisible(target, {
+          await target2.route("**/*", readonly);
+          return await sweepFocusVisible(target2, {
             maxStops: tuple.project.checks.probe.maxControls,
             ignore: [
               ...tuple.project.checks.focusVisible.ignore,
@@ -30638,15 +32482,15 @@ async function captureInContext(context2, tuple, runtime, linkChecker) {
             monotonicNow: runtime.monotonicNow
           });
         } finally {
-          await target.unroute("**/*", readonly).catch(() => void 0);
+          await target2.unroute("**/*", readonly).catch(() => void 0);
           await context2.unroute("**/*", readonly).catch(() => void 0);
         }
       } : void 0,
       probe: tuple.probe ? () => {
         const settings = tuple.project.checks.probe;
-        const target2 = page;
+        const target3 = page;
         return probeControls({
-          page: target2,
+          page: target3,
           enumerateOnly: tuple.enumerateProbe,
           flowBudget: tuple.probeBudget,
           signal: tuple.signal,
@@ -30691,8 +32535,8 @@ async function closeWithin(close2) {
   let timer;
   await Promise.race([
     Promise.resolve(close2()).catch(() => void 0),
-    new Promise((resolve55) => {
-      timer = setTimeout(resolve55, CLOSE_TIMEOUT_MS);
+    new Promise((resolve56) => {
+      timer = setTimeout(resolve56, CLOSE_TIMEOUT_MS);
     })
   ]);
   clearTimeout(timer);
@@ -30839,9 +32683,9 @@ function createBrowserLauncher(overrides = {}) {
             tuple.state.settleMs ?? tuple.project.capture.settleMs
           );
           if (tuple.state.focus !== void 0) {
-            const target = page.locator(tuple.state.focus).first();
-            if (await target.count() === 0) return void 0;
-            await target.focus();
+            const target2 = page.locator(tuple.state.focus).first();
+            if (await target2.count() === 0) return void 0;
+            await target2.focus();
             await page.waitForTimeout(50);
           }
           await runner?.checkpoint();
@@ -31863,6 +33707,7 @@ function createElectronLauncher(overrides = {}) {
             onActivity: tuple.onActivity,
             state: tuple.state,
             settleMs: tuple.state.settleMs ?? tuple.project.capture.settleMs,
+            animationSettleMs: tuple.project.capture.animationSettleMs,
             reachStage: "state",
             reach: async () => {
               await synchronizePage(
@@ -32024,8 +33869,8 @@ async function withCaptureOwnership(maxMinutes, dependencies, work) {
     try {
       await Promise.race([
         owner2.cleanup(),
-        new Promise((resolve55) => {
-          timer = setTimeout(resolve55, CLEANUP_GRACE_MS);
+        new Promise((resolve56) => {
+          timer = setTimeout(resolve56, CLEANUP_GRACE_MS);
         })
       ]);
     } catch (error) {
@@ -32847,6 +34692,9 @@ async function captureOwned(options, owner2) {
             `${collapse2.sameAs.state}\0${selected2.viewport.name}\0${selected2.colorScheme}`
           );
           const reuseScreenshot = representative?.result?.ok === true ? representative.result.screenshot : void 0;
+          const reuseScreenshotGeometry = representative?.result?.ok === true && representative.result.screenshotGeometry !== void 0 ? (({ drift: _drift, rects: _rects, ...own }) => own)(
+            representative.result.screenshotGeometry
+          ) : void 0;
           if (collapse2 !== void 0 && reuseScreenshot === void 0)
             collapsed.delete(tupleId(selected2));
           const captureStarted = clock();
@@ -32859,6 +34707,7 @@ async function captureOwned(options, owner2) {
             }),
             shell: options.flow.shell,
             reuseScreenshot,
+            reuseScreenshotGeometry,
             invariants: effectiveInvariants(
               options.flow,
               resolution.value.state
@@ -33015,7 +34864,9 @@ async function captureOwned(options, owner2) {
         const stateTimeoutMs = project.checks.probe.stateTimeoutMs;
         const runnable = /* @__PURE__ */ new Map();
         for (const [index, selected2] of selectedTuples.entries()) {
-          if (!probeKeys.has(tupleId(selected2)) || !laneResults[index]?.artifact.result?.ok)
+          if (!probeKeys.has(tupleId(selected2)) || !laneResults[index]?.artifact.result?.ok || classifyDocument(
+            laneResults[index]?.artifact.result?.observations?.document.contentType
+          ) === "non-html")
             continue;
           const partition = `${selected2.viewport.name}\0${selected2.colorScheme}`;
           const states = runnable.get(partition) ?? /* @__PURE__ */ new Set();
@@ -33026,7 +34877,9 @@ async function captureOwned(options, owner2) {
         const flowDeadline = runStarted + wallTarget - PROBE_WALL_RESERVE_MS;
         for (let round4 = 1; ; round4 += 1) {
           const work = selectedTuples.flatMap((selected2, index) => {
-            if (!probeKeys.has(tupleId(selected2)) || !laneResults[index]?.artifact.result?.ok)
+            if (!probeKeys.has(tupleId(selected2)) || !laneResults[index]?.artifact.result?.ok || classifyDocument(
+              laneResults[index]?.artifact.result?.observations?.document.contentType
+            ) === "non-html")
               return [];
             const partition = `${selected2.viewport.name}\0${selected2.colorScheme}`;
             const count = probeLedger.assignedCount(
@@ -33329,6 +35182,7 @@ var init_run = __esm({
     init_design_components();
     init_observe();
     init_capture2();
+    init_document();
     init_errors();
     init_coverage();
     init_flow();
@@ -34680,7 +36534,7 @@ var init_claude_code = __esm({
         settled = true;
         reject(error);
       };
-      const collect = (target, stream) => (chunk) => {
+      const collect = (target2, stream) => (chunk) => {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         if (stream === "stdout") stdoutBytes += buffer.byteLength;
         else stderrBytes += buffer.byteLength;
@@ -34691,7 +36545,7 @@ var init_claude_code = __esm({
           child.kill("SIGKILL");
           return;
         }
-        target.push(buffer);
+        target2.push(buffer);
       };
       child.once("error", fail);
       child.stdout.on("data", collect(stdout8, "stdout"));
@@ -35612,12 +37466,18 @@ var init_names = __esm({
 // src/review/crops.ts
 import { mkdir as mkdir9, readFile as readFile22, writeFile as writeFile11 } from "fs/promises";
 import { dirname as dirname9, join as join19 } from "path";
-import { PNG as PNG5 } from "pngjs";
+import { PNG as PNG6 } from "pngjs";
 function selectorsFor(finding) {
   const params = finding.verification.params ?? {};
   return [params.selector, params.neighbour].filter(
     (value) => typeof value === "string" && value !== "document"
   );
+}
+function paramsRect(finding) {
+  const rect2 = finding.verification.params?.rect;
+  if (typeof rect2 !== "object" || rect2 === null) return void 0;
+  const { x, y, width, height } = rect2;
+  return typeof x === "number" && typeof y === "number" && typeof width === "number" && typeof height === "number" && [x, y, width, height].every(Number.isFinite) && width > 0 && height > 0 ? { x, y, width, height } : void 0;
 }
 function union2(rects) {
   if (rects.length === 0) return void 0;
@@ -35627,13 +37487,20 @@ function union2(rects) {
   const bottom = Math.max(...rects.map((rect2) => rect2.y + rect2.height));
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
+function screenshotPlacement(observations) {
+  const geometry = observations.version === 2 ? observations.screenshot : void 0;
+  return {
+    scale: geometry?.scale,
+    rect: (element) => geometry?.rects?.[element.selector] ?? element.rect
+  };
+}
 async function cropToFile(options) {
   const screenshotPath = join19(options.runDirectory, options.screenshotPath);
   if (!options.images.has(screenshotPath)) {
     try {
       options.images.set(
         screenshotPath,
-        PNG5.sync.read(await readFile22(screenshotPath))
+        PNG6.sync.read(await readFile22(screenshotPath))
       );
     } catch {
       options.images.set(screenshotPath, void 0);
@@ -35642,7 +37509,11 @@ async function cropToFile(options) {
   const image2 = options.images.get(screenshotPath);
   if (image2 === void 0) return false;
   const { rect: rect2, padding: padding2 } = options;
-  const scale = image2.width / options.viewportWidth;
+  const scale = options.scale ?? (options.viewport === void 0 ? image2.width / options.viewportWidth : screenshotScale(
+    image2,
+    options.viewport,
+    options.viewport.documentWidth
+  ));
   const x = Math.max(0, Math.floor((rect2.x - padding2) * scale));
   const y = Math.max(0, Math.floor((rect2.y - padding2) * scale));
   const width = Math.min(
@@ -35654,11 +37525,11 @@ async function cropToFile(options) {
     Math.ceil((rect2.height + padding2 * 2) * scale)
   );
   if (width <= 0 || height <= 0) return false;
-  const crop = new PNG5({ width, height });
-  PNG5.bitblt(image2, crop, x, y, width, height, 0, 0);
-  const target = join19(options.runDirectory, options.relativePath);
-  await mkdir9(dirname9(target), { recursive: true });
-  await writeFile11(target, PNG5.sync.write(crop));
+  const crop = new PNG6({ width, height });
+  PNG6.bitblt(image2, crop, x, y, width, height, 0, 0);
+  const target2 = join19(options.runDirectory, options.relativePath);
+  await mkdir9(dirname9(target2), { recursive: true });
+  await writeFile11(target2, PNG6.sync.write(crop));
   return true;
 }
 async function attachCrops(runDirectory, findings, tuples) {
@@ -35697,6 +37568,7 @@ async function attachCrops(runDirectory, findings, tuples) {
             screenshotPath: screenshot2,
             images: decoded,
             viewportWidth: tuple.width,
+            scale: design ? void 0 : tuple.observations && screenshotPlacement(tuple.observations).scale,
             rect: design ? drift.region.designRect : drift.region.rect,
             padding,
             relativePath: path
@@ -35708,8 +37580,9 @@ async function attachCrops(runDirectory, findings, tuples) {
         const selector = design ? entry.selector ?? drift.designSelector ?? drift.designContext : drift.appSelector ?? drift.appContext;
         const neighbour = design ? drift.neighbour?.designSelector : drift.neighbour?.appSelector;
         if (!screenshot2 || !observation || !selector) continue;
+        const placement2 = design ? void 0 : screenshotPlacement(observation);
         const rect3 = union2(
-          observation.elements.filter((e) => e.selector === selector || e.selector === neighbour).map((e) => e.rect)
+          observation.elements.filter((e) => e.selector === selector || e.selector === neighbour).map((e) => placement2?.rect(e) ?? e.rect)
         );
         if (!rect3) continue;
         if (await cropToFile({
@@ -35717,6 +37590,7 @@ async function attachCrops(runDirectory, findings, tuples) {
           screenshotPath: screenshot2,
           images: decoded,
           viewportWidth: tuple.width,
+          scale: placement2?.scale,
           rect: rect3,
           padding,
           relativePath: path
@@ -35741,15 +37615,17 @@ async function attachCrops(runDirectory, findings, tuples) {
       continue;
     }
     const selectors = selectorsFor(finding);
+    const measured2 = paramsRect(finding);
     const observations = tuple?.observations;
-    if (tuple?.screenshotPath === void 0 || observations === void 0 || selectors.length === 0) {
+    if (tuple?.screenshotPath === void 0 || observations === void 0 || selectors.length === 0 && measured2 === void 0) {
       result2.push(finding);
       continue;
     }
-    const rect2 = union2(
+    const placement = screenshotPlacement(observations);
+    const rect2 = measured2 ?? union2(
       observations.elements.filter(
         (element) => element.visible && selectors.includes(element.selector)
-      ).map((element) => element.rect)
+      ).map((element) => placement.rect(element))
     );
     if (rect2 === void 0 || rect2.width <= 0 || rect2.height <= 0) {
       result2.push(finding);
@@ -35765,6 +37641,11 @@ async function attachCrops(runDirectory, findings, tuples) {
       screenshotPath: tuple.screenshotPath,
       images: decoded,
       viewportWidth: observations.viewport.width,
+      viewport: {
+        ...observations.viewport,
+        documentWidth: observations.document.scrollWidth
+      },
+      scale: placement.scale,
       rect: rect2,
       padding,
       relativePath: relativePath2
@@ -35792,6 +37673,7 @@ var padding;
 var init_crops = __esm({
   "src/review/crops.ts"() {
     "use strict";
+    init_media_bands();
     init_evidence();
     padding = 24;
   }
@@ -35800,9 +37682,12 @@ var init_crops = __esm({
 // src/sweep/crops.ts
 import { dirname as dirname10, join as join20, resolve as resolve17 } from "path";
 function controlRegions(tuple) {
+  const placement = tuple.observations && screenshotPlacement(tuple.observations);
   const elements = (tuple.observations?.elements ?? []).filter(
     (element) => element.visible && element.interactive && element.rect.width > 0 && element.rect.height > 0
-  ).sort(
+  ).map((element) => ({
+    rect: placement?.rect(element) ?? element.rect
+  })).sort(
     (left, right) => left.rect.y - right.rect.y || left.rect.x - right.rect.x
   );
   const regions = [];
@@ -35821,6 +37706,7 @@ function controlRegions(tuple) {
 }
 function findingRegions(tuple, findings) {
   const elements = tuple.observations?.elements ?? [];
+  const placement = tuple.observations && screenshotPlacement(tuple.observations);
   return findings.filter(
     (finding) => finding.state === tuple.state && finding.viewport === tuple.viewport && (finding.colorScheme === void 0 || finding.colorScheme === tuple.colorScheme)
   ).flatMap((finding) => {
@@ -35828,7 +37714,7 @@ function findingRegions(tuple, findings) {
     const rect2 = union2(
       elements.filter(
         (element) => element.visible && selectors.includes(element.selector)
-      ).map((element) => element.rect)
+      ).map((element) => placement?.rect(element) ?? element.rect)
     );
     return rect2 === void 0 || rect2.width <= 0 || rect2.height <= 0 ? [] : [rect2];
   });
@@ -35863,6 +37749,7 @@ async function sweepCrops(options) {
         screenshotPath: tuple.screenshotPath,
         images,
         viewportWidth: observations.viewport.width,
+        scale: screenshotPlacement(observations).scale,
         rect: rect2,
         padding: PADDING,
         relativePath: relativePath2
@@ -35898,7 +37785,7 @@ var init_crops2 = __esm({
 });
 
 // src/sweep/geometry.ts
-function radius2(element) {
+function radius3(element) {
   const { styles, rect: rect2 } = element;
   const values = [
     styles.borderTopLeftRadius,
@@ -35994,7 +37881,7 @@ function surfaceGeometry(tuple) {
       role: element.signals?.role ?? element.tag,
       name: truncate(name),
       size: size2(element.rect),
-      radius: radius2(element),
+      radius: radius3(element),
       ...nearest === void 0 ? {} : { gapToNearest: nearest },
       ...measured2 === void 0 ? {} : { contrast: measured2 }
     };
@@ -37789,6 +39676,7 @@ async function cropSection(options) {
   );
   if (element === void 0 || element.rect.width <= 0 || element.rect.height <= 0)
     return finding;
+  const placement = screenshotPlacement(observations);
   const relativePath2 = join26(
     dirname12(tuple.screenshotPath),
     "crops",
@@ -37799,7 +39687,8 @@ async function cropSection(options) {
     screenshotPath: tuple.screenshotPath,
     images: options.images,
     viewportWidth: observations.viewport.width,
-    rect: element.rect,
+    scale: placement.scale,
+    rect: placement.rect(element),
     padding: cropPadding,
     relativePath: relativePath2
   });
@@ -38019,7 +39908,7 @@ function repairPresentation(catalog, record2) {
     fingerprint: lineage.first.finding.fingerprint,
     findingId: lineage.first.finding.id
   };
-  const target = presentedRecord(
+  const target2 = presentedRecord(
     record2,
     lineage.id,
     lineage.ids.filter((id2) => id2 !== lineage.id),
@@ -38036,7 +39925,7 @@ function repairPresentation(catalog, record2) {
       )
     ];
   });
-  return { target, siblings };
+  return { target: target2, siblings };
 }
 function repairSiblingLines(siblings) {
   return siblings.length === 0 ? ["- Other findings from this review: none."] : [
@@ -38071,8 +39960,8 @@ function ticketIdsForIdentities(identities2) {
     )
   ];
 }
-function markdownPath(fromDirectory, target) {
-  const path = relative16(fromDirectory, resolve21(target)).split(sep10).join("/");
+function markdownPath(fromDirectory, target2) {
+  const path = relative16(fromDirectory, resolve21(target2)).split(sep10).join("/");
   return path.split("/").map((segment) => encodeURIComponent(segment)).join("/");
 }
 function jsonFence(value) {
@@ -38083,8 +39972,8 @@ function jsonFence(value) {
   return "`".repeat(Math.max(3, longest + 1));
 }
 function renderTicket(options) {
-  const target = options.presentation?.target ?? options.record;
-  const finding = findingForTicket(target.finding, options.identity);
+  const target2 = options.presentation?.target ?? options.record;
+  const finding = findingForTicket(target2.finding, options.identity);
   const id2 = ticketId(finding.fingerprint, finding.id);
   const title = `Resolve ${finding.category} in ${finding.state} at ${finding.viewport}${finding.colorScheme === void 0 ? "" : ` (${finding.colorScheme})`}`;
   const siblings = options.presentation?.siblings ?? options.sourceFindings.filter((record2) => record2.finding.id !== finding.id);
@@ -38092,7 +39981,7 @@ function renderTicket(options) {
   const fence = jsonFence(serialized);
   const screenshotLines = finding.evidence.screenshots.map(
     (screenshot2, index) => {
-      const absolute = resolve21(target.runDirectory, screenshot2);
+      const absolute = resolve21(target2.runDirectory, screenshot2);
       return `- [Screenshot ${index + 1}](${markdownPath(options.ticketDirectory, absolute)})`;
     }
   );
@@ -38120,7 +40009,7 @@ function renderTicket(options) {
     "",
     "## Evidence",
     "",
-    `Source review: ${target.runId}; captured commit: \`${finding.commit}\`; finding: \`${finding.id}\`.`,
+    `Source review: ${target2.runId}; captured commit: \`${finding.commit}\`; finding: \`${finding.id}\`.`,
     "",
     ...screenshotLines.length === 0 ? ["No screenshot was available for this finding."] : screenshotLines,
     "",
@@ -38625,16 +40514,16 @@ function newestOpenFindings(catalog, decisions) {
 }
 async function checkpointLineageStatus(options) {
   const lineage = findCatalogLineage(options.catalog, options.findingId);
-  const target = lineage.latest;
-  const source = await readFindings(target.findingsPath);
+  const target2 = lineage.latest;
+  const source = await readFindings(target2.findingsPath);
   if (source === void 0)
     throw new IdiomError(
-      `reviewed findings disappeared: ${target.findingsPath}`
+      `reviewed findings disappeared: ${target2.findingsPath}`
     );
-  const index = source.findIndex((finding) => finding.id === target.finding.id);
+  const index = source.findIndex((finding) => finding.id === target2.finding.id);
   if (index < 0)
     throw new IdiomError(
-      `finding ${target.finding.id} disappeared from ${target.findingsPath}`
+      `finding ${target2.finding.id} disappeared from ${target2.findingsPath}`
     );
   const updated = findingSchema.parse({
     ...source[index],
@@ -38648,13 +40537,13 @@ async function checkpointLineageStatus(options) {
     );
   }
   source[index] = updated;
-  const temporary = `${target.findingsPath}.tmp`;
+  const temporary = `${target2.findingsPath}.tmp`;
   await writeFile15(temporary, `${JSON.stringify(source, null, 2)}
 `, "utf8");
-  await rename12(temporary, target.findingsPath);
-  target.finding = updated;
+  await rename12(temporary, target2.findingsPath);
+  target2.finding = updated;
   lineage.latest.finding = updated;
-  return target;
+  return target2;
 }
 var init_catalog2 = __esm({
   "src/review/catalog.ts"() {
@@ -38901,7 +40790,7 @@ function quickLimitsMarkdown(targets) {
     "",
     `Only the supplied public URL${targets.length === 1 ? " was" : "s were"} visited; Idiom did not crawl links or submit forms:`,
     "",
-    ...targets.map((target) => `- ${text(target)}`),
+    ...targets.map((target2) => `- ${text(target2)}`),
     "",
     "The following were not judged because quick review has no declared states, fixtures, credentials, product document, or design document:",
     "",
@@ -39314,12 +41203,12 @@ function renderReport(options) {
   );
   for (const coverage of options.captureCoverage ?? []) {
     lines2.push(
-      axisAware ? `| \u2014 | \u2014 | \u2014 | ${coverage.check} | ${coverage.status} | ${text(coverage.reason ?? "")} |` : `| \u2014 | \u2014 | ${coverage.check} | ${coverage.status} | ${text(coverage.reason ?? "")} |`
+      axisAware ? `| \u2014 | \u2014 | \u2014 | ${coverage.check} | ${coverage.status} | ${text(paintedCoverageText(coverage))} |` : `| \u2014 | \u2014 | ${coverage.check} | ${coverage.status} | ${text(paintedCoverageText(coverage))} |`
     );
   }
   for (const entry of options.coverage) {
     lines2.push(
-      axisAware ? `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.tuple.colorScheme ?? "light"} | ${entry.coverage.check} | ${entry.coverage.status} | ${text(entry.coverage.reason ?? "")} |` : `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.coverage.check} | ${entry.coverage.status} | ${text(entry.coverage.reason ?? "")} |`
+      axisAware ? `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.tuple.colorScheme ?? "light"} | ${entry.coverage.check} | ${entry.coverage.status} | ${text(paintedCoverageText(entry.coverage))} |` : `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.coverage.check} | ${entry.coverage.status} | ${text(paintedCoverageText(entry.coverage))} |`
     );
   }
   lines2.push("");
@@ -39371,6 +41260,7 @@ function designDriftMarkdown(drift) {
 var init_report = __esm({
   "src/review/report.ts"() {
     "use strict";
+    init_painted();
     init_evidence();
     init_coverage();
     init_groups();
@@ -39441,7 +41331,7 @@ function coverageTable(options) {
   ];
   const narrow = options.narrowWidth === void 0 ? "Responsive and target checks were unavailable because the capture has no viewport tuples." : `Responsive and target checks use the minimum captured CSS width, ${options.narrowWidth}px.`;
   return `<section><h2>Check coverage</h2><p>${escapeHtml(narrow)}</p><table><thead><tr><th>State</th><th>Viewport</th>${axisAware ? "<th>Scheme</th>" : ""}<th>Check</th><th>Coverage</th><th>Reason</th></tr></thead><tbody>${rows.map(
-    ({ state, viewport, colorScheme, coverage }) => `<tr><td>${escapeHtml(state)}</td><td>${escapeHtml(viewport)}</td>${axisAware ? `<td>${escapeHtml(colorScheme)}</td>` : ""}<td>${escapeHtml(coverage.check)}</td><td>${escapeHtml(coverage.status)}</td><td>${escapeHtml(coverage.reason ?? "")}</td></tr>`
+    ({ state, viewport, colorScheme, coverage }) => `<tr><td>${escapeHtml(state)}</td><td>${escapeHtml(viewport)}</td>${axisAware ? `<td>${escapeHtml(colorScheme)}</td>` : ""}<td>${escapeHtml(coverage.check)}</td><td>${escapeHtml(coverage.status)}</td><td>${escapeHtml(paintedCoverageText(coverage))}</td></tr>`
   ).join("")}</tbody></table></section>`;
 }
 function unruledSection(options) {
@@ -39518,7 +41408,7 @@ function renderReviewHtmlReport(options) {
       );
     return `<li><strong>${escapeHtml(finding.id)}</strong> (${escapeHtml(finding.severity)}, ${escapeHtml(finding.layer)}) \u2014 ${escapeHtml(finding.flow)} / ${escapeHtml(finding.state)} / ${escapeHtml(finding.viewport)}${finding.colorScheme === void 0 ? "" : ` / ${escapeHtml(finding.colorScheme)}`}${finding.combination === void 0 ? "" : ` [${escapeHtml(finding.combination)}]`} \u2014 ${escapeHtml(finding.explanation)}${severityOverride === void 0 ? "" : ` \u2014 Severity override: ${escapeHtml(severityOverride.original)} \u2192 ${escapeHtml(severityOverride.effective)} by rule ${escapeHtml(severityOverride.override.id)} (${escapeHtml(severityOverride.override.reason)})`}</li>`;
   }).join("")}</ul>`}</section>`;
-  const quickLimits = options.outcome.kind !== "quick" ? "" : `<section><h2>Quick-review limits</h2><p>Only the supplied public URL${options.outcome.targets.length === 1 ? " was" : "s were"} visited; Idiom did not crawl links or submit forms.</p><ul>${options.outcome.targets.map((target) => `<li>${escapeHtml(target)}</li>`).join("")}</ul><p>The following were not judged because quick review has no declared states, fixtures, credentials, product document, or design document:</p><ul><li>fixture-dependent error and empty states</li><li>authenticated surfaces</li><li>destinations behind forms or other interactions</li><li>product-specific intent and design-law judgments</li><li>reference alignment and design-token judgments</li></ul><p>To judge those surfaces, run <code>idiom init</code>, define a flow manifest, then run <code>idiom review &lt;flow&gt;</code>.</p></section>`;
+  const quickLimits = options.outcome.kind !== "quick" ? "" : `<section><h2>Quick-review limits</h2><p>Only the supplied public URL${options.outcome.targets.length === 1 ? " was" : "s were"} visited; Idiom did not crawl links or submit forms.</p><ul>${options.outcome.targets.map((target2) => `<li>${escapeHtml(target2)}</li>`).join("")}</ul><p>The following were not judged because quick review has no declared states, fixtures, credentials, product document, or design document:</p><ul><li>fixture-dependent error and empty states</li><li>authenticated surfaces</li><li>destinations behind forms or other interactions</li><li>product-specific intent and design-law judgments</li><li>reference alignment and design-token judgments</li></ul><p>To judge those surfaces, run <code>idiom init</code>, define a flow manifest, then run <code>idiom review &lt;flow&gt;</code>.</p></section>`;
   const pageScope = options.page === void 0 ? "" : `<section><h2>Page-review scope</h2><ul><li>Page: ${escapeHtml(options.page.url)}</li><li>Brief: ${escapeHtml(options.page.brief ?? "not supplied")}</li><li>Art direction: ${escapeHtml(options.page.direction ?? "not supplied")}</li><li>Focus areas: ${escapeHtml(options.page.focus.length === 0 ? "none" : options.page.focus.join(", "))}</li></ul><p>Only the brief is the source of truth for the offer and every statistic; claims were not fact-checked against the web.</p></section>`;
   return renderHtmlDocument({
     title: `${heading} review: ${options.flow}`,
@@ -39559,6 +41449,7 @@ function designDriftHtml(drift) {
 var init_html_report = __esm({
   "src/review/html-report.ts"() {
     "use strict";
+    init_painted();
     init_evidence();
     init_coverage();
     init_html();
@@ -39649,11 +41540,11 @@ function scoreGroup(group, counts, context2) {
   let primaryAction = false;
   for (const coordinate4 of new Set(group.coordinates)) {
     const tuple = context2?.get(coordinate4);
-    const target = group.selector === void 0 ? void 0 : tuple?.elements.get(group.selector);
-    primaryAction ||= target?.signals?.paint?.primaryAction === true;
-    if (!tuple || !target?.visible) continue;
+    const target2 = group.selector === void 0 ? void 0 : tuple?.elements.get(group.selector);
+    primaryAction ||= target2?.signals?.paint?.primaryAction === true;
+    if (!tuple || !target2?.visible) continue;
     const { width, height } = tuple.viewport;
-    const rect2 = target.rect;
+    const rect2 = target2.rect;
     if (![width, height, rect2.x, rect2.y, rect2.width, rect2.height].every(
       Number.isFinite
     ) || width <= 0 || height <= 0 || rect2.width <= 0 || rect2.height <= 0)
@@ -39671,10 +41562,10 @@ function scoreGroup(group, counts, context2) {
       Math.min(1, intersectionWidth / width * (intersectionHeight / height))
     );
     const aboveFold = areaRatio > 0;
-    const primaryRegion = aboveFold && (tuple.primaryRegions.has(target.selector) || target.ancestorSelectors.some(
+    const primaryRegion = aboveFold && (tuple.primaryRegions.has(target2.selector) || target2.ancestorSelectors.some(
       (selector) => tuple.primaryRegions.has(selector)
     ));
-    const action = aboveFold && target.signals?.paint?.primaryAction === true;
+    const action = aboveFold && target2.signals?.paint?.primaryAction === true;
     const candidate2 = aboveFold ? 1 + Math.sqrt(areaRatio) + 0.5 + 0.5 * Number(primaryRegion || action) : 1;
     if (candidate2 > base || !explanation.geometryAvailable && candidate2 === base) {
       base = candidate2;
@@ -40309,6 +42200,7 @@ async function runReview(options) {
     scope: loaded.record,
     timings,
     reportCoverage: reportOptions.reportCoverage,
+    ...reportedCheckCoverage(reviewed.coverage),
     runDirectory,
     findingsPath,
     deferredFindings,
@@ -40333,6 +42225,7 @@ var init_run2 = __esm({
     "use strict";
     init_resolve();
     init_run();
+    init_painted();
     init_project_config();
     init_registry();
     init_anthropic();
@@ -40726,10 +42619,10 @@ function componentFor(record2, id2, observations) {
     );
     return matches.length === 1 ? matches[0] : void 0;
   };
-  const target = unique4(selector);
-  if (target === void 0 || isComponentShell(target)) return singleton;
-  const ancestors = target.ancestorSelectors.map(unique4);
-  const chain = [target, ...ancestors];
+  const target2 = unique4(selector);
+  if (target2 === void 0 || isComponentShell(target2)) return singleton;
+  const ancestors = target2.ancestorSelectors.map(unique4);
+  const chain = [target2, ...ancestors];
   for (const element of chain) {
     if (element === void 0) break;
     if (isComponentShell(element)) continue;
@@ -40744,7 +42637,7 @@ function componentFor(record2, id2, observations) {
     parents.push(element);
   }
   const anchored = parents.find(isComponentBoundary);
-  const component = anchored ?? parents[0] ?? target;
+  const component = anchored ?? parents[0] ?? target2;
   return `selector:${component.selector}`;
 }
 function groupFindings(members) {
@@ -40843,8 +42736,8 @@ function symptomTargets(findings, group) {
   for (const finding of findings) {
     const params = finding.verification.params ?? {};
     if (Array.isArray(params.targets)) {
-      for (const target of params.targets) {
-        const { selector, property } = target ?? {};
+      for (const target2 of params.targets) {
+        const { selector, property } = target2 ?? {};
         if (typeof selector !== "string") continue;
         add(
           selector,
@@ -40871,12 +42764,12 @@ function symptomTargets(findings, group) {
 }
 function resolveTargets(group, targets, context2) {
   const resolved = [];
-  for (const target of targets)
+  for (const target2 of targets)
     for (const coordinate4 of group.coordinates) {
       const tuple = context2.get(coordinate4);
-      const element = tuple?.elements.get(target.selector);
+      const element = tuple?.elements.get(target2.selector);
       if (tuple === void 0 || element === void 0) continue;
-      resolved.push({ target, element, tuple });
+      resolved.push({ target: target2, element, tuple });
       break;
     }
   return resolved;
@@ -40944,14 +42837,14 @@ function regionKey(resolved) {
 }
 function candidatesFor(resolved, targets) {
   const candidates = [];
-  const measured2 = resolved.filter(({ target }) => target.properties.length);
+  const measured2 = resolved.filter(({ target: target2 }) => target2.properties.length);
   const measuredTotal = targets.filter(
-    (target) => target.properties.length
+    (target2) => target2.properties.length
   ).length;
   const tokens2 = /* @__PURE__ */ new Map();
-  for (const { target, element } of measured2) {
+  for (const { target: target2, element } of measured2) {
     const seen = /* @__PURE__ */ new Map();
-    for (const property of target.properties) {
+    for (const property of target2.properties) {
       const source = element.styleSources?.[property];
       for (const name of source?.tokens ?? [])
         seen.set(
@@ -40994,9 +42887,9 @@ function candidatesFor(resolved, targets) {
         label: label3
       });
   const rules = /* @__PURE__ */ new Map();
-  for (const { target, element } of measured2) {
+  for (const { target: target2, element } of measured2) {
     const seen = /* @__PURE__ */ new Set();
-    for (const property of target.properties) {
+    for (const property of target2.properties) {
       const source = element.styleSources?.[property];
       if (source === void 0 || source.sheet === "inline") continue;
       seen.add(`${source.sheet}\0${source.selector}`);
@@ -41090,7 +42983,7 @@ function describe3(assignment) {
       elements.set(element.selector, element);
   const selectors = new Set(
     symptoms.flatMap(
-      (symptom) => symptom.targets.length ? symptom.targets.map((target) => target.selector) : symptom.group.selector === void 0 ? [] : [symptom.group.selector]
+      (symptom) => symptom.targets.length ? symptom.targets.map((target2) => target2.selector) : symptom.group.selector === void 0 ? [] : [symptom.group.selector]
     )
   );
   const count = selectors.size;
@@ -41110,8 +43003,8 @@ function describe3(assignment) {
     for (const symptom of symptoms) {
       const finding = symptom.findings[0];
       const prevailing = finding?.verification.params?.prevailing;
-      for (const { target, element } of symptom.resolved)
-        for (const property of target.properties) {
+      for (const { target: target2, element } of symptom.resolved)
+        for (const property of target2.properties) {
           measured2 += 1;
           const source = element.styleSources?.[property];
           if (!source?.tokens?.includes(name)) continue;
@@ -41171,7 +43064,7 @@ function describe3(assignment) {
       ...new Set(
         symptoms.flatMap(
           (symptom) => symptom.resolved.flatMap(
-            ({ target, element }) => target.properties.filter((property) => {
+            ({ target: target2, element }) => target2.properties.filter((property) => {
               const source = element.styleSources?.[property];
               return source?.sheet === sheet && source.selector === selector;
             }).map(nounFor)
@@ -41500,7 +43393,7 @@ async function resolveTicketTarget(options) {
     );
   const supplied = options.out === void 0 ? source.root : resolve27(options.cwd ?? process.cwd(), options.out);
   const physical = await physicalPath(supplied);
-  const target = options.out === void 0 ? source : await fileTrackerFrom(supplied);
+  const target2 = options.out === void 0 ? source : await fileTrackerFrom(supplied);
   const physicalConfig = options.out === void 0 ? source : await fileTrackerFrom(physical);
   for (const candidate2 of [supplied, physical]) {
     let ancestor = candidate2;
@@ -41518,9 +43411,9 @@ async function resolveTicketTarget(options) {
     "ready",
     "doing",
     "done",
-    target.readyState.toLowerCase(),
+    target2.readyState.toLowerCase(),
     physicalConfig.readyState.toLowerCase()
-  ].includes(leaf) || ["ready", "doing", "done", target.readyState.toLowerCase()].includes(
+  ].includes(leaf) || ["ready", "doing", "done", target2.readyState.toLowerCase()].includes(
     basename4(supplied).toLowerCase()
   ))
     throw new IdiomError(`ticket proposals must land in triage: ${supplied}`);
@@ -41528,7 +43421,7 @@ async function resolveTicketTarget(options) {
   const outputDirectory = await physicalPath(
     namedTriage || leaf === "triage" ? physical : join32(root, "triage")
   );
-  for (const config of [target, physicalConfig]) {
+  for (const config of [target2, physicalConfig]) {
     if (config.readyState.toLowerCase() === "triage")
       throw new IdiomError(
         "triage is configured as ready; refusing dispatchable proposals"
@@ -41655,13 +43548,13 @@ import { mkdir as mkdir11, writeFile as writeFile19 } from "fs/promises";
 import { join as join34 } from "path";
 async function emitClusterTickets(options) {
   const catalog = await loadReviewCatalog(options);
-  const target = await resolveTicketTarget({
+  const target2 = await resolveTicketTarget({
     ...options,
     projectDirectory: catalog.projectDirectory
   });
   const index = await indexTickets([
-    target.canonicalRoot,
-    target.root,
+    target2.canonicalRoot,
+    target2.root,
     join34(catalog.projectDirectory, ".autobuild/tickets")
   ]);
   const decisions = await readDecisionLog(catalog.projectDirectory);
@@ -41674,7 +43567,7 @@ async function emitClusterTickets(options) {
   );
   const result2 = {
     projectDirectory: catalog.projectDirectory,
-    outputDirectory: target.outputDirectory,
+    outputDirectory: target2.outputDirectory,
     createdPaths: [],
     outcomes: [],
     ineligible: []
@@ -41707,7 +43600,7 @@ async function emitClusterTickets(options) {
         path: owner2.path,
         state: owner2.state
       });
-      if (accepted && owner2.root === target.canonicalRoot) checkpoint.add(id2);
+      if (accepted && owner2.root === target2.canonicalRoot) checkpoint.add(id2);
       continue;
     }
     const terminal = lineage.occurrences.find(
@@ -41765,11 +43658,11 @@ async function emitClusterTickets(options) {
     const rendered = renderClusterTicket({
       cluster,
       id: id2,
-      ticketDirectory: target.outputDirectory,
+      ticketDirectory: target2.outputDirectory,
       availableImages
     });
-    const path = join34(target.outputDirectory, `${id2}.md`);
-    await mkdir11(target.outputDirectory, { recursive: true });
+    const path = join34(target2.outputDirectory, `${id2}.md`);
+    await mkdir11(target2.outputDirectory, { recursive: true });
     let existed = false;
     try {
       await writeFile19(path, rendered.body, { encoding: "utf8", flag: "wx" });
@@ -41780,7 +43673,7 @@ async function emitClusterTickets(options) {
         );
       existed = true;
     }
-    const published = await readIndexedTicket(path, target.root, "triage");
+    const published = await readIndexedTicket(path, target2.root, "triage");
     index.push(published);
     if (existed) {
       for (const member of cluster.members) {
@@ -41805,7 +43698,7 @@ async function emitClusterTickets(options) {
           path,
           state: "triage"
         });
-        if (target.canonical && acceptedIds.has(member.id))
+        if (target2.canonical && acceptedIds.has(member.id))
           checkpoint.add(member.id);
       }
     } else {
@@ -41816,7 +43709,7 @@ async function emitClusterTickets(options) {
         ticketId: id2,
         path
       });
-      if (target.canonical) {
+      if (target2.canonical) {
         for (const member of cluster.members)
           if (acceptedIds.has(member.id)) checkpoint.add(member.id);
       }
@@ -42046,6 +43939,8 @@ async function checkWithReview(options) {
   summary.scope = result2.scope;
   summary.timings = result2.timings;
   summary.coverage = result2.reportCoverage;
+  if (result2.checkCoverage !== void 0)
+    summary.checkCoverage = result2.checkCoverage;
   if (emitTickets !== void 0) {
     const actionable = new Set(
       summary.findings.filter(
@@ -43502,9 +45397,9 @@ var init_report2 = __esm({
 });
 
 // src/verify/run.ts
-import { cp as cp2, mkdir as mkdir19, mkdtemp as mkdtemp5, readFile as readFile51, rm as rm14, writeFile as writeFile30 } from "fs/promises";
+import { cp as cp2, mkdir as mkdir19, mkdtemp as mkdtemp5, readFile as readFile52, rm as rm14, writeFile as writeFile30 } from "fs/promises";
 import { tmpdir as tmpdir4 } from "os";
-import { basename as basename10, dirname as dirname18, isAbsolute as isAbsolute19, join as join53, resolve as resolve42 } from "path";
+import { basename as basename10, dirname as dirname19, isAbsolute as isAbsolute19, join as join53, resolve as resolve43 } from "path";
 function defaultOutput2(projectDirectory, now) {
   return join53(
     projectDirectory,
@@ -43524,7 +45419,7 @@ async function runVerify(options) {
   const flow = validated.flows[0]?.flow;
   if (flow === void 0 || flow.id !== options.flow)
     throw new IdiomError(`requested flow ${options.flow} was not validated`);
-  const specPath = isAbsolute19(options.spec) ? options.spec : resolve42(validated.projectDirectory, options.spec);
+  const specPath = isAbsolute19(options.spec) ? options.spec : resolve43(validated.projectDirectory, options.spec);
   const findings = await readVerificationSpec(specPath);
   const findingTuples = selectFindingTuples({
     findings,
@@ -43539,18 +45434,18 @@ async function runVerify(options) {
     })
   ) : findingTuples;
   const now = options.dependencies?.now?.() ?? /* @__PURE__ */ new Date();
-  const outputDirectory = options.out === void 0 ? defaultOutput2(validated.projectDirectory, now) : resolve42(validated.projectDirectory, options.out);
+  const outputDirectory = options.out === void 0 ? defaultOutput2(validated.projectDirectory, now) : resolve43(validated.projectDirectory, options.out);
   if (options.out === void 0 && await exists5(outputDirectory))
     throw new IdiomError(
       `default verify output already exists; retry with --out for atomic replacement: ${outputDirectory}`
     );
   await assertReplaceable(outputDirectory, verifyOutputOwner);
   const staging = await mkdtemp5(
-    join53(dirname18(outputDirectory), `.${basename10(outputDirectory)}.staging-`)
+    join53(dirname19(outputDirectory), `.${basename10(outputDirectory)}.staging-`)
   ).catch(async () => {
-    await mkdir19(dirname18(outputDirectory), { recursive: true });
+    await mkdir19(dirname19(outputDirectory), { recursive: true });
     return mkdtemp5(
-      join53(dirname18(outputDirectory), `.${basename10(outputDirectory)}.staging-`)
+      join53(dirname19(outputDirectory), `.${basename10(outputDirectory)}.staging-`)
     );
   });
   let published = false;
@@ -43730,8 +45625,8 @@ async function runVerify(options) {
       );
       const afterPath = join53(runB.runDirectory, afterTuple.screenshotPath);
       const [beforeSource, afterSource] = await Promise.all([
-        readFile51(beforePath),
-        readFile51(afterPath)
+        readFile52(beforePath),
+        readFile52(afterPath)
       ]);
       await writeBeforeAfterComposite({
         beforePath,
@@ -43886,8 +45781,8 @@ var init_run3 = __esm({
 });
 
 // src/fix/check.ts
-import { readFile as readFile52 } from "fs/promises";
-import { basename as basename11, resolve as resolve43 } from "path";
+import { readFile as readFile53 } from "fs/promises";
+import { basename as basename11, resolve as resolve44 } from "path";
 async function eligibleRecords(snapshot2) {
   const decisions = await readDecisionLog(snapshot2.projectDirectory);
   return snapshot2.records.filter(
@@ -43911,20 +45806,20 @@ async function refreshEligibility(snapshot2) {
         finding,
         runId: basename11(snapshot2.runDirectory),
         runDirectory: snapshot2.runDirectory,
-        findingsPath: resolve43(snapshot2.runDirectory, "findings.json")
+        findingsPath: resolve44(snapshot2.runDirectory, "findings.json")
       })
     )
   );
 }
 function selectTargets(snapshot2, records, top) {
   const byId = new Map(records.map((record2) => [record2.finding.id, record2]));
-  const resolve55 = (ids) => [...new Set(ids)].flatMap((id2) => {
+  const resolve56 = (ids) => [...new Set(ids)].flatMap((id2) => {
     const record2 = byId.get(id2);
     return record2 === void 0 ? [] : [record2];
   });
   const issues5 = snapshot2.summary.issues;
   if (issues5 === void 0)
-    return resolve55(
+    return resolve56(
       snapshot2.summary.findings.map((finding) => finding.id)
     ).slice(0, top);
   const groups = new Map(
@@ -43932,7 +45827,7 @@ function selectTargets(snapshot2, records, top) {
   );
   const selected2 = [];
   for (const issue of issues5) {
-    const eligible = resolve55(
+    const eligible = resolve56(
       issue.groups.flatMap(
         (id2) => groups.get(id2)?.members.map((member) => member.id) ?? []
       )
@@ -43988,13 +45883,13 @@ async function takeFixSnapshot(options) {
       "fix requires complete successful full-flow capture coverage; a missing or failed tuple cannot prove a fix"
     );
   }
-  const findings = findingSchema.array().parse(JSON.parse(await readFile52(review.findingsPath, "utf8")));
+  const findings = findingSchema.array().parse(JSON.parse(await readFile53(review.findingsPath, "utf8")));
   const catalog = await loadReviewCatalog({
     project: validated.projectDirectory
   });
   const snapshot2 = {
     projectDirectory: validated.projectDirectory,
-    runDirectory: resolve43(review.runDirectory),
+    runDirectory: resolve44(review.runDirectory),
     summary,
     catalog,
     records: findings.filter(
@@ -44002,7 +45897,7 @@ async function takeFixSnapshot(options) {
     ).map((finding) => ({
       finding,
       runId: loaded.runId,
-      runDirectory: resolve43(review.runDirectory),
+      runDirectory: resolve44(review.runDirectory),
       findingsPath: review.findingsPath
     })),
     occurrences: review.deterministicOccurrences ?? findings,
@@ -44018,8 +45913,8 @@ async function takeFixSnapshot(options) {
       project: validated.project,
       flow,
       rules: validated.rules,
-      design: await readFile52(
-        resolve43(
+      design: await readFile53(
+        resolve44(
           validated.projectDirectory,
           validated.project.design.specFile ?? "DESIGN.md"
         ),
@@ -44029,7 +45924,7 @@ async function takeFixSnapshot(options) {
         throw error;
       })
     }),
-    designFile: resolve43(
+    designFile: resolve44(
       validated.projectDirectory,
       validated.project.design.specFile ?? "DESIGN.md"
     )
@@ -44102,12 +45997,12 @@ var init_render3 = __esm({
 
 // src/fix/prompt.ts
 import { access as access11 } from "fs/promises";
-import { resolve as resolve44 } from "path";
+import { resolve as resolve45 } from "path";
 async function repairPrompt(snapshot2, selected2, eligible) {
   if (selected2.length === 0) return "";
   const instructionPaths = [];
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {
-    const path = resolve44(snapshot2.projectDirectory, name);
+    const path = resolve45(snapshot2.projectDirectory, name);
     try {
       await access11(path);
       instructionPaths.push(path);
@@ -44138,7 +46033,7 @@ async function repairPrompt(snapshot2, selected2, eligible) {
           acceptance: finding.acceptance,
           coordinate: tupleCoordinateKey(finding),
           cropPaths: (crops.length ? crops : screenshots).map(
-            (path) => resolve44(record2.runDirectory, path)
+            (path) => resolve45(record2.runDirectory, path)
           )
         },
         null,
@@ -44291,8 +46186,8 @@ var init_config = __esm({
 
 // src/quick/run.ts
 import { randomUUID as randomUUID9 } from "crypto";
-import { readFile as readFile62, writeFile as writeFile36 } from "fs/promises";
-import { join as join63, resolve as resolve49 } from "path";
+import { readFile as readFile63, writeFile as writeFile36 } from "fs/promises";
+import { join as join63, resolve as resolve50 } from "path";
 function defaultRunName2(now) {
   return now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
 }
@@ -44460,7 +46355,7 @@ async function writeReviewReports(runDirectory, reportOptions) {
   const screenshots = new Map(
     await Promise.all(
       screenshotPaths.map(
-        async (path) => [path, pngDataUri(await readFile62(join63(runDirectory, path)))]
+        async (path) => [path, pngDataUri(await readFile63(join63(runDirectory, path)))]
       )
     )
   );
@@ -44479,7 +46374,7 @@ function quickDesignReference(value, cwd) {
     if (isFigmaHost2(trimmed) || claudeWrapper(trimmed)) return trimmed;
     return { site: trimmed };
   }
-  return resolve49(cwd, trimmed);
+  return resolve50(cwd, trimmed);
 }
 async function runQuick(options) {
   const directory = resolveProjectArgument(options.project, options.cwd);
@@ -44512,7 +46407,7 @@ async function runQuick(options) {
     directory,
     "idiom-quick-reports",
     options.literal ? `${defaultRunName2(startedAt)}-${randomUUID9().slice(0, 8)}` : defaultRunName2(startedAt)
-  ) : resolve49(directory, options.out);
+  ) : resolve50(directory, options.out);
   const { runDirectory, loaded, reviewed, counts } = await captureLiteralPages({
     directory,
     finalDirectory,
@@ -44600,6 +46495,7 @@ async function runQuick(options) {
       reportPath: reportPath3,
       htmlReportPath,
       findingCount: findings.length,
+      ...reportedCheckCoverage(reviewed.coverage),
       counts,
       ...options.materializeAllDeterministic ? { findings, groups, issues: issues5 } : {}
     };
@@ -44618,6 +46514,7 @@ var init_run4 = __esm({
     init_browser();
     init_ownership();
     init_resolve();
+    init_painted();
     init_registry();
     init_capture2();
     init_evidence();
@@ -44678,8 +46575,8 @@ var init_execution = __esm({
         const signal = AbortSignal.any([ctx.mcpReq.signal, this.lifetime.signal]);
         const previous = this.tail;
         let release2;
-        this.tail = new Promise((resolve55) => {
-          release2 = resolve55;
+        this.tail = new Promise((resolve56) => {
+          release2 = resolve56;
         });
         let abort;
         const cancelled = new Promise((_, reject) => {
@@ -44746,32 +46643,32 @@ var init_execution = __esm({
 });
 
 // src/mcp/evidence.ts
-import { readFile as readFile67, realpath as realpath12 } from "fs/promises";
-import { basename as basename16, isAbsolute as isAbsolute22, join as join70, relative as relative33, resolve as resolve53, sep as sep19 } from "path";
+import { readFile as readFile68, realpath as realpath12 } from "fs/promises";
+import { basename as basename16, isAbsolute as isAbsolute22, join as join70, relative as relative33, resolve as resolve54, sep as sep19 } from "path";
 function result(text2, data) {
   return {
     content: [{ type: "text", text: text2 }],
     structuredContent: JSON.parse(JSON.stringify(data))
   };
 }
-function inside2(root, target) {
-  const path = relative33(root, target);
+function inside2(root, target2) {
+  const path = relative33(root, target2);
   return path !== ".." && !path.startsWith(`..${sep19}`) && !isAbsolute22(path);
 }
 async function evidencePath(runDirectory, path) {
-  if (isAbsolute22(path) || /\\|\0/.test(path) || !inside2(runDirectory, resolve53(runDirectory, path)))
+  if (isAbsolute22(path) || /\\|\0/.test(path) || !inside2(runDirectory, resolve54(runDirectory, path)))
     throw new IdiomError(
       `Evidence path escapes its source run: ${path}. Obtain a fresh check.`
     );
-  const [root, target] = await Promise.all([
+  const [root, target2] = await Promise.all([
     realpath12(runDirectory),
-    realpath12(resolve53(runDirectory, path))
+    realpath12(resolve54(runDirectory, path))
   ]);
-  if (!inside2(root, target))
+  if (!inside2(root, target2))
     throw new IdiomError(
       `Evidence symlink escapes its source run: ${path}. Obtain a fresh check.`
     );
-  return target;
+  return target2;
 }
 function findingDetail(record2, qualify2 = (id2) => id2) {
   const finding = record2.finding;
@@ -44795,9 +46692,9 @@ function findingDetail(record2, qualify2 = (id2) => id2) {
       colorScheme: finding.colorScheme,
       combination: finding.combination
     },
-    cropPath: crop === void 0 ? void 0 : resolve53(record2.runDirectory, crop),
+    cropPath: crop === void 0 ? void 0 : resolve54(record2.runDirectory, crop),
     evidencePaths: screenshots.map(
-      (path) => resolve53(record2.runDirectory, path)
+      (path) => resolve54(record2.runDirectory, path)
     ),
     evidenceStatus: crop === void 0 ? "unavailable: original finding has no visual evidence" : "available"
   };
@@ -44846,12 +46743,12 @@ var init_evidence2 = __esm({
             );
             const findings = findingSchema.array().parse(
               JSON.parse(
-                await readFile67(join70(runDirectory, "findings.json"), "utf8")
+                await readFile68(join70(runDirectory, "findings.json"), "utf8")
               )
             );
             const groups2 = await readGroups(runDirectory) ?? [];
             const detail = JSON.parse(
-              await readFile67(join70(runDirectory, "mcp-detail.json"), "utf8")
+              await readFile68(join70(runDirectory, "mcp-detail.json"), "utf8")
             );
             run2 = {
               runDirectory,
@@ -44982,7 +46879,7 @@ var init_evidence2 = __esm({
         if (selected2 !== void 0) {
           try {
             const path = await evidencePath(found.run.runDirectory, selected2);
-            const data = await readFile67(path);
+            const data = await readFile68(path);
             if (!data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
               throw new Error("not a PNG");
             response.content.push({
@@ -45016,7 +46913,7 @@ var init_evidence2 = __esm({
         const runDirectory = join70(reports, runId);
         await evidencePath(reports, `${runId}/findings.json`);
         const originals = findingSchema.array().parse(
-          JSON.parse(await readFile67(join70(runDirectory, "findings.json"), "utf8"))
+          JSON.parse(await readFile68(join70(runDirectory, "findings.json"), "utf8"))
         );
         const findings = refs.map((ref) => {
           const finding = originals.find((finding2) => finding2.id === ref.id);
@@ -45054,9 +46951,9 @@ var init_evidence2 = __esm({
 });
 
 // src/mcp/tools.ts
-import { mkdtemp as mkdtemp8, readdir as readdir22, readFile as readFile68, rm as rm19, writeFile as writeFile39 } from "fs/promises";
+import { mkdtemp as mkdtemp8, readdir as readdir22, readFile as readFile69, rm as rm19, writeFile as writeFile39 } from "fs/promises";
 import { tmpdir as tmpdir5 } from "os";
-import { basename as basename17, join as join71, resolve as resolve54 } from "path";
+import { basename as basename17, join as join71, resolve as resolve55 } from "path";
 import { z as z29 } from "zod";
 function registerIdiomTools(server, root, queue, dependencies) {
   const evidence = new EvidenceStore(root);
@@ -45169,6 +47066,7 @@ function registerIdiomTools(server, root, queue, dependencies) {
             groups: groups.length,
             captures: output.counts
           },
+          ...output.checkCoverage === void 0 ? {} : { checkCoverage: output.checkCoverage },
           reports: {
             markdown: output.reportPath,
             html: output.htmlReportPath,
@@ -45220,7 +47118,7 @@ function registerIdiomTools(server, root, queue, dependencies) {
         throw new IdiomError(
           `Capture failed: ${failures.join("; ")}. Report: ${output.reportPath}`
         );
-      const originals = findingSchema.array().parse(JSON.parse(await readFile68(output.findingsPath, "utf8")));
+      const originals = findingSchema.array().parse(JSON.parse(await readFile69(output.findingsPath, "utf8")));
       const live = summary.baseline ? (output.deterministicOccurrences ?? originals).filter(
         (finding) => summary.findings.some(
           (item) => item.id === finding.id && item.where === tupleCoordinateKey(finding)
@@ -45235,7 +47133,7 @@ function registerIdiomTools(server, root, queue, dependencies) {
             finding.id,
             {
               ...summary2,
-              ...summary2.screenshot === void 0 ? {} : { screenshot: resolve54(root, summary2.screenshot) }
+              ...summary2.screenshot === void 0 ? {} : { screenshot: resolve55(root, summary2.screenshot) }
             }
           ];
         })
@@ -45293,10 +47191,11 @@ function registerIdiomTools(server, root, queue, dependencies) {
           ),
           preExistingFindings: summary.preExistingFindings?.map((item) => ({
             ...item,
-            ...item.screenshot === void 0 ? {} : { screenshot: resolve54(root, item.screenshot) }
+            ...item.screenshot === void 0 ? {} : { screenshot: resolve55(root, item.screenshot) }
           })),
           fixed: summary.fixed,
           coverage: summary.coverage,
+          ...summary.checkCoverage === void 0 ? {} : { checkCoverage: summary.checkCoverage },
           reports: {
             markdown: output.reportPath,
             html: output.htmlReportPath,
@@ -45573,7 +47472,7 @@ async function mcpCommand(options = {}) {
 `)
     }
   );
-  await new Promise((resolve55) => {
+  await new Promise((resolve56) => {
     let closing = false;
     const shutdown = () => {
       if (closing) return;
@@ -45589,7 +47488,7 @@ async function mcpCommand(options = {}) {
           process.stderr.write(`Idiom MCP shutdown: ${String(error)}
 `);
         } finally {
-          resolve55();
+          resolve56();
         }
       })();
     };
@@ -45980,8 +47879,8 @@ init_context2();
 
 // src/coverage/routes.ts
 init_flow();
-import { readdir as readdir13 } from "fs/promises";
-import { join as join41, relative as relative20, sep as sep11 } from "path";
+import { readdir as readdir13, readFile as readFile40 } from "fs/promises";
+import { dirname as dirname17, join as join41, relative as relative20, resolve as resolve31, sep as sep11 } from "path";
 var ignoredDirectories = /* @__PURE__ */ new Set([
   "node_modules",
   ".next",
@@ -45997,6 +47896,7 @@ var ignoredDirectories = /* @__PURE__ */ new Set([
 ]);
 var pageFile = /^page\.(?:tsx|ts|jsx|js|mdx)$/;
 var pagesRouterFile = /\.(?:tsx|ts|jsx|js|mdx)$/;
+var astroPageFile = /\.(?:astro|md|mdx|html)$/;
 async function walk(directory, visit, depth = 0) {
   if (depth > 12) return;
   let entries;
@@ -46008,7 +47908,8 @@ async function walk(directory, visit, depth = 0) {
   for (const entry of entries) {
     const path = join41(directory, entry.name);
     if (entry.isDirectory()) {
-      if (ignoredDirectories.has(entry.name)) continue;
+      if (ignoredDirectories.has(entry.name) || entry.name.startsWith("_"))
+        continue;
       await walk(path, visit, depth + 1);
     } else visit(path, entry);
   }
@@ -46051,7 +47952,30 @@ function appRouteFromSegments(segments) {
 }
 async function discoverRouteEntries(projectDirectory) {
   const found = [];
+  const boundary = resolve31(projectDirectory);
+  const owners = /* @__PURE__ */ new Map();
+  const isAstro = (directory) => {
+    const cached = owners.get(directory);
+    if (cached) return cached;
+    const lookup = (async () => {
+      try {
+        const manifest = JSON.parse(
+          await readFile40(join41(directory, "package.json"), "utf8")
+        );
+        return Object.hasOwn(manifest?.dependencies ?? {}, "astro") || Object.hasOwn(manifest?.devDependencies ?? {}, "astro");
+      } catch (error) {
+        if (error.code !== "ENOENT") return false;
+        const parent = dirname17(directory);
+        if (directory === boundary || relative20(boundary, parent).startsWith(".."))
+          return false;
+        return isAstro(parent);
+      }
+    })();
+    owners.set(directory, lookup);
+    return lookup;
+  };
   for (const root of await routeRoots(projectDirectory)) {
+    const extension = root.kind === "pages" && await isAstro(resolve31(root.path)) ? astroPageFile : pagesRouterFile;
     await walk(root.path, (path, entry) => {
       const relativePath2 = relative20(root.path, path);
       const segments = relativePath2.split(sep11);
@@ -46062,8 +47986,9 @@ async function discoverRouteEntries(projectDirectory) {
         if (route !== void 0) found.push({ route, source });
         return;
       }
-      if (!pagesRouterFile.test(entry.name) || segments[0] === "api") return;
-      const name = entry.name.replace(pagesRouterFile, "");
+      if (!extension.test(entry.name) || segments[0] === "api" || segments.some((segment) => segment.startsWith("_")) || /\.d\.[cm]?ts$/.test(entry.name))
+        return;
+      const name = entry.name.replace(extension, "");
       if (name.startsWith("_")) return;
       const parts = [
         ...segments.slice(0, -1),
@@ -46258,17 +48183,17 @@ init_design();
 init_flow();
 init_validation();
 import { randomUUID as randomUUID5 } from "crypto";
-import { readFile as readFile40, rename as rename16, rm as rm9, writeFile as writeFile22 } from "fs/promises";
-import { isAbsolute as isAbsolute13, relative as relative21, resolve as resolve31, sep as sep12 } from "path";
+import { readFile as readFile41, rename as rename16, rm as rm9, writeFile as writeFile22 } from "fs/promises";
+import { isAbsolute as isAbsolute13, relative as relative21, resolve as resolve32, sep as sep12 } from "path";
 async function addDesignCommand(options) {
-  const source = designSourceSchema.parse(options.source), cwd = resolve31(options.cwd ?? process.cwd());
+  const source = designSourceSchema.parse(options.source), cwd = resolve32(options.cwd ?? process.cwd());
   const validated = await validateProject(options);
   const records = validated.flows.filter(({ flow }) => !options.flow || flow.id === options.flow).filter(
     ({ flow }) => flow.states.some((state) => state.id === options.state)
   );
   const candidates = [];
   for (const { file } of records) {
-    const raw = JSON.parse(await readFile40(file, "utf8"));
+    const raw = JSON.parse(await readFile41(file, "utf8"));
     const states = Array.isArray(raw.states) ? raw.states : [];
     for (const state of states)
       if (state.id === options.state) candidates.push({ file, raw, state });
@@ -46281,7 +48206,7 @@ async function addDesignCommand(options) {
   if (!entry) throw new IdiomError("State not found");
   let stored = source;
   if (!/^https?:/i.test(source)) {
-    const absolute = resolve31(cwd, source), local = relative21(validated.projectDirectory, absolute);
+    const absolute = resolve32(cwd, source), local = relative21(validated.projectDirectory, absolute);
     stored = !isAbsolute13(local) && local !== ".." && !local.startsWith(`..${sep12}`) ? local.split(sep12).join("/") || "." : absolute;
   }
   if (options.viewport !== void 0 && !validated.project.viewports.some((v) => v.name === options.viewport))
@@ -46324,7 +48249,7 @@ init_resolve();
 init_run();
 init_errors();
 import { mkdir as mkdir18, rm as rm13 } from "fs/promises";
-import { basename as basename9, join as join50, resolve as resolve41 } from "path";
+import { basename as basename9, join as join50, resolve as resolve42 } from "path";
 import { stdin as stdin3, stdout as stdout3 } from "process";
 import { createInterface as createInterface3 } from "readline/promises";
 
@@ -46333,27 +48258,27 @@ init_errors();
 init_exploration();
 import {
   access as access9,
-  readFile as readFile41,
+  readFile as readFile42,
   realpath as realpath7,
   rename as rename17,
   rm as rm10,
   writeFile as writeFile23
 } from "fs/promises";
-import { isAbsolute as isAbsolute14, join as join42, relative as relative22, resolve as resolve32 } from "path";
+import { isAbsolute as isAbsolute14, join as join42, relative as relative22, resolve as resolve33 } from "path";
 function runPath(projectDirectory, runId) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runId) || runId === "." || runId === "..")
     throw new IdiomError(
       "exploration run must be a simple run ID beneath .idiom/reports"
     );
-  const reports = resolve32(projectDirectory, ".idiom", "reports");
-  const directory = resolve32(reports, runId);
+  const reports = resolve33(projectDirectory, ".idiom", "reports");
+  const directory = resolve33(reports, runId);
   const escaped = relative22(reports, directory);
   if (escaped.startsWith("..") || isAbsolute14(escaped))
     throw new IdiomError("exploration run must remain beneath .idiom/reports");
   return directory;
 }
 function contained2(directory, item) {
-  const path = resolve32(directory, item);
+  const path = resolve33(directory, item);
   const escaped = relative22(directory, path);
   if (escaped.startsWith("..") || isAbsolute14(escaped))
     throw new IdiomError(
@@ -46364,7 +48289,7 @@ function contained2(directory, item) {
 async function parse3(path, unknownRun) {
   let value;
   try {
-    value = JSON.parse(await readFile41(path, "utf8"));
+    value = JSON.parse(await readFile42(path, "utf8"));
   } catch (error) {
     if (unknownRun && error.code === "ENOENT")
       throw new IdiomError(
@@ -46383,7 +48308,7 @@ async function parse3(path, unknownRun) {
 }
 async function loadExplorationRun(options) {
   const lexicalRun = runPath(options.projectDirectory, options.runId);
-  const reportsDirectory = resolve32(
+  const reportsDirectory = resolve33(
     options.projectDirectory,
     ".idiom",
     "reports"
@@ -46487,7 +48412,7 @@ init_context();
 init_errors();
 init_law();
 import { createHash as createHash18 } from "crypto";
-import { readFile as readFile43 } from "fs/promises";
+import { readFile as readFile44 } from "fs/promises";
 import { join as join44 } from "path";
 
 // src/rulings/lookup.ts
@@ -46495,8 +48420,8 @@ init_errors();
 init_baseline();
 init_artifacts4();
 init_law();
-import { readdir as readdir14, readFile as readFile42 } from "fs/promises";
-import { join as join43, resolve as resolve33 } from "path";
+import { readdir as readdir14, readFile as readFile43 } from "fs/promises";
+import { join as join43, resolve as resolve34 } from "path";
 async function locate(projectDirectories, id2) {
   for (const projectDirectory of projectDirectories) {
     const reports = join43(projectDirectory, ".idiom", "reports");
@@ -46514,7 +48439,7 @@ async function locate(projectDirectories, id2) {
       } catch (error) {
         const path = join43(reports, entry.name, "unruled-decisions.json");
         try {
-          await readFile42(path);
+          await readFile43(path);
         } catch (readError) {
           if (readError.code === "ENOENT") continue;
         }
@@ -46530,8 +48455,8 @@ async function lookupUnruledDecision(options) {
     const candidate2 = await (options.gitTopology ?? primaryCheckout)(
       options.projectDirectory
     );
-    if (candidate2 !== void 0 && resolve33(candidate2) !== resolve33(options.projectDirectory))
-      primary = resolve33(candidate2);
+    if (candidate2 !== void 0 && resolve34(candidate2) !== resolve34(options.projectDirectory))
+      primary = resolve34(candidate2);
   } catch {
     primary = void 0;
   }
@@ -46539,7 +48464,7 @@ async function lookupUnruledDecision(options) {
     [options.projectDirectory, ...primary === void 0 ? [] : [primary]],
     options.id
   );
-  const law = parseRulingBlocks(await readFile42(options.designPath, "utf8"));
+  const law = parseRulingBlocks(await readFile43(options.designPath, "utf8"));
   if (law.resolutions.some(
     (resolution) => resolution.id === decision.id || resolution.fingerprint === decision.fingerprint
   ))
@@ -46554,7 +48479,7 @@ init_exploration();
 init_validation();
 async function required(path, label3) {
   try {
-    return await readFile43(path, "utf8");
+    return await readFile44(path, "utf8");
   } catch (error) {
     throw new IdiomError(
       `cannot load ${label3} for exploration from ${path}: ${error instanceof Error ? error.message : String(error)}`
@@ -46628,7 +48553,7 @@ init_claude_code();
 init_errors();
 import { randomUUID as randomUUID6 } from "crypto";
 import { mkdir as mkdir14, rename as rename18, unlink, writeFile as writeFile24 } from "fs/promises";
-import { resolve as resolve34 } from "path";
+import { resolve as resolve35 } from "path";
 
 // src/explore/schema.ts
 init_exploration();
@@ -46833,9 +48758,9 @@ function repairedDiagnostic(kind, value) {
   return `repaired output returned ${shape(value)}`;
 }
 async function preserveRejectedOutput(options) {
-  const directory = resolve34(options.evidence.runDirectory, "provider-output");
-  const target = resolve34(directory, `${options.kind}-rejected.json`);
-  const temporary = resolve34(
+  const directory = resolve35(options.evidence.runDirectory, "provider-output");
+  const target2 = resolve35(directory, `${options.kind}-rejected.json`);
+  const temporary = resolve35(
     directory,
     `.${options.kind}-rejected.${process.pid}.${randomUUID6()}.tmp`
   );
@@ -46859,12 +48784,12 @@ async function preserveRejectedOutput(options) {
   try {
     await writeFile24(temporary, `${JSON.stringify(record2, null, 2)}
 `, "utf8");
-    await rename18(temporary, target);
+    await rename18(temporary, target2);
   } catch (error) {
     await unlink(temporary).catch(() => void 0);
     throw error;
   }
-  return target;
+  return target2;
 }
 async function parseWithRepair(options) {
   let initialError;
@@ -46914,8 +48839,8 @@ function parseRefinementWithRepair(options) {
 init_anthropic();
 init_claude_code();
 init_errors();
-import { readFile as readFile44, realpath as realpath8 } from "fs/promises";
-import { isAbsolute as isAbsolute15, relative as relative23, resolve as resolve35, sep as sep13 } from "path";
+import { readFile as readFile45, realpath as realpath8 } from "fs/promises";
+import { isAbsolute as isAbsolute15, relative as relative23, resolve as resolve36, sep as sep13 } from "path";
 import Anthropic2 from "@anthropic-ai/sdk";
 
 // src/explore/prompt.ts
@@ -47018,20 +48943,20 @@ async function contained3(root, requested) {
   if (isAbsolute15(requested) || requested.includes("\\") || requested.split("/").includes(".."))
     throw new IdiomError("provider requested an unsafe source path");
   const realRoot = await realpath8(root);
-  const target = await realpath8(resolve35(realRoot, requested));
-  const escaped = relative23(realRoot, target);
+  const target2 = await realpath8(resolve36(realRoot, requested));
+  const escaped = relative23(realRoot, target2);
   if (escaped === "" || isAbsolute15(escaped) || escaped === ".." || escaped.startsWith(`..${sep13}`))
     throw new IdiomError(
       "provider requested a source path outside the exploration mirror"
     );
-  return target;
+  return target2;
 }
 async function mirrorManifest(root, paths) {
   const realRoot = await realpath8(root);
   const absolute = [];
   const relativePaths = [];
   for (const path of paths) {
-    const realEntry = await realpath8(resolve35(path));
+    const realEntry = await realpath8(resolve36(path));
     const escaped = relative23(realRoot, realEntry);
     if (escaped === "" || isAbsolute15(escaped) || escaped === ".." || escaped.startsWith(`..${sep13}`))
       throw new IdiomError(
@@ -47114,7 +49039,7 @@ var AnthropicExplorationAdapter = class {
     let encodedBytes = 0;
     const imageBlocks = [];
     for (const path of imagePaths) {
-      const source = await readFile44(path);
+      const source = await readFile45(path);
       const data = source.toString("base64");
       encodedBytes += Buffer.byteLength(data);
       if (encodedBytes > MAX_ENCODED_IMAGE_BYTES)
@@ -47162,7 +49087,7 @@ var AnthropicExplorationAdapter = class {
         let result2;
         try {
           if (use.name === "read_file" && typeof input?.path === "string") {
-            const source = await readFile44(
+            const source = await readFile45(
               await contained3(options.root, input.path)
             );
             if (source.byteLength > MAX_FILE_BYTES)
@@ -47175,7 +49100,7 @@ var AnthropicExplorationAdapter = class {
             const matches = [];
             for (const item of input.paths.slice(0, 20)) {
               if (typeof item !== "string") continue;
-              const source = await readFile44(
+              const source = await readFile45(
                 await contained3(options.root, item)
               );
               if (source.byteLength > MAX_FILE_BYTES) continue;
@@ -47289,7 +49214,7 @@ init_claude_code();
 init_errors();
 import { realpath as realpath9 } from "fs/promises";
 import { tmpdir as tmpdir2 } from "os";
-import { isAbsolute as isAbsolute16, relative as relative24, resolve as resolve36, sep as sep14 } from "path";
+import { isAbsolute as isAbsolute16, relative as relative24, resolve as resolve37, sep as sep14 } from "path";
 function structuredOutput2(source) {
   let envelope;
   try {
@@ -47316,7 +49241,7 @@ async function canonicalReadablePaths(root, paths) {
   const realRoot = await realpath9(root);
   const output = [];
   for (const item of paths) {
-    const realEntry = await realpath9(resolve36(item));
+    const realEntry = await realpath9(resolve37(item));
     const escaped = relative24(realRoot, realEntry);
     if (escaped === "" || isAbsolute16(escaped) || escaped === ".." || escaped.startsWith(`..${sep14}`))
       throw new IdiomError(
@@ -47479,7 +49404,7 @@ function createExplorationAdapter(options) {
 // src/explore/report.ts
 init_html();
 init_exploration();
-import { readFile as readFile45, rename as rename19, writeFile as writeFile25 } from "fs/promises";
+import { readFile as readFile46, rename as rename19, writeFile as writeFile25 } from "fs/promises";
 import { join as join45, relative as relative25, sep as sep15 } from "path";
 async function atomic(path, source) {
   const temporary = `${path}.tmp`;
@@ -47491,14 +49416,14 @@ function tupleKey2(tuple) {
 }
 async function image(run2, tuple) {
   if (tuple.screenshotPath === void 0) return "";
-  return pngDataUri(await readFile45(join45(run2, tuple.screenshotPath)));
+  return pngDataUri(await readFile46(join45(run2, tuple.screenshotPath)));
 }
 async function writeExplorationReport(runDirectory, data) {
   const jsonPath = join45(runDirectory, "exploration.json");
   let resolution;
   try {
     const existing = explorationRunSchema.safeParse(
-      JSON.parse(await readFile45(jsonPath, "utf8"))
+      JSON.parse(await readFile46(jsonPath, "utf8"))
     );
     if (existing.success) resolution = existing.data.resolution;
   } catch {
@@ -47578,7 +49503,7 @@ async function writeExplorationReport(runDirectory, data) {
 
 // src/explore/resolve.ts
 init_decide2();
-import { readFile as readFile48 } from "fs/promises";
+import { readFile as readFile49 } from "fs/promises";
 import { join as join48 } from "path";
 
 // src/commands/tickets.ts
@@ -47590,8 +49515,8 @@ init_lifecycle();
 init_render2();
 init_spec();
 init_emit();
-import { access as access10, mkdir as mkdir15, readdir as readdir15, readFile as readFile46, writeFile as writeFile26 } from "fs/promises";
-import { isAbsolute as isAbsolute17, join as join46, resolve as resolve37 } from "path";
+import { access as access10, mkdir as mkdir15, readdir as readdir15, readFile as readFile47, writeFile as writeFile26 } from "fs/promises";
+import { isAbsolute as isAbsolute17, join as join46, resolve as resolve38 } from "path";
 var TICKET_STATES2 = ["triage", "ready", "doing", "done"];
 async function exists6(path) {
   try {
@@ -47625,7 +49550,7 @@ async function indexTrackerTickets(trackerRoot) {
       const path = join46(directory, entry.name);
       let source;
       try {
-        source = await readFile46(path, "utf8");
+        source = await readFile47(path, "utf8");
       } catch (error) {
         throw new IdiomError(
           `cannot read tracker ticket ${path}: ${error instanceof Error ? error.message : String(error)}`
@@ -47672,7 +49597,7 @@ function embeddedTicketForLineage(index, lineage) {
   return void 0;
 }
 function outputPath(out, cwd) {
-  return isAbsolute17(out) ? resolve37(out) : resolve37(cwd ?? process.cwd(), out);
+  return isAbsolute17(out) ? resolve38(out) : resolve38(cwd ?? process.cwd(), out);
 }
 function canonicalTicketOptions(catalog, record2, ticketDirectory) {
   const lineage = findCatalogLineage(catalog, record2.finding.id);
@@ -47718,7 +49643,7 @@ async function ticketsCommand(options) {
   const defaultRoot = join46(catalog.projectDirectory, ".autobuild", "tickets");
   const defaultTriage = join46(defaultRoot, "triage");
   const outputDirectory = options.out === void 0 ? defaultTriage : outputPath(options.out, options.cwd);
-  const trackerOutput = resolve37(outputDirectory) === resolve37(defaultTriage);
+  const trackerOutput = resolve38(outputDirectory) === resolve38(defaultTriage);
   const selected2 = options.findingIds === void 0 || options.findingIds.length === 0 ? catalog.findings : options.findingIds.map((id2) => findCatalogFinding(catalog, id2));
   const unique4 = new Map(
     selected2.map((record2) => {
@@ -47817,7 +49742,7 @@ async function ticketsCommand(options) {
             ticketId: path.split("/").at(-1)?.replace(/\.md$/, "") ?? rendered2.id,
             path,
             unchanged: ticketBytesAreKnown(
-              await readFile46(path, "utf8"),
+              await readFile47(path, "utf8"),
               rendered2.body,
               compatibleTicketBodies(catalog, lineage, outputDirectory)
             )
@@ -47886,7 +49811,7 @@ async function ticketsCommand(options) {
           path: destination,
           ...trackerOutput ? { state: "triage" } : {},
           unchanged: ticketBytesAreKnown(
-            await readFile46(destination, "utf8"),
+            await readFile47(destination, "utf8"),
             rendered.body,
             compatibleTicketBodies(catalog, lineage, outputDirectory)
           )
@@ -47921,10 +49846,10 @@ init_names();
 // src/rulings/record.ts
 init_errors();
 init_law();
-import { mkdir as mkdir16, readFile as readFile47, rename as rename20, rm as rm11, writeFile as writeFile27 } from "fs/promises";
+import { mkdir as mkdir16, readFile as readFile48, rename as rename20, rm as rm11, writeFile as writeFile27 } from "fs/promises";
 import { join as join47 } from "path";
 async function recordRuling(options) {
-  const source = await readFile47(options.designPath, "utf8");
+  const source = await readFile48(options.designPath, "utf8");
   const completed = appendRuling(source, options.resolution);
   const diff = rulingDiff(options.displayPath, source, completed);
   options.write?.(diff);
@@ -47957,12 +49882,12 @@ init_findings();
 init_fingerprint();
 init_names2();
 init_finding();
-import { relative as relative26, resolve as resolve38, sep as sep16 } from "path";
+import { relative as relative26, resolve as resolve39, sep as sep16 } from "path";
 function key(tuple) {
   return `${tuple.state}\0${tuple.viewport}\0${tuple.colorScheme ?? "light"}`;
 }
 function reportPath2(root, directory, path) {
-  return relative26(resolve38(root), resolve38(directory, path)).split(sep16).join("/");
+  return relative26(resolve39(root), resolve39(directory, path)).split(sep16).join("/");
 }
 async function publishExplorationRepairs(options) {
   const catalog = await loadReviewCatalog({
@@ -48039,7 +49964,7 @@ function outcomeFingerprints(candidate2, steering) {
 async function assertNotRecorded(options) {
   let source;
   try {
-    source = await readFile48(options.designPath, "utf8");
+    source = await readFile49(options.designPath, "utf8");
   } catch (error) {
     throw new IdiomError(
       `cannot load design guidance from ${options.designPath}: ${error instanceof Error ? error.message : String(error)}`
@@ -48236,10 +50161,10 @@ var ExplorationSession = class {
 
 // src/explore/validate.ts
 init_errors();
-import { readFile as readFile49 } from "fs/promises";
-import { resolve as resolve39 } from "path";
+import { readFile as readFile50 } from "fs/promises";
+import { resolve as resolve40 } from "path";
 import pixelmatch2 from "pixelmatch";
-import { PNG as PNG6 } from "pngjs";
+import { PNG as PNG7 } from "pngjs";
 
 // src/explore/content.ts
 init_errors();
@@ -48531,7 +50456,7 @@ async function dom(runDirectory, tuple) {
     throw new IdiomError(
       `capture tuple ${tuple.state}/${tuple.viewport} has no DOM artifact`
     );
-  return readFile49(resolve39(runDirectory, path), "utf8");
+  return readFile50(resolve40(runDirectory, path), "utf8");
 }
 async function screenshot(runDirectory, tuple) {
   if (tuple.screenshotPath === void 0)
@@ -48539,8 +50464,8 @@ async function screenshot(runDirectory, tuple) {
       `capture tuple ${tuple.state}/${tuple.viewport} has no screenshot`
     );
   try {
-    return PNG6.sync.read(
-      await readFile49(resolve39(runDirectory, tuple.screenshotPath))
+    return PNG7.sync.read(
+      await readFile50(resolve40(runDirectory, tuple.screenshotPath))
     );
   } catch (error) {
     throw new IdiomError(
@@ -48556,9 +50481,9 @@ async function different(leftRun, left, rightRun, right) {
   const width = Math.max(a.width, b.width);
   const height = Math.max(a.height, b.height);
   const pad = (image2) => {
-    const output = new PNG6({ width, height });
+    const output = new PNG7({ width, height });
     output.data.fill(255);
-    PNG6.bitblt(image2, output, 0, 0, image2.width, image2.height, 0, 0);
+    PNG7.bitblt(image2, output, 0, 0, image2.width, image2.height, 0, 0);
     return output;
   };
   const aa = pad(a);
@@ -48652,7 +50577,7 @@ import {
   mkdir as mkdir17,
   mkdtemp as mkdtemp4,
   readdir as readdir16,
-  readFile as readFile50,
+  readFile as readFile51,
   readlink,
   realpath as realpath10,
   rename as rename21,
@@ -48663,11 +50588,11 @@ import {
 import { tmpdir as tmpdir3 } from "os";
 import {
   basename as basename8,
-  dirname as dirname17,
+  dirname as dirname18,
   isAbsolute as isAbsolute18,
   join as join49,
   relative as relative27,
-  resolve as resolve40,
+  resolve as resolve41,
   sep as sep17
 } from "path";
 import { promisify as promisify4 } from "util";
@@ -48689,22 +50614,22 @@ function excludedMirror(path) {
   const parts = normalized.split("/");
   return excludedRuntime(normalized) || normalized === EVIDENCE || normalized.startsWith(`${EVIDENCE}/`) || parts.some(secretName) || parts.includes("node_modules") || parts.includes("dist") || parts.includes("build") || normalized.startsWith(".autobuild/tickets/");
 }
-async function reflink(source, target) {
-  await mkdir17(dirname17(target), { recursive: true });
+async function reflink(source, target2) {
+  await mkdir17(dirname18(target2), { recursive: true });
   try {
-    await copyFile2(source, target, constants.COPYFILE_FICLONE);
+    await copyFile2(source, target2, constants.COPYFILE_FICLONE);
   } catch {
-    await copyFile2(source, target, constants.COPYFILE_EXCL);
+    await copyFile2(source, target2, constants.COPYFILE_EXCL);
   }
 }
-async function copyTree(source, target, root = source) {
-  await mkdir17(target, { recursive: true });
+async function copyTree(source, target2, root = source) {
+  await mkdir17(target2, { recursive: true });
   for (const entry of await readdir16(source, { withFileTypes: true })) {
     const from = join49(source, entry.name);
     const relativePath2 = relative27(root, from);
     if (excludedRuntime(relativePath2) || EXCLUDED_ROOTS.has(relativePath2))
       continue;
-    const to = join49(target, entry.name);
+    const to = join49(target2, entry.name);
     if (entry.isDirectory()) await copyTree(from, to, root);
     else if (entry.isSymbolicLink()) await symlink(await readlink(from), to);
     else if (entry.isFile()) await reflink(from, to);
@@ -48743,10 +50668,10 @@ function assertEditPath(path) {
 async function containedRegular(root, path) {
   assertEditPath(path);
   const realRoot = await realpath10(root);
-  const target = resolve40(realRoot, path);
+  const target2 = resolve41(realRoot, path);
   let status;
   try {
-    status = await lstat5(target);
+    status = await lstat5(target2);
   } catch {
     throw new IdiomError(`exploration edit target does not exist: ${path}`);
   }
@@ -48754,7 +50679,7 @@ async function containedRegular(root, path) {
     throw new IdiomError(
       `exploration edit target is not a regular file: ${path}`
     );
-  const realTarget = await realpath10(target);
+  const realTarget = await realpath10(target2);
   const escaped = relative27(realRoot, realTarget);
   if (isAbsolute18(escaped) || escaped === ".." || escaped.startsWith(`..${sep17}`))
     throw new IdiomError(
@@ -48764,7 +50689,7 @@ async function containedRegular(root, path) {
 }
 async function atomicReplace(path, source) {
   const temporary = join49(
-    dirname17(path),
+    dirname18(path),
     `.${basename8(path)}.idiom-${process.pid}-${Date.now()}`
   );
   await writeFile28(temporary, source, "utf8");
@@ -48774,7 +50699,7 @@ async function readExplorationEditSources(options) {
   return Promise.all(
     options.edits.map(async (edit2) => ({
       path: edit2.path,
-      source: await readFile50(
+      source: await readFile51(
         await containedRegular(options.mirrorDirectory, edit2.path),
         "utf8"
       )
@@ -48792,8 +50717,8 @@ async function applyExplorationEdits(options) {
       containedRegular(options.mirrorDirectory, edit2.path)
     ]);
     const [cloneSource, mirrorSource] = await Promise.all([
-      readFile50(clonePath, "utf8"),
-      readFile50(mirrorPath, "utf8")
+      readFile51(clonePath, "utf8"),
+      readFile51(mirrorPath, "utf8")
     ]);
     if (cloneSource !== mirrorSource)
       throw new IdiomError(
@@ -48853,12 +50778,12 @@ async function createExplorationWorkspace(projectDirectory) {
       await mkdir17(directory, { recursive: true });
       const staged = [];
       for (const [index, path] of paths.entries()) {
-        const target = join49(
+        const target2 = join49(
           directory,
           `${namespace}-${String(index + 1).padStart(3, "0")}-${basename8(path)}`
         );
-        await reflink(path, target);
-        staged.push(await realpath10(target));
+        await reflink(path, target2);
+        staged.push(await realpath10(target2));
       }
       return staged;
     },
@@ -48937,7 +50862,7 @@ async function exploreCommand(options) {
     throw new IdiomError(
       `baseline exploration capture failed ${baselineCapture.counts.failed} declared tuple(s)`
     );
-  const runDirectory = resolve41(baselineCapture.runDirectory);
+  const runDirectory = resolve42(baselineCapture.runDirectory);
   const baseline = await loadCaptureRun(loadedOptions(context2, runDirectory));
   const createWorkspace = dependencies?.workspace ?? createExplorationWorkspace;
   let workspace;
@@ -49359,14 +51284,14 @@ async function assertLegacySteeringIsUnambiguous(projectDirectory, question) {
   } catch {
     return;
   }
-  const target = normalizeExplorationKey(question);
+  const target2 = normalizeExplorationKey(question);
   for (const entry of entries) {
     try {
       const decisions = await readUnruledDecisions(
         join51(projectDirectory, ".idiom", "reports", entry)
       );
       if (decisions.some(
-        (decision) => normalizeExplorationKey(decision.question) === target
+        (decision) => normalizeExplorationKey(decision.question) === target2
       ))
         throw new IdiomError(
           "this legacy exploration may have been steered by a reviewed decision, but its stored artifact does not identify that decision; rerun exploration"
@@ -49907,14 +51832,14 @@ import {
   chmod as chmod2,
   lstat as lstat8,
   mkdir as mkdir21,
-  readFile as readFile59,
+  readFile as readFile60,
   readlink as readlink2,
   rename as rename23,
   rm as rm16,
   symlink as symlink2,
   writeFile as writeFile34
 } from "fs/promises";
-import { basename as basename12, dirname as dirname21, join as join60 } from "path";
+import { basename as basename12, dirname as dirname22, join as join60 } from "path";
 import { stdin as stdin5, stdout as stdout5 } from "process";
 import { createInterface as createInterface5 } from "readline/promises";
 
@@ -50375,6 +52300,7 @@ import { createHash as createHash19 } from "crypto";
 
 // src/flows/browser.ts
 init_browser();
+init_document();
 import { chromium as chromium3 } from "playwright";
 async function openFlowBrowser(project, options = {}) {
   const viewport = project.viewports[0];
@@ -50390,18 +52316,25 @@ async function openFlowBrowser(project, options = {}) {
       const context2 = await browser.newContext(
         deterministicContextOptions(project, viewport)
       );
+      let response;
       try {
         const page = await context2.newPage();
-        const response = await page.goto(url, {
+        page.on("response", (candidate2) => {
+          try {
+            const request2 = candidate2.request();
+            if (request2.isNavigationRequest() && request2.frame() === page.mainFrame() && !(candidate2.status() >= 300 && candidate2.status() < 400))
+              response = candidate2;
+          } catch {
+          }
+        });
+        await page.goto(url, {
           waitUntil: "domcontentloaded",
           timeout
         });
         await page.waitForTimeout(project.capture.settleMs);
         const finalUrl = page.url();
-        const html = /(?:text\/html|application\/xhtml\+xml)/i.test(
-          response?.headers()["content-type"] ?? ""
-        );
         const content = await page.evaluate(() => ({
+          contentType: document.contentType,
           base: document.baseURI,
           links: Array.from(
             document.querySelectorAll("a[href]:not([download])"),
@@ -50409,11 +52342,13 @@ async function openFlowBrowser(project, options = {}) {
           ),
           password: document.querySelector('input[type="password"]') !== null
         }));
+        const html = classifyDocument(response?.headers()["content-type"]) === "html" && classifyDocument(content.contentType) === "html";
         return { finalUrl, status: response?.status(), html, ...content };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
-          finalUrl: url,
+          finalUrl: response?.url() ?? url,
+          status: response?.status(),
           html: false,
           password: false,
           links: [],
@@ -50433,13 +52368,13 @@ async function openFlowBrowser(project, options = {}) {
       const timer = setTimeout(() => controller.abort(), timeout);
       let context2;
       try {
-        let target = new URL(url);
+        let target2 = new URL(url);
         let xml;
         for (let redirects = 0; redirects <= 5; redirects++) {
           if (closed) throw new Error("discovery closed");
-          if (target.origin !== origin || target.username || target.password)
+          if (target2.origin !== origin || target2.username || target2.password)
             throw new Error("off-origin sitemap redirect rejected");
-          const response = await fetch(target, {
+          const response = await fetch(target2, {
             redirect: "manual",
             signal: controller.signal
           });
@@ -50447,7 +52382,7 @@ async function openFlowBrowser(project, options = {}) {
             await response.body?.cancel();
             const location2 = response.headers.get("location");
             if (!location2) throw new Error("sitemap redirect has no location");
-            target = new URL(location2, target);
+            target2 = new URL(location2, target2);
             continue;
           }
           if (!response.ok) {
@@ -50536,8 +52471,25 @@ function normalizePage(href, base, origin) {
 function loginPath(path) {
   return path.split("/").some((segment) => /^(?:login|log-in|signin|sign-in)$/i.test(segment));
 }
+function nonHtml(result2) {
+  return !result2.error && result2.status !== void 0 && !result2.html;
+}
 function assessment(path, origin, result2) {
+  if (result2.status !== void 0 && (result2.status < 200 || result2.status >= 300))
+    return {
+      reason: `not a successful HTML page (HTTP ${result2.status})`,
+      rejected: true
+    };
   if (result2.error) return { reason: result2.error };
+  if (nonHtml(result2))
+    return {
+      reason: `non-HTML document (HTTP ${result2.status})`,
+      rejected: true
+    };
+  if (result2.status === void 0 || !result2.html)
+    return {
+      reason: `not a successful HTML page (HTTP ${result2.status ?? "unknown"})`
+    };
   const final = new URL(result2.finalUrl);
   const changed = final.origin !== origin || (final.pathname.replace(/\/+$/, "") || "/") !== path;
   if (changed && (loginPath(final.pathname) || result2.password))
@@ -50546,10 +52498,9 @@ function assessment(path, origin, result2) {
       setup: `${final.origin === origin ? "" : final.origin}${final.pathname}`
     };
   if (final.origin !== origin)
-    return { reason: `unexpected off-origin destination ${final.href}` };
-  if (result2.status === void 0 || result2.status < 200 || result2.status >= 300 || !result2.html)
     return {
-      reason: `not a successful HTML page (HTTP ${result2.status ?? "unknown"})`
+      reason: `unexpected off-origin destination ${final.href}`,
+      rejected: true
     };
   return { expectedPath: final.pathname };
 }
@@ -50625,20 +52576,20 @@ async function discoverFlowRoutes(options) {
         const sitemap = await live.sitemap(url);
         if (expired) break;
         for (const href of sitemap.urls.sort()) {
-          let target;
+          let target2;
           try {
-            target = new URL(href, url);
+            target2 = new URL(href, url);
           } catch {
             warnings.push(`Sitemap ${url}: invalid location ${href}`);
             continue;
           }
-          if (target.origin !== origin || target.username || target.password || !["http:", "https:"].includes(target.protocol))
+          if (target2.origin !== origin || target2.username || target2.password || !["http:", "https:"].includes(target2.protocol))
             continue;
           if (sitemap.kind === "sitemapindex") {
-            if (!seen.has(target.href) && !documents.includes(target.href))
-              documents.push(target.href);
+            if (!seen.has(target2.href) && !documents.includes(target2.href))
+              documents.push(target2.href);
           } else {
-            const path = normalizePage(target.href, url, origin);
+            const path = normalizePage(target2.href, url, origin);
             if (path) admit(path, url);
           }
         }
@@ -50663,7 +52614,7 @@ async function discoverFlowRoutes(options) {
         warnings.push(
           `Ready page ${path} could not be verified: ${assessed.reason}`
         );
-      if (assessed.expectedPath !== void 0)
+      if (assessed.expectedPath !== void 0 || assessed.rejected)
         admit(path, index === 0 ? options.readyUrl : origin + path);
       if (assessed.reason || assessed.setup) continue;
       const paths = [
@@ -50702,13 +52653,13 @@ async function discoverFlowRoutes(options) {
   try {
     await Promise.race([
       work(),
-      new Promise((resolve55) => {
+      new Promise((resolve56) => {
         timer = setTimeout(() => {
           expired = true;
           warnings.push(
             "Live discovery reached its overall time limit; remaining routes are unverified."
           );
-          resolve55();
+          resolve56();
         }, options.limits?.totalMs ?? 6e4);
       })
     ]);
@@ -50727,6 +52678,7 @@ async function discoverFlowRoutes(options) {
     return score(b.route) - score(a.route) || a.route.localeCompare(b.route);
   });
   const fallbackExamples = /* @__PURE__ */ new Map();
+  const failedExamples = /* @__PURE__ */ new Map();
   for (const [path, sources] of [...observed].sort(
     ([a], [b]) => a.localeCompare(b)
   )) {
@@ -50738,7 +52690,14 @@ async function discoverFlowRoutes(options) {
     if (owners.length > 0) {
       for (const record2 of owners) {
         record2.sources.push(...sources);
-        if (assessed.expectedPath === void 0) continue;
+        if (assessed.expectedPath === void 0) {
+          if (assessed.rejected && record2.route.includes("[")) {
+            const failures = failedExamples.get(record2) ?? [];
+            failures.push(`${path}: ${assessed.reason}`);
+            failedExamples.set(record2, failures);
+          }
+          continue;
+        }
         const candidates = fallbackExamples.get(record2) ?? [];
         candidates.push(path);
         fallbackExamples.set(record2, candidates);
@@ -50754,8 +52713,17 @@ async function discoverFlowRoutes(options) {
   }
   for (const record2 of records.values()) {
     record2.sources = [...new Set(record2.sources)].sort();
+    if (record2.path) {
+      const result2 = inspected.get(record2.path);
+      if (result2 && nonHtml(result2)) {
+        delete record2.path;
+        delete record2.expectedPath;
+        delete record2.setup;
+        Object.assign(record2, assessment(record2.route, origin, result2));
+      }
+    }
     if (!record2.path)
-      record2.reason = "no successfully inspected link or sitemap example matched this dynamic template; it may be unreachable or beyond a discovery limit";
+      record2.reason ??= "no successfully inspected link or sitemap example matched this dynamic template; it may be unreachable or beyond a discovery limit" + (failedExamples.has(record2) ? `; rejected examples: ${failedExamples.get(record2)?.join(", ")}` : "");
     else {
       const result2 = inspected.get(record2.path);
       Object.assign(
@@ -50802,7 +52770,7 @@ function constructSiteFlow(project, discovery, surface) {
       (counts.get(routeStateId(route.route)) ?? 0) + 1
     );
   const states = discovery.routes.flatMap((route) => {
-    if (!route.path) {
+    if (!route.path || route.rejected) {
       todos.push(
         `TODO: ${route.route} (${route.sources.join(", ")}): ${route.reason}`
       );
@@ -50886,7 +52854,7 @@ import { randomUUID as randomUUID7 } from "crypto";
 import {
   chmod,
   lstat as lstat6,
-  readFile as readFile53,
+  readFile as readFile54,
   rename as rename22,
   rm as rm15,
   writeFile as writeFile33
@@ -51213,7 +53181,7 @@ async function draftSystemLearning(before, extraction, options = {}) {
   };
 }
 async function applySystemDraft(path, draft, publish2 = rename22) {
-  if (await readFile53(path, "utf8") !== draft.before)
+  if (await readFile54(path, "utf8") !== draft.before)
     throw new Error(
       "Project configuration changed after preview; rerun idiom system --learn."
     );
@@ -51224,7 +53192,7 @@ async function applySystemDraft(path, draft, publish2 = rename22) {
   try {
     await writeFile33(temporary, draft.after, { encoding: "utf8", flag: "wx" });
     await chmod(temporary, entry.mode);
-    if (await readFile53(path, "utf8") !== draft.before)
+    if (await readFile54(path, "utf8") !== draft.before)
       throw new Error(
         "Project configuration changed after preview; rerun idiom system --learn."
       );
@@ -51236,7 +53204,7 @@ async function applySystemDraft(path, draft, publish2 = rename22) {
 
 // src/system/learn/run.ts
 init_errors();
-import { readFile as readFile57 } from "fs/promises";
+import { readFile as readFile58 } from "fs/promises";
 import { join as join58 } from "path";
 import { stdin as stdin4, stdout as stdout4 } from "process";
 import { createInterface as createInterface4 } from "readline/promises";
@@ -51254,8 +53222,8 @@ init_artifacts2();
 init_catalog2();
 init_law();
 init_validation();
-import { lstat as lstat7, readdir as readdir19, readFile as readFile55 } from "fs/promises";
-import { isAbsolute as isAbsolute21, join as join57, relative as relative29, resolve as resolve46 } from "path";
+import { lstat as lstat7, readdir as readdir19, readFile as readFile56 } from "fs/promises";
+import { isAbsolute as isAbsolute21, join as join57, relative as relative29, resolve as resolve47 } from "path";
 
 // src/system/drift.ts
 init_registry();
@@ -51518,8 +53486,8 @@ init_errors();
 init_css();
 init_inline();
 init_schema();
-import { readdir as readdir18, readFile as readFile54, realpath as realpath11, stat as stat5 } from "fs/promises";
-import { dirname as dirname19, isAbsolute as isAbsolute20, join as join56, relative as relative28, resolve as resolve45 } from "path";
+import { readdir as readdir18, readFile as readFile55, realpath as realpath11, stat as stat5 } from "fs/promises";
+import { dirname as dirname20, isAbsolute as isAbsolute20, join as join56, relative as relative28, resolve as resolve46 } from "path";
 import postcss4 from "postcss";
 function contained4(root, path) {
   const rel = relative28(root, path);
@@ -51528,10 +53496,10 @@ function contained4(root, path) {
 function importTarget(params) {
   const trimmed = params.trim();
   const quoted = /^(?:url\(\s*)?(["'])(.*?)\1\s*\)?/u.exec(trimmed);
-  const target = quoted?.[2] ?? /^(?:url\(\s*)?([^\s)'";]+)/u.exec(trimmed)?.[1];
-  if (target === void 0 || !target.startsWith("./") && !target.startsWith("../") || !target.toLowerCase().endsWith(".css"))
+  const target2 = quoted?.[2] ?? /^(?:url\(\s*)?([^\s)'";]+)/u.exec(trimmed)?.[1];
+  if (target2 === void 0 || !target2.startsWith("./") && !target2.startsWith("../") || !target2.toLowerCase().endsWith(".css"))
     return void 0;
-  return target;
+  return target2;
 }
 function varUses(source) {
   const uses = [];
@@ -51597,7 +53565,7 @@ async function cssFiles(projectDirectory, configuredPath) {
   }
   if (!contained4(rootReal, configuredReal))
     throw new IdiomError("design.tokensFile must remain inside the project");
-  const siblingDirectory = dirname19(configuredPath);
+  const siblingDirectory = dirname20(configuredPath);
   let siblings;
   try {
     siblings = (await readdir18(siblingDirectory, { withFileTypes: true })).filter((entry) => entry.isFile() && entry.name.endsWith(".css")).map((entry) => join56(siblingDirectory, entry.name)).sort();
@@ -51609,7 +53577,7 @@ async function cssFiles(projectDirectory, configuredPath) {
   const accepted = [];
   const visited = /* @__PURE__ */ new Set();
   const visit = async (lexicalPath) => {
-    const path = resolve45(lexicalPath);
+    const path = resolve46(lexicalPath);
     if (visited.has(path) || !contained4(projectDirectory, path)) return;
     visited.add(path);
     let actual;
@@ -51624,7 +53592,7 @@ async function cssFiles(projectDirectory, configuredPath) {
     accepted.push(path);
     let parsed;
     try {
-      parsed = postcss4.parse(await readFile54(path, "utf8"), { from: path });
+      parsed = postcss4.parse(await readFile55(path, "utf8"), { from: path });
     } catch (error) {
       throw new IdiomError(
         `cannot parse token support stylesheet ${relative28(projectDirectory, path)}: ${error instanceof Error ? error.message : String(error)}`
@@ -51633,8 +53601,8 @@ async function cssFiles(projectDirectory, configuredPath) {
     const imports = parsed.nodes.flatMap((node) => {
       if (node.type !== "atrule" || node.name.toLowerCase() !== "import")
         return [];
-      const target = importTarget(node.params);
-      return target === void 0 ? [] : [resolve45(dirname19(path), target)];
+      const target2 = importTarget(node.params);
+      return target2 === void 0 ? [] : [resolve46(dirname20(path), target2)];
     });
     for (const imported of imports.sort()) await visit(imported);
   };
@@ -51645,7 +53613,7 @@ async function cssFiles(projectDirectory, configuredPath) {
 async function definitionsFrom(files) {
   const definitions = /* @__PURE__ */ new Map();
   for (const file of files) {
-    const parsed = postcss4.parse(await readFile54(file, "utf8"), { from: file });
+    const parsed = postcss4.parse(await readFile55(file, "utf8"), { from: file });
     parsed.walkDecls((declaration) => {
       if (!declaration.prop.startsWith("--") || declaration.value.trim() === "")
         return;
@@ -51709,7 +53677,7 @@ async function collectSystemTokens(projectDirectory, tokensFile, inline2 = []) {
       declarations: inlineDeclarations(inline2),
       environment: {}
     } : authored;
-  const configuredPath = resolve45(projectDirectory, authored.source);
+  const configuredPath = resolve46(projectDirectory, authored.source);
   const definitions = await definitionsFrom(
     await cssFiles(projectDirectory, configuredPath)
   );
@@ -51747,7 +53715,7 @@ async function collectSystemTokens(projectDirectory, tokensFile, inline2 = []) {
 // src/system/collect.ts
 async function requiredText2(path, label3) {
   try {
-    return await readFile55(path, "utf8");
+    return await readFile56(path, "utf8");
   } catch (error) {
     throw new IdiomError(
       `cannot read ${JSON.stringify(label3)} for the system page: ${error instanceof Error ? error.message : String(error)}`
@@ -51786,7 +53754,7 @@ async function storedRuns(roots) {
       if (!runs.has(entry.name))
         runs.set(entry.name, {
           runId: entry.name,
-          runDirectory: resolve46(root, entry.name)
+          runDirectory: resolve47(root, entry.name)
         });
     }
   }
@@ -51814,7 +53782,7 @@ async function firstMetadata(runDirectory) {
   for (const path of candidates.sort()) {
     let source;
     try {
-      source = await readFile55(path, "utf8");
+      source = await readFile56(path, "utf8");
     } catch (error) {
       if (error.code === "ENOENT") continue;
       throw error;
@@ -51939,16 +53907,16 @@ function coordinate3(tuple) {
     colorScheme: tuple.colorScheme ?? "light"
   };
 }
-function addObserved(target, value, point) {
+function addObserved(target2, value, point) {
   const normalized = value.trim();
   if (normalized === "") return;
-  const coordinates = target.get(normalized) ?? [];
+  const coordinates = target2.get(normalized) ?? [];
   const key3 = `${point.flow}/${point.state}/${point.viewport}/${point.colorScheme}`;
   if (coordinates.length < 4 && !coordinates.some(
     (item) => `${item.flow}/${item.state}/${item.viewport}/${item.colorScheme}` === key3
   ))
     coordinates.push(point);
-  target.set(normalized, coordinates);
+  target2.set(normalized, coordinates);
 }
 function observedValues(source) {
   return [...source.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([value, coordinates]) => ({ value, coordinates }));
@@ -52011,10 +53979,10 @@ function aggregateObservedTuples(capture) {
 }
 function safeEvidencePath(runDirectory, path) {
   if (path === "" || isAbsolute21(path) || path.includes("\\")) return void 0;
-  const target = resolve46(runDirectory, path);
-  const rel = relative29(runDirectory, target);
+  const target2 = resolve47(runDirectory, path);
+  const rel = relative29(runDirectory, target2);
   if (rel.startsWith("..") || isAbsolute21(rel)) return void 0;
-  return target;
+  return target2;
 }
 async function embedProhibitions(prohibitions) {
   return await Promise.all(
@@ -52022,15 +53990,15 @@ async function embedProhibitions(prohibitions) {
       if (prohibition.kind === "degraded") return prohibition;
       const images = [];
       for (const path of prohibition.evidence.screenshots) {
-        const target = safeEvidencePath(
+        const target2 = safeEvidencePath(
           prohibition.evidence.runDirectory,
           path
         );
-        if (target === void 0) continue;
+        if (target2 === void 0) continue;
         try {
-          const stat7 = await lstat7(target);
+          const stat7 = await lstat7(target2);
           if (!stat7.isFile()) continue;
-          images.push({ path, dataUri: pngDataUri(await readFile55(target)) });
+          images.push({ path, dataUri: pngDataUri(await readFile56(target2)) });
         } catch (error) {
           if (error.code !== "ENOENT") throw error;
         }
@@ -52169,11 +54137,11 @@ init_discover();
 
 // src/system/learn/dtcg.ts
 init_mapping();
-import { readFile as readFile56 } from "fs/promises";
-import { resolve as resolve47 } from "path";
+import { readFile as readFile57 } from "fs/promises";
+import { resolve as resolve48 } from "path";
 var object = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 async function extractDtcg(root, path) {
-  const data = JSON.parse(await readFile56(resolve47(root, path), "utf8"));
+  const data = JSON.parse(await readFile57(resolve48(root, path), "utf8"));
   const entries = /* @__PURE__ */ new Map();
   const walk2 = (value, keys, inherited) => {
     if (!object(value)) return;
@@ -52209,10 +54177,10 @@ async function extractDtcg(root, path) {
     const entry = entries.get(name);
     if (!entry) throw new Error(`Missing token alias target: ${name}`);
     if (typeof entry.value === "string" && /^\{[^{}]+\}$/.test(entry.value)) {
-      const target = resolveValue2(entry.value.slice(1, -1), [...trail, name]);
-      if (entry.type && entry.type !== target.type)
+      const target2 = resolveValue2(entry.value.slice(1, -1), [...trail, name]);
+      if (entry.type && entry.type !== target2.type)
         throw new Error(`Alias type mismatch: ${name}`);
-      return { ...target, type: entry.type ?? target.type };
+      return { ...target2, type: entry.type ?? target2.type };
     }
     return entry;
   };
@@ -52278,7 +54246,7 @@ init_schema();
 
 // src/system/learn/tailwind.ts
 init_mapping();
-import { resolve as resolve48 } from "path";
+import { resolve as resolve49 } from "path";
 import loadConfig from "tailwindcss-v3/loadConfig.js";
 import resolveConfig from "tailwindcss-v3/resolveConfig.js";
 function trackThemeFunctions(config, results, seen = /* @__PURE__ */ new Map()) {
@@ -52334,7 +54302,7 @@ function explicitlyDeclared(config, section2, keys, results, seen = /* @__PURE__
 }
 function extractTailwind(root, path) {
   try {
-    const loaded = loadConfig(resolve48(root, path));
+    const loaded = loadConfig(resolve49(root, path));
     const results = /* @__PURE__ */ new Map();
     const config = trackThemeFunctions(loaded, results);
     const effective = resolveConfig(config);
@@ -52521,8 +54489,8 @@ function resolveValue(variables, variable, modeId, seen = /* @__PURE__ */ new Se
   const collection = variables.meta.variableCollections[variable.variableCollectionId];
   const value = variable.valuesByMode[modeId] ?? (collection ? variable.valuesByMode[collection.defaultModeId] : void 0);
   if (!isVariableAlias(value)) return value;
-  const target = variables.meta.variables[value.id];
-  return target ? resolveValue(variables, target, modeId, seen) : void 0;
+  const target2 = variables.meta.variables[value.id];
+  return target2 ? resolveValue(variables, target2, modeId, seen) : void 0;
 }
 function figmaVariableTokens(variables, path) {
   const tokens2 = [], diagnostics = [];
@@ -52595,7 +54563,7 @@ async function prepareLearning(projectDirectory, dependencies = {}, source = {})
     deps: dependencies.figma
   }) : void 0;
   const extraction = figma ?? await extractSources(projectDirectory);
-  const before = await readFile57(
+  const before = await readFile58(
     join58(projectDirectory, ".idiom", "project.json"),
     "utf8"
   );
@@ -52721,8 +54689,8 @@ async function runSystemLearning(projectDirectory, options) {
 }
 
 // src/templates.ts
-import { readFile as readFile58 } from "fs/promises";
-import { dirname as dirname20, join as join59 } from "path";
+import { readFile as readFile59 } from "fs/promises";
+import { dirname as dirname21, join as join59 } from "path";
 import { fileURLToPath } from "url";
 var templateNames = [
   "PRODUCT.md",
@@ -52738,13 +54706,13 @@ function idiomSkillTemplatePath(name) {
   return join59("idiom", name);
 }
 function templatesDirectory() {
-  return join59(dirname20(fileURLToPath(import.meta.url)), "..", "templates");
+  return join59(dirname21(fileURLToPath(import.meta.url)), "..", "templates");
 }
 async function readTemplate(name) {
-  return readFile58(join59(templatesDirectory(), name), "utf8");
+  return readFile59(join59(templatesDirectory(), name), "utf8");
 }
 async function readIdiomSkillFile(name) {
-  return readFile58(
+  return readFile59(
     join59(templatesDirectory(), idiomSkillTemplatePath(name)),
     "utf8"
   );
@@ -52756,10 +54724,10 @@ function autobuildVerifierSkillTemplatePath() {
   return join59(templatesDirectory(), "ab-verify-idiom", "SKILL.md");
 }
 async function readAutobuildTemplate() {
-  return readFile58(autobuildTemplatePath(), "utf8");
+  return readFile59(autobuildTemplatePath(), "utf8");
 }
 async function readAutobuildVerifierSkillTemplate() {
-  return readFile58(autobuildVerifierSkillTemplatePath(), "utf8");
+  return readFile59(autobuildVerifierSkillTemplatePath(), "utf8");
 }
 
 // src/commands/init.ts
@@ -52796,7 +54764,7 @@ async function matchesTemplate(file, template) {
     if (error.code === "ENOENT") return false;
     throw error;
   }
-  return await readFile59(file, "utf8") === template;
+  return await readFile60(file, "utf8") === template;
 }
 async function installSkills(projectDirectory, result2) {
   const canonicalDirectory = join60(projectDirectory, canonicalSkillPath);
@@ -52844,7 +54812,7 @@ async function installSkills(projectDirectory, result2) {
   if (!canonicalOwned) return;
   const claudeEntry = join60(projectDirectory, claudeSkillPath);
   if (!await entryExists(claudeEntry)) {
-    await mkdir21(dirname21(claudeEntry), { recursive: true });
+    await mkdir21(dirname22(claudeEntry), { recursive: true });
     await symlink2(claudeSkillTarget, claudeEntry, "dir");
     result2.created.push(claudeSkillPath);
     return;
@@ -52868,7 +54836,7 @@ async function entrySnapshot(path) {
     const entry = await lstat8(path);
     if (entry.isSymbolicLink()) return `symlink:${await readlink2(path)}`;
     if (entry.isFile())
-      return `file:${(await readFile59(path)).toString("base64")}`;
+      return `file:${(await readFile60(path)).toString("base64")}`;
     if (entry.isDirectory()) return "directory";
     return "other";
   } catch (error) {
@@ -52898,7 +54866,7 @@ async function verifierSkillState(projectDirectory, template) {
         kind: "unsafe",
         reason: `${autobuildSkillFile} is occupied by a foreign entry.`
       };
-    return await readFile59(file, "utf8") === template ? { kind: "exact" } : { kind: "replaceable" };
+    return await readFile60(file, "utf8") === template ? { kind: "exact" } : { kind: "replaceable" };
   } catch (error) {
     if (error.code === "ENOENT")
       return {
@@ -52948,7 +54916,7 @@ async function prepareWiring(projectDirectory) {
         skillTemplate: await readAutobuildVerifierSkillTemplate()
       };
     }
-    configSource = await readFile59(configPath, "utf8");
+    configSource = await readFile60(configPath, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return void 0;
     throw error;
@@ -52994,11 +54962,11 @@ function recordOnce(collection, path) {
   if (!collection.includes(path)) collection.push(path);
 }
 async function atomicReplaceConfig(path, expected, content) {
-  if (await readFile59(path, "utf8") !== expected)
+  if (await readFile60(path, "utf8") !== expected)
     throw new Error(`${path} changed after confirmation; rerun init`);
   const entry = await lstat8(path);
   const temporary = join60(
-    dirname21(path),
+    dirname22(path),
     `.${basename12(path)}.idiom-${process.pid}-${randomUUID8()}.tmp`
   );
   try {
@@ -53030,7 +54998,7 @@ async function applyWiring(projectDirectory, preparation, result2) {
   } else recordOnce(result2.unchanged, autobuildSkillFile);
   if (preparation.claudeState.kind === "absent") {
     const path = join60(projectDirectory, autobuildClaudeSkillPath);
-    await mkdir21(dirname21(path), { recursive: true });
+    await mkdir21(dirname22(path), { recursive: true });
     await symlink2(autobuildClaudeSkillTarget, path, "dir");
     recordOnce(result2.created, autobuildClaudeSkillPath);
   } else recordOnce(result2.unchanged, autobuildClaudeSkillPath);
@@ -53135,7 +55103,7 @@ async function initProject(options) {
     const file = join60(projectDirectory, relativePath2);
     let existing;
     try {
-      existing = await readFile59(file, "utf8");
+      existing = await readFile60(file, "utf8");
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
@@ -53244,7 +55212,7 @@ async function initProject(options) {
         result2.skipped.push(relativePath2);
         kind = "preserved";
       } else {
-        const existing = await readFile59(file, "utf8");
+        const existing = await readFile60(file, "utf8");
         if (existing === generated.content) {
           result2.unchanged.push(relativePath2);
           kind = "unchanged";
@@ -53296,13 +55264,13 @@ async function instructionCommand(options) {
 // src/commands/learn.ts
 init_errors();
 import { copyFile as copyFile3, mkdir as mkdir22, rename as rename24, rm as rm17, writeFile as writeFile35 } from "fs/promises";
-import { dirname as dirname22 } from "path";
+import { dirname as dirname23 } from "path";
 import { stdin as stdin6, stdout as stdout6 } from "process";
 import { createInterface as createInterface6 } from "readline/promises";
 
 // src/learn/capture.ts
 init_artifacts2();
-import { readdir as readdir20, readFile as readFile60, stat as stat6 } from "fs/promises";
+import { readdir as readdir20, readFile as readFile61, stat as stat6 } from "fs/promises";
 import { join as join61, relative as relative31 } from "path";
 async function exists7(path) {
   try {
@@ -53322,7 +55290,7 @@ async function directories(path) {
 async function capturedFlow(tuple) {
   try {
     const metadata2 = JSON.parse(
-      await readFile60(join61(tuple, "metadata.json"), "utf8")
+      await readFile61(join61(tuple, "metadata.json"), "utf8")
     );
     return typeof metadata2.flow?.id === "string" ? metadata2.flow.id : void 0;
   } catch {
@@ -53377,7 +55345,7 @@ init_fingerprint2();
 init_law();
 init_names();
 init_flow();
-import { readFile as readFile61 } from "fs/promises";
+import { readFile as readFile62 } from "fs/promises";
 import { join as join62, relative as relative32 } from "path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "util";
 
@@ -53606,7 +55574,7 @@ var PNG_SIGNATURE2 = Buffer.from([
 ]);
 async function optionalText(path) {
   try {
-    return await readFile61(path, "utf8");
+    return await readFile62(path, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return void 0;
     throw error;
@@ -53649,7 +55617,7 @@ async function draftLearning(options) {
   if (options.screenshot !== void 0) {
     let source;
     try {
-      source = await readFile61(options.screenshot);
+      source = await readFile62(options.screenshot);
     } catch (error) {
       throw new IdiomError(
         `cannot read --screenshot ${options.screenshot}: ${error instanceof Error ? error.message : String(error)}`
@@ -53666,7 +55634,7 @@ async function draftLearning(options) {
       throw new IdiomError(
         `no capture of ${options.flow.flow.id}/${options.state} found; run idiom capture ${options.flow.flow.id} or pass --selector`
       );
-    html ??= await readFile61(options.capture.domPath, "utf8");
+    html ??= await readFile62(options.capture.domPath, "utf8");
     return (await resolveSubject({ html, subject, launch: options.launch })).selector;
   };
   const expectSelectors = (count2) => {
@@ -53677,7 +55645,7 @@ async function draftLearning(options) {
   };
   const projectPath = join62(projectDirectory, ".idiom", "project.json");
   const editProject = async (path, item, edit2) => {
-    const before = await readFile61(projectPath, "utf8");
+    const before = await readFile62(projectPath, "utf8");
     const value = record(JSON.parse(before));
     if (value.checks === void 0) value.checks = {};
     edit2(record(value.checks));
@@ -53696,7 +55664,7 @@ async function draftLearning(options) {
     diffs.push(fileDiff(display(projectPath), before, after));
   };
   let entry;
-  let target;
+  let target2;
   let rulingNames;
   let ruling;
   switch (interpretation.kind) {
@@ -53721,7 +55689,7 @@ async function draftLearning(options) {
           );
         components.push(entry);
       });
-      target = { file: display(projectPath), selector };
+      target2 = { file: display(projectPath), selector };
       break;
     }
     case "invariant": {
@@ -53734,7 +55702,7 @@ async function draftLearning(options) {
         ...interpretation.height === void 0 ? {} : { height: interpretation.height }
       };
       const path = options.flow.file;
-      const before = await readFile61(path, "utf8");
+      const before = await readFile62(path, "utf8");
       const value = record(JSON.parse(before));
       const state = (Array.isArray(value.states) ? value.states : []).map(record).find((candidate2) => candidate2.id === options.state);
       if (state === void 0)
@@ -53758,7 +55726,7 @@ async function draftLearning(options) {
         );
       writes.push({ path, displayPath: display(path), before, after });
       diffs.push(fileDiff(display(path), before, after));
-      target = { file: display(path), selector };
+      target2 = { file: display(path), selector };
       break;
     }
     case "glossary": {
@@ -53778,7 +55746,7 @@ async function draftLearning(options) {
           );
         glossary.push(entry);
       });
-      target = { file: display(projectPath) };
+      target2 = { file: display(projectPath) };
       break;
     }
     case "mirrored": {
@@ -53797,7 +55765,7 @@ async function draftLearning(options) {
           );
         pairs.push(entry);
       });
-      target = { file: display(projectPath), selector: `${a}, ${b}` };
+      target2 = { file: display(projectPath), selector: `${a}, ${b}` };
       break;
     }
     case "ruling": {
@@ -53834,7 +55802,7 @@ async function draftLearning(options) {
       });
       diffs.push(rulingDiff(display(designPath), before, after));
       entry = { id: ruling.id, wording: ruling.wording };
-      target = { file: display(designPath), rulingId: ruling.id };
+      target2 = { file: display(designPath), rulingId: ruling.id };
       break;
     }
   }
@@ -53856,7 +55824,7 @@ async function draftLearning(options) {
     state: options.state,
     observation: options.observation.trim(),
     kind: interpretation.kind,
-    target,
+    target: target2,
     entry,
     ...options.capture === void 0 ? {} : {
       capture: {
@@ -53906,7 +55874,7 @@ async function defaultConfirmation3() {
   }
 }
 async function atomicWrite(path, content) {
-  await mkdir22(dirname22(path), { recursive: true });
+  await mkdir22(dirname23(path), { recursive: true });
   const temporary = `${path}.tmp-${process.pid}-${Date.now()}`;
   try {
     await writeFile35(temporary, content, "utf8");
@@ -53976,7 +55944,7 @@ async function learnCommand(options) {
   const confirmed = options.yes === true || await (options.dependencies?.confirm ?? defaultConfirmation3)(draft.diff);
   if (!confirmed) return { recorded: false };
   for (const copy2 of draft.copies) {
-    await mkdir22(dirname22(copy2.to), { recursive: true });
+    await mkdir22(dirname23(copy2.to), { recursive: true });
     await copyFile3(copy2.from, copy2.to);
   }
   for (const write of draft.writes) await atomicWrite(write.path, write.after);
@@ -54001,7 +55969,7 @@ async function quickCommand(options) {
 }
 
 // src/commands/reference.ts
-import { resolve as resolve51 } from "path";
+import { resolve as resolve52 } from "path";
 
 // src/references/run.ts
 init_browser();
@@ -54013,12 +55981,12 @@ import {
   lstat as lstat9,
   mkdir as mkdir23,
   mkdtemp as mkdtemp7,
-  readFile as readFile63,
+  readFile as readFile64,
   rename as rename25,
   rm as rm18,
   writeFile as writeFile37
 } from "fs/promises";
-import { basename as basename13, extname as extname4, join as join64, resolve as resolve50 } from "path";
+import { basename as basename13, extname as extname4, join as join64, resolve as resolve51 } from "path";
 async function exists8(path) {
   try {
     await lstat9(path);
@@ -54061,7 +56029,7 @@ async function addReference(options) {
   let localSource;
   let imageData;
   if (options.file !== void 0) {
-    localSource = resolve50(options.cwd, options.file);
+    localSource = resolve51(options.cwd, options.file);
     const mediaType = mediaTypeForPath(localSource);
     if (mediaType === void 0)
       throw new IdiomError(
@@ -54079,7 +56047,7 @@ async function addReference(options) {
       throw new IdiomError(
         `local reference is not a regular file: ${localSource}`
       );
-    imageData = await readFile63(localSource);
+    imageData = await readFile64(localSource);
     metadata2 = {
       version: 1,
       name,
@@ -54209,7 +56177,7 @@ async function addReferenceCommand(options) {
   return await addReference({
     projectDirectory: validated.projectDirectory,
     project: validated.project,
-    cwd: resolve51(options.cwd ?? process.cwd()),
+    cwd: resolve52(options.cwd ?? process.cwd()),
     name: options.name,
     note: options.note,
     url: options.url,
@@ -54348,7 +56316,7 @@ async function reportCommand(options) {
 
 // src/commands/review.ts
 init_summary();
-import { readFile as readFile65, writeFile as writeFile38 } from "fs/promises";
+import { readFile as readFile66, writeFile as writeFile38 } from "fs/promises";
 import { join as join67 } from "path";
 
 // src/review/page.ts
@@ -54369,8 +56337,8 @@ init_validation();
 init_crops();
 init_findings();
 init_run2();
-import { readFile as readFile64 } from "fs/promises";
-import { join as join66, resolve as resolve52 } from "path";
+import { readFile as readFile65 } from "fs/promises";
+import { join as join66, resolve as resolve53 } from "path";
 var DEFAULT_MAX_FINDINGS = 10;
 function numberedLines(source) {
   const lines2 = source.split(/\r\n?|\n/);
@@ -54379,7 +56347,7 @@ function numberedLines(source) {
 }
 async function readInput(cwd, path, label3) {
   try {
-    return { path, text: await readFile64(resolve52(cwd, path), "utf8") };
+    return { path, text: await readFile65(resolve53(cwd, path), "utf8") };
   } catch (error) {
     throw new IdiomError(
       `cannot read ${label3} ${path}: ${error instanceof Error ? error.message : String(error)}`
@@ -54388,7 +56356,7 @@ async function readInput(cwd, path, label3) {
 }
 async function optionalText2(path) {
   try {
-    return await readFile64(path, "utf8");
+    return await readFile65(path, "utf8");
   } catch {
     return "";
   }
@@ -54410,7 +56378,7 @@ function defaultRunName3(now) {
   return now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
 }
 async function runPageReview(options) {
-  const cwd = resolve52(options.cwd ?? process.cwd());
+  const cwd = resolve53(options.cwd ?? process.cwd());
   const directory = resolveProjectArgument(options.project, cwd);
   const projectDirectory = await findOptionalProjectDirectory(directory);
   const project = projectDirectory === void 0 ? void 0 : (await validateProjectConfiguration({ project: projectDirectory })).project;
@@ -54423,7 +56391,7 @@ async function runPageReview(options) {
     page: project?.checks.page ?? {}
   });
   const configuration = createQuickConfiguration([options.url], {
-    design: options.design === void 0 ? void 0 : /^https?:/i.test(designSourceSchema.parse(options.design)) ? options.design : resolve52(cwd, options.design),
+    design: options.design === void 0 ? void 0 : /^https?:/i.test(designSourceSchema.parse(options.design)) ? options.design : resolve53(cwd, options.design),
     flowId: "page-review",
     title: "Page review",
     colorSchemes: ["light"],
@@ -54435,7 +56403,7 @@ async function runPageReview(options) {
     checks.page = { ...checks.page, brief: { text: brief.text } };
   const now = options.dependencies?.capture?.now ?? (() => /* @__PURE__ */ new Date());
   const startedAt = now();
-  const finalDirectory = options.out === void 0 ? join66(directory, "idiom-page-reviews", defaultRunName3(startedAt)) : resolve52(directory, options.out);
+  const finalDirectory = options.out === void 0 ? join66(directory, "idiom-page-reviews", defaultRunName3(startedAt)) : resolve53(directory, options.out);
   const { runDirectory, loaded, reviewed, counts } = await captureLiteralPages({
     directory,
     finalDirectory,
@@ -54633,7 +56601,7 @@ async function reviewCommand(options) {
   let material;
   const readMaterial = async () => {
     material ??= JSON.parse(
-      await readFile65(result2.findingsPath, "utf8")
+      await readFile66(result2.findingsPath, "utf8")
     );
     return material;
   };
@@ -54733,7 +56701,7 @@ async function rulingCommand(options) {
 init_summary();
 init_run2();
 init_emit();
-import { readFile as readFile66 } from "fs/promises";
+import { readFile as readFile67 } from "fs/promises";
 import { basename as basename14 } from "path";
 var severityRank = { blocker: 0, major: 1, minor: 2 };
 var layerRank = { deterministic: 0, model: 1 };
@@ -54746,7 +56714,7 @@ async function sweepCommand(options) {
   const { emitTickets, ...reviewOptions } = options;
   const result2 = await runReview({ ...reviewOptions, mode: "sweep" });
   const findings = JSON.parse(
-    await readFile66(result2.findingsPath, "utf8")
+    await readFile67(result2.findingsPath, "utf8")
   );
   const ranked = rankSweepFindings(
     findings.filter(

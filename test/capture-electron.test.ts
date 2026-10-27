@@ -542,3 +542,61 @@ test("captures a deterministic Electron fixture with full artifact parity", asyn
     expect(screenshot.height).toBe(tuple.height * 2);
   }
 }, 120_000);
+
+test.each([0, 1000])(
+  "Electron launcher threads animationSettleMs=%i to shared evidence",
+  async (bound) => {
+    const flow = flowSchema.parse({
+      id: "f",
+      title: "f",
+      intent: [],
+      setup: [],
+      target: {
+        kind: "electron",
+        launch: {
+          executablePath: electronPath,
+          args: ["electron.cjs"],
+          cwd: join(import.meta.dirname, "fixtures/painted-visibility"),
+        },
+        window: { title: "Painted entrance" },
+      },
+      states: [{ id: "entrance", description: "entrance", expect: {} }],
+    });
+    if (!isElectronFlow(flow)) throw new Error("missing electron flow");
+    const project = projectSchema.parse({
+      version: 1,
+      app: { name: "test", framework: "other" },
+      server: {
+        build: "unused",
+        start: "unused",
+        readyUrl: "http://127.0.0.1:3000",
+        port: 3000,
+        env: {},
+      },
+      capture: { settleMs: 0, reducedMotion: false, animationSettleMs: bound },
+      design: {},
+      model: { provider: "claude-code", model: "test" },
+    });
+    const session = await createElectronLauncher({
+      createAxe: () => ({ analyze: async () => ({ violations: [] }) }),
+    })({
+      projectDirectory: import.meta.dirname,
+      flow,
+      dataDirectory: import.meta.dirname,
+      inheritedEnvironment: process.env,
+    });
+    const state = flow.states[0];
+    const viewport = project.viewports[0];
+    if (!state || !viewport) throw new Error("missing tuple");
+    try {
+      const { result } = await session.capture({ project, state, viewport });
+      expect(result.ok).toBe(true);
+      expect(
+        result.observations?.elements.find((e) => e.selector === "#entrance")
+          ?.painted?.value,
+      ).toBe(bound > 0);
+    } finally {
+      await session.close();
+    }
+  },
+);
