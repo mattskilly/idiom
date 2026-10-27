@@ -194,6 +194,54 @@ test("a four-step form flow reaches and captures the editor", async () => {
   expect(result.screenshot?.length).toBeGreaterThan(100);
 });
 
+test("every web step and the state load get an action timeline", async () => {
+  const flow = flowWith(
+    [
+      { action: "click", selector: "#new" },
+      { action: "fill", selector: "#title", value: "My page" },
+      { action: "select", selector: "#template", label: "Basic" },
+      { action: "click", selector: "#create" },
+    ],
+    "/",
+  );
+  const project = projectAt(Number(new URL(baseUrl).port));
+  const state = flow.states[0];
+  const viewport = project.viewports[0];
+  if (!state || !viewport) throw Error("missing tuple");
+  const result = await session.capture({
+    project,
+    state,
+    viewport,
+    navigationUrl: `${baseUrl}/?token=secret`,
+  });
+  expect(result.ok).toBe(true);
+  const actions = result.timelines?.actions ?? [];
+  expect(actions.map((action) => action.id)).toEqual([
+    "load",
+    "step-1",
+    "step-2",
+    "step-3",
+    "step-4",
+  ]);
+  expect(actions.map((action) => action.kind)).toEqual([
+    "navigation",
+    "click",
+    "fill",
+    "select",
+    "click",
+  ]);
+  const [load, first] = actions;
+  if (!load || !first) throw Error("missing timelines");
+  expect(load.name).toBe("/");
+  // The load window closes where the user's first action begins.
+  expect(load.startedAt + load.durationMs).toBeLessThanOrEqual(
+    first.startedAt + 1,
+  );
+  expect(first.effectRegion.control).toBe("#new");
+  expect(JSON.stringify(result.timelines)).not.toContain("secret");
+  expect(JSON.stringify(result.observations)).not.toContain("__idiomTimeline");
+});
+
 test("supports select value (rather than matching a label), press, waits, URLs and duplicate visible text", async () => {
   const result = await capture([
     { action: "expectUrl", path: "/editor" },

@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><title>Exclusion</title><style>body{font:16px sans-serif;margin:24px}</style></head><body>
+<main><h1>Notes</h1><button id="add" type="button">Add note</button><ul id="notes"></ul><p id="count"></p></main>
+<script>
+document.querySelector("#add").addEventListener("click", async () => {
+  const item = document.createElement("li");
+  item.textContent = "New note";
+  document.querySelector("#notes").append(item);
+  const response = await fetch("/api/items");
+  const items = await response.json();
+  document.querySelector("#count").textContent = items.length + " notes synced";
+});
+</script></body></html>

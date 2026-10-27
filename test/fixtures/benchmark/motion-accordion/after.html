@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Motion lab</title><style>
+body { font: 16px system-ui; padding: 32px; margin: 0; } button { padding: 12px; }
+#details { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 150ms ease-out; }
+#details.open { grid-template-rows: 1fr; }
+#details > div { overflow: hidden; }
+#details > div > p { height: 160px; margin: 0; background: #f4f4f4; }
+@keyframes enter { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style></head><body>
+<h1>Release notes</h1>
+<p>Version 2 adds offline mode.</p>
+<button id="more" aria-expanded="false" aria-controls="details">Show more</button>
+<div id="details"><div><p>Offline mode keeps drafts on the device and syncs them later.</p></div></div>
+<p>Thanks for reading.</p>
+<script>more.onclick = () => { const open = more.getAttribute("aria-expanded") !== "true"; more.setAttribute("aria-expanded", String(open)); details.classList.toggle("open", open); };</script>
+</body></html>

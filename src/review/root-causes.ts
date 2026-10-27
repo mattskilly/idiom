@@ -353,7 +353,15 @@ const tiers: Array<{
 
 type Assignment = { candidate: Candidate; symptoms: Symptom[] };
 
-function assign(symptoms: Symptom[]): {
+export type AggregateCauseOptions = {
+  /** Aggregate group id → owning flow. Enables same-rule declared components only. */
+  groupFlows: ReadonlyMap<string, string>;
+};
+
+function assign(
+  symptoms: Symptom[],
+  aggregate?: AggregateCauseOptions,
+): {
   causes: Assignment[];
   rest: Symptom[];
 } {
@@ -395,7 +403,13 @@ function assign(symptoms: Symptom[]): {
       const remaining = bucket.symptoms.filter(
         (symptom) => !assigned.has(symptom),
       );
-      if (!tier.accepts(remaining)) continue;
+      const repeatedComponent =
+        aggregate !== undefined &&
+        tier.kind === "component" &&
+        /^(component:|idiom-name:)/.test(bucket.candidate.key) &&
+        new Set(remaining.map((s) => aggregate.groupFlows.get(s.group.id)))
+          .size >= 2;
+      if (!tier.accepts(remaining) && !repeatedComponent) continue;
       for (const symptom of remaining) assigned.add(symptom);
       causes.push({ candidate: bucket.candidate, symptoms: remaining });
     }
@@ -587,6 +601,7 @@ export function rootCauseIssues(
   findingsById: ReadonlyMap<string, Finding>,
   primary: ReadonlySet<string>,
   context?: IssueRankingContext,
+  aggregate?: AggregateCauseOptions,
 ): CheckIssue[] {
   if (context === undefined) return collapseIssues(groups, primary, context);
   const symptoms: Symptom[] = groups.map((group) => {
@@ -603,10 +618,23 @@ export function rootCauseIssues(
         ruleFamily(group.category, group.rule) ?? group.rule ?? group.category,
       targets,
       resolved,
-      candidates: candidatesFor(resolved, targets),
+      candidates: candidatesFor(resolved, targets).map((candidate) =>
+        aggregate !== undefined &&
+        (candidate.kind === "region" ||
+          (candidate.kind === "component" &&
+            candidate.key.startsWith("class:")))
+          ? {
+              ...candidate,
+              key: JSON.stringify([
+                aggregate.groupFlows.get(group.id),
+                candidate.key,
+              ]),
+            }
+          : candidate,
+      ),
     };
   });
-  const { causes, rest } = assign(symptoms);
+  const { causes, rest } = assign(symptoms, aggregate);
   const issues = causes.map((assignment) =>
     rootCauseIssue(assignment, context),
   );

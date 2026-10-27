@@ -3,12 +3,14 @@ import { type Browser, chromium } from "playwright";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { createBrowserLauncher } from "../src/capture/browser.js";
 import { ProgressCollector } from "../src/capture/progress.js";
+import { withTimelineIds } from "../src/capture/timeline.js";
 import { observationArtifactSchema } from "../src/checks/artifact-schema.js";
 import { runDeterministicChecks } from "../src/checks/registry.js";
 import type { EmptyRegionsObservation } from "../src/checks/types.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
 import { fixture, reviewFixture } from "./benchmark-support.js";
+import { startLoadingServer } from "./loading-support.js";
 import { emptyObservation, required, tupleFor } from "./motion-support.js";
 
 let browser: Browser;
@@ -175,6 +177,86 @@ test("longRunning capture records progress, round-trips offline, and discloses n
     await new Promise<void>((accept) => server.close(() => accept()));
   }
 }, 30_000);
+
+test("a web step that fetches with no feedback gets a held replay; longRunning leaves it to progress-affordance", async () => {
+  const server = await startLoadingServer();
+  const port = Number(new URL(server.origin).port);
+  const session = await createBrowserLauncher({
+    createAxe: () => ({ analyze: async () => ({ violations: [] }) }),
+  })();
+  try {
+    const project = projectSchema.parse({
+      version: 1,
+      app: { name: "Loading", framework: "other" },
+      server: {
+        build: "node -e 0",
+        start: "node -e 0",
+        readyUrl: server.origin,
+        port,
+        env: {},
+      },
+      viewports: [{ name: "desktop", width: 800, height: 600 }],
+      capture: { settleMs: 0 },
+      design: {},
+      model: { provider: "anthropic", model: "unused", maxFindings: 5 },
+    });
+    for (const marked of [false, true]) {
+      const flow = flowSchema.parse({
+        id: "loading",
+        title: "Loading",
+        intent: [],
+        setup: [],
+        states: [
+          {
+            id: marked ? "marked" : "unmarked",
+            description: "Load items",
+            url: "/loading-state/before.html",
+            steps: [
+              {
+                action: "click",
+                selector: "#load",
+                ...(marked ? { longRunning: true } : {}),
+              },
+              { action: "expectText", text: "Alpha" },
+            ],
+            expect: {},
+          },
+        ],
+      });
+      const result = await session.capture({
+        project,
+        state: required(flow.states[0]),
+        viewport: required(project.viewports[0]),
+        navigationUrl: `${server.origin}/loading-state/before.html`,
+        probe: true,
+      });
+      expect(result.ok).toBe(true);
+      if (result.observations?.version !== 2) throw Error("missing evidence");
+      const timelines = withTimelineIds(result.timelines);
+      expect(timelines?.actions.map((action) => action.id)).toContain(
+        "slow-step-1",
+      );
+      const found = runDeterministicChecks([
+        { ...tupleFor(result.observations), timelines },
+      ]).candidates.filter(({ candidate }) =>
+        ["loading-state-missing", "progress-affordance"].includes(
+          candidate.category,
+        ),
+      );
+      expect(
+        found.map(({ candidate }) => [candidate.category, candidate.timeline]),
+      ).toEqual(
+        marked
+          ? [["progress-affordance", undefined]]
+          : [["loading-state-missing", "slow-step-1"]],
+      );
+    }
+    expect(server.nonGet).toEqual([]);
+  } finally {
+    await session.close();
+    await server.close();
+  }
+}, 90_000);
 
 test.each([
   [

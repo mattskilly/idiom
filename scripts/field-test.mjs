@@ -22,10 +22,13 @@ import {
   classifyFailure,
   countProbeTimeouts,
   mergeLabelTemplate,
+  probeTupleOverheadMs,
   renderGenerated,
   replaceGeneratedSection,
   summarizeCheckResult,
+  summarizeProbeSafety,
   summarizeQuickResult,
+  sumProbeSafety,
   validateTargets,
 } from "./field-test-lib.mjs";
 
@@ -37,7 +40,9 @@ const paths = {
   labels: join(root, "docs", "field-test", "labels.json"),
   doc: join(root, "docs", "field-test.md"),
 };
-const QUICK_TIMEOUT_MS = 10 * 60_000;
+// The static quick limit plus quick review's default per-page probe budget.
+const QUICK_PROBE_BUDGET_MS = 45_000;
+const QUICK_TIMEOUT_MS = 10 * 60_000 + QUICK_PROBE_BUDGET_MS;
 const SMOKE_TIMEOUT_MS = 10 * 60_000;
 const STEP_TIMEOUT_MS = 15 * 60_000;
 const SPEED_STATES = 10;
@@ -124,14 +129,25 @@ function killGroup(child) {
 }
 
 async function observations(directory) {
+  return (await tupleDocuments(directory)).map((item) => item.observations);
+}
+
+/** Each tuple's observations.json with its metadata.json. */
+async function tupleDocuments(directory) {
   const found = [];
   const walk = async (path) => {
-    for (const entry of await readdir(path, { withFileTypes: true })) {
-      const next = join(path, entry.name);
-      if (entry.isDirectory()) await walk(next);
-      else if (entry.name === "observations.json")
-        found.push(await readJson(next).catch(() => undefined));
-    }
+    const entries = await readdir(path, { withFileTypes: true });
+    if (entries.some((entry) => entry.name === "observations.json"))
+      found.push({
+        observations: await readJson(join(path, "observations.json")).catch(
+          () => undefined,
+        ),
+        metadata: await readJson(join(path, "metadata.json")).catch(
+          () => undefined,
+        ),
+      });
+    for (const entry of entries)
+      if (entry.isDirectory()) await walk(join(path, entry.name));
   };
   if (directory && existsSync(directory)) await walk(directory);
   return found;
@@ -147,7 +163,7 @@ function stepFailure(stage, result) {
   });
 }
 
-async function quickTarget(target, scratch) {
+async function quickTarget(target, scratch, previous) {
   const record = { mode: "quick", failures: [], runs: [] };
   const project = await mkdtemp(join(scratch, `${target.id}-mcp-`));
   const transport = new StdioClientTransport({
@@ -182,11 +198,26 @@ async function quickTarget(target, scratch) {
             target: target.id,
           });
           const runDirectory = response.structuredContent.runDirectory;
+          const tuples = await tupleDocuments(runDirectory);
+          const documents = tuples.map((item) => item.observations);
+          const probeSafety = summarizeProbeSafety(documents);
+          if (probeSafety.nonSafeSent > 0)
+            record.failures.push(
+              classifyFailure({
+                stage: "probe safety",
+                message: `probe sent ${probeSafety.nonSafeSent} non-safe request(s): ${JSON.stringify(probeSafety.sent)}`,
+              }),
+            );
           record.runs.push({
             url,
             attempts: attempt,
             ...summary,
-            probe: countProbeTimeouts(await observations(runDirectory)),
+            probe: countProbeTimeouts(documents),
+            probeSafety,
+            probeTupleOverheadMs: probeTupleOverheadMs(
+              tuples.map((item) => item.metadata),
+              documents,
+            ),
             runDirectory,
           });
           break;
@@ -224,7 +255,24 @@ async function quickTarget(target, scratch) {
       issues: record.runs.reduce((sum, item) => sum + item.issues, 0),
       topIssues: first.topIssues,
       probe: sumProbe(record.runs.map((item) => item.probe)),
+      probeSafety: sumProbeSafety(record.runs.map((item) => item.probeSafety)),
+      probeTupleOverheadMs: record.runs.reduce(
+        (sum, item) => sum + (item.probeTupleOverheadMs ?? 0),
+        0,
+      ),
     });
+    // The last static (probe-free) run of this target is the baseline the
+    // probe's overhead is measured against.
+    const staticBaselineMs =
+      previous?.probe?.ran === 0 &&
+      previous?.probe?.partial === 0 &&
+      previous?.probe?.timedOut === 0
+        ? previous.elapsedMs
+        : previous?.staticBaselineMs;
+    if (typeof staticBaselineMs === "number") {
+      record.staticBaselineMs = staticBaselineMs;
+      record.probeOverheadMs = Math.round(record.elapsedMs - staticBaselineMs);
+    }
     for (const item of record.runs) delete item.topIssues;
   }
   const smokeProject = await mkdtemp(join(scratch, `${target.id}-cli-`));
@@ -397,7 +445,11 @@ async function runCommand(args) {
     const started = performance.now();
     const outcome = target.repo
       ? await repoTarget(target, scratch)
-      : await quickTarget(target, scratch);
+      : await quickTarget(
+          target,
+          scratch,
+          previous?.targets?.find((item) => item.id === target.id),
+        );
     results.targets.push({
       id: target.id,
       kind: target.kind,

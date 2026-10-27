@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Motion lab</title><style>
+body { font: 16px system-ui; padding: 32px; margin: 0; } button { padding: 12px; }
+.badge { display: inline-block; width: 16px; height: 16px; border-radius: 8px; background: crimson; vertical-align: middle; }
+</style></head><body>
+<h1>Inbox</h1>
+<button id="mark">Mark unread</button> <span id="slot"></span>
+<script>mark.onclick = () => { const dot = document.createElement("span"); dot.className = "badge"; dot.setAttribute("aria-label", "Unread"); slot.replaceChildren(dot); };</script>
+</body></html>

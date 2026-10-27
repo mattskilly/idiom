@@ -8,6 +8,8 @@ import {
   type Route,
 } from "playwright";
 import { inferredComponentInputs } from "../checks/design-components.js";
+import { checksConfigFrom } from "../checks/registry.js";
+import type { ActionTimelineArtifact } from "../checks/types.js";
 import { navigateDesign } from "../design/source.js";
 import {
   type ColorScheme,
@@ -15,12 +17,23 @@ import {
   type Project,
 } from "../schemas/project.js";
 import { ExplanationCollector } from "./explanations.js";
+import { FilmstripBudget, FilmstripCapture } from "./filmstrips.js";
 import { sweepFocusVisible } from "./focus.js";
 import { createLinkChecker, type LinkChecker } from "./links.js";
+import { heldCandidate } from "./loading.js";
 import { MotionCollector } from "./motion.js";
 import { collectPageEvidence } from "./page.js";
-import { probeControls, probeRequestAllowed } from "./probe.js";
+import {
+  createProbeSafetyLedger,
+  crossOriginNavigation,
+  type HeldStep,
+  probeControls,
+  probeRequestAllowed,
+  protectProbeFocus,
+  recordProbeRequest,
+} from "./probe.js";
 import { ProgressCollector } from "./progress.js";
+import { TimelineCollector } from "./timeline.js";
 import type {
   BrowserLauncher,
   BrowserSession,
@@ -29,10 +42,10 @@ import type {
   FlowState,
   TupleResult,
 } from "./types.js";
-
 import {
   consoleIsAllowed,
   type ReachContext,
+  runAction,
   WebStepRunner,
 } from "./web-steps.js";
 
@@ -126,6 +139,13 @@ async function captureInContext(
 ): Promise<TupleResult> {
   const records: ConsoleRecord[] = [];
   let page: Page | undefined;
+  // Third-party probing shares one ledger across the sweep and the clicks.
+  const safety =
+    tuple.probe && tuple.probeSafety === "third-party"
+      ? createProbeSafetyLedger([new URL(tuple.navigationUrl).origin])
+      : undefined;
+  const clock = runtime.monotonicNow ?? (() => performance.now());
+  let probeStartedAt: number | undefined;
   try {
     page = await context.newPage();
     const steps = "health" in tuple.state ? tuple.state.steps : [];
@@ -214,6 +234,36 @@ async function captureInContext(
       target,
       tuple.project.checks.progressWithinMs,
     );
+    const filmstrips =
+      !tuple.designReference && tuple.project.capture.filmstrips.enabled
+        ? new FilmstripCapture(
+            {
+              ...tuple.project.capture.filmstrips,
+              offsetsMs:
+                tuple.filmstripRequests?.[0]?.offsetsMs ??
+                tuple.project.capture.filmstrips.offsetsMs,
+            },
+            checksConfigFrom(tuple.project.checks),
+            () => motion.evidence(),
+            tuple.filmstripRequests?.map((r) => r.identity),
+            tuple.filmstripBudget,
+          )
+        : undefined;
+    const timelines = tuple.designReference
+      ? undefined
+      : new TimelineCollector(target, {
+          clock: runtime.monotonicNow,
+          motionSelectors: tuple.project.checks.motion.selectors,
+          filmstrips,
+        });
+    let probeTimelines: ActionTimelineArtifact | undefined;
+    await timelines?.beginLoad({
+      source: "load",
+      kind: "navigation",
+      name: URL.canParse(tuple.navigationUrl)
+        ? new URL(tuple.navigationUrl).pathname
+        : (tuple.navigationUrl.split(/[?#]/)[0] ?? ""),
+    });
     const createRunner = (collect = false, activePage = target) =>
       steps.length > 0
         ? new WebStepRunner(
@@ -225,16 +275,75 @@ async function captureInContext(
             collect ? explanations : undefined,
             tuple.onActivity,
             tuple.signal,
+            collect ? timelines : undefined,
           )
         : undefined;
     const runner = createRunner(true);
     const reach = async (
       active: WebStepRunner | undefined,
       activePage = target,
+      through = steps,
     ) =>
       active === undefined
         ? ((await activePage.goto(tuple.navigationUrl))?.status() ?? null)
-        : active.reach(tuple.navigationUrl, steps, reachContext(tuple.state));
+        : active.reach(tuple.navigationUrl, through, reachContext(tuple.state));
+    /** Replay steps 1..n-1 on a fresh page, as restore replays them all. */
+    const reachBefore = async (activePage: Page, stepIndex: number) => {
+      const replay = createRunner(false, activePage);
+      try {
+        await reach(replay, activePage, steps.slice(0, stepIndex - 1));
+        await activePage.waitForTimeout(
+          tuple.state.settleMs ?? tuple.project.capture.settleMs,
+        );
+        await replay?.finish();
+      } finally {
+        await replay?.dispose();
+      }
+    };
+    /** Web steps whose recorded action sent fetch/XHR/document requests. */
+    const heldSteps = (): HeldStep[] =>
+      (timelines?.evidence().actions ?? []).flatMap((action) => {
+        if (action.source !== "web-step" || action.stepIndex === undefined)
+          return [];
+        if (!heldCandidate(action.requests)) return [];
+        const stepIndex = action.stepIndex;
+        const step = steps[stepIndex - 1];
+        if (
+          step === undefined ||
+          !(
+            step.action === "click" ||
+            step.action === "fill" ||
+            step.action === "press" ||
+            step.action === "select"
+          )
+        )
+          return [];
+        const selector = step.selector;
+        return [
+          {
+            stepIndex,
+            action: step.action,
+            selector,
+            reach: (page: Page) => reachBefore(page, stepIndex),
+            perform: (page: Page) =>
+              runAction(page, step).then(() => undefined),
+            repeat:
+              step.action === "click"
+                ? (page: Page, timeout: number) =>
+                    page
+                      .locator(selector)
+                      .first()
+                      .click({ timeout, noWaitAfter: true })
+                : step.action === "press"
+                  ? (page: Page, timeout: number) =>
+                      page
+                        .locator(selector)
+                        .first()
+                        .press(step.key, { timeout, noWaitAfter: true })
+                  : undefined,
+          },
+        ];
+      });
     return await collectPageEvidence({
       page,
       signal: tuple.signal,
@@ -268,13 +377,17 @@ async function captureInContext(
             }
           : undefined,
       explanations,
+      timelines,
+      filmstrips,
+      probeTimelines: () => probeTimelines,
       motion: steps.length > 0 ? () => motion.evidence() : undefined,
       progress: steps.some((step) => "longRunning" in step && step.longRunning)
         ? () => progress.evidence()
         : undefined,
       createAxe: runtime.createAxe,
       // Freeze step evidence before replay/probe activity mutates the page.
-      collectConsole: async () => (steps.length > 0 ? [...records] : records),
+      collectConsole: async () =>
+        steps.length > 0 || safety !== undefined ? [...records] : records,
       tokens: tuple.tokens ?? { status: "not-configured" },
       screenshotOptions: deterministicScreenshotOptions(tuple.project),
       reuseScreenshot: tuple.reuseScreenshot,
@@ -328,23 +441,50 @@ async function captureInContext(
           : (records) => linkChecker().check(records),
       focusSweep: tuple.probe
         ? async () => {
-            const readonly = (route: Route) =>
-              probeRequestAllowed(route.request())
+            probeStartedAt ??= clock();
+            if (safety) {
+              const origin = new URL(target.url()).origin;
+              if (!safety.origins.includes(origin)) safety.origins.push(origin);
+            }
+            const readonly = (route: Route) => {
+              const request = route.request();
+              if (safety && crossOriginNavigation(safety, request)) {
+                safety.blocked.crossOriginNavigation += 1;
+                recordProbeRequest(safety, request, false);
+                return route.abort("blockedbyclient").catch(() => undefined);
+              }
+              const allowed = probeRequestAllowed(
+                request,
+                safety ? "third-party" : "app",
+              );
+              if (safety) recordProbeRequest(safety, request, allowed);
+              return allowed
                 ? route.fallback()
                 : route.abort("blockedbyclient").catch(() => undefined);
+            };
+            let unprotect: (() => Promise<void>) | undefined;
             await context.route("**/*", readonly);
             try {
               await target.route("**/*", readonly);
+              if (safety) unprotect = await protectProbeFocus(target, safety);
               return await sweepFocusVisible(target, {
                 maxStops: tuple.project.checks.probe.maxControls,
                 ignore: [
                   ...tuple.project.checks.focusVisible.ignore,
                   ...tuple.project.checks.probe.skip,
                 ],
-                budgetMs: tuple.project.checks.probe.stateTimeoutMs,
+                // A page budget keeps at least two thirds for the clicks.
+                budgetMs:
+                  tuple.probePageBudgetMs === undefined
+                    ? tuple.project.checks.probe.stateTimeoutMs
+                    : Math.min(
+                        tuple.project.checks.probe.stateTimeoutMs,
+                        Math.max(1, Math.floor(tuple.probePageBudgetMs / 3)),
+                      ),
                 monotonicNow: runtime.monotonicNow,
               });
             } finally {
+              await unprotect?.();
               await target.unroute("**/*", readonly).catch(() => undefined);
               await context.unroute("**/*", readonly).catch(() => undefined);
             }
@@ -354,15 +494,25 @@ async function captureInContext(
         ? () => {
             const settings = tuple.project.checks.probe;
             const target = page as Page;
+            probeStartedAt ??= clock();
+            const stateTimeoutMs =
+              tuple.probePageBudgetMs === undefined
+                ? settings.stateTimeoutMs
+                : Math.max(
+                    1,
+                    tuple.probePageBudgetMs - (clock() - probeStartedAt),
+                  );
             return probeControls({
               page: target,
+              filmstrips,
+              requestedActions: tuple.filmstripRequests?.map((r) => r.identity),
               enumerateOnly: tuple.enumerateProbe,
               flowBudget: tuple.probeBudget,
               signal: tuple.signal,
               onActivity: tuple.onActivity,
               onProbeProgress: tuple.onProbeProgress,
               controlTimeoutMs: settings.controlTimeoutMs,
-              stateTimeoutMs: settings.stateTimeoutMs,
+              stateTimeoutMs,
               monotonicNow: runtime.monotonicNow,
               replacePage: () => context.newPage(),
               skip: settings.skip,
@@ -370,11 +520,29 @@ async function captureInContext(
               maxControls: settings.maxControls,
               waitMs: settings.waitMs,
               motionSelectors: tuple.project.checks.motion.selectors,
+              motionMinExtentPx: tuple.project.checks.motion.minExtentPx,
+              reducedMotion: tuple.project.capture.reducedMotion,
+              onTimelines: (recorded) => {
+                probeTimelines = recorded;
+              },
+              heldReplay:
+                tuple.enumerateProbe || tuple.designReference
+                  ? undefined
+                  : {
+                      delayMs: tuple.project.checks.loading.delayMs,
+                      withinMs: tuple.project.checks.progressWithinMs,
+                      steps: heldSteps(),
+                    },
               explanation: tuple.project.checks.explanation,
               collections: tuple.project.checks.collections.map(
                 ({ selector }) => selector,
               ),
               ledger: tuple.probeLedger,
+              ...(safety === undefined
+                ? {}
+                : {
+                    safety: { policy: "third-party" as const, ledger: safety },
+                  }),
               stateId: tuple.state.id,
               ledgerPartition: `${tuple.viewport.name}\0${tuple.colorScheme ?? tuple.project.capture.colorScheme}`,
               restore: async (activePage) => {
@@ -438,6 +606,7 @@ export function createBrowserLauncher(
       void browser.close().catch(() => undefined);
     };
     options?.signal?.addEventListener("abort", abort, { once: true });
+    const filmstripBudgets = new Map<string, FilmstripBudget>();
     let links: LinkChecker | undefined;
     const linkCheckerFor = (tuple: BrowserTuple) => {
       const settings = tuple.project.checks.links;
@@ -458,13 +627,17 @@ export function createBrowserLauncher(
     };
     const newContext = async (tuple: BrowserTuple) => {
       tuple.signal?.throwIfAborted();
-      const context = await browser.newContext(
-        deterministicContextOptions(
+      const context = await browser.newContext({
+        ...deterministicContextOptions(
           tuple.project,
           tuple.viewport,
           tuple.colorScheme ?? tuple.project.capture.colorScheme,
         ),
-      );
+        // A service worker's fetches bypass context routing.
+        ...(tuple.probe && tuple.probeSafety === "third-party"
+          ? { serviceWorkers: "block" as const }
+          : {}),
+      });
       if (tuple.signal?.aborted) {
         void context.close().catch(() => undefined);
         tuple.signal.throwIfAborted();
@@ -511,9 +684,15 @@ export function createBrowserLauncher(
         try {
           tuple.signal?.throwIfAborted();
           context = await newContext(tuple);
+          const lane = `${tuple.viewport.name}\0${tuple.colorScheme ?? tuple.project.capture.colorScheme}`;
+          let filmstripBudget = filmstripBudgets.get(lane);
+          if (!filmstripBudget) {
+            filmstripBudget = new FilmstripBudget();
+            filmstripBudgets.set(lane, filmstripBudget);
+          }
           return await captureInContext(
             context,
-            tuple,
+            { ...tuple, filmstripBudget },
             runtime,
             linkCheckerFor(tuple),
           );

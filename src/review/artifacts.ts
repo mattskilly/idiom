@@ -17,7 +17,11 @@ import type {
   ExpectationMismatch,
   ProductionBuild,
 } from "../capture/types.js";
-import { observationArtifactSchema } from "../checks/artifact-schema.js";
+import {
+  actionTimelineArtifactSchema,
+  observationArtifactSchema,
+} from "../checks/artifact-schema.js";
+import { filmstripManifestSchema } from "../checks/filmstrip-schema.js";
 import type { CheckTuple } from "../checks/types.js";
 import { loadDesignArtifacts } from "../design/artifacts.js";
 import { IdiomError } from "../errors.js";
@@ -265,6 +269,19 @@ function parseAxe(value: unknown, path: string): unknown {
     }
   }
   return value;
+}
+
+function parseTimelines(value: unknown, path: string) {
+  const parsed = actionTimelineArtifactSchema.safeParse(value);
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
+      .join("; ");
+    throw new IdiomError(
+      `invalid action timelines in ${path}: ${issues}; recapture the flow`,
+    );
+  }
+  return parsed.data;
 }
 
 function parseObservations(value: unknown, path: string) {
@@ -598,9 +615,43 @@ export async function loadCaptureRun(options: {
         );
       }
     }
+    // Optional: runs captured before action timelines load unchanged.
+    const timelinesCandidate = join(directory, "timelines.json");
+    if (await exists(timelinesCandidate))
+      present["timelines.json"] = timelinesCandidate;
+    const filmstripPath = join(directory, "filmstrips.json");
+    let filmstrips:
+      | import("../checks/filmstrip-schema.js").FilmstripManifest
+      | undefined;
+    if (await exists(filmstripPath)) {
+      const parsed = filmstripManifestSchema.safeParse(
+        await parseJson(filmstripPath),
+      );
+      if (!parsed.success)
+        throw new IdiomError(
+          `invalid filmstrips in ${filmstripPath}: ${parsed.error.message}; recapture the flow`,
+        );
+      filmstrips = parsed.data;
+      present["filmstrips.json"] = filmstripPath;
+      for (const action of filmstrips.actions)
+        for (const frame of action.frames)
+          if (frame.path) {
+            const path = join(directory, frame.path);
+            // resolve + realpath confinement is checked again before reading image bytes.
+            if (!(await exists(path)))
+              throw new IdiomError(
+                `missing filmstrip frame ${path}; recapture the flow`,
+              );
+            await assertEvidencePaths(runDirectory, [
+              reportPath(runDirectory, path),
+            ]);
+            present[frame.path] = path;
+          }
+    }
     const consolePath = present["console.jsonl"];
     const axePath = present["axe.json"];
     const observationsPath = present["observations.json"];
+    const timelinesPath = present["timelines.json"];
     const expectedStatus = options.expectedStatusByState?.get(record.state.id);
     const url = documentUrl(record.url);
     tuples.push({
@@ -631,6 +682,7 @@ export async function loadCaptureRun(options: {
       artifactPaths: Object.values(present)
         .map((path) => reportPath(runDirectory, path))
         .sort(),
+      filmstrips,
       commit: record.source.commit,
       createdAt: record.timestamps.startedAt,
       ...(observationsPath === undefined
@@ -639,6 +691,14 @@ export async function loadCaptureRun(options: {
             observations: parseObservations(
               await parseJson(observationsPath),
               observationsPath,
+            ),
+          }),
+      ...(timelinesPath === undefined
+        ? {}
+        : {
+            timelines: parseTimelines(
+              await parseJson(timelinesPath),
+              timelinesPath,
             ),
           }),
       ...(axePath === undefined

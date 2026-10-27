@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Profile</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d1d1f; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px; }
+  .saved { box-sizing: border-box; height: 56px; padding: 16px; background: #e7f6ec; border-radius: 8px; overflow: hidden; }
+  .saved { animation: reveal 240ms ease-out; }
+  @keyframes reveal { from { height: 0; padding-block: 0; } to { height: 56px; padding-block: 16px; } }
+  form { margin-top: 16px; }
+  label { display: block; margin: 12px 0 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Profile</h1>
+  <div id="messages" role="status"></div>
+  <form onsubmit="return false">
+    <label for="name">Display name</label>
+    <input id="name" value="Ada">
+    <p>Your name appears on shared projects.</p>
+    <button id="save" type="button">Save changes</button>
+  </form>
+</main>
+<script>
+  document.getElementById("save").addEventListener("click", () => {
+    if (document.querySelector(".saved")) return;
+    const message = document.createElement("div");
+    message.className = "saved";
+    message.textContent = "Profile saved.";
+    document.getElementById("messages").append(message);
+  });
+</script>
+</body>
+</html>

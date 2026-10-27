@@ -43,3 +43,11 @@ export function mergeCopyPolicy(
     ],
   });
 }
+
+/**
+ * Action names the automated interaction probe never clicks, because the
+ * click would destroy, publish, pay or end a session rather than reveal
+ * behaviour. Quick review counts these skips in its report.
+ */
+export const DESTRUCTIVE_ACTION_PATTERN =
+  /\b(delete|remove|sign ?out|log ?out|publish|unpublish|reset|discard|clear all|archive|deactivate|unsubscribe|pay|purchase|buy|checkout|send|submit order)\b/i;

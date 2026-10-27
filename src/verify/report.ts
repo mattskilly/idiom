@@ -85,6 +85,7 @@ export function renderVerificationReport(options: {
           : `| ${item.kind} | ${item.state} | ${item.viewport} | [before / after](${item.path}) |`,
       ),
       "",
+      ...filmstripMarkdown(options.manifest),
       `Report attachment kind: \`${options.manifest.report.kind}\` (\`${options.manifest.report.path}\`).`,
       "",
     ].join("\n")}\n`;
@@ -159,6 +160,7 @@ export function renderVerificationReport(options: {
         : `| ${composite.kind} | ${composite.state} | ${composite.viewport} | [before / after](${composite.path}) |`,
     ),
     "",
+    ...filmstripMarkdown(options.manifest),
     `Report attachment kind: \`${options.manifest.report.kind}\` (\`${options.manifest.report.path}\`).`,
     "",
   ];
@@ -172,4 +174,18 @@ export async function writeVerificationReport(
   const path = join(outputDirectory, "before-after.md");
   await writeFile(path, source);
   return path;
+}
+
+function filmstripMarkdown(manifest: AttachmentManifest): string[] {
+  return (manifest.filmstrips ?? []).flatMap((f) => [
+    `### ${f.kind}: ${f.finding}`,
+    "",
+    f.before
+      ? `Before: ![Before filmstrip](${f.before})`
+      : `Before unavailable: ${f.beforeUnavailable}`,
+    f.after
+      ? `After: ![After filmstrip](${f.after})`
+      : `After unavailable: ${f.afterUnavailable}`,
+    "",
+  ]);
 }

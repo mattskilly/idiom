@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orders</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d1d1f; }
+  header { padding: 16px 24px; border-bottom: 1px solid #ddd; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px; }
+  .notice { position: fixed; top: 0; left: 0; right: 0; box-sizing: border-box; height: 48px; padding: 12px 24px; background: #fff4d6; }
+  footer { max-width: 720px; margin: 0 auto; padding: 24px; color: #555; }
+</style>
+</head>
+<body>
+<header><button id="show" type="button">Show notice</button></header>
+<main>
+  <h1>Orders</h1>
+  <p class="summary">Three orders are waiting for review.</p>
+  <ul class="orders">
+    <li>Order 1042, 2 items</li>
+    <li>Order 1043, 1 item</li>
+    <li>Order 1044, 5 items</li>
+  </ul>
+</main>
+<footer>Orders sync every five minutes.</footer>
+<script>
+  document.getElementById("show").addEventListener("click", () => {
+    if (document.querySelector(".notice")) return;
+    const notice = document.createElement("div");
+    notice.className = "notice";
+    notice.setAttribute("role", "status");
+    notice.textContent = "Your orders are up to date.";
+    document.body.insertBefore(notice, document.body.firstChild);
+  });
+</script>
+</body>
+</html>

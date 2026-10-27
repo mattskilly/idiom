@@ -32,10 +32,15 @@ import { glyphIconCheck } from "./glyph-icon.js";
 import { groupInvariantsCheck } from "./group-invariants.js";
 import { headingStructureCheck } from "./heading-structure.js";
 import { imageDistortionCheck } from "./image-distortion.js";
+import { interactionShiftCheck } from "./interaction-shift.js";
 import { layoutInvariantsCheck } from "./layout-invariants.js";
 import { layoutShiftCheck } from "./layout-shift.js";
 import { lineLengthCheck } from "./line-length.js";
 import { livenessCheck } from "./liveness.js";
+import {
+  doubleSubmitCheck,
+  loadingStateMissingCheck,
+} from "./loading-state.js";
 import { luminanceParityCheck } from "./luminance-parity.js";
 import { mediaFillCheck } from "./media-fill.js";
 import { mirroredControlCheck } from "./mirrored-control.js";
@@ -139,7 +144,10 @@ export const signalChecks: DeterministicCheck[] = [
   imageDistortionCheck,
   brokenImageCheck,
   layoutShiftCheck,
+  interactionShiftCheck,
   designDriftCheck,
+  loadingStateMissingCheck,
+  doubleSubmitCheck,
 ];
 
 export function checksConfigFrom(
@@ -157,6 +165,7 @@ export function checksConfigFrom(
     orphanWord: { ...merged.orphanWord },
     images: { ...merged.images },
     layoutShift: { ...merged.layoutShift },
+    interactionShift: { ...merged.interactionShift },
     designDrift: merged.designDrift,
     shellVisibility: merged.shellVisibility,
     ...(merged.compoundControls === undefined
@@ -251,6 +260,7 @@ export function checksConfigFrom(
     },
     naming: { surfaces: { ...merged.naming.surfaces } },
     progressWithinMs: merged.progressWithinMs,
+    loading: { delayMs: merged.loading.delayMs },
     emptyState: {
       regions: merged.emptyState.regions.map(({ selector, items }) => ({
         selector,

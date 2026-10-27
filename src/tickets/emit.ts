@@ -17,11 +17,13 @@ import {
   type ClusterMember,
   clusterTicketId,
   componentFor,
+  type FindingCluster,
   groupFindings,
   observationLoader,
 } from "./cluster.js";
 import { indexTickets, readIndexedTicket, ticketsForLineage } from "./index.js";
 import { renderClusterTicket } from "./render.js";
+import { sweepTicketEvidence } from "./sweep-evidence.js";
 import { resolveTicketTarget } from "./target.js";
 
 export type ClusterTicketOutcome =
@@ -35,6 +37,8 @@ export type ClusterTicketsResult = {
   createdPaths: string[];
   outcomes: ClusterTicketOutcome[];
   ineligible: string[];
+  omittedCount?: number;
+  selectedClusters?: FindingCluster[];
 };
 export type ClusterTicketsOptions = {
   project?: string | undefined;
@@ -48,6 +52,9 @@ export type ClusterTicketsOptions = {
 export async function emitClusterTickets(
   options: ClusterTicketsOptions & {
     /** A check passes exact persisted current-run records, including an explicitly empty set. */
+    maxTickets?: number | undefined;
+    orderedClusters?: FindingCluster[] | undefined;
+    occurrences?: CatalogFinding[] | undefined;
     selection?:
       | { policy: "current-run"; records: CatalogFinding[] }
       | undefined;
@@ -83,6 +90,8 @@ export async function emitClusterTickets(
     createdPaths: [],
     outcomes: [],
     ineligible: [],
+    omittedCount: 0,
+    selectedClusters: [],
   };
   const pending: ClusterMember[] = [];
   const availableImages = new Map<string, string[]>();
@@ -171,7 +180,27 @@ export async function emitClusterTickets(
   }
   if (pending.length === 0 && checkpoint.size === 0) return result;
   await persistCatalogFindingNames(catalog);
-  for (const cluster of groupFindings(pending)) {
+  const pendingById = new Map(pending.map((member) => [member.id, member]));
+  const candidates =
+    options.orderedClusters === undefined
+      ? groupFindings(pending)
+      : options.orderedClusters
+          .map((cluster) => ({
+            ...cluster,
+            members: cluster.members.flatMap((member) => {
+              const canonicalId = findCatalogLineage(catalog, member.id).id;
+              const available = pendingById.get(canonicalId);
+              return available === undefined ? [] : [available];
+            }),
+          }))
+          .filter((cluster) => cluster.members.length > 0);
+  const selectedClusters = candidates.slice(
+    0,
+    options.maxTickets ?? candidates.length,
+  );
+  result.omittedCount = candidates.length - selectedClusters.length;
+  result.selectedClusters = selectedClusters;
+  for (const cluster of selectedClusters) {
     const id = clusterTicketId(cluster);
     const rendered = renderClusterTicket({
       cluster,
@@ -179,11 +208,30 @@ export async function emitClusterTickets(
       ticketDirectory: target.outputDirectory,
       availableImages,
     });
+    const extraEvidence =
+      options.occurrences === undefined
+        ? ""
+        : await sweepTicketEvidence({
+            cluster,
+            id,
+            directory: target.outputDirectory,
+            projectDirectory: catalog.projectDirectory,
+            occurrences: options.occurrences.map((record) => ({
+              ...record,
+              finding: {
+                ...record.finding,
+                id: findCatalogLineage(catalog, record.finding.id).id,
+              },
+            })),
+          });
     const path = join(target.outputDirectory, `${id}.md`);
     await mkdir(target.outputDirectory, { recursive: true });
     let existed = false;
     try {
-      await writeFile(path, rendered.body, { encoding: "utf8", flag: "wx" });
+      await writeFile(path, rendered.body + extraEvidence, {
+        encoding: "utf8",
+        flag: "wx",
+      });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST")
         throw new IdiomError(

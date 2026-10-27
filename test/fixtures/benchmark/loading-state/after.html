@@ -1,0 +1,19 @@
+<!doctype html><html lang="en"><head><title>Items</title><style>body{font:16px sans-serif;margin:24px}</style></head><body>
+<main id="items-panel"><h1>Items</h1><button id="load" type="button">Load items</button><ul id="list"></ul></main>
+<script>
+const button = document.querySelector("#load");
+button.addEventListener("click", async () => {
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Loading…";
+  try {
+    const response = await fetch("/api/items");
+    const items = await response.json();
+    document.querySelector("#list").innerHTML = items.map((item) => `<li>${item}</li>`).join("");
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.textContent = "Load items";
+  }
+});
+</script></body></html>

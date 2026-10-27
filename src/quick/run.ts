@@ -17,11 +17,14 @@ import {
   type CaptureOwnership,
   withCaptureOwnership,
 } from "../capture/ownership.js";
+import { createProbeLedger } from "../capture/probe-ledger.js";
 import {
+  captureTupleKey,
   expectedCaptureTupleKeys,
   expectedStatusByState,
   selectCaptureTuples,
 } from "../capture/resolve.js";
+import { coordinate, probeCoordinates } from "../capture/scope.js";
 import type {
   BrowserLauncher,
   CaptureCounts,
@@ -48,6 +51,7 @@ import { buildReviewCoverage } from "../report/coverage.js";
 import { pngDataUri, writeHtmlReport } from "../report/html.js";
 import { loadCaptureRun } from "../review/artifacts.js";
 import { attachCrops } from "../review/crops.js";
+import { attachFilmstrips } from "../review/filmstrips.js";
 import {
   buildDeterministicDrafts,
   finalizeFindingSelection,
@@ -68,7 +72,18 @@ import {
   designLocationSchema,
 } from "../schemas/design.js";
 import type { Finding } from "../schemas/finding.js";
-import { createQuickConfiguration, type QuickConfiguration } from "./config.js";
+import {
+  createQuickConfiguration,
+  parseProbeBudget,
+  QUICK_PROBE_BUDGET_MS,
+  QUICK_PROBE_MAX_CONTROLS,
+  type QuickConfiguration,
+} from "./config.js";
+import {
+  type ProbedPage,
+  type QuickInteraction,
+  summarizeQuickInteraction,
+} from "./interaction.js";
 
 export type QuickDependencies = CaptureLifetime & {
   onProbeProgress?: ((event: ProbeProgress) => void) | undefined;
@@ -90,6 +105,8 @@ export type QuickRunResult = PaintedCoverageReport & {
   findings?: Finding[];
   groups?: FindingGroup[];
   issues?: CheckIssue[];
+  /** What the interaction probe did, or that it was off. */
+  interaction: QuickInteraction;
 };
 
 function defaultRunName(now: Date): string {
@@ -101,6 +118,8 @@ export type LiteralCapture = {
   loaded: Awaited<ReturnType<typeof loadCaptureRun>>;
   reviewed: ReturnType<typeof runDeterministicChecks>;
   counts: CaptureCounts;
+  /** Pages the interaction probe was asked to run on. */
+  probed: ProbedPage[];
 };
 
 /**
@@ -119,6 +138,11 @@ type LiteralOptions = {
   label: string;
   /** Refetch pinned Figma frames instead of reusing the cache. */
   refreshDesign?: boolean | undefined;
+  /**
+   * Probe each page once at the first viewport in light (quick review).
+   * Absent keeps the capture static (page review).
+   */
+  probe?: { budgetMs: number; safety: "third-party" } | undefined;
   dependencies?: QuickDependencies | undefined;
 };
 
@@ -158,11 +182,36 @@ async function captureLiteralOwned(
     const browserVersion = browser.version;
     owner.check();
     const tuples: ArtifactTuple[] = [];
-    for (const selected of selectCaptureTuples({
-      project: configuration.project,
-      flow: configuration.flow,
-    })) {
+    const selectedTuples = [
+      ...selectCaptureTuples({
+        project: configuration.project,
+        flow: configuration.flow,
+      }),
+    ];
+    // The same coordinate rule configured flows use.
+    const probeKeys = new Set(
+      options.probe === undefined
+        ? []
+        : probeCoordinates(
+            configuration.project,
+            configuration.flow,
+            selectedTuples,
+          ).intended.map(captureTupleKey),
+    );
+    const probeLedger = createProbeLedger();
+    const probed: ProbedPage[] = selectedTuples
+      .filter((selected) =>
+        probeKeys.has(captureTupleKey(coordinate(selected))),
+      )
+      .map((selected) => ({
+        ...coordinate(selected),
+        url: selected.state.url as string,
+      }));
+    for (const selected of selectedTuples) {
       owner.coordinate(selected, "tuple capture");
+      const probe =
+        options.probe !== undefined &&
+        probeKeys.has(captureTupleKey(coordinate(selected)));
       const url = selected.state.url as string;
       const result = await browser.capture({
         signal: owner.signal,
@@ -180,6 +229,14 @@ async function captureLiteralOwned(
         colorScheme: selected.colorScheme,
         navigationUrl: url,
         tokens: { status: "not-configured" },
+        ...(probe && options.probe !== undefined
+          ? {
+              probe: true,
+              probeLedger,
+              probeSafety: options.probe.safety,
+              probePageBudgetMs: options.probe.budgetMs,
+            }
+          : {}),
       });
       tuples.push({
         flow: configuration.flow,
@@ -268,6 +325,7 @@ async function captureLiteralOwned(
       loaded,
       reviewed,
       counts,
+      probed,
     };
   } catch (error) {
     if (error instanceof IdiomError) throw error;
@@ -294,10 +352,13 @@ export async function writeReviewReports(
       ),
       ...[reportOptions.findings, reportOptions.deferred ?? []]
         .flat()
-        .flatMap(
-          (finding) =>
-            finding.evidence.designDrift?.crops?.map((crop) => crop.path) ?? [],
-        ),
+        .flatMap((finding) => [
+          ...(finding.evidence.designDrift?.crops?.map((crop) => crop.path) ??
+            []),
+          ...(finding.evidence.filmstrip?.sheet
+            ? [finding.evidence.filmstrip.sheet]
+            : []),
+        ]),
     ]),
   ];
   const screenshots = new Map(
@@ -339,6 +400,10 @@ export async function runQuick(options: {
   urls: string[];
   design?: string | undefined;
   viewports?: Array<"desktop" | "mobile"> | undefined;
+  /** Run the safe interaction probe; default true. */
+  probe?: boolean | undefined;
+  /** Per-page probe budget in milliseconds (CLI `--probe-budget`). */
+  probeBudgetMs?: string | number | undefined;
   literal?: boolean | undefined;
   materializeAllDeterministic?: boolean | undefined;
   project?: string | undefined;
@@ -369,9 +434,17 @@ export async function runQuick(options: {
       );
     design = parsed.data;
   }
+  const probing = options.probe !== false;
+  if (!probing && options.probeBudgetMs !== undefined)
+    throw new IdiomError("--probe-budget requires the probe; drop --no-probe");
+  const probeBudgetMs =
+    options.probeBudgetMs === undefined
+      ? QUICK_PROBE_BUDGET_MS
+      : parseProbeBudget(options.probeBudgetMs);
   const configuration = createQuickConfiguration(options.urls, {
     viewports: options.viewports,
     design,
+    ...(probing ? { probe: { maxControls: QUICK_PROBE_MAX_CONTROLS } } : {}),
   });
   const now = options.dependencies?.now ?? (() => new Date());
   const startedAt = now();
@@ -385,14 +458,25 @@ export async function runQuick(options: {
             : defaultRunName(startedAt),
         )
       : resolve(directory, options.out);
-  const { runDirectory, loaded, reviewed, counts } = await captureLiteralPages({
-    directory,
-    finalDirectory,
-    configuration,
-    checks: checksConfigFrom(configuration.project.checks),
-    startedAt,
-    label: "quick review",
-    dependencies: options.dependencies,
+  const { runDirectory, loaded, reviewed, counts, probed } =
+    await captureLiteralPages({
+      directory,
+      finalDirectory,
+      configuration,
+      checks: checksConfigFrom(configuration.project.checks),
+      startedAt,
+      label: "quick review",
+      ...(probing
+        ? { probe: { budgetMs: probeBudgetMs, safety: "third-party" as const } }
+        : {}),
+      dependencies: options.dependencies,
+    });
+  const interaction = summarizeQuickInteraction({
+    tuples: loaded.tuples,
+    probed,
+    enabled: probing,
+    budgetMs: probeBudgetMs,
+    maxControls: configuration.project.checks.probe.maxControls,
   });
   try {
     options.dependencies?.signal?.throwIfAborted();
@@ -408,13 +492,22 @@ export async function runQuick(options: {
         ? Number.POSITIVE_INFINITY
         : 5,
     });
-    const findings = options.materializeAllDeterministic
-      ? await attachCrops(runDirectory, selection.material, loaded.tuples)
-      : selection.material;
+    const findings = await attachFilmstrips(
+      runDirectory,
+      options.materializeAllDeterministic
+        ? await attachCrops(runDirectory, selection.material, loaded.tuples)
+        : selection.material,
+      loaded.tuples,
+    );
+    const deferred = await attachFilmstrips(
+      runDirectory,
+      selection.deferred,
+      loaded.tuples,
+    );
     const groups = groupRepeatedFindings(
-      [...findings, ...selection.deferred],
+      [...findings, ...deferred],
       coordinateIndex(drafts),
-      new Set(selection.deferred.map((finding) => finding.id)),
+      new Set(deferred.map((finding) => finding.id)),
     );
     const primaryActionSelectors = loaded.tuples.flatMap((tuple) =>
       tuple.observations?.version === 2
@@ -441,7 +534,7 @@ export async function runQuick(options: {
       await writeGroups(runDirectory, groups);
       await writeFile(
         join(runDirectory, "mcp-detail.json"),
-        JSON.stringify({ version: 1, issues }),
+        JSON.stringify({ version: 1, issues, interaction }),
       );
     }
     const outcome = {
@@ -455,7 +548,7 @@ export async function runQuick(options: {
       tuples: loaded.tuples,
       coverage: reviewed.coverage,
       captureCoverage: reviewed.captureCoverage,
-      deferred: selection.deferred,
+      deferred: deferred,
       ...(reviewed.narrowWidth === undefined
         ? {}
         : { narrowWidth: reviewed.narrowWidth }),
@@ -466,6 +559,7 @@ export async function runQuick(options: {
         project: configuration.project,
         tuples: loaded.tuples,
         commit: loaded.commit,
+        interaction,
       }),
     };
     const { reportPath, htmlReportPath } = await writeReviewReports(
@@ -484,6 +578,7 @@ export async function runQuick(options: {
       findingCount: findings.length,
       ...reportedCheckCoverage(reviewed.coverage),
       counts,
+      interaction,
       ...(options.materializeAllDeterministic
         ? { findings, groups, issues }
         : {}),

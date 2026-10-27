@@ -1,0 +1,23 @@
+<!doctype html><html lang="en"><head><title>Crowded</title><style>body{font:16px sans-serif;margin:24px}</style></head><body>
+<main><h1>Crowded</h1><button id="load" type="button">Load items</button><ul id="list"></ul><p id="out"></p><div id="busy"></div></main>
+<script>
+document.querySelector("#load").addEventListener("click", async () => {
+  const response = await fetch("/api/items");
+  const items = await response.json();
+  document.querySelector("#list").innerHTML = items.map((item) => `<li>${item}</li>`).join("");
+});
+// Many controls whose effect keeps the page busy, so clicks fill the budget.
+for (let index = 0; index < 30; index++) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = `Tool ${index}`;
+  button.addEventListener("click", () => {
+    let count = 0;
+    const timer = setInterval(() => {
+      document.querySelector("#out").textContent = `${button.textContent} ${count++}`;
+      if (count > 40) clearInterval(timer);
+    }, 50);
+  });
+  document.querySelector("#busy").append(button);
+}
+</script></body></html>

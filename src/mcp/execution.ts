@@ -16,7 +16,7 @@ export function toolError(error: unknown): CallToolResult {
           )
         ? "Free the configured port or correct .idiom/project.json server settings, then retry."
         : /no \.idiom\/project.json/i.test(diagnostic)
-          ? "Run idiom init in the project, or restart idiom mcp --project /absolute/project/path."
+          ? "Call idiom_init (or run idiom init) in the project, or restart idiom mcp --project /absolute/project/path."
           : "Correct the reported input, configuration or evidence problem, then retry this tool. Run idiom validate for configured flows.";
   return {
     isError: true,

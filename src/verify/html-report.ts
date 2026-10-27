@@ -21,11 +21,26 @@ export type VerificationHtmlOptions = {
   diagnostic?: string | undefined;
   noFindings?: boolean | undefined;
   reportCoverage?: ReportCoverage | undefined;
+  filmstripImages?: ReadonlyMap<string, string> | undefined;
 };
 
 function attachments(options: VerificationHtmlOptions): string {
   if (options.manifest.composites.length === 0) return "";
-  return `<section><h2>Evidence attachments</h2>${options.manifest.composites
+  const films = (options.manifest.filmstrips ?? [])
+    .map(
+      (f) =>
+        `<article><h3>${escapeHtml(f.kind)}: ${escapeHtml(f.finding)}</h3>${(
+          ["before", "after"] as const
+        )
+          .map((side) => {
+            const path = f[side];
+            const image = path && options.filmstripImages?.get(path);
+            return `<figure style="overflow-x:auto"><figcaption>${side}</figcaption>${path ? `${evidenceLink(path)}${image ? `<img style="max-width:none" src="${image}" alt="${side} filmstrip">` : ""}` : escapeHtml(f[side === "before" ? "beforeUnavailable" : "afterUnavailable"] ?? "unavailable")}</figure>`;
+          })
+          .join("")}</article>`,
+    )
+    .join("");
+  return `<section>${films}<h2>Evidence attachments</h2>${options.manifest.composites
     .map((item, index) => {
       const images = options.comparisons?.find(
         (candidate) =>

@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { arch, release, tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
+import { recordingKey } from "../checks/temporal-evidence.js";
 import { writeDesignArtifacts } from "../design/artifacts.js";
 import type { CapturedDesign, DesignDescriptor } from "../design/types.js";
 import { IdiomError } from "../errors.js";
@@ -213,10 +214,52 @@ export async function writeTupleArtifacts(options: {
     if (result.axe !== undefined) {
       await writeFile(join(directory, "axe.json"), json(result.axe));
     }
+    if (result.observations?.version === 2 && result.observations.motion) {
+      const ids = new Map(
+        result.timelines?.actions.flatMap((a) => {
+          const key = recordingKey(a);
+          return key && a.id ? [[key, a.id] as const] : [];
+        }),
+      );
+      result.observations.motion.actions =
+        result.observations.motion.actions.map((a) => {
+          const key = recordingKey(a);
+          const timelineId = key && ids.get(key);
+          return timelineId ? { ...a, timelineId } : a;
+        });
+    }
     if (result.observations !== undefined) {
       await writeFile(
         join(directory, "observations.json"),
         json(result.observations),
+      );
+    }
+    if (result.filmstrips !== undefined) {
+      const facts = {
+        flow: tuple.flow.id,
+        state: tuple.state.id,
+        viewport: tuple.viewport.name,
+        width: tuple.viewport.width,
+        height: tuple.viewport.height,
+        metadataPath: "metadata.json",
+        artifactPaths: [],
+        commit: options.source.commit,
+        createdAt: result.startedAt,
+        observations: result.observations,
+        timelines: result.timelines,
+        console: result.console,
+        mismatches: result.mismatches,
+      };
+      await result.filmstrips.publish(
+        directory,
+        facts,
+        result.filmstrips.finalCandidates(facts),
+      );
+    }
+    if (result.timelines !== undefined) {
+      await writeFile(
+        join(directory, "timelines.json"),
+        json(result.timelines),
       );
     }
   }
@@ -382,6 +425,8 @@ async function existingArtifactLinks(
     "console.jsonl",
     "axe.json",
     "observations.json",
+    "timelines.json",
+    "filmstrips.json",
     "metadata.json",
   ];
   const links: string[] = [];

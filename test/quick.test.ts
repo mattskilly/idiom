@@ -430,3 +430,191 @@ test("pre-aborted literal review launches nothing", async () => {
   ).rejects.toThrow("cancel before start");
   expect(launch).not.toHaveBeenCalled();
 });
+
+test("quick review probes each page once at the first viewport in light", async () => {
+  const directory = await temporaryDirectory();
+  const captures: BrowserTuple[] = [];
+  const result = await runQuick({
+    urls: ["http://127.0.0.1:4173/a", "http://127.0.0.1:4173/b"],
+    cwd: directory,
+    out: join(directory, "probed"),
+    dependencies: {
+      browserLauncher: browserLauncher(captures),
+      now: () => new Date("2026-08-20T12:34:56.000Z"),
+      environment: {},
+    },
+  });
+  const probed = captures.filter((tuple) => tuple.probe === true);
+  expect(
+    probed.map((tuple) => [
+      tuple.state.id,
+      tuple.viewport.name,
+      tuple.colorScheme,
+    ]),
+  ).toEqual([
+    ["page-1", "desktop", "light"],
+    ["page-2", "desktop", "light"],
+  ]);
+  for (const tuple of probed) {
+    expect(tuple.probeSafety).toBe("third-party");
+    expect(tuple.probePageBudgetMs).toBe(45_000);
+    expect(tuple.project.checks.probe.maxControls).toBe(40);
+    expect(tuple.enumerateProbe).toBeUndefined();
+  }
+  expect(probed[0]?.probeLedger).toBeDefined();
+  expect(probed[0]?.probeLedger).toBe(probed[1]?.probeLedger);
+  for (const tuple of captures.filter((tuple) => tuple.probe !== true)) {
+    expect(tuple.probeSafety).toBeUndefined();
+    expect(tuple.probePageBudgetMs).toBeUndefined();
+  }
+  // The fake browser records no probe artifact: each page says so.
+  expect(result.interaction).toMatchObject({
+    status: "probed",
+    budgetMs: 45_000,
+    maxControls: 40,
+    pages: [
+      { state: "page-1", probeStatus: "unavailable" },
+      { state: "page-2", probeStatus: "unavailable" },
+    ],
+  });
+  const report = await readFile(result.reportPath, "utf8");
+  expect(report).toContain("### Interaction");
+  expect(report).toContain("Idiom could not interact with");
+  expect(report).toContain(
+    "form submission and non-GET requests were blocked while probing",
+  );
+});
+
+test("quick review probes mobile in light when only mobile is selected", async () => {
+  const directory = await temporaryDirectory();
+  const captures: BrowserTuple[] = [];
+  await runQuick({
+    urls: ["http://127.0.0.1:4173/"],
+    viewports: ["mobile"],
+    cwd: directory,
+    out: join(directory, "mobile"),
+    probeBudgetMs: 1000,
+    dependencies: {
+      browserLauncher: browserLauncher(captures),
+      environment: {},
+    },
+  });
+  const probed = captures.filter((tuple) => tuple.probe === true);
+  expect(
+    probed.map((tuple) => [
+      tuple.viewport.name,
+      tuple.colorScheme,
+      tuple.probePageBudgetMs,
+    ]),
+  ).toEqual([["mobile", "light", 1000]]);
+});
+
+test("quick review without the probe is a stated static review", async () => {
+  const directory = await temporaryDirectory();
+  const captures: BrowserTuple[] = [];
+  const result = await runQuick({
+    urls: ["http://127.0.0.1:4173/"],
+    cwd: directory,
+    out: join(directory, "static"),
+    probe: false,
+    dependencies: {
+      browserLauncher: browserLauncher(captures),
+      environment: {},
+    },
+  });
+  expect(captures.some((tuple) => tuple.probe !== undefined)).toBe(false);
+  expect(
+    captures.some(
+      (tuple) =>
+        tuple.probeSafety !== undefined ||
+        tuple.probePageBudgetMs !== undefined,
+    ),
+  ).toBe(false);
+  expect(captures[0]?.project.checks.probe.maxControls).toBe(80);
+  expect(result.interaction).toEqual({ status: "off" });
+  const report = await readFile(result.reportPath, "utf8");
+  expect(report).toContain("Interaction probe off (--no-probe)");
+  const html = await readFile(result.htmlReportPath, "utf8");
+  expect(html).toContain("Interaction probe off (--no-probe)");
+});
+
+test.each([
+  [{ probe: false, probeBudgetMs: 1000 }, "requires the probe"],
+  [{ probeBudgetMs: 0 }, "positive integer"],
+  [{ probeBudgetMs: "abc" }, "positive integer"],
+  [{ probeBudgetMs: 600_001 }, "up to 600000"],
+  [{ probeBudgetMs: 1.5 }, "positive integer"],
+])("quick review rejects probe options %j", async (probeOptions, message) => {
+  const directory = await temporaryDirectory();
+  const captures: BrowserTuple[] = [];
+  await expect(
+    runQuick({
+      urls: ["http://127.0.0.1:4173/"],
+      cwd: directory,
+      ...probeOptions,
+      dependencies: { browserLauncher: browserLauncher(captures) },
+    }),
+  ).rejects.toThrow(message);
+  expect(captures).toEqual([]);
+});
+
+test("quick CLI forwards --probe-budget and --no-probe and reports the probe", async () => {
+  const directory = await temporaryDirectory();
+  const run1 = async (args: string[]) => {
+    const captures: BrowserTuple[] = [];
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await run(["node", "idiom", "quick", ...args], {
+      cwd: directory,
+      stdout: (message) => stdout.push(message),
+      stderr: (message) => stderr.push(message),
+      quick: { browserLauncher: browserLauncher(captures), environment: {} },
+    });
+    return {
+      code,
+      captures,
+      stdout: stdout.join(""),
+      stderr: stderr.join(""),
+    };
+  };
+  const budget = await run1([
+    "https://example.com/",
+    "--out",
+    "budget",
+    "--probe-budget",
+    "2000",
+  ]);
+  expect(budget.code).toBe(0);
+  expect(budget.captures.find((tuple) => tuple.probe)?.probePageBudgetMs).toBe(
+    2000,
+  );
+  expect(budget.stdout).toContain("probed 0 controls, skipped 0, not probed 0");
+  const off = await run1([
+    "https://example.com/",
+    "--out",
+    "off",
+    "--no-probe",
+  ]);
+  expect(off.code).toBe(0);
+  expect(off.captures.some((tuple) => tuple.probe)).toBe(false);
+  expect(off.stdout).toContain("probe off");
+  for (const value of ["0", "abc", "600001"]) {
+    const failed = await run1([
+      "https://example.com/",
+      "--probe-budget",
+      value,
+    ]);
+    expect(failed.code).toBe(1);
+    expect(failed.stderr).toContain(
+      "--probe-budget must be a positive integer",
+    );
+  }
+  const conflict = await run1([
+    "https://example.com/",
+    "--no-probe",
+    "--probe-budget",
+    "1000",
+  ]);
+  expect(conflict.code).toBe(1);
+  expect(conflict.stderr).toContain("requires the probe");
+});

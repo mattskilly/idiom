@@ -480,7 +480,7 @@ async function desiredFiles(
         : join(".idiom", name);
     files.set(destination, content);
   }
-  files.set(join(".idiom", ".gitignore"), "reports/\n");
+  files.set(join(".idiom", ".gitignore"), "reports/\n/agent-hooks/\n");
   return files;
 }
 
@@ -732,4 +732,49 @@ export async function initProject(options: {
     result.flows = { ...generated, kind };
   } else if (options.yes !== true) result.flows = { kind: "declined" };
   return result;
+}
+
+/** The human summary `idiom init` prints after scaffolding; MCP reuses it. */
+export function initSummaryLines(result: InitResult): string[] {
+  const lines: string[] = [];
+  lines.push(
+    `Initialized ${result.projectDirectory}: ${result.created.length} created, ${result.replaced.length} replaced, ${result.unchanged.length} unchanged, ${result.skipped.length} preserved`,
+  );
+  if ("stateCount" in result.flows) {
+    const outcome = result.flows;
+    lines.push(
+      outcome.kind === "no-routes"
+        ? "No discoverable routes; no site flow written."
+        : `Site flow ${outcome.kind}: .idiom/flows/site.json (${outcome.routeCount} routes, ${outcome.stateCount} candidate states, ${outcome.setup.length} setup-required routes).`,
+    );
+    for (const note of [
+      ...outcome.warnings,
+      ...outcome.todos,
+      ...outcome.setup,
+    ])
+      lines.push(note);
+    if (outcome.content !== undefined)
+      lines.push("Next: idiom validate site; idiom capture site");
+    if (outcome.content !== undefined && outcome.stateCount === 0)
+      lines.push("TODO-only flow: no concrete states are ready to capture.");
+  }
+  for (const file of result.skipped) lines.push(`Preserved existing ${file}`);
+  if (result.autobuild.kind === "available-noninteractive")
+    lines.push(
+      "Autobuild verification is available; rerun `idiom init` interactively to review and approve wiring.",
+    );
+  else if (result.autobuild.kind === "declined")
+    lines.push("Autobuild wiring declined; no Autobuild files changed.");
+  else if (result.autobuild.kind === "applied")
+    lines.push("Wired Idiom verification into Autobuild.");
+  else if (result.autobuild.kind === "already-wired")
+    lines.push("Autobuild verification is already wired; no changes needed.");
+  else if (result.autobuild.kind === "manual") {
+    lines.push(
+      `Autobuild wiring made no changes: ${result.autobuild.reason} Ordinary Idiom initialization still completed.`,
+    );
+    lines.push("Make this addition by hand:");
+    lines.push(result.autobuild.addition);
+  }
+  return lines;
 }

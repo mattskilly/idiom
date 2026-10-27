@@ -5,6 +5,7 @@ import { isAbsolute, join } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { PNG } from "pngjs";
 import { afterEach, expect, test } from "vitest";
+import { run as runCli } from "../src/cli.js";
 import { readDecisionLog } from "../src/decisions/log.js";
 import {
   eligibleRecords,
@@ -299,6 +300,48 @@ test("real benchmark quick/check/issue expose ranked complete findings and the a
 const page = (size: number, extra = "") =>
   `<!doctype html><html lang="en"><head><title>Repair</title><style>body{background:#fff;color:#111;font:16px sans-serif;margin:32px}button{width:${size}px;height:${size}px;padding:0;border:0;font-size:10px}main{width:300px}</style></head><body><main><h1>Repair</h1><span style="display:inline-flex;align-items:center;gap:4px"><button id="target" aria-label="Toggle" onclick="this.setAttribute('aria-pressed',this.getAttribute('aria-pressed')!=='true')">+</button><button aria-label="Neighbor" style="width:44px;height:44px"></button></span>${extra}</main></body></html>`;
 
+test("public CLI and MCP live checks record completion despite findings and preserve scoped metadata", async () => {
+  const { client, project } = await configured(page(12));
+  await writeFile(join(project, "page.html"), page(13));
+  const output: string[] = [];
+  const code = await runCli(
+    [
+      "node",
+      "idiom",
+      "check",
+      "studio",
+      "--project",
+      project,
+      "--all",
+      "--fail-on",
+      "minor",
+    ],
+    {
+      stdout: (message) => output.push(message),
+      stderr: (message) => output.push(message),
+    },
+  );
+  expect(code, output.join("\n")).toBe(1);
+  const path = join(project, ".idiom/agent-hooks/state.json");
+  const cliState = JSON.parse(await readFile(path, "utf8"));
+  expect(cliState.check).toMatchObject({
+    flow: "studio",
+    digest: expect.any(String),
+    completedAt: expect.any(Number),
+  });
+  const result = toolData<Check>(
+    await client.callTool({
+      name: "idiom_check",
+      arguments: { flow: "studio", all: true, states: ["editor"] },
+    }),
+  );
+  expect(result.counts.findings).toBeGreaterThan(0);
+  const mcpState = JSON.parse(await readFile(path, "utf8"));
+  expect(mcpState.check.digest).toBe(cliState.check.digest);
+  expect(mcpState.check.id).not.toBe(cliState.check.id);
+  expect(mcpState.check.scope.states).toBe("editor");
+}, 60000);
+
 test("baseline bootstrap, exact fix prompt and calibrated full-flow handoff preserve original identities across checks", async () => {
   const { client, project } = await configured(page(12), ["editor", "other"]);
   const initial = toolData<Check>(
@@ -325,6 +368,10 @@ test("baseline bootstrap, exact fix prompt and calibrated full-flow handoff pres
   const expectedPrompt = await repairPrompt(snapshot, selected, eligible);
   const status = await git(project, "status", "--porcelain");
   const head = await git(project, "rev-parse", "HEAD");
+  const checkEvidence = await readFile(
+    join(project, ".idiom/agent-hooks/state.json"),
+    "utf8",
+  );
   const plan = toolData<{
     prompt: string;
     findings: Finding[];
@@ -344,6 +391,9 @@ test("baseline bootstrap, exact fix prompt and calibrated full-flow handoff pres
   );
   expect(await git(project, "status", "--porcelain")).toBe(status);
   expect(await git(project, "rev-parse", "HEAD")).toBe(head);
+  expect(
+    await readFile(join(project, ".idiom/agent-hooks/state.json"), "utf8"),
+  ).toBe(checkEvidence);
   const original = plan.findings[0];
   if (!original) throw new Error("Expected target");
   const noOp = toolData<{
@@ -503,6 +553,9 @@ test("stored capture failures remain actionable before automatic baseline bootst
     arguments: { flow: "studio" },
   })) as CallToolResult;
   expect(response.isError).toBe(true);
+  await expect(
+    readFile(join(project, ".idiom/agent-hooks/state.json")),
+  ).rejects.toThrow();
   expect(JSON.stringify(response.content)).toContain(
     "npx playwright install chromium",
   );
@@ -513,3 +566,31 @@ test("stored capture failures remain actionable before automatic baseline bootst
     ).flows.length,
   ).toBeGreaterThan(0);
 }, 30000);
+
+test("idiom_baseline records a real capture of clean HEAD with commit guidance, then shows it applied", async () => {
+  const { client, project } = await configured(page(48));
+  const progress: string[] = [];
+  const recorded = (await client.callTool(
+    { name: "idiom_baseline", arguments: { action: "record" } },
+    { onprogress: (event) => progress.push(event.message ?? "") },
+  )) as CallToolResult;
+  const data = toolData<{
+    flow: string;
+    commit: string;
+    path: string;
+    commitGuidance: string;
+  }>(recorded);
+  expect(data.flow).toBe("studio");
+  expect(data.path).toBe(join(project, ".idiom/baselines/studio.json"));
+  expect(data.commitGuidance).toContain("deliberately");
+  expect(JSON.stringify(recorded.content)).toContain("Commit this file");
+  expect(progress.some((message) => message.includes("editor/"))).toBe(true);
+  expect(
+    toolData<{ applied: string; distance: number }>(
+      await client.callTool({
+        name: "idiom_baseline",
+        arguments: { action: "show" },
+      }),
+    ),
+  ).toMatchObject({ applied: data.commit, distance: 0 });
+}, 120000);

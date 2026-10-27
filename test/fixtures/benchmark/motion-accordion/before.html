@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Motion lab</title><style>
+body { font: 16px system-ui; padding: 32px; margin: 0; } button { padding: 12px; }
+#details { height: 160px; background: #f4f4f4; }
+</style></head><body>
+<h1>Release notes</h1>
+<p>Version 2 adds offline mode.</p>
+<button id="more" aria-expanded="false" aria-controls="details">Show more</button>
+<div id="details" hidden><p>Offline mode keeps drafts on the device and syncs them later.</p></div>
+<p>Thanks for reading.</p>
+<script>more.onclick = () => { const open = more.getAttribute("aria-expanded") !== "true"; more.setAttribute("aria-expanded", String(open)); details.hidden = !open; };</script>
+</body></html>

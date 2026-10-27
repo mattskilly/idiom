@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Motion lab</title><style>
+body { font: 16px system-ui; padding: 32px; margin: 0; } button { padding: 12px; }
+.toast { height: 56px; width: 280px; background: #222; color: white; padding: 0 16px; display: flex; align-items: center; animation: enter 150ms ease-out; }
+@keyframes enter { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style></head><body>
+<h1>Draft</h1>
+<p>Write something worth keeping.</p>
+<button id="save">Save draft</button>
+<div id="toasts" style="position: fixed; bottom: 24px; right: 24px;"></div>
+<script>save.onclick = () => { const toast = document.createElement("div"); toast.className = "toast"; toast.setAttribute("role", "status"); toast.textContent = "Draft saved"; toasts.append(toast); };</script>
+</body></html>

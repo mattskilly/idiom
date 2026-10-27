@@ -2,6 +2,7 @@ import type { Page } from "playwright";
 import { PNG } from "pngjs";
 import { type ObserveOptions, observePage } from "../checks/observe.js";
 import type {
+  ActionTimelineArtifact,
   FailedImageRequest,
   FocusVisibleObservation,
   GeometryScan,
@@ -22,6 +23,11 @@ import {
   fullPageSize,
   withScreenshotGeometry,
 } from "./screenshot.js";
+import {
+  mergeTimelines,
+  type TimelineCollector,
+  withTimelineIds,
+} from "./timeline.js";
 import { diagnoseTouchReachability, parkPointer } from "./touch.js";
 import type {
   ConsoleRecord,
@@ -69,6 +75,11 @@ export async function collectPageEvidence(options: {
   /** Runs last, after console collection, on a page it may freely mutate. */
   probe?: (() => Promise<ProbeArtifact>) | undefined;
   motion?: (() => MotionArtifact | undefined) | undefined;
+  /** Load and web-step timelines; the load window is already open. */
+  timelines?: TimelineCollector | undefined;
+  filmstrips?: import("./filmstrips.js").FilmstripCapture | undefined;
+  /** Probe-click timelines, read after the probe has run. */
+  probeTimelines?: (() => ActionTimelineArtifact | undefined) | undefined;
   explanations?: ExplanationCollector | undefined;
   explanation?: "default" | "visible" | undefined;
   explanationWaitMs?: number | undefined;
@@ -141,6 +152,12 @@ export async function collectPageEvidence(options: {
       contentType: document.contentType,
     }));
     nonHtml = classifyDocument(documentType.contentType) === "non-html";
+    // Already finished, unsettled, when web steps began.
+    await options.timelines?.finishLoad(
+      nonHtml ? "non-html document" : undefined,
+      true,
+      true,
+    );
 
     if (!nonHtml && options.observe?.designComparison) {
       activity("design resources");
@@ -419,6 +436,7 @@ export async function collectPageEvidence(options: {
     }
   } finally {
     await options.healthGuard?.dispose();
+    await options.timelines?.finishLoad("state did not settle");
   }
 
   let records: ConsoleRecord[] = [];
@@ -429,6 +447,7 @@ export async function collectPageEvidence(options: {
   } catch (error) {
     if (failure === undefined) failure = error;
   }
+  await options.timelines?.waitVisual();
   let probeBlocked: string | undefined;
   if (
     failure === undefined &&
@@ -502,8 +521,17 @@ export async function collectPageEvidence(options: {
       probeMs = Math.max(0, clock() - probeStarted);
     }
   }
+  await options.filmstrips?.dispose();
   options.signal?.throwIfAborted();
   const endedAt = options.now().toISOString();
+  const timelines = options.timelines
+    ? withTimelineIds(
+        mergeTimelines(
+          options.timelines.evidence(),
+          options.probeTimelines?.(),
+        ),
+      )
+    : undefined;
   if (failure !== undefined) {
     return {
       ok: false,
@@ -516,6 +544,8 @@ export async function collectPageEvidence(options: {
       console: records,
       axe,
       observations,
+      timelines,
+      filmstrips: options.filmstrips,
       mismatches,
       startedAt,
       endedAt,
@@ -531,6 +561,8 @@ export async function collectPageEvidence(options: {
     console: records,
     axe,
     observations,
+    timelines,
+    filmstrips: options.filmstrips,
     mismatches,
     startedAt,
     endedAt,

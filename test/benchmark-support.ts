@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { AxeBuilder } from "@axe-core/playwright";
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import { PNG } from "pngjs";
 import {
   ExplanationCollector,
@@ -14,6 +14,11 @@ import { mergeMotion } from "../src/capture/motion.js";
 import { probeControls } from "../src/capture/probe.js";
 import { createProbeLedger } from "../src/capture/probe-ledger.js";
 import {
+  mergeTimelines,
+  TimelineCollector,
+  withTimelineIds,
+} from "../src/capture/timeline.js";
+import {
   inferDesignComponents,
   inferredComponentInputs,
   mergeInferredComponents,
@@ -24,6 +29,7 @@ import {
   runDeterministicChecks,
 } from "../src/checks/registry.js";
 import type {
+  ActionTimelineArtifact,
   CheckTuple,
   FindingCandidate,
   ObservationArtifact,
@@ -82,6 +88,13 @@ export type ReviewOptions = {
   focusSweep?: boolean;
   /** Check observed links with this checker, as web capture does. */
   links?: LinkChecker;
+  /**
+   * Serve the fixture at http://idiom.test/ and navigate to it, so a load
+   * timeline is recorded (an init script needs a real navigation).
+   */
+  serve?: boolean;
+  /** Extra routes for a served fixture, such as delayed endpoints. */
+  routes?: (page: Page) => Promise<void>;
 };
 
 /**
@@ -154,14 +167,31 @@ export async function reviewStates(
         options.colorSchemes === undefined
           ? `${state}/desktop`
           : `${state}/desktop/${colorScheme}`;
+      const served = options.serve === true || options.routes !== undefined;
       try {
+        if (served) {
+          await page.route("http://idiom.test/", (route) =>
+            route.fulfill({ contentType: "text/html", body: html }),
+          );
+          await options.routes?.(page);
+        }
         const load = async () => {
-          if (url === undefined) await page.setContent(html);
+          if (served) await page.goto("http://idiom.test/");
+          else if (url === undefined) await page.setContent(html);
           else await page.goto(url);
           if (options.settleMs !== undefined)
             await page.waitForTimeout(options.settleMs);
         };
+        // A served fixture records its load as capture does.
+        const loadTimeline = served ? new TimelineCollector(page) : undefined;
+        await loadTimeline?.beginLoad({
+          source: "load",
+          kind: "navigation",
+          name: "/",
+        });
         await load();
+        await loadTimeline?.finishLoad();
+        let probeTimelines: ActionTimelineArtifact | undefined;
         const explanations =
           settings.explanation === "visible"
             ? new ExplanationCollector(page, "capture", settings.probe.waitMs)
@@ -257,18 +287,28 @@ export async function reviewStates(
           };
         if (options.probe && observations.version === 2) {
           const probe = await probeControls({
+            heldReplay: {
+              delayMs: settings.loading.delayMs,
+              withinMs: settings.progressWithinMs,
+              steps: [],
+            },
             page,
             skip: settings.probe.skip,
             respectControlIntent: settings.probe.respectControlIntent,
             maxControls: settings.probe.maxControls,
             waitMs: 150,
             motionSelectors: settings.motion.selectors,
+            motionMinExtentPx: settings.motion.minExtentPx,
+            reducedMotion: options.reducedMotion !== false,
             explanation: settings.explanation,
             collections: settings.collections.map(({ selector }) => selector),
             ledger: probeLedger,
             stateId: state,
             ledgerPartition: `desktop\0${colorScheme ?? "light"}`,
             restore: load,
+            onTimelines: (timelines) => {
+              probeTimelines = timelines;
+            },
           });
           observations = {
             ...observations,
@@ -281,6 +321,9 @@ export async function reviewStates(
           };
         }
         options.onObservations?.(observations);
+        const timelines = withTimelineIds(
+          mergeTimelines(loadTimeline?.evidence(), probeTimelines),
+        );
         tuples.push({
           flow: "studio-lab",
           colorScheme,
@@ -293,7 +336,11 @@ export async function reviewStates(
           width: viewport.width,
           height: viewport.height,
           metadataPath: `${tupleDirectory}/metadata.json`,
-          artifactPaths: [`${tupleDirectory}/observations.json`],
+          artifactPaths: [
+            `${tupleDirectory}/observations.json`,
+            ...(timelines ? [`${tupleDirectory}/timelines.json`] : []),
+          ],
+          ...(timelines ? { timelines } : {}),
           commit: "fixture",
           createdAt: "2026-10-22T00:00:00.000Z",
           observations,

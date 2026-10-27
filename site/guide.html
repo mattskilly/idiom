@@ -169,12 +169,12 @@ footer a:hover { color:var(--redline-ink); }
 
 <div class="wrap">
 
-  <header class="top"><a class="wordmark" href="https://idiom.build/">idiom</a><span class="meta">Field guide · v0.11.0</span><nav aria-label="Site"><a href="https://idiom.build/">Overview</a><a href="https://github.com/mattskilly/idiom">GitHub</a></nav><button class="theme-toggle" type="button" aria-label="Switch to dark theme" title="Switch to dark theme"><svg class="moon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13.5 9.6A5.6 5.6 0 0 1 6.4 2.5a5.6 5.6 0 1 0 7.1 7.1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><svg class="sun" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button></header>
+  <header class="top"><a class="wordmark" href="https://idiom.build/">idiom</a><span class="meta">Field guide · v0.12.0</span><nav aria-label="Site"><a href="https://idiom.build/">Overview</a><a href="https://github.com/mattskilly/idiom">GitHub</a></nav><button class="theme-toggle" type="button" aria-label="Switch to dark theme" title="Switch to dark theme"><svg class="moon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13.5 9.6A5.6 5.6 0 0 1 6.4 2.5a5.6 5.6 0 1 0 7.1 7.1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><svg class="sun" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button></header>
 
   <section>
     <h2 class="rail">In one breath</h2>
     <h1>The Idiom field guide.</h1>
-    <p class="lede">Your coding agent builds fast, and nobody looks at every screen in every condition. Idiom opens your running app in a real browser, captures every state you declare (an expired link, an error message, mobile, dark mode), measures what rendered against your design rules and the design you meant, and turns each problem into a small fix you can prove. It remembers what you decided, so a settled question stays settled.</p>
+    <p class="lede">Your coding agent builds fast, and nobody looks at every screen in every condition. Idiom opens your running app in a real browser, captures every state you declare (an expired link, an error message, mobile, dark mode), watches what happens between those states, measures what rendered against your design rules and the design you meant, and turns each problem into a small fix you can prove. It remembers what you decided, so a settled question stays settled.</p>
   </section>
 
   <section>
@@ -182,7 +182,7 @@ footer a:hover { color:var(--redline-ink); }
     <div class="pitch">
       <div>
         <h3>It sees the states you skip</h3>
-        <p>You and a crawler mostly see the happy path. Idiom drives the states you declare, such as expired, invalid, empty and error, at every viewport in light and dark, on web apps and Electron desktop apps.</p>
+        <p>You and a crawler mostly see the happy path. Idiom drives the states you declare, such as expired, invalid, empty and error, at every viewport in light and dark, on web apps and Electron desktop apps. It also records what happens during every load and click, so content that jumps, a button that shows nothing while it waits, and a panel that snaps open are caught, not just the screens either side.</p>
       </div>
       <div>
         <h3>Evidence, not opinion</h3>
@@ -199,8 +199,8 @@ footer a:hover { color:var(--redline-ink); }
     <h2 class="rail">The loop</h2>
     <ol class="loop">
       <li><span class="step">Learn</span><p><code>idiom init</code> mines your repo, interviews you for what code can't answer, and writes PRODUCT.md and DESIGN.md, your product's design law. <code>idiom init --flows</code> drafts flows from your routes, keeping only real HTML pages.</p></li>
-      <li><span class="step">Render</span><p><code>idiom capture</code> starts your app for real and photographs every declared state × viewport × color scheme, keyed to the exact commit. It clicks controls to see whether they do anything, and never sends requests that change your data.</p></li>
-      <li><span class="step">Critique</span><p><code>idiom check</code> runs more than 60 measured checks (contrast, broken links and images, fonts that fail to load, dead controls, spacing, sizes off your system and more) and compares against your intended design: Figma, Claude Design or HTML, an image, or a live site. Top issues come first, ranked by how noticeable and how prominent each is; symptoms of one cause become one issue. Capture waits for entrance animations to finish, then only what is painted is judged: content in a closed menu or collapsed section, and hidden, fully transparent or clipped-away elements are skipped and counted in the report. <code>idiom review</code> adds a model judge armed with your law, five findings at most.</p></li>
+      <li><span class="step">Render</span><p><code>idiom capture</code> starts your app for real and photographs every declared state × viewport × color scheme, keyed to the exact commit. It clicks controls to see whether they do anything and records a timeline of every page load, step and click: layout shifts, content inserted or removed, animations and the requests each action started. Actions that send requests are replayed with the responses held, as a slow network would, to see what the user waits through. It never sends requests that change your data.</p></li>
+      <li><span class="step">Critique</span><p><code>idiom check</code> runs more than 60 measured checks (contrast, broken links and images, fonts that fail to load, dead controls, content that jumps when you act, actions with no loading state or that can be submitted twice, changes that snap with no transition, spacing, sizes off your system and more) and compares against your intended design: Figma, Claude Design or HTML, an image, or a live site. Top issues come first, ranked by how noticeable and how prominent each is; symptoms of one cause become one issue. Capture waits for entrance animations to finish, then only what is painted is judged: content in a closed menu or collapsed section, and hidden, fully transparent or clipped-away elements are skipped and counted in the report. <code>idiom review</code> adds a model judge armed with your law, five findings at most.</p></li>
       <li><span class="step">Repair</span><p>You accept or reject each finding. Accepted ones become bounded tickets or paste-ready instructions for Claude Code, Codex, Cursor or whatever builds your code. <code>idiom fix</code> hands them to your coding agent and checks the result.</p></li>
       <li><span class="step">Verify</span><p><code>idiom verify</code> re-renders the same states after the fix and proves the finding is gone. No model is involved; the exit code is the verdict, so it works in CI.</p></li>
       <li><span class="step">Remember</span><p>Every decision is recorded in your repo. <code>idiom context</code> hands the accumulated judgment to the next agent before it writes a line of UI.</p></li>
@@ -214,8 +214,8 @@ footer a:hover { color:var(--redline-ink); }
       <thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead>
       <tbody class="group-head"><tr><td colspan="2">Start here, no setup</td></tr></tbody>
       <tbody>
-        <tr><td>idiom quick &lt;url…&gt;</td><td>Review any running page (localhost works): desktop + mobile, light + dark, all measurable checks, an HTML report, and a list of what it could not reach without setup. Two minutes, no config. Add <code>--design &lt;source&gt;</code> to compare against an image, an HTML or Claude Design export, a live site or a Figma frame.</td></tr>
-        <tr><td>idiom mcp</td><td>Serve Idiom's tools to Claude Code, Codex, Cursor or any MCP client, so your agent can check and fix as it builds.</td></tr>
+        <tr><td>idiom quick &lt;url…&gt;</td><td>Review any running page (localhost works): desktop + mobile, light + dark, all measurable checks, an HTML report, and a list of what it could not reach without setup. It clicks through the page's own controls with a strict probe that only lets read-only requests leave the browser (45 seconds per page; <code>--no-probe</code> to skip). A few minutes, no config. Add <code>--design &lt;source&gt;</code> to compare against an image, an HTML or Claude Design export, a live site or a Figma frame.</td></tr>
+        <tr><td>idiom mcp</td><td>Serve Idiom's tools to Claude Code, Codex, Cursor or any MCP client, so your agent can check and fix as it builds. The tools cover the loop from <code>idiom init</code> to sweep and baseline, and a problem that happens between states comes with a filmstrip of what the user saw. In Claude Code, the bundled plugin reminds the agent to check after it edits UI.</td></tr>
       </tbody>
       <tbody class="group-head"><tr><td colspan="2">Setting up</td></tr></tbody>
       <tbody>
@@ -237,6 +237,7 @@ footer a:hover { color:var(--redline-ink); }
         <tr><td>idiom tickets</td><td>Emit accepted findings as bounded repair tickets into your tracker's triage.</td></tr>
         <tr><td>idiom fix &lt;flow&gt;</td><td>Hand the top findings to your local coding agent (Claude Code or Codex), then verify each repair.</td></tr>
         <tr><td>idiom verify &lt;flow&gt;</td><td>After the fix merges: re-render, compare before/after, exit 0 only if the finding is provably gone. Model-free, CI-safe.</td></tr>
+        <tr><td>idiom sweep --all</td><td>After an autonomous build: capture every flow, group findings that share a cause into one cleanup set ranked by how noticeable and prominent each is, and emit at most 10 repair tickets for you to triage. <code>--deterministic-only</code> needs no model key.</td></tr>
         <tr><td>idiom compare &lt;flow&gt;</td><td>Write before/after composites for the states that changed between two captures.</td></tr>
       </tbody>
       <tbody class="group-head"><tr><td colspan="2">When the law doesn't exist yet</td></tr></tbody>

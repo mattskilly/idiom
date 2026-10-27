@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Exclusion</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d1d1f; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px; }
+  .section { height: 600px; border-bottom: 1px solid #ddd; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Guide</h1>
+  <button id="jump" type="button">Jump to setup</button>
+  <section class="section"><h2>Overview</h2><p>What the guide covers.</p></section>
+  <section class="section" id="setup"><h2>Setup</h2><p>Install the tools.</p></section>
+  <section class="section"><h2>Usage</h2><p>Run the first task.</p></section>
+</main>
+<script>
+  document.getElementById("jump").addEventListener("click", () => {
+    window.scrollBy(0, 500);
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Motion lab</title><style>
+body { font: 16px system-ui; padding: 32px; margin: 0; } button { padding: 12px; }
+.price { height: 120px; background: #f4f4f4; padding: 16px; }
+</style></head><body>
+<h1>Plans</h1>
+<div role="group" aria-label="Billing period">
+<button id="monthly" aria-pressed="true">Monthly</button>
+<button id="yearly" aria-pressed="false">Yearly</button>
+</div>
+<div id="prices" aria-label="Prices"><div class="price"><h2>Monthly</h2><p>12 per month</p></div></div>
+<script>
+const show = (period) => { const card = document.createElement("div"); card.className = "price"; card.innerHTML = `<h2>${period}</h2><p>${period === "Yearly" ? "120 per year" : "12 per month"}</p>`; prices.replaceChildren(card); };
+for (const button of [monthly, yearly]) button.onclick = () => { monthly.setAttribute("aria-pressed", String(button === monthly)); yearly.setAttribute("aria-pressed", String(button === yearly)); show(button.textContent); };
+</script>
+</body></html>

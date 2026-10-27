@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><title>Exclusion</title><style>body{font:16px sans-serif;margin:24px}</style></head><body>
+<main><h1>Article</h1><p>Some article text.</p><button id="like" type="button">Like</button></main>
+<script>
+document.querySelector("#like").addEventListener("click", () => {
+  fetch("/api/track", { method: "POST", body: "like" }).catch(() => undefined);
+});
+</script></body></html>

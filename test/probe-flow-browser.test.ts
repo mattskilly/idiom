@@ -15,6 +15,26 @@ import { loadCaptureRun } from "../src/review/artifacts.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
 
+/**
+ * Probe clicks per control across states, from the recorded timelines. The
+ * server sees more: the held replay repeats a click that sent requests (and
+ * activates it once more while a non-safe request is held), so its click
+ * counts no longer measure how often the probe itself clicked.
+ */
+async function probeClicks(runDirectory: string, name: string) {
+  let count = 0;
+  for (const id of ["a", "b"]) {
+    const artifact = JSON.parse(
+      await readFile(join(runDirectory, id, "desktop/timelines.json"), "utf8"),
+    ) as { actions: Array<{ source: string; name: string }> };
+    count += artifact.actions.filter(
+      (action) =>
+        action.source === "probe-click" && action.name.startsWith(name),
+    ).length;
+  }
+  return count;
+}
+
 test.each([false, true])(
   "a planned flow retains local coverage and mutation protection (failed probe context: %s)",
   async (failProbe) => {
@@ -128,8 +148,11 @@ createServer((req,res)=>{
       const clicks = (await readFile(join(directory, "clicks.txt"), "utf8"))
         .trim()
         .split("\n");
-      expect(clicks.filter((line) => line.includes("shared"))).toHaveLength(1);
-      expect(clicks.filter((line) => line.includes("own"))).toHaveLength(2);
+      expect(
+        clicks.filter((line) => line.includes("shared")).length,
+      ).toBeGreaterThan(0);
+      expect(await probeClicks(captured.runDirectory, "Shared")).toBe(1);
+      expect(await probeClicks(captured.runDirectory, "Own")).toBe(2);
       await expect(
         readFile(join(directory, "mutations.txt")),
       ).rejects.toMatchObject({ code: "ENOENT" });
@@ -257,8 +280,11 @@ createServer((req,res)=>{
     const clicks = (await readFile(join(directory, "clicks.txt"), "utf8"))
       .trim()
       .split("\n");
-    expect(clicks.filter((line) => line.includes("shared"))).toHaveLength(1);
-    expect(clicks.filter((line) => line.includes("own"))).toHaveLength(2);
+    expect(
+      clicks.filter((line) => line.includes("shared")).length,
+    ).toBeGreaterThan(0);
+    expect(await probeClicks(captured.runDirectory, "Shared")).toBe(1);
+    expect(await probeClicks(captured.runDirectory, "Own")).toBe(2);
     const results = (
       await Promise.all(
         ["a", "b"].map(async (id) => {

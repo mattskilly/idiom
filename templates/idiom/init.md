@@ -13,7 +13,7 @@ interview and the captured references. Phase 1 decides which.
 
 ## Phase 0 — scaffold safely
 
-Run `idiom init --yes` from the repository root. Always pass `--yes`: without it
+When the `idiom_init` MCP tool is present, call it (`flows:true` for route generation) instead of the CLI; it is always non-interactive. Otherwise run `idiom init --yes` from the repository root. Always pass `--yes`: without it
 the CLI opens an interactive stdin prompt a non-interactive shell cannot answer,
 and `--yes` still never overwrites a differing file. Never run `idiom init`
 without `--yes`. For requested route generation, run the configured local app and use

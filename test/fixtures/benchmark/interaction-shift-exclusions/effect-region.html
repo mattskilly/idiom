@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Exclusion</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d1d1f; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px; }
+  .panel { height: 240px; overflow: hidden; border: 1px solid #ddd; padding: 16px; }
+  .panel p { margin: 0 0 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Account</h1>
+  <div role="tablist">
+    <button role="tab" id="news-tab" type="button" aria-selected="false" aria-controls="panel">Show news</button>
+  </div>
+  <div class="panel" id="panel" role="tabpanel">
+    <p class="lede">Your plan renews on 1 December.</p>
+    <p class="detail">Billing contact: accounts team.</p>
+  </div>
+  <p class="after">Questions? Write to support.</p>
+</main>
+<script>
+  document.getElementById("news-tab").addEventListener("click", (event) => {
+    event.currentTarget.setAttribute("aria-selected", "true");
+    const news = document.createElement("p");
+    news.className = "news";
+    news.textContent = "New: invoices can now be downloaded as CSV.";
+    document.getElementById("panel").prepend(news);
+  });
+</script>
+</body>
+</html>

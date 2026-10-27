@@ -14,6 +14,7 @@ import {
 import type { ExplanationCollector } from "./explanations.js";
 import type { MotionCollector } from "./motion.js";
 import type { ProgressCollector } from "./progress.js";
+import type { TimelineCollector } from "./timeline.js";
 import type { ConsoleRecord } from "./types.js";
 
 export type ResolvedWebHealth = {
@@ -196,6 +197,7 @@ export class WebStepRunner implements StepHealthGuard {
     private explanations?: ExplanationCollector,
     private onActivity?: ((step: string) => void) | undefined,
     private signal?: AbortSignal | undefined,
+    private timelines?: TimelineCollector | undefined,
   ) {
     this.urls = health.allow.urls.map((source) => new RegExp(source));
     if (health.serverLog !== undefined) {
@@ -364,6 +366,8 @@ export class WebStepRunner implements StepHealthGuard {
             }),
       };
       if (index === 0) {
+        // The load timeline ends where the user's first action begins.
+        await this.timelines?.finishLoad();
         await this.readLog(true);
         this.schedulePoll();
       }
@@ -372,14 +376,24 @@ export class WebStepRunner implements StepHealthGuard {
       const mutation = ["click", "fill", "press", "select"].includes(
         step.action,
       );
+      const recording = await this.timelines?.start({
+        source: "web-step",
+        kind: step.action,
+        ...("selector" in step ? { selector: step.selector } : {}),
+        name: step.action,
+        stepIndex: index + 1,
+      });
       const window =
         mutation && "selector" in step
-          ? await this.motion?.start({
-              source: "web-step",
-              selector: step.selector,
-              name: step.action,
-              stepIndex: index + 1,
-            })
+          ? await this.motion?.start(
+              {
+                source: "web-step",
+                selector: step.selector,
+                name: step.action,
+                stepIndex: index + 1,
+              },
+              recording?.key,
+            )
           : undefined;
       const explanationWindow = mutation
         ? await this.explanations?.start()
@@ -413,6 +427,9 @@ export class WebStepRunner implements StepHealthGuard {
             Math.max(0, 350 - (performance.now() - started)),
           );
         await watch?.finish();
+        await recording?.finish();
+        await window?.finish();
+        await recording?.finishVisual(this.motion?.evidence());
         await this.checkpoint();
       } catch (error) {
         await watch?.finish({
@@ -427,6 +444,8 @@ export class WebStepRunner implements StepHealthGuard {
             : undefined,
         );
         await window?.dispose();
+        await recording?.finish("step failed", false);
+        await recording?.dispose();
         await watch?.dispose();
         await explanationWindow?.finish(failed ? "step failed" : undefined);
         await explanationWindow?.dispose();
@@ -459,7 +478,7 @@ export class WebStepRunner implements StepHealthGuard {
   }
 }
 
-async function runAction(page: Page, step: WebStep) {
+export async function runAction(page: Page, step: WebStep) {
   const timeout = 10_000;
   switch (step.action) {
     case "click":

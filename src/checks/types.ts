@@ -5,6 +5,13 @@ import type { DesignDriftEvidence } from "../schemas/finding.js";
 import type { EffectiveInvariant } from "../schemas/invariant.js";
 import type { ColorScheme } from "../schemas/project.js";
 import type {
+  ActionTimeline,
+  ActionTimelineArtifact,
+  HeldReplay,
+  PendingIndicatorKind,
+  VisibleChange,
+} from "./artifact-schema.js";
+import type {
   LivenessArtifact,
   TouchReachabilityArtifact,
 } from "./dynamic-schema.js";
@@ -70,7 +77,10 @@ export const deterministicCheckIds = [
   "image-distortion",
   "broken-image",
   "layout-shift",
+  "interaction-shift",
   "design-drift",
+  "loading-state-missing",
+  "double-submit",
 ] as const;
 
 export type DeterministicCheckId = (typeof deterministicCheckIds)[number];
@@ -511,6 +521,7 @@ export type MotionChange = {
   effects: MotionEffect[];
 };
 export type MotionAction = {
+  timelineId?: string | undefined;
   source: "probe-hover" | "probe-click" | "web-step";
   selector: string;
   name: string;
@@ -525,6 +536,14 @@ export type MotionArtifact = {
   reason?: string | undefined;
   reducedMotion: boolean;
   actions: MotionAction[];
+};
+
+export type {
+  ActionTimeline,
+  ActionTimelineArtifact,
+  HeldReplay,
+  PendingIndicatorKind,
+  VisibleChange,
 };
 
 export type ExplanationRecord = {
@@ -557,7 +576,38 @@ export type ProbeCollection = {
   reason?: string | undefined;
 };
 
+/**
+ * How strictly the probe guards the page. `app` is a configured flow's own
+ * app; `third-party` is an arbitrary URL in quick review, where only
+ * safe-method requests leave the browser and every escape is blocked.
+ */
+export type ProbeSafetyPolicy = "app" | "third-party";
+
+/** What a third-party probe sent, blocked and skipped. Counts only. */
+export type ProbeSafetyLedger = {
+  policy: "third-party";
+  /** Origins top-level navigation may stay on. */
+  origins: string[];
+  /** Routed requests by upper-case HTTP method. */
+  requests: {
+    sent: Record<string, number>;
+    blocked: Record<string, number>;
+  };
+  blocked: {
+    crossOriginNavigation: number;
+    formSubmission: number;
+    download: number;
+    popup: number;
+    windowOpen: number;
+    beforeunload: number;
+    permission: number;
+  };
+  skipped: { destructive: number };
+};
+
 export type ProbeArtifact = {
+  /** Present only for third-party (quick review) probes. */
+  safety?: ProbeSafetyLedger | undefined;
   /** Read-only enumeration used to allocate this flow before any clicks. */
   candidates?: import("../capture/probe.js").ProbeCandidate[] | undefined;
   selector?: string | undefined;
@@ -568,6 +618,10 @@ export type ProbeArtifact = {
   results: ProbeResult[];
   motion?: MotionArtifact | undefined;
   collections?: ProbeCollection[] | undefined;
+  /** The held (slow-network) replay of actions that sent requests. */
+  heldReplay?:
+    | { delayMs: number; queued: number; ran: number; notes: string[] }
+    | undefined;
 };
 
 export type ComponentObservation = {
@@ -1158,6 +1212,8 @@ export type FindingCandidate = {
   consoleExcerpt?: string | undefined;
   axeNodes?: unknown[] | undefined;
   evidenceTuples?: CheckTuple[] | undefined;
+  /** An action timeline id in the candidate's tuple. */
+  timeline?: string | undefined;
 };
 
 export type CheckTuple = {
@@ -1181,6 +1237,9 @@ export type CheckTuple = {
   commit: string;
   createdAt: string;
   observations?: ObservationArtifact | undefined;
+  /** Absent for runs captured before action timelines were recorded. */
+  timelines?: ActionTimelineArtifact | undefined;
+  filmstrips?: import("./filmstrip-schema.js").FilmstripManifest | undefined;
   axe?: unknown;
   console: ConsoleRecord[];
   consoleAvailable?: boolean | undefined;
@@ -1248,6 +1307,7 @@ export type ChecksConfig = {
   orphanWord?: { enabled: boolean; maxChars: number } | undefined;
   images?: { enabled: boolean; distortionTolerance: number } | undefined;
   layoutShift?: { enabled: boolean; max: number } | undefined;
+  interactionShift?: { enabled: boolean; minDistance: number } | undefined;
   designDrift?: DesignDriftConfig | undefined;
   /** Recorded `decide --choose` answers, applied where design references disagree. */
   designChoices?: import("../design/decide.js").DesignChoice[] | undefined;
@@ -1274,7 +1334,13 @@ export type ChecksConfig = {
   targetSize?:
     | { fine: number; coarse: number; narrowBelow: number }
     | undefined;
-  motion: { maxMs: number; durations: number[]; selectors: string[] };
+  motion: {
+    maxMs: number;
+    durations: number[];
+    selectors: string[];
+    /** Smallest visible change (px) a content snap must reach. */
+    minExtentPx: number;
+  };
   minGap: number;
   adjacentGap: { indicatorMax: number };
   centeringTolerance: number;
@@ -1303,6 +1369,8 @@ export type ChecksConfig = {
   alarm: { colors: string[]; brand: string[] };
   naming: { surfaces: Record<string, string> };
   progressWithinMs: number;
+  /** Optional so hand-built configs stay valid; read as `?? 1500`. */
+  loading?: { delayMs: number } | undefined;
   emptyState: {
     regions: Array<{ selector: string; items: string }>;
     auto: boolean;

@@ -153,10 +153,25 @@ export function accumulateProbeRound(
     previous.explanations,
     next.explanations,
   );
+  const held =
+    previous.heldReplay && next.heldReplay
+      ? {
+          delayMs: next.heldReplay.delayMs,
+          queued: previous.heldReplay.queued + next.heldReplay.queued,
+          ran: previous.heldReplay.ran + next.heldReplay.ran,
+          notes: [
+            ...new Set([
+              ...previous.heldReplay.notes,
+              ...next.heldReplay.notes,
+            ]),
+          ],
+        }
+      : (previous.heldReplay ?? next.heldReplay);
   return {
     ...previous,
     results,
     ...(explanations ? { explanations } : {}),
     ...(previous.candidates ? {} : { candidates: next.candidates }),
+    ...(held ? { heldReplay: held } : {}),
   };
 }

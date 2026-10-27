@@ -48,7 +48,7 @@ test("first run creates the complete scaffold with schema-valid defaults", async
   const result = await initProject({ project, yes: true });
   expect(result.created).toHaveLength(11);
   expect(await readFile(join(project, ".idiom", ".gitignore"), "utf8")).toBe(
-    "reports/\n",
+    "reports/\n/agent-hooks/\n",
   );
   for (const directory of [
     "flows",

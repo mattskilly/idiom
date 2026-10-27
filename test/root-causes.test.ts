@@ -418,3 +418,114 @@ test("the breadth factor is capped at 25%", () => {
   expect(rootCauseBreadth(8)).toBeCloseTo(1.25);
   expect(rootCauseBreadth(100)).toBeCloseTo(1.25);
 });
+
+test("aggregate same-rule components join across flows with qualified geometry; default grouping stays unchanged", () => {
+  const { groups, findingsById } = fixture(
+    ["#a", "#a"].map((selector) => ({
+      category: "target-size",
+      rule: "idiom:minimum-target-size",
+      selector,
+      params: { selector },
+    })),
+  );
+  const qualifiedGroups = groups.map((g, i) => ({
+    ...g,
+    coordinates: [JSON.stringify([i ? "beta" : "alpha", coordinate])],
+  }));
+  const tuple = context([element("#a")], {
+    components: new Map([["#a", "Button"]]),
+  }).get(coordinate) as IssueRankingTuple;
+  const ctx: IssueRankingContext = new Map(
+    qualifiedGroups.map((g, i) => [
+      g.coordinates[0] as string,
+      {
+        ...tuple,
+        state: JSON.stringify([i, "editor"]),
+        elements: new Map([
+          [
+            "#a",
+            element("#a", {
+              rect: { x: 0, y: 0, width: i ? 400 : 40, height: i ? 300 : 20 },
+            }),
+          ],
+        ]),
+      },
+    ]),
+  );
+  const groupFlows = new Map(
+    groups.map((g, i) => [g.id, i ? "beta" : "alpha"]),
+  );
+  const aggregate = rootCauseIssues(
+    qualifiedGroups,
+    findingsById,
+    new Set(),
+    ctx,
+    { groupFlows },
+  );
+  expect(aggregate).toHaveLength(1);
+  expect(aggregate[0]?.rootCause?.key).toBe("component:Button");
+  expect(aggregate[0]?.explanation.states).toBe(2);
+  expect(aggregate[0]?.explanation.coordinate).toBe(
+    qualifiedGroups[1]?.coordinates[0],
+  );
+  expect(
+    rootCauseIssues(qualifiedGroups, findingsById, new Set(), ctx).some(
+      (i) => i.rootCause,
+    ),
+  ).toBe(false);
+  const plain = new Map(
+    [...ctx].map(([key, t]) => [
+      key,
+      { ...t, components: new Map<string, string>() },
+    ]),
+  );
+  expect(
+    rootCauseIssues(qualifiedGroups, findingsById, new Set(), plain, {
+      groupFlows,
+    }).some((i) => i.rootCause),
+  ).toBe(false);
+});
+
+test("aggregate regions and class heuristics remain local to their flow", () => {
+  const { groups, findingsById } = fixture([
+    {
+      category: "target-size",
+      rule: "idiom:minimum-target-size",
+      selector: "#a",
+      params: { selector: "#a" },
+    },
+    {
+      category: "text-centering",
+      rule: "idiom:text-off-centre",
+      selector: "#a",
+      params: { selector: "#a" },
+    },
+    {
+      category: "dead-control",
+      rule: "idiom:no-effect",
+      selector: "#a",
+      params: { selector: "#a" },
+    },
+  ]);
+  const tuple = context([
+    element("#a", { ancestorSelectors: ["#settings"] }),
+    element("#settings", { tag: "section", interactive: false }),
+  ]).get(coordinate) as IssueRankingTuple;
+  const ctx = new Map<string, IssueRankingTuple>();
+  const flows = new Map<string, string>();
+  for (const [i, g] of groups.entries()) {
+    g.coordinates = [JSON.stringify([String(i), coordinate])];
+    ctx.set(g.coordinates[0] as string, { ...tuple, state: String(i) });
+    flows.set(g.id, String(i));
+  }
+  expect(
+    rootCauseIssues(groups, findingsById, new Set(), ctx).some(
+      (i) => i.rootCause?.kind === "region",
+    ),
+  ).toBe(true);
+  expect(
+    rootCauseIssues(groups, findingsById, new Set(), ctx, {
+      groupFlows: flows,
+    }).some((i) => i.rootCause),
+  ).toBe(false);
+});

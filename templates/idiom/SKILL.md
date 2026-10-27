@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # /idiom $ARGUMENTS
 
-Ask only for design judgment; report execution errors. When available, prefer MCP tools for quick/check/context/flows/fix-plan/verify/decide. Keep human judgment and an explicit reason for decisions. Use CLI for absent tools or unsupported workflows (model review, explore, init, references, tickets and spec-based verify); never silently retry a tool error via CLI. Verify mode owns verification only; fix-plan hands repairs to the caller only when requested. Figma: when Figma's own MCP server is connected, use it to read the frame for intent and context, then pass the frame URL (with `node-id`) to Idiom (`idiom design add <state> <frame-url>` or `review --page <url> --design <frame-url>`) for the measured comparison; never transcribe Figma values by hand. The first fetch needs `FIGMA_TOKEN` (a personal access token with `file_content:read`). When references disagree, a finding is a design decision: ask the human which reference is intended and record `idiom decide --finding <id> --choose <name> --reason <reason>`.
+Ask only for design judgment; report execution errors. When available, prefer MCP tools: `idiom_quick`, `idiom_check`, `idiom_context`, `idiom_flows`, `idiom_fix_plan`, `idiom_verify`, `idiom_decide`, `idiom_init` (init), `idiom_design_add` (design add), `idiom_choose` (decide --choose), `idiom_tickets` (clustered tickets), `idiom_sweep` (sweep), `idiom_coverage` (coverage) and `idiom_baseline` (baseline show/record). Keep human judgment and an explicit reason for decisions. Use CLI for absent tools or CLI-only workflows (page review, explore, rulings/learn, references, per-finding tickets and instructions, spec-based verify, report/system); never silently retry a tool error via CLI. Verify mode owns verification only; fix-plan hands repairs to the caller only when requested. Figma: when Figma's own MCP server is connected, use it to read the frame for intent and context, then pass the frame URL (with `node-id`) to Idiom (prefer `idiom_design_add` when present, else `idiom design add <state> <frame-url>`, or `review --page <url> --design <frame-url>`) for the measured comparison; never transcribe Figma values by hand. The first fetch needs `FIGMA_TOKEN` (a personal access token with `file_content:read`), in the MCP server's environment for tools. When references disagree, a finding is a design decision: ask the human which reference is intended and their reason, then record exactly that with `idiom_choose` when present, else `idiom decide --finding <id> --choose <name> --reason <reason>`.
 
 ## Verify mode
 
@@ -46,10 +46,22 @@ text unchanged as one shell-safe CLI argument. Run exactly one command:
 `idiom explore resolve <runId> --none --reason <reason> --yes`.
 Never infer a choice, offer refinement in this detached flow, apply candidate
 code, or leave the outcome only in the conversation.
+
+## Sweep mode
+
+When `$ARGUMENTS` starts with `sweep`, route it here, including `sweep --all`.
+After a batch of builds lands, run `idiom sweep --all --emit-tickets .autobuild/tickets/triage`
+(or MCP `idiom_sweep` with `{all:true,emitTickets:".autobuild/tickets/triage"}`).
+Use `--deterministic-only` without model credentials; `--max-tickets` defaults to 10.
+Inspect polish Markdown/HTML reports, omitted counts and probe/model coverage limits.
+Present bounded triage proposals without inventing accept/reject decisions. Never
+promote them, launch dispatch or implement cleanup. Groom manually; after repairs,
+run every ticket's printed verification-sidecar command for its flow and tuple.
+
 ## Review mode
 
 Otherwise `$ARGUMENTS` is an optional flow id — never `init`, `verify` or `check`.
-Explore was routed above. With no flow, process `.idiom/flows/*.json` in
+Explore and sweep were routed above. With no flow, process `.idiom/flows/*.json` in
 deterministic filename order.
 
 Before review, manage visual context only with

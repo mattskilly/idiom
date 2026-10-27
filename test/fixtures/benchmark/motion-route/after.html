@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Motion lab</title><style>
+body { font: 16px system-ui; padding: 32px; margin: 0; } button { padding: 12px; }
+main { min-height: 300px; background: #f4f4f4; padding: 16px; }
+</style></head><body>
+<nav aria-label="Primary"><button id="reports">Reports</button></nav>
+<main><h1>Home</h1><p>Welcome back.</p></main>
+<script>
+const swap = () => { history.pushState({}, "", "/reports"); document.querySelector("main").innerHTML = "<section style='height: 320px'><h1>Reports</h1><p>Weekly totals.</p></section>"; };
+reports.onclick = () => { if (document.startViewTransition) document.startViewTransition(swap); else swap(); };
+</script>
+</body></html>

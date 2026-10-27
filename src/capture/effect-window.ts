@@ -1,4 +1,11 @@
 import type { Page, Request } from "playwright";
+import { ignoredRequest } from "./request-policy.js";
+
+/**
+ * How long a probe click may wait for content its own requests bring: long
+ * enough to see data that arrives after the 500ms late-shift boundary.
+ */
+export const LATE_CONTENT_WINDOW_MS = 2000;
 
 type QuietWindow = {
   __idiomQuiet?: {
@@ -10,17 +17,35 @@ type QuietWindow = {
   };
 };
 
-/** Observe 150ms of inactivity, bounded by the former fixed effect window. */
-export async function beginEffectWindow(page: Page, maximumMs: number) {
+/**
+ * Observe 150ms of inactivity, bounded by the former fixed effect window.
+ * With `pendingMs`, a window that reaches its bound while requests it saw
+ * start are still in flight keeps waiting for them (and 150ms of quiet), up
+ * to `pendingMs` in total, so late content lands inside the window.
+ * Ignored requests, navigations and streams (EventSource, WebSocket) never
+ * extend it.
+ */
+export async function beginEffectWindow(
+  page: Page,
+  maximumMs: number,
+  options: { pendingMs?: number | undefined } = {},
+) {
   const token = `${Date.now()}:${Math.random()}`;
   let networkAt = performance.now();
   const pending = new Set<Request>();
+  const awaited = new Set<Request>();
   const request = (value: Request) => {
     pending.add(value);
     networkAt = performance.now();
+    if (
+      !ignoredRequest(value) &&
+      !["document", "eventsource", "websocket"].includes(value.resourceType())
+    )
+      awaited.add(value);
   };
   const finished = (value: Request) => {
     pending.delete(value);
+    awaited.delete(value);
     networkAt = performance.now();
   };
   const dispose = async () => {
@@ -70,7 +95,8 @@ export async function beginEffectWindow(page: Page, maximumMs: number) {
   }
   return {
     dispose,
-    async wait() {
+    /** Resolves true when the page went quiet, false at the bound. */
+    async wait(): Promise<boolean> {
       const begun = performance.now();
       networkAt = Math.max(networkAt, begun);
       // Clicking itself starts the window even when it causes no activity.
@@ -80,7 +106,16 @@ export async function beginEffectWindow(page: Page, maximumMs: number) {
           if (state?.token === token) state.last = performance.now();
         }, token)
         .catch(() => undefined);
-      while (performance.now() - begun < maximumMs) {
+      const pendingMs = Math.max(maximumMs, options.pendingMs ?? maximumMs);
+      let extended = false;
+      const open = () => {
+        const elapsed = performance.now() - begun;
+        if (elapsed < maximumMs) return true;
+        // At the bound, only requests this window saw start extend it.
+        if (!extended) extended = awaited.size > 0;
+        return extended && elapsed < pendingMs;
+      };
+      while (open()) {
         const quiet = await page
           .evaluate((token) => {
             const state = (window as QuietWindow).__idiomQuiet;
@@ -93,10 +128,21 @@ export async function beginEffectWindow(page: Page, maximumMs: number) {
           }, token)
           .catch(() => false);
         if (quiet && pending.size === 0 && performance.now() - networkAt >= 150)
-          return;
-        const remaining = maximumMs - (performance.now() - begun);
+          return true;
+        // Extended for awaited requests: once they are done and the page is
+        // quiet, stop, still unsettled when other requests remain.
+        if (
+          extended &&
+          quiet &&
+          awaited.size === 0 &&
+          performance.now() - networkAt >= 150
+        )
+          return false;
+        const remaining =
+          (extended ? pendingMs : maximumMs) - (performance.now() - begun);
         if (remaining > 0) await page.waitForTimeout(Math.min(25, remaining));
       }
+      return false;
     },
   };
 }

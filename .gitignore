@@ -5,6 +5,7 @@ dist/
 .env.*
 .DS_Store
 .idiom/reports/
+.idiom/agent-hooks/
 .autobuild/
 .vercel
 .env*

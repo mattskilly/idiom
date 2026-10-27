@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><title>Exclusion</title><style>body{font:16px sans-serif;margin:24px}</style></head><body>
+<main><h1>Search</h1><button id="refresh" type="button">Refresh results</button><p id="status" role="status"></p><ul id="results"></ul></main>
+<script>
+document.querySelector("#refresh").addEventListener("click", async () => {
+  document.querySelector("#status").textContent = "Loading results…";
+  const response = await fetch("/api/items");
+  const items = await response.json();
+  document.querySelector("#results").innerHTML = items.map((item) => "<li>" + item + "</li>").join("");
+  document.querySelector("#status").textContent = items.length + " results";
+});
+</script></body></html>

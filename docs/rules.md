@@ -246,11 +246,11 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `motion`
 
-- **Catches:** Panels, drawers, menus and dialogs that snap open with no transition, observed durations outside the configured scale or maximum, and motion that still runs under reduced motion.
-- **Why it matters:** Snapping surfaces feel abrupt, slow ones feel sluggish, and motion that ignores the reduced-motion preference can make people unwell.
-- **Severity:** major for motion running under reduced motion; minor for snaps and durations.
+- **Catches:** Panels, drawers, menus and dialogs that snap open with no transition (`idiom:motion-no-transition`); content that snaps after an action (`idiom:motion-snap`): tab and segmented-control content swaps, inline expand/collapse, list items added or removed, toasts and status messages, and client-side route changes that swap the main content; observed durations outside the configured scale or maximum; and motion that still runs under reduced motion. A content snap is a visible change of at least `minExtentPx` with no animation or transition on the changed element or an ancestor and no View Transition. Text-only changes (counters, echoed input), smaller changes, focus rings and changes to the clicked control itself are not snaps. Each surface and kind of change is one finding listing every action that produced it.
+- **Why it matters:** When opening or changing something goes boom, boom, the app feels jarring and cheap. Slow motion feels sluggish, and motion that ignores the reduced-motion preference can make people unwell.
+- **Severity:** major for snaps (overlay and content) and for motion running under reduced motion; minor for durations.
 - **Source:** WCAG 2.2 2.3.3 Animation from Interactions (AAA) for reduced motion; craft convention for timing.
-- **Configure or decide:** `checks.motion` sets `maxMs` (default 150), `durations` and extra `selectors`, and `capture.reducedMotion` picks the audit; needs the probe or declared web steps, and findings are decided with `idiom decide`.
+- **Configure or decide:** `checks.motion` sets `maxMs` (default 150), `durations`, extra `selectors` and `minExtentPx` (default 24), and `capture.reducedMotion` picks the audit. Under reduced motion an instant change is correct, so snaps are judged only under normal motion: in a reduced-motion capture (the default) the probe replays each suspected content snap once under normal motion to confirm it (one replay per surface and kind, six per state); web steps are judged in a `reducedMotion: false` capture or when the probe confirmed the same surface. Needs the probe or declared web steps, and findings are decided with `idiom decide`.
 
 ### `element-overlap`
 
@@ -494,11 +494,19 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `layout-shift`
 
-- **Catches:** Cumulative layout shift during load above the maximum, naming the elements that moved.
+- **Catches:** Cumulative layout shift during load above the maximum, naming the elements that moved. When the capture recorded a load timeline, it also names the late-arriving content (inserted, removed or resized) behind the largest shift, with its measured size, and the fix reserves that space.
 - **Why it matters:** Content that jumps after load makes people lose their place or click the wrong thing.
-- **Severity:** minor.
+- **Severity:** major (a "feel" law: content never moves under the reader).
 - **Source:** Core Web Vitals: Cumulative Layout Shift, where 0.1 or less is good.
-- **Configure or decide:** On by default; `checks.layoutShift` sets `enabled` and `max` (default 0.1), and findings are decided with `idiom decide`.
+- **Configure or decide:** On by default; `checks.layoutShift` sets `enabled` and `max` (default 0.1), and findings are decided with `idiom decide`. Older captures without a load timeline keep the previous text; recapture to get the cause.
+
+### `interaction-shift`
+
+- **Catches:** Content displaced by at least 4px after a probe click or web step, without animation, because content was inserted, removed or resized, outside what the action changes (the control, its `aria-controls` targets, and a local container of what it inserted or removed). Content that arrives more than 500ms after input (async data, lazy images, banners) is reported even inside that region, because the reader had already started reading it. Not a shift: scrolling, sorting or filtering rows within a list, gradual (animated) movement, overlays that displace nothing, pinned content that stays put on screen, containers that collapse to nothing, movement entirely outside the viewport, and, within 500ms, the panel the control opens, closes or dismisses (whether it snaps is the transition rules' concern). A chain of pushes, such as table columns widening one after another, is one finding named after the first cause. Each finding names the cause, the distance and direction, the time after input and up to five moved elements, ranked by area times distance, and its fix is generated from the measured size: reserve the height or aspect ratio, render a skeleton at the final size, or overlay instead of pushing.
+- **Why it matters:** Content that jumps after you act makes you lose your place or click the wrong thing, and agents that only see static screenshots never notice it.
+- **Severity:** major (a "feel" law: content never moves under the reader).
+- **Source:** Craft law over the action timeline. Core Web Vitals deliberately exempts shifts within 500ms of input; this rule does not, because the shifts people complain about are the ones they cause.
+- **Configure or decide:** On by default; `checks.interactionShift` sets `enabled` and `minDistance` (default 4px). The 500ms late boundary is fixed. Runs captured before action timelines need a recapture. Findings are decided with `idiom decide`.
 
 ### `design-drift`
 
@@ -507,3 +515,19 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 - **Severity:** minor for measured drift, copy, extras and image regions; major when a declared scale step is crossed, or when controls, headings, main content or its illustrations are missing.
 - **Source:** Craft convention: the built screen matches its intended design.
 - **Configure or decide:** Opt-in per state through `design` (or `idiom design add`); `checks.designDrift` sets `enabled`, the common `tolerance` and per-property overrides, `fontWeight` and `color`, and findings are decided with `idiom decide`.
+
+### `loading-state-missing`
+
+- **Catches:** An action whose visible result waits on a fetch or XHR request but shows nothing while that request is pending. The interaction probe replays each probe click and web step that sent requests with those responses held for `checks.loading.delayMs`, as a slow network would. It reports when nothing indicates pending work within `checks.progressWithinMs` and the page changes only after a response. Pending work means a spinner or progress bar, `aria-busy`, a skeleton or placeholder, a status or live-region text change, a disabled, busy or pressed trigger, or any visible content change. A client-side route change is judged only by indicators, progress text, a disabled trigger and changes inside the main region; a highlighted nav link or route announcer does not count. The finding names the trigger, the requests and the measured silent time. Not reported: full-page document navigations (the browser shows progress), requests whose response nothing visible waits on, and declared `longRunning` steps that `progress-affordance` judged.
+- **Why it matters:** Locally every response is instant. On a real network, a click that shows nothing for a second reads as broken, and people click again or leave.
+- **Severity:** major.
+- **Source:** Usability heuristic: visibility of system status.
+- **Configure or decide:** `checks.loading.delayMs` sets the hold (default 1500ms; it must exceed `checks.progressWithinMs`, default 1000ms); the interaction probe must run. Skeletons whose swap displaces content are left to layout rules reading the same timeline. Findings are decided with `idiom decide` or a `.idiom/rules.json` override.
+
+### `double-submit`
+
+- **Catches:** A trigger that stays enabled while its non-safe request (POST, PUT, PATCH, DELETE) is pending, where activating it again issues a duplicate of that request. During the held replay Idiom activates the trigger a second time; the duplicate is observed at the route layer and aborted, never sent. A request nothing visible waits on (a beacon) is not reported.
+- **Why it matters:** A double click or an impatient user submits the same order, message or payment twice.
+- **Severity:** major.
+- **Source:** Usability heuristic: error prevention.
+- **Configure or decide:** `checks.loading.delayMs` sets how long the request is held, and `checks.progressWithinMs` sets when the second activation is tried; the interaction probe must run. Findings are decided with `idiom decide` or a `.idiom/rules.json` override.

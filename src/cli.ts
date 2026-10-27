@@ -34,7 +34,11 @@ import {
 } from "./commands/explore.js";
 import { exploreResolveCommand } from "./commands/explore-resolve.js";
 import { fixCommand } from "./commands/fix.js";
-import { type Confirmation, initProject } from "./commands/init.js";
+import {
+  type Confirmation,
+  initProject,
+  initSummaryLines,
+} from "./commands/init.js";
 import { instructionCommand } from "./commands/instruction.js";
 import { type LearnDependencies, learnCommand } from "./commands/learn.js";
 import { quickCommand } from "./commands/quick.js";
@@ -55,6 +59,7 @@ import { IdiomError } from "./errors.js";
 import { renderFixSummary } from "./fix/report.js";
 import type { FixDependencies } from "./fix/run.js";
 import type { GenerateFlow } from "./flows/generate.js";
+import { interactionTail } from "./quick/interaction.js";
 import type { QuickDependencies } from "./quick/run.js";
 import type { ReferenceDependencies } from "./references/run.js";
 import type { OpenReportDependencies } from "./report/open.js";
@@ -199,45 +204,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         confirm: dependencies.confirm,
         write: writeOut,
       });
-      writeOut(
-        `Initialized ${result.projectDirectory}: ${result.created.length} created, ${result.replaced.length} replaced, ${result.unchanged.length} unchanged, ${result.skipped.length} preserved`,
-      );
-      if ("stateCount" in result.flows) {
-        const outcome = result.flows;
-        writeOut(
-          outcome.kind === "no-routes"
-            ? "No discoverable routes; no site flow written."
-            : `Site flow ${outcome.kind}: .idiom/flows/site.json (${outcome.routeCount} routes, ${outcome.stateCount} candidate states, ${outcome.setup.length} setup-required routes).`,
-        );
-        for (const note of [
-          ...outcome.warnings,
-          ...outcome.todos,
-          ...outcome.setup,
-        ])
-          writeOut(note);
-        if (outcome.content !== undefined)
-          writeOut("Next: idiom validate site; idiom capture site");
-        if (outcome.content !== undefined && outcome.stateCount === 0)
-          writeOut("TODO-only flow: no concrete states are ready to capture.");
-      }
-      for (const file of result.skipped) writeOut(`Preserved existing ${file}`);
-      if (result.autobuild.kind === "available-noninteractive")
-        writeOut(
-          "Autobuild verification is available; rerun `idiom init` interactively to review and approve wiring.",
-        );
-      else if (result.autobuild.kind === "declined")
-        writeOut("Autobuild wiring declined; no Autobuild files changed.");
-      else if (result.autobuild.kind === "applied")
-        writeOut("Wired Idiom verification into Autobuild.");
-      else if (result.autobuild.kind === "already-wired")
-        writeOut("Autobuild verification is already wired; no changes needed.");
-      else if (result.autobuild.kind === "manual") {
-        writeOut(
-          `Autobuild wiring made no changes: ${result.autobuild.reason} Ordinary Idiom initialization still completed.`,
-        );
-        writeOut("Make this addition by hand:");
-        writeOut(result.autobuild.addition);
-      }
+      for (const line of initSummaryLines(result)) writeOut(line);
     });
 
   program
@@ -260,23 +227,35 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       "--design <source>",
       "intended design image, HTML file/directory, site URL or Figma frame URL",
     )
+    .option(
+      "--probe-budget <ms>",
+      "per-page interaction probe budget in milliseconds (default 45000)",
+    )
+    .option("--no-probe", "skip the interaction probe (static review)")
     .action(
       async (
         urls: string[],
-        options: { out?: string; design?: string },
+        options: {
+          out?: string;
+          design?: string;
+          probe?: boolean;
+          probeBudget?: string;
+        },
         command: Command,
       ) => {
         const shared = command.optsWithGlobals<SharedOptions>();
         const result = await quickCommand({
           urls,
           design: options.design,
+          probe: options.probe,
+          probeBudgetMs: options.probeBudget,
           project: shared.project,
           cwd: dependencies.cwd,
           out: options.out,
           dependencies: dependencies.quick,
         });
         writeOut(
-          `Quick review: ${result.findingCount} finding(s), ${result.counts.total} capture(s) — Markdown: ${result.reportPath} — HTML: ${result.htmlReportPath}`,
+          `Quick review: ${result.findingCount} finding(s), ${result.counts.total} capture(s) — ${interactionTail(result.interaction)} — Markdown: ${result.reportPath} — HTML: ${result.htmlReportPath}`,
         );
       },
     );
@@ -952,7 +931,18 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
     .description(
       "capture, run every deterministic check, then a per-surface model sweep with crops and measured geometry",
     )
-    .argument("<flow>", "flow manifest id")
+    .argument("[flow]", "flow manifest id")
+    .option("--all", "capture and sweep every validated flow")
+    .option(
+      "--deterministic-only",
+      "run the full check registry without model credentials",
+    )
+    .option(
+      "--max-tickets <n>",
+      "maximum new cleanup tickets (default 10)",
+      Number,
+      10,
+    )
     .option("--prod", "capture and sweep a fresh production build")
     .option(
       "--port <port>",
@@ -979,8 +969,11 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
     )
     .action(
       async (
-        flow: string,
+        flow: string | undefined,
         options: {
+          all?: boolean;
+          deterministicOnly?: boolean;
+          maxTickets: number;
           from?: string;
           latest?: boolean;
           prod?: boolean;
@@ -994,6 +987,9 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         const shared = command.optsWithGlobals<SharedOptions>();
         const summary = await sweepCommand({
           flow,
+          all: options.all,
+          deterministicOnly: options.deterministicOnly,
+          maxTickets: options.maxTickets,
           project: shared.project,
           cwd: dependencies.cwd,
           from: options.from,
@@ -1010,7 +1006,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         );
         if (summary.outcome.kind === "degraded")
           writeErr(
-            `Warning: Model critique degraded: ${summary.outcome.reason}`,
+            `Warning: ${"scope" in summary ? "Sweep incomplete" : "Model critique degraded"}: ${summary.outcome.reason}`,
           );
         const rank = { blocker: 0, major: 1, minor: 2 } as const;
         const failing =

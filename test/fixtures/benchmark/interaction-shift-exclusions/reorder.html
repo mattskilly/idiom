@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Exclusion</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d1d1f; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px; }
+  .rows { height: 960px; }
+  .row { box-sizing: border-box; height: 40px; padding: 8px 0; border-bottom: 1px solid #eee; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Projects</h1>
+  <button id="sort" type="button">Sort by name</button>
+  <div class="rows">
+    <div class="row" data-id="cedar">Cedar</div>
+    <div class="row" data-id="alder">Alder</div>
+    <div class="row" data-id="aspen">Aspen</div>
+    <div class="row" data-id="oak">Oak</div>
+    <div class="row" data-id="beech">Beech</div>
+    <div class="row" data-id="birch">Birch</div>
+    <div class="row" data-id="cherry">Cherry</div>
+    <div class="row" data-id="chestnut">Chestnut</div>
+    <div class="row" data-id="cypress">Cypress</div>
+    <div class="row" data-id="dogwood">Dogwood</div>
+    <div class="row" data-id="elm">Elm</div>
+    <div class="row" data-id="fir">Fir</div>
+    <div class="row" data-id="ginkgo">Ginkgo</div>
+    <div class="row" data-id="hawthorn">Hawthorn</div>
+    <div class="row" data-id="hazel">Hazel</div>
+    <div class="row" data-id="hemlock">Hemlock</div>
+    <div class="row" data-id="hickory">Hickory</div>
+    <div class="row" data-id="holly">Holly</div>
+    <div class="row" data-id="juniper">Juniper</div>
+    <div class="row" data-id="larch">Larch</div>
+    <div class="row" data-id="linden">Linden</div>
+    <div class="row" data-id="magnolia">Magnolia</div>
+    <div class="row" data-id="maple">Maple</div>
+    <div class="row" data-id="pine">Pine</div>
+  </div>
+</main>
+<script>
+  document.getElementById("sort").addEventListener("click", () => {
+    // Keyed reconciliation: only rows out of place are moved.
+    const list = document.querySelector(".rows");
+    const sorted = [...list.children].sort((a, b) => a.textContent.localeCompare(b.textContent));
+    sorted.forEach((row, index) => {
+      if (list.children[index] !== row) list.insertBefore(row, list.children[index]);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tupleCoordinateKey } from "../baseline/coordinate.js";
+import { temporalAction } from "../checks/temporal-evidence.js";
 import type { CheckTuple, FindingCandidate } from "../checks/types.js";
 import type {
   ModelFindingCandidate,
@@ -164,6 +165,7 @@ function deterministicFinding(options: {
             evidenceTuples.flatMap((evidence) => evidence.artifactPaths),
           ),
         ],
+        ...timelineReference(tuple, candidate),
         ...(candidate.domSnippet === undefined
           ? {}
           : { domSnippet: candidate.domSnippet }),
@@ -187,6 +189,17 @@ function deterministicFinding(options: {
       status: "open",
     }),
   };
+}
+
+/** A finding references its action timeline only when the tuple stored one. */
+function timelineReference(tuple: CheckTuple, candidate: FindingCandidate) {
+  const action = temporalAction(tuple, candidate);
+  const artifact = tuple.artifactPaths.find((path) =>
+    /(^|\/)timelines\.json$/.test(path),
+  );
+  return artifact && action?.id
+    ? { timeline: { artifact, id: action.id } }
+    : {};
 }
 
 export function buildDeterministicDrafts(options: {
@@ -517,7 +530,7 @@ export async function writeFindings(
 }
 
 /** Finalize each tuple separately: canonical IDs may legitimately occur more than once. */
-export function finalizeDeterministicOccurrences(options: {
+export function finalizeFindingOccurrences(options: {
   runId: string;
   drafts: FindingDraft[];
   catalog?: ReviewCatalog | undefined;
@@ -539,3 +552,6 @@ export function finalizeDeterministicOccurrences(options: {
         left.fingerprint.localeCompare(right.fingerprint),
     );
 }
+
+/** Compatibility name for check callers requesting deterministic drafts only. */
+export const finalizeDeterministicOccurrences = finalizeFindingOccurrences;

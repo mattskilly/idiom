@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Exclusion</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d1d1f; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px; }
+  .menu-host { position: relative; display: inline-block; }
+  .menu { position: absolute; top: 100%; left: 0; width: 200px; margin: 4px 0 0; padding: 8px; list-style: none; background: #fff; border: 1px solid #ddd; box-shadow: 0 4px 12px rgb(0 0 0 / 0.12); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Reports</h1>
+  <div class="menu-host">
+    <button id="more" type="button" aria-haspopup="false" aria-expanded="false">More actions</button>
+  </div>
+  <p>Reports are generated nightly.</p>
+  <p>Older reports are archived after a year.</p>
+</main>
+<script>
+  document.getElementById("more").addEventListener("click", (event) => {
+    if (document.querySelector(".menu")) return;
+    event.currentTarget.setAttribute("aria-expanded", "true");
+    const menu = document.createElement("ul");
+    menu.className = "menu";
+    for (const label of ["Download", "Share", "Archive"]) {
+      const item = document.createElement("li");
+      item.textContent = label;
+      menu.append(item);
+    }
+    document.querySelector(".menu-host").append(menu);
+  });
+</script>
+</body>
+</html>

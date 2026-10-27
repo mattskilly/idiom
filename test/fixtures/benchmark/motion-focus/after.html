@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Motion lab</title><style>
+body { font: 16px system-ui; padding: 32px; margin: 0; } button { padding: 12px; }
+input { padding: 12px; border: 1px solid #888; outline: none; }
+input:focus { box-shadow: 0 0 0 4px #4a90e2; outline: 3px solid #1a5fb4; outline-offset: 2px; }
+</style></head><body>
+<h1>Search</h1>
+<label for="query">Query</label> <input id="query">
+<button id="jump">Jump to search</button>
+<script>jump.onclick = () => query.focus();</script>
+</body></html>

@@ -14,7 +14,10 @@ const {
   replaceGeneratedSection,
   renderGenerated,
   summarizeCheckResult,
+  probeTupleOverheadMs,
+  summarizeProbeSafety,
   summarizeQuickResult,
+  sumProbeSafety,
   validateTargets,
 } = lib;
 
@@ -317,4 +320,100 @@ describe("generated section", () => {
     expect(markdown).toContain("| `r` | 1 | 0 | 0 | 1 | 100% | agent |  |");
     expect(markdown).toContain("#### t");
   });
+});
+
+test("summarizeProbeSafety sums the probe ledger and detects non-safe sends", () => {
+  const ledger = (sent: Record<string, number>) => ({
+    policy: "third-party",
+    origins: ["https://a.example"],
+    requests: { sent, blocked: { POST: 2 } },
+    blocked: {
+      crossOriginNavigation: 1,
+      formSubmission: 1,
+      download: 0,
+      popup: 0,
+      windowOpen: 1,
+      beforeunload: 0,
+      permission: 0,
+    },
+    skipped: { destructive: 1 },
+  });
+  const clean = summarizeProbeSafety([
+    {
+      probe: {
+        status: "partial",
+        safety: ledger({ GET: 5, HEAD: 1 }),
+        results: [
+          { status: "completed", effects: ["dom"] },
+          { status: "completed", skipped: "destructive name" },
+          { status: "completed", skipped: "not clickable: hidden" },
+          { status: "not-reached", skipped: "not reached: state budget" },
+          { status: "timed-out", timeoutScope: "state" },
+          { status: "timed-out", timeoutScope: "control" },
+        ],
+      },
+    },
+    { probe: undefined },
+    {},
+  ]);
+  expect(clean).toEqual({
+    probedPages: 1,
+    probed: 2,
+    skippedDestructive: 1,
+    skippedOther: 1,
+    notReached: 2,
+    blocked: {
+      crossOriginNavigation: 1,
+      formSubmission: 1,
+      download: 0,
+      popup: 0,
+      windowOpen: 1,
+      beforeunload: 0,
+      permission: 0,
+    },
+    sent: { GET: 5, HEAD: 1 },
+    nonSafeSent: 0,
+  });
+  const leaked = summarizeProbeSafety([
+    {
+      probe: {
+        status: "ran",
+        safety: ledger({ GET: 1, POST: 2 }),
+        results: [],
+      },
+    },
+  ]);
+  expect(leaked.nonSafeSent).toBe(2);
+  const total = sumProbeSafety([clean, leaked]);
+  expect(total.probedPages).toBe(2);
+  expect(total.sent).toEqual({ GET: 6, HEAD: 1, POST: 2 });
+  expect(total.blocked.crossOriginNavigation).toBe(2);
+  expect(total.nonSafeSent).toBe(2);
+});
+
+test("probeTupleOverheadMs compares a probed tuple with its unprobed sibling", () => {
+  const meta = (viewport: string, scheme: string, seconds: number) => ({
+    state: { id: "page-1" },
+    viewport: { name: viewport },
+    colorScheme: scheme,
+    timestamps: {
+      startedAt: "2026-10-26T00:00:00.000Z",
+      endedAt: new Date(
+        Date.parse("2026-10-26T00:00:00.000Z") + seconds * 1000,
+      ).toISOString(),
+    },
+  });
+  expect(
+    probeTupleOverheadMs(
+      [
+        meta("desktop", "light", 50),
+        meta("desktop", "dark", 20),
+        meta("mobile", "light", 9),
+      ],
+      [{ probe: { status: "ran", results: [] } }, {}, {}],
+    ),
+  ).toBe(30_000);
+  expect(
+    probeTupleOverheadMs([meta("desktop", "light", 5)], [{}]),
+  ).toBeUndefined();
 });

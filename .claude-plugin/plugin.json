@@ -1,6 +1,6 @@
 {
   "name": "idiom",
-  "description": "Design acceptance tools and the conversational Idiom skill.",
+  "description": "Design acceptance tools, UI check reminders and the conversational Idiom skill.",
   "skills": ["./templates/idiom"],
   "mcpServers": {
     "idiom": {

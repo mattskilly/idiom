@@ -247,6 +247,106 @@ export function countProbeTimeouts(documents) {
   return counts;
 }
 
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const BLOCKED_KEYS = [
+  "crossOriginNavigation",
+  "formSubmission",
+  "download",
+  "popup",
+  "windowOpen",
+  "beforeunload",
+  "permission",
+];
+
+/**
+ * Quick review's probe ledger summed over a run's observations.json
+ * documents. Mirrors src/quick/interaction.ts counting rules; `nonSafeSent`
+ * must always be 0.
+ * @param {any[]} documents
+ */
+export function summarizeProbeSafety(documents) {
+  const summary = {
+    probedPages: 0,
+    probed: 0,
+    skippedDestructive: 0,
+    skippedOther: 0,
+    notReached: 0,
+    blocked: Object.fromEntries(BLOCKED_KEYS.map((key) => [key, 0])),
+    sent: {},
+    nonSafeSent: 0,
+  };
+  for (const document of documents) {
+    const probe = document?.probe;
+    if (!probe) continue;
+    summary.probedPages += 1;
+    for (const result of probe.results ?? []) {
+      const reason = result.skipped ?? "";
+      if (result.status === "not-reached") summary.notReached += 1;
+      else if (result.status === "timed-out") {
+        if (result.timeoutScope === "state") summary.notReached += 1;
+        else summary.probed += 1;
+      } else if (reason === "destructive name") summary.skippedDestructive += 1;
+      else if (reason !== "") summary.skippedOther += 1;
+      else summary.probed += 1;
+    }
+    const safety = probe.safety;
+    if (!safety) continue;
+    for (const key of BLOCKED_KEYS)
+      summary.blocked[key] += safety.blocked?.[key] ?? 0;
+    for (const [method, count] of Object.entries(safety.requests?.sent ?? {})) {
+      summary.sent[method] = (summary.sent[method] ?? 0) + count;
+      if (!SAFE_METHODS.has(method.toUpperCase())) summary.nonSafeSent += count;
+    }
+  }
+  return summary;
+}
+
+/**
+ * The probe's in-run cost: each probed tuple's capture time minus its
+ * unprobed dark sibling's at the same viewport. Live sites vary too much
+ * between runs for a stored static baseline to isolate it.
+ * @param {any[]} metadata metadata.json documents of one run
+ * @param {any[]} documents the matching observations.json documents
+ */
+export function probeTupleOverheadMs(metadata, documents) {
+  const duration = (item) =>
+    Date.parse(item.timestamps.endedAt) - Date.parse(item.timestamps.startedAt);
+  let total;
+  metadata.forEach((item, index) => {
+    if (!documents[index]?.probe) return;
+    const sibling = metadata.find(
+      (other, otherIndex) =>
+        otherIndex !== index &&
+        !documents[otherIndex]?.probe &&
+        other.state?.id === item.state?.id &&
+        other.viewport?.name === item.viewport?.name,
+    );
+    if (!sibling) return;
+    total = (total ?? 0) + duration(item) - duration(sibling);
+  });
+  return total === undefined ? undefined : Math.round(total);
+}
+
+/** Sums summarizeProbeSafety results. */
+export function sumProbeSafety(items) {
+  const total = summarizeProbeSafety([]);
+  for (const item of items) {
+    for (const key of [
+      "probedPages",
+      "probed",
+      "skippedDestructive",
+      "skippedOther",
+      "notReached",
+      "nonSafeSent",
+    ])
+      total[key] += item[key];
+    for (const key of BLOCKED_KEYS) total.blocked[key] += item.blocked[key];
+    for (const [method, count] of Object.entries(item.sent))
+      total.sent[method] = (total.sent[method] ?? 0) + count;
+  }
+  return total;
+}
+
 /**
  * @param {{ stage: string, message?: string, timedOut?: boolean,
  *   exitCode?: number | null, signal?: string | null }} failure

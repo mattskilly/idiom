@@ -25,7 +25,7 @@ declare global {
  * navigation cannot separate helper installation from its use.
  * All geometry is viewport-relative.
  */
-function installVisibilityDom(
+export function installVisibilityDom(
   query?: VisibilityQuery,
 ): VisibilityResult | undefined {
   const box = (r: DOMRect): Rect => ({

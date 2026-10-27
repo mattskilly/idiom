@@ -1040,3 +1040,47 @@ test("members sharing a root cause form one cluster across categories, rendered 
   expect(parseFindingBlocks(rendered.body)).toHaveLength(2);
   expect(() => parse(rendered.body.split("+++")[1] ?? "")).not.toThrow();
 });
+
+test.each([1, 10, 20])(
+  "ordered sweep clusters cap new tickets after ownership filtering (%i)",
+  async (maxTickets) => {
+    const { directory, records } = await recordsFixture();
+    const orderedClusters = records.map((record) => ({
+      key: record.finding.id,
+      component: `finding:${record.finding.id}`,
+      members: [
+        {
+          id: record.finding.id,
+          record,
+          component: `finding:${record.finding.id}`,
+        },
+      ],
+    }));
+    const options = {
+      project: directory,
+      orderedClusters,
+      maxTickets,
+      selection: { policy: "current-run" as const, records },
+    };
+    const first = await emitClusterTickets(options);
+    expect(first.createdPaths).toHaveLength(
+      Math.min(maxTickets, records.length),
+    );
+    expect(first.omittedCount).toBe(Math.max(0, records.length - maxTickets));
+    const original = await Promise.all(
+      first.createdPaths.map((path) => readFile(path, "utf8")),
+    );
+    const second = await emitClusterTickets(options);
+    expect(second.createdPaths).toHaveLength(
+      Math.min(maxTickets, records.length - first.createdPaths.length),
+    );
+    expect(
+      second.outcomes.filter((o) => o.kind === "already-emitted"),
+    ).toHaveLength(first.createdPaths.length);
+    expect(
+      await Promise.all(
+        first.createdPaths.map((path) => readFile(path, "utf8")),
+      ),
+    ).toEqual(original);
+  },
+);

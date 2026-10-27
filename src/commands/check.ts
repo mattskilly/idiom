@@ -1,5 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
+import {
+  beginCheckRecording,
+  completeCheckRecording,
+} from "../agent/check-state.js";
 import { resolveRunBaseline } from "../baseline/compare.js";
 import { recordBaseline } from "../baseline/record.js";
 import { renderBaselineComparison } from "../baseline/render.js";
@@ -120,7 +124,8 @@ export type CheckOptions = {
 export async function checkCommand(
   options: CheckOptions,
 ): Promise<CheckSummary> {
-  return (await checkWithReview(options)).summary;
+  return (await checkWithReview({ ...options, recordAgentCheck: true }))
+    .summary;
 }
 
 /** Internal rich seam for controllers; normal check output stays unchanged. */
@@ -129,6 +134,8 @@ export async function checkWithReview(
     materializeAllDeterministic?: boolean;
     /** Adapters need tuple diagnostics before an automatic baseline can fail. */
     captureFailureIsError?: boolean;
+    /** Only public live check commands count toward the agent reminder. */
+    recordAgentCheck?: boolean;
   },
 ): Promise<{ summary: CheckSummary; review: ReviewRunResult }> {
   const {
@@ -140,6 +147,7 @@ export async function checkWithReview(
     advisory,
     materializeAllDeterministic,
     captureFailureIsError,
+    recordAgentCheck,
     ...reviewOptions
   } = options;
   const selectors = [
@@ -172,6 +180,12 @@ export async function checkWithReview(
       bootstrap = { validated, flow, runDirectory: "", requireHead: true };
     }
   }
+  const recording =
+    recordAgentCheck === true &&
+    options.from === undefined &&
+    options.latest !== true
+      ? await beginCheckRecording(options)
+      : undefined;
   const result = await runReview({
     ...reviewOptions,
     deterministicOnly: true,
@@ -368,6 +382,11 @@ export async function checkWithReview(
     });
   }
   options.dependencies?.capture?.signal?.throwIfAborted();
+  await completeCheckRecording(
+    recording,
+    result.reportCoverage,
+    options.dependencies?.capture?.signal,
+  );
   return { summary, review: result };
 }
 

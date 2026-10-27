@@ -184,6 +184,9 @@ test("stored checks use measured touch signals and fall back to width for old ca
     flow: "studio-lab",
     from,
   });
+  await expect(
+    readFile(join(project, ".idiom/agent-hooks/state.json")),
+  ).rejects.toThrow();
   const targets = touched.findings.filter(
     (finding) => finding.category === "target-size",
   );

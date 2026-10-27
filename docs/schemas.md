@@ -713,6 +713,18 @@ results survive page replacement and state expiry. `print` and `download` join
 the effect enum. Native UI is suppressed for the whole disposable probe lifecycle,
 independently of `respectControlIntent`.
 
+Quick review's probe artifacts add an optional `safety` ledger; configured flows
+and older artifacts omit it. `policy` is `third-party`. `origins` lists the
+origins top-level navigation may stay on (the page's URL and its settled origin
+after any redirect). `requests.sent` and `requests.blocked` count routed requests
+by upper-case HTTP method; every method in `sent` is `GET`, `HEAD` or `OPTIONS`.
+`blocked` counts `crossOriginNavigation`, `formSubmission`, `download`, `popup`,
+`windowOpen`, `beforeunload` and `permission`, and `skipped.destructive` counts
+controls never clicked because of a destructive name. All counts are nonnegative
+integers. A blocked action maps to an existing effect so it is never judged a
+dead control: a blocked navigation is `navigation`, a vetoed submission is
+`network`, and a denied permission prompt is `dialog`.
+
 Live progress is emitted only through an optional library `onProbeProgress`
 callback; the CLI writes it to stderr, keeping JSON stdout parseable. `run.json`
 timings optionally carry `slowestControls`, at most five entries sorted by elapsed
@@ -801,3 +813,12 @@ whose `designDrift.designDecision` holds `version`, `decisionKey`, `property`,
 `allowance`, `matchesBuild`, `layerPath`, `link`, `pairId`, `designSelector`).
 A decision-log record written by `decide --choose` adds `designChoice: { flow,
 state, colorScheme?, decisionKey, reference }`; the last choice per key applies.
+
+
+## Filmstrip evidence
+
+Each opted-in web tuple may contain optional version-1 `filmstrips.json` and selected PNGs at `filmstrips/<action-id>/<offset-or-settle>.png`. The manifest records configured offsets/limits, stable timeline id, semantic source/kind/control/name/step/held identity, epoch dispatch anchor, timeline clock origin, native settle time and flag, fixed CSS crop region, optional tail geometry, and ordered frame slots. Each slot has requested milliseconds plus either a confined relative PNG path, paint timestamp, actual milliseconds, viewport/scroll/device/page scale geometry, or an explicit unavailable reason. Collections and actions distinguish complete, partial and unavailable evidence. Present malformed manifests or missing referenced frames are artifact errors; absent manifests remain valid historical captures.
+
+`Finding.evidence.filmstrip` optionally records `sheet`, `manifest`, `action`, `status`, `reason`, actual `width`/`height`/`bytes`, optional `generationMs`, and configured sheet `limits`. `sheet` is absent when no usable image can be made. Sheet paths are separate from `evidence.screenshots`, so static crops keep their original filenames and semantics. `CheckTuple.filmstrips` is the validated manifest. Motion action records may have `timelineId`; transient recording keys are never serialized. Hover windows use `hover-N` while existing click, load, step and slow-replay IDs keep their namespaces.
+
+The version-1 verification attachment manifest optionally adds `filmstrips[]`: consecutive `ordinal`, unique canonical `kind` (`idiom-filmstrip-001`, etc.), finding and tuple identity, local `before`/`after` sheet paths or explicit `beforeUnavailable`/`afterUnavailable` reasons, and optional retained `frames` paths. Validation requires every declared file and report links for sheet attachments. Existing composite kinds and ordinals are unchanged; legacy manifests omit the collection.

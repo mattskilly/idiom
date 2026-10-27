@@ -207,7 +207,7 @@ test("README exposes design and agent entry points", () => {
     expect(design).toContain(fragment);
   const agent = readmeSection("## Use it from your agent");
   for (const fragment of [
-    "eight",
+    "fifteen",
     "stdio",
     "claude mcp add idiom -- npx -y @mattskilly/idiom mcp",
     "](docs/mcp.md)",
@@ -441,10 +441,14 @@ test("MCP setup snippets parse to the documented launchers and preserve fixed de
   expect(source).toContain(
     "claude mcp add idiom -- npx -y @mattskilly/idiom mcp",
   );
-  const snippets = [...source.matchAll(/```json\n([\s\S]*?)\n```/g)];
-  expect(snippets).toHaveLength(2);
-  for (const snippet of snippets) {
-    const settings = JSON.parse(snippet[1] ?? "");
+  const snippets = [...source.matchAll(/```json\n([\s\S]*?)\n```/g)].map(
+    (snippet) => JSON.parse(snippet[1] ?? ""),
+  );
+  const launchers = snippets.filter(
+    (settings) => settings.mcpServers !== undefined,
+  );
+  expect(launchers).toHaveLength(2);
+  for (const settings of launchers) {
     expect(settings.mcpServers.idiom).toEqual({
       command: "npx",
       args: [
@@ -456,6 +460,15 @@ test("MCP setup snippets parse to the documented launchers and preserve fixed de
       ],
     });
   }
+  const agentSettings = snippets.filter(
+    (settings) => settings.agent !== undefined,
+  );
+  expect(agentSettings).toHaveLength(2);
+  const template = JSON.parse(
+    await readFile(join(repositoryRoot, "templates/project.json"), "utf8"),
+  );
+  for (const settings of agentSettings)
+    projectSchema.parse({ ...template, ...settings });
   const toml = /```toml\n([\s\S]*?)\n```/.exec(source)?.[1];
   const configuration = parse(toml ?? "");
   expect(configuration).toMatchObject({

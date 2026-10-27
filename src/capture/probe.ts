@@ -7,16 +7,20 @@ import type {
   Route,
 } from "playwright";
 import { menuTriggerPattern } from "../checks/collection-actions.js";
+import { animatedKeys, snapCandidateKeys } from "../checks/motion-snap.js";
 import type {
+  ActionTimelineArtifact,
   ExplanationRecord,
   ProbeArtifact,
   ProbeAttemptTimings,
   ProbeCollection,
   ProbeEffect,
   ProbeResult,
+  ProbeSafetyLedger,
 } from "../checks/types.js";
+import { DESTRUCTIVE_ACTION_PATTERN } from "../copy-policy.js";
 import { Deadline, DeadlineExpired, deadlinePage } from "./deadline.js";
-import { beginEffectWindow } from "./effect-window.js";
+import { beginEffectWindow, LATE_CONTENT_WINDOW_MS } from "./effect-window.js";
 import {
   type ExplanationCandidate,
   ExplanationCollector,
@@ -24,6 +28,12 @@ import {
   mergeExplanations,
   sampleExplanation,
 } from "./explanations.js";
+import {
+  type HeldItem,
+  heldCandidate,
+  MAX_HELD_REPLAYS,
+  replayHeld,
+} from "./loading.js";
 import { MotionCollector, mergeMotion } from "./motion.js";
 import {
   identityKeys,
@@ -31,10 +41,18 @@ import {
   type ProbeLedger,
   type ProbeLedgerEntry,
 } from "./probe-ledger.js";
+import { ignoredRequest, probeRequestAllowed } from "./request-policy.js";
+import { mergeTimelines, TimelineCollector } from "./timeline.js";
 import type { CaptureHooks } from "./types.js";
+
+export { probeRequestAllowed };
 
 export type ProbeOptions = CaptureHooks & {
   page: Page;
+  filmstrips?: import("./filmstrips.js").FilmstripCapture | undefined;
+  requestedActions?:
+    | import("../checks/filmstrip-schema.js").FilmstripIdentity[]
+    | undefined;
   enumerateOnly?: boolean | undefined;
   flowBudget?: import("./probe-budget.js").ProbeBudgetLease | undefined;
   /** Replay on the supplied disposable page, including replacement pages. */
@@ -47,6 +65,15 @@ export type ProbeOptions = CaptureHooks & {
   maxControls: number;
   waitMs: number;
   motionSelectors?: string[] | undefined;
+  /** `checks.motion.minExtentPx`: the smallest change a snap must reach. */
+  motionMinExtentPx?: number | undefined;
+  /**
+   * The project's reduced-motion preference (`capture.reducedMotion`),
+   * restored after each normal-motion snap confirmation.
+   */
+  reducedMotion?: boolean | undefined;
+  /** Receives the merged probe-click timelines once probing ends. */
+  onTimelines?: ((timelines: ActionTimelineArtifact) => void) | undefined;
   respectControlIntent?: boolean;
   explanation?: "default" | "visible" | undefined;
   collections?: string[] | undefined;
@@ -59,6 +86,33 @@ export type ProbeOptions = CaptureHooks & {
   stateId?: string | undefined;
   /** Ledger partition: the tuple's viewport and colour scheme. */
   ledgerPartition?: string | undefined;
+  /**
+   * The third-party policy (quick review on arbitrary URLs): no request
+   * exemptions, no cross-origin top-level navigation, form submission and
+   * permission prompts vetoed, everything counted in `ledger`, which is
+   * published as `safety` on the artifact.
+   */
+  safety?: { policy: "third-party"; ledger: ProbeSafetyLedger } | undefined;
+  /**
+   * The held replay: after the clicks, actions that sent fetch/XHR/document
+   * requests are replayed on a fresh copy with those requests held for
+   * `delayMs`. `steps` are the state's web steps that sent requests; probe
+   * clicks are queued as they run. Absent: no held replay.
+   */
+  heldReplay?:
+    | { delayMs: number; withinMs: number; steps: HeldStep[] }
+    | undefined;
+};
+
+/** A web step whose action sent requests, replayable on a fresh page. */
+export type HeldStep = {
+  stepIndex: number;
+  action: HeldItem["kind"];
+  selector: string;
+  /** Reach the state before this step (steps 1..n-1) on `page`. */
+  reach(page: Page): Promise<void>;
+  perform(page: Page): Promise<void>;
+  repeat?: ((page: Page, timeoutMs: number) => Promise<void>) | undefined;
 };
 
 export type ProbeCandidate = {
@@ -144,23 +198,62 @@ function appeared(after: string[], before: string[]): string[] {
   });
 }
 
-/**
- * Names that must never be clicked by an automated probe, because the click
- * would destroy or publish fixture data rather than reveal behaviour.
- */
-const destructive =
-  /\b(delete|remove|sign ?out|log ?out|publish|unpublish|reset|discard|clear all|archive|deactivate|unsubscribe|pay|purchase|buy|checkout|send|submit order)\b/i;
+/** Names that must never be clicked by an automated probe. */
+const destructive = DESTRUCTIVE_ACTION_PATTERN;
 
-const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
+export function createProbeSafetyLedger(origins: string[]): ProbeSafetyLedger {
+  return {
+    policy: "third-party",
+    origins: [...new Set(origins)],
+    requests: { sent: {}, blocked: {} },
+    blocked: {
+      crossOriginNavigation: 0,
+      formSubmission: 0,
+      download: 0,
+      popup: 0,
+      windowOpen: 0,
+      beforeunload: 0,
+      permission: 0,
+    },
+    skipped: { destructive: 0 },
+  };
+}
 
-const ignoredRequest = (request: Request) =>
-  /(?:webpack-hmr|__nextjs|_next\/static|hot-update|favicon|\/__vite|sockjs)/.test(
-    request.url(),
-  );
+// Page and context routes can both see one request; count it once.
+const recordedRequests = new WeakSet<object>();
 
-/** The same request policy applies to focus sweeps and every probe context. */
-export function probeRequestAllowed(request: Request): boolean {
-  return safeMethods.has(request.method()) || ignoredRequest(request);
+/** Count a routed request as sent or blocked, once per request. */
+export function recordProbeRequest(
+  ledger: ProbeSafetyLedger,
+  request: Pick<Request, "method">,
+  allowed: boolean,
+): void {
+  if (recordedRequests.has(request)) return;
+  recordedRequests.add(request);
+  const method = request.method().toUpperCase();
+  const counts = allowed ? ledger.requests.sent : ledger.requests.blocked;
+  counts[method] = (counts[method] ?? 0) + 1;
+}
+
+/** A top-level navigation that would leave the ledger's origins. */
+export function crossOriginNavigation(
+  ledger: ProbeSafetyLedger,
+  request: Request,
+): boolean {
+  let topLevel = false;
+  try {
+    topLevel =
+      request.isNavigationRequest() && request.frame().parentFrame() === null;
+  } catch {
+    // Service-worker requests have no frame.
+    return false;
+  }
+  if (!topLevel) return false;
+  try {
+    return !ledger.origins.includes(new URL(request.url()).origin);
+  } catch {
+    return true;
+  }
 }
 
 async function installInstrumentation(
@@ -384,12 +477,19 @@ async function installInstrumentation(
     });
     const suppressed = (
       window as unknown as {
-        __idiomSuppressed?: { print: number; popup: number };
+        __idiomSuppressed?: {
+          print: number;
+          popup: number;
+          submit: number;
+          permission: number;
+        };
       }
     ).__idiomSuppressed;
     if (suppressed) {
       suppressed.print = 0;
       suppressed.popup = 0;
+      suppressed.submit = 0;
+      suppressed.permission = 0;
     }
     const open = window.open;
     const wrappedOpen = (...args: Parameters<typeof window.open>) => {
@@ -431,9 +531,22 @@ async function readCounters(page: Page) {
         popups: 0,
       }),
       pickers: scope.__idiomPickerCount?.() ?? 0,
-      prints:
-        (window as unknown as { __idiomSuppressed?: { print: number } })
-          .__idiomSuppressed?.print ?? 0,
+      ...(() => {
+        const suppressed = (
+          window as unknown as {
+            __idiomSuppressed?: {
+              print: number;
+              submit?: number;
+              permission?: number;
+            };
+          }
+        ).__idiomSuppressed;
+        return {
+          prints: suppressed?.print ?? 0,
+          submits: suppressed?.submit ?? 0,
+          permissions: suppressed?.permission ?? 0,
+        };
+      })(),
     };
   });
 }
@@ -1054,17 +1167,69 @@ function skippedResult(
   };
 }
 
+/**
+ * Click once more inside a timeline-only window tagged `confirmation`.
+ * Touches no motion evidence, effects, counters or result signature.
+ */
+async function confirmClick(
+  page: Page,
+  path: string,
+  name: string,
+  waitMs: number,
+  timeline: TimelineCollector,
+  respectControlIntent: boolean,
+): Promise<void> {
+  // The pointer rests on the control first, so hover styling is not in the window.
+  await page
+    .locator(path)
+    .first()
+    .hover({ timeout: 1500 })
+    .catch(() => undefined);
+  await page.waitForTimeout(120);
+  await installInstrumentation(page, respectControlIntent);
+  const recording = await timeline.start({
+    source: "probe-click",
+    kind: "click",
+    selector: path,
+    name,
+    confirmation: true,
+  });
+  try {
+    const effectWindow = await beginEffectWindow(page, waitMs);
+    try {
+      await page
+        .locator(path)
+        .first()
+        .click({ timeout: 1500, noWaitAfter: true });
+    } catch (error) {
+      await recording.finish("control was not clicked successfully", false);
+      throw error;
+    }
+    try {
+      await recording.finish(undefined, await effectWindow.wait());
+    } finally {
+      await effectWindow.dispose();
+    }
+  } finally {
+    await recording.dispose();
+  }
+}
+
 async function clickAndObserve(
   page: Page,
   path: string,
   waitMs: number,
   motion: MotionCollector,
+  timeline: TimelineCollector | undefined,
   name: string,
   respectControlIntent: boolean,
   observed: Set<ProbeEffect>,
   onOpened?: (selectors: string[]) => void,
   timings?: ProbeAttemptTimings,
   clock = () => performance.now(),
+  onBlocked?: (kind: "formSubmission" | "permission" | "windowOpen") => void,
+  /** How long the click may wait for its own in-flight requests. */
+  lateContentMs = LATE_CONTENT_WINDOW_MS,
 ): Promise<{
   effects: ProbeEffect[];
   signature?: string;
@@ -1072,11 +1237,20 @@ async function clickAndObserve(
   error?: string;
 }> {
   // Hover first and let any tooltip settle, so the click is measured alone.
-  const hover = await motion.start({
+  const hoverRecording = await timeline?.start({
     source: "probe-hover",
+    kind: "hover",
     selector: path,
     name,
   });
+  const hover = await motion.start(
+    {
+      source: "probe-hover",
+      selector: path,
+      name,
+    },
+    hoverRecording?.key,
+  );
   try {
     await page
       .locator(path)
@@ -1084,8 +1258,11 @@ async function clickAndObserve(
       .hover({ timeout: 1500 })
       .catch(() => undefined);
     await page.waitForTimeout(120);
+    await hoverRecording?.finish();
     await hover.finish();
+    await hoverRecording?.finishVisual(motion.evidence());
   } finally {
+    await hoverRecording?.dispose();
     await hover.dispose();
   }
   const before = await snapshot(page);
@@ -1111,12 +1288,24 @@ async function clickAndObserve(
   page.on("dialog", onDialog);
   page.on("popup", onPopup);
   let click: Awaited<ReturnType<MotionCollector["start"]>> | undefined;
+  let recording: Awaited<ReturnType<TimelineCollector["start"]>> | undefined;
   let openedPicker = false;
   let effectWindow: Awaited<ReturnType<typeof beginEffectWindow>> | undefined;
   try {
     await installInstrumentation(page, respectControlIntent);
-    click = await motion.start({ source: "probe-click", selector: path, name });
-    effectWindow = await beginEffectWindow(page, waitMs);
+    recording = await timeline?.start({
+      source: "probe-click",
+      kind: "click",
+      selector: path,
+      name,
+    });
+    click = await motion.start(
+      { source: "probe-click", selector: path, name },
+      recording?.key,
+    );
+    effectWindow = await beginEffectWindow(page, waitMs, {
+      pendingMs: Math.max(waitMs, lateContentMs),
+    });
     const clickStarted = clock();
     try {
       await page
@@ -1125,6 +1314,7 @@ async function clickAndObserve(
         .click({ timeout: 1500, noWaitAfter: true });
     } catch (error) {
       await click.finish("control was not clicked successfully");
+      await recording?.finish("control was not clicked successfully", false);
       page.off("request", onRequest);
       page.off("dialog", onDialog);
       page.off("popup", onPopup);
@@ -1140,14 +1330,18 @@ async function clickAndObserve(
     }
     const effectStarted = clock();
     try {
+      let settled = false;
       try {
-        await effectWindow.wait();
+        settled = await effectWindow.wait();
       } finally {
         if (timings) timings.effectWindowMs += clock() - effectStarted;
       }
+      await recording?.finish(undefined, settled);
       await click.finish();
+      await recording?.finishVisual(motion.evidence());
     } finally {
       await click.dispose();
+      await recording?.dispose();
     }
     page.off("request", onRequest);
     page.off("dialog", onDialog);
@@ -1166,8 +1360,23 @@ async function clickAndObserve(
       popups: 0,
       pickers: 0,
       prints: 0,
+      submits: 0,
+      permissions: 0,
     }));
     if (counters.prints > 0) effects.add("print");
+    // A vetoed submission did try to send; a denied prompt did ask.
+    if (counters.submits > 0) {
+      effects.add("network");
+      for (let index = 0; index < counters.submits; index += 1)
+        onBlocked?.("formSubmission");
+    }
+    if (counters.permissions > 0) {
+      effects.add("dialog");
+      for (let index = 0; index < counters.permissions; index += 1)
+        onBlocked?.("permission");
+    }
+    for (let index = 0; index < counters.popups; index += 1)
+      onBlocked?.("windowOpen");
     if (counters.pickers > 0) {
       effects.add("picker");
       openedPicker = true;
@@ -1256,19 +1465,95 @@ async function clickAndObserve(
     }
     await cleanupInstrumentation(page);
     await click?.dispose();
+    await recording?.finish("action interrupted", false);
+    await recording?.dispose();
     if (openedPicker)
       await page.keyboard.press("Escape").catch(() => undefined);
   }
 }
 
-/** Probe-only shims run before application scripts in replayed documents/frames. */
-function suppressNativeUi() {
+/**
+ * Probe-only shims run before application scripts in replayed
+ * documents/frames. `strict` (third-party pages) also vetoes form submission
+ * and denies permission prompts. Self-contained: it is serialized.
+ */
+function suppressNativeUi(strict = false) {
   const scope = window as unknown as {
-    __idiomSuppressed?: { print: number; popup: number };
+    __idiomSuppressed?: {
+      print: number;
+      popup: number;
+      submit: number;
+      permission: number;
+    };
   };
   if (scope.__idiomSuppressed) return;
-  const counters = { print: 0, popup: 0 };
+  const counters = { print: 0, popup: 0, submit: 0, permission: 0 };
   scope.__idiomSuppressed = counters;
+  if (strict) {
+    // Capture phase on window runs first; the app's own handlers still run
+    // and their non-safe requests are blocked by routing.
+    window.addEventListener(
+      "submit",
+      (event) => {
+        event.preventDefault();
+        counters.submit += 1;
+      },
+      { capture: true },
+    );
+    HTMLFormElement.prototype.submit = () => {
+      counters.submit += 1;
+    };
+    const deny = () => {
+      counters.permission += 1;
+    };
+    try {
+      if (typeof Notification !== "undefined")
+        Notification.requestPermission = () => {
+          deny();
+          return Promise.resolve("denied" as NotificationPermission);
+        };
+    } catch {
+      // Not every document exposes notifications.
+    }
+    try {
+      const geolocation = navigator.geolocation;
+      if (geolocation !== undefined) {
+        const refuse = (
+          _success: unknown,
+          error?: ((error: GeolocationPositionError) => void) | null,
+        ) => {
+          deny();
+          error?.({
+            code: 1,
+            message: "denied",
+            PERMISSION_DENIED: 1,
+            POSITION_UNAVAILABLE: 2,
+            TIMEOUT: 3,
+          } as GeolocationPositionError);
+          return 0;
+        };
+        geolocation.getCurrentPosition = (success, error) => {
+          refuse(success, error);
+        };
+        geolocation.watchPosition = (success, error) => refuse(success, error);
+      }
+    } catch {
+      // A locked geolocation object stays as it is.
+    }
+    try {
+      const media = navigator.mediaDevices;
+      if (media !== undefined) {
+        const reject = () => {
+          deny();
+          return Promise.reject(new DOMException("denied", "NotAllowedError"));
+        };
+        media.getUserMedia = reject;
+        media.getDisplayMedia = reject;
+      }
+    } catch {
+      // Insecure origins have no media devices.
+    }
+  }
   // A replay must be able to leave the disposable document. Prevent the
   // application's unload veto; the native listener remains a fallback.
   window.addEventListener(
@@ -1288,12 +1573,79 @@ function suppressNativeUi() {
   };
 }
 
+/** Apply the click probe's native guards while Tab can trigger page handlers. */
+export async function protectProbeFocus(page: Page, ledger: ProbeSafetyLedger) {
+  const context = page.context();
+  const onDialog = (dialog: Dialog) => {
+    if (dialog.type() === "beforeunload") {
+      ledger.blocked.beforeunload += 1;
+      void dialog.accept().catch(() => undefined);
+    } else void dialog.dismiss().catch(() => undefined);
+  };
+  const onDownload = (download: Download) => {
+    ledger.blocked.download += 1;
+    void download.cancel().catch(() => undefined);
+  };
+  const onPage = (popup: Page) => {
+    ledger.blocked.popup += 1;
+    void popup.close({ runBeforeUnload: false }).catch(() => undefined);
+  };
+  page.on("dialog", onDialog);
+  page.on("download", onDownload);
+  context.on("page", onPage);
+  const cleanup = async () => {
+    try {
+      for (const frame of page.frames()) {
+        const counters = await frame
+          .evaluate(() => {
+            const scope = window as unknown as {
+              __idiomSuppressed?: {
+                submit: number;
+                permission: number;
+                popup: number;
+              };
+            };
+            return scope.__idiomSuppressed;
+          })
+          .catch(() => undefined);
+        ledger.blocked.formSubmission += counters?.submit ?? 0;
+        ledger.blocked.permission += counters?.permission ?? 0;
+        ledger.blocked.windowOpen += counters?.popup ?? 0;
+      }
+    } finally {
+      page.off("dialog", onDialog);
+      page.off("download", onDownload);
+      context.off("page", onPage);
+    }
+  };
+  try {
+    await page.addInitScript(suppressNativeUi, true);
+    for (const frame of page.frames())
+      await frame.evaluate(suppressNativeUi, true);
+    return cleanup;
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
 /** Every continuation uses an attempt-local page and can publish only while valid. */
 export async function probeControls(
   options: ProbeOptions,
 ): Promise<ProbeArtifact> {
   const clock = options.monotonicNow ?? (() => performance.now());
   const artifact: ProbeArtifact = { status: "ran", results: [] };
+  const safety = options.safety?.ledger;
+  if (safety) {
+    // The settled page's origin covers a redirect (apex to www) on load.
+    try {
+      const origin = new URL(options.page.url()).origin;
+      if (origin !== "null" && !safety.origins.includes(origin))
+        safety.origins.push(origin);
+    } catch {
+      // An unparseable URL adds no origin.
+    }
+  }
   let attemptTimings: ProbeAttemptTimings | undefined;
   const measure = async <T>(
     phase: keyof ProbeAttemptTimings,
@@ -1321,6 +1673,9 @@ export async function probeControls(
   const stateTimeoutMs =
     options.flowBudget?.shareMs() ?? options.stateTimeoutMs ?? 60000;
   const controlTimeoutMs = options.controlTimeoutMs ?? 5000;
+  // Waiting for a click's late content never spends more than half of the
+  // control's budget, so it cannot time the control out.
+  const lateContentMs = Math.min(LATE_CONTENT_WINDOW_MS, controlTimeoutMs / 2);
   const state = new Deadline(
     "state",
     stateTimeoutMs,
@@ -1375,6 +1730,11 @@ export async function probeControls(
       needsReplay = false;
     });
   const settleWait = Math.min(options.waitMs, 150);
+  const onBlocked = safety
+    ? (kind: "formSubmission" | "permission" | "windowOpen") => {
+        safety.blocked[kind] += 1;
+      }
+    : undefined;
   /**
    * The restore ladder: no reload when nothing changed, then Escape, then a
    * newly revealed close control. False means a full replay is needed. It
@@ -1463,14 +1823,36 @@ export async function probeControls(
       () => undefined,
     );
   };
+  // `popup` and the context's `page` event both report one new window.
+  const counted = new WeakSet<Page>();
   const onNewPage = (page: Page) => {
     if (!creating && !owned.has(page)) {
       effects?.add("popup");
+      if (safety && !counted.has(page)) {
+        counted.add(page);
+        safety.blocked.popup += 1;
+      }
       close(page);
     }
   };
   context.on("page", onNewPage);
   const onContextRoute = (route: Route) => {
+    if (safety) {
+      const request = route.request();
+      // No replay exemption: quick review's replay is a plain GET.
+      if (crossOriginNavigation(safety, request)) {
+        if (!recordedRequests.has(request))
+          safety.blocked.crossOriginNavigation += 1;
+        recordProbeRequest(safety, request, false);
+        effects?.add("navigation");
+        return route.abort("blockedbyclient").catch(() => undefined);
+      }
+      const allowed = probeRequestAllowed(request, "third-party");
+      recordProbeRequest(safety, request, allowed);
+      if (allowed) return route.fallback();
+      effects?.add("network");
+      return route.abort("blockedbyclient").catch(() => undefined);
+    }
     if (replaying > 0 || probeRequestAllowed(route.request()))
       return route.fallback();
     effects?.add("network");
@@ -1479,7 +1861,18 @@ export async function probeControls(
   const protect = async (page: Page, deadline: Deadline) => {
     const onDialog = (dialog: Dialog) => {
       effects?.add("dialog");
-      if (dialog.type() === "beforeunload") retireAfterAttempt = true;
+      if (dialog.type() === "beforeunload") {
+        if (safety) {
+          // A listener registered before the shim still vetoes leaving.
+          // Dismissing would cancel the replay; the page is disposable, so
+          // leave it (cross-origin targets are still blocked by routing).
+          // The navigation proceeds, so the page need not be retired.
+          safety.blocked.beforeunload += 1;
+          void dialog.accept().catch(() => undefined);
+          return;
+        }
+        retireAfterAttempt = true;
+      }
       void dialog.dismiss().catch(() => undefined);
     };
     const onFileChooser = (chooser: FileChooser) => {
@@ -1491,10 +1884,15 @@ export async function probeControls(
     };
     const onDownload = (download: Download) => {
       effects?.add("download");
+      if (safety) safety.blocked.download += 1;
       void download.cancel().catch(() => undefined);
     };
     const onPopup = (popup: Page) => {
       effects?.add("popup");
+      if (safety && !counted.has(popup)) {
+        counted.add(popup);
+        safety.blocked.popup += 1;
+      }
       close(popup);
     };
     const onRequest = (request: Request) => {
@@ -1515,9 +1913,10 @@ export async function probeControls(
       return page.unroute("**/*", onRoute).catch(() => undefined);
     });
     await deadline.run(() => page.route("**/*", onRoute));
-    await deadline.run(() => page.addInitScript(suppressNativeUi));
+    const strict = safety !== undefined;
+    await deadline.run(() => page.addInitScript(suppressNativeUi, strict));
     for (const frame of page.frames())
-      await deadline.run(() => frame.evaluate(suppressNativeUi));
+      await deadline.run(() => frame.evaluate(suppressNativeUi, strict));
   };
   const retire = () => {
     effects = undefined;
@@ -1550,6 +1949,11 @@ export async function probeControls(
   };
   const appendMotion = (motion: MotionCollector, reason?: string) => {
     artifact.motion = mergeMotion(artifact.motion, motion.evidence(reason));
+  };
+  let timelines: ActionTimelineArtifact | undefined;
+  const appendTimelines = (timeline: TimelineCollector, reason?: string) => {
+    if (timeline.recorded === 0) return;
+    timelines = mergeTimelines(timelines, timeline.evidence(reason));
   };
   const markPartial = (reason: string) => {
     if (artifact.status !== "timed-out") artifact.status = "partial";
@@ -1673,6 +2077,7 @@ export async function probeControls(
       motion: MotionCollector,
       explanation: ExplanationCollector,
       deadline: Deadline,
+      timeline: TimelineCollector,
     ) => Promise<AttemptValue>,
     parent?: string,
     budgetMs?: number,
@@ -1710,6 +2115,7 @@ export async function probeControls(
     );
     let bound: ReturnType<typeof deadlinePage> | undefined;
     let motion: MotionCollector | undefined;
+    let timeline: TimelineCollector | undefined;
     let explanation: ExplanationCollector | undefined;
     let value: AttemptValue | undefined;
     try {
@@ -1719,11 +2125,18 @@ export async function probeControls(
         bound = deadlinePage(realPage, deadline);
         const page = bound.page;
         motion = new MotionCollector(page, options.motionSelectors);
+        const recorder = new TimelineCollector(page, {
+          clock,
+          motionSelectors: options.motionSelectors,
+          filmstrips: options.filmstrips,
+          filmstripPage: realPage,
+        });
+        timeline = recorder;
         explanation = new ExplanationCollector(page, "probe", options.waitMs);
         await motion.initialize();
         deadline.check();
         progress(phase);
-        const value = await work(page, motion, explanation, deadline);
+        const value = await work(page, motion, explanation, deadline, recorder);
         effects = undefined;
         const leftPage =
           value.result?.effects.includes("navigation") === true ||
@@ -1753,6 +2166,15 @@ export async function probeControls(
           motion,
           deadline.signal.aborted ? "attempt timed-out" : undefined,
         );
+      if (timeline) {
+        await timeline.finishPending(
+          deadline.signal.aborted ? "attempt timed-out" : "action interrupted",
+        );
+        appendTimelines(
+          timeline,
+          deadline.signal.aborted ? "attempt timed-out" : undefined,
+        );
+      }
       if (deadline.signal.aborted && explanation)
         explanation.partial("attempt timed-out");
       if (explanation)
@@ -1774,6 +2196,132 @@ export async function probeControls(
   };
   let initialMotion: MotionCollector | undefined;
   let explanationIdentities: ExplanationCandidate[] = [];
+  /**
+   * Normal-motion snap confirmation. Under prefers-reduced-motion: reduce an
+   * instant change is correct, so a suspected snap is replayed once under
+   * no-preference in a timeline-only window. One replay per change group
+   * (`kind|container`), at most SNAP_CONFIRMATIONS per state.
+   */
+  const SNAP_CONFIRMATIONS = 6;
+  const minExtentPx = options.motionMinExtentPx ?? 24;
+  const snapGroups = new Map<string, "confirmed" | "cleared" | "unconfirmed">();
+  let confirmations = 0;
+  type SnapSuspect = { candidate: Candidate; keys: string[] };
+  let snapSuspect: SnapSuspect | undefined;
+  const suspectSnap = (
+    candidate: Candidate,
+    action: ActionTimelineArtifact["actions"][number] | undefined,
+  ): SnapSuspect | undefined => {
+    if (
+      action?.reducedMotion !== true ||
+      action.source !== "probe-click" ||
+      action.confirmation === true ||
+      // A same-document route change replays after a full restore; a
+      // document navigation leaves no visible changes to confirm.
+      effects?.has("popup")
+    )
+      return undefined;
+    const keys = snapCandidateKeys(action, minExtentPx).filter(
+      (key) => !snapGroups.has(key),
+    );
+    return keys.length ? { candidate, keys } : undefined;
+  };
+  const confirmSnap = async ({ candidate, keys }: SnapSuspect) => {
+    const unconfirmed = () => {
+      for (const key of keys)
+        if (!snapGroups.has(key)) snapGroups.set(key, "unconfirmed");
+    };
+    if (
+      confirmations >= SNAP_CONFIRMATIONS ||
+      state.remaining() < controlTimeoutMs + 2 * options.waitMs + 1500
+    ) {
+      unconfirmed();
+      return;
+    }
+    confirmations += 1;
+    progress("motion confirmation");
+    const deadline = new Deadline(
+      "control",
+      Math.min(restoreBudgetMs, state.remaining()),
+      () => `${selector} (${activity})`,
+      { signal: state.signal },
+    );
+    let bound: ReturnType<typeof deadlinePage> | undefined;
+    let realPage: Page | undefined;
+    let recorder: TimelineCollector | undefined;
+    let emulated = false;
+    let failure: string | undefined;
+    try {
+      await deadline.run(async () => {
+        realPage = await ensurePage(deadline);
+        bound = deadlinePage(realPage, deadline);
+        const page = bound.page;
+        if (needsReplay || !(await settle(page, deadline))) await replay(page);
+        recorder = new TimelineCollector(page, {
+          clock,
+          motionSelectors: options.motionSelectors,
+        });
+        emulated = true;
+        await realPage.emulateMedia({ reducedMotion: "no-preference" });
+        await confirmClick(
+          page,
+          candidate.path,
+          candidate.name,
+          options.waitMs,
+          recorder,
+          intent,
+        );
+      });
+      const replayed = recorder?.lastAction();
+      const snapping = new Set(
+        replayed?.confirmation === true && replayed.reducedMotion === false
+          ? snapCandidateKeys(replayed, minExtentPx)
+          : [],
+      );
+      const animated = new Set(
+        replayed?.confirmation === true && replayed.reducedMotion === false
+          ? animatedKeys(replayed, minExtentPx)
+          : [],
+      );
+      for (const key of keys)
+        snapGroups.set(
+          key,
+          snapping.has(key)
+            ? "confirmed"
+            : animated.has(key)
+              ? "cleared"
+              : "unconfirmed",
+        );
+    } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason;
+      if (
+        state.signal.aborted ||
+        (error instanceof DeadlineExpired && error.scope === "state")
+      )
+        throw state.signal.reason ?? error;
+      unconfirmed();
+      failure = `snap confirmation failed: ${(error instanceof Error ? error.message : String(error)).split("\n")[0]}`;
+    } finally {
+      if (emulated && realPage)
+        await realPage
+          .emulateMedia({
+            reducedMotion:
+              options.reducedMotion === false ? "no-preference" : "reduce",
+          })
+          .catch(() => undefined);
+      if (recorder) {
+        await recorder.finishPending("action interrupted");
+        appendTimelines(recorder, failure);
+      }
+      // The replayed click left the page where the original one did.
+      if (realPage && bound && !deadline.signal.aborted && !needsReplay) {
+        const settled = await settle(bound.page, deadline).catch(() => false);
+        if (!settled) needsReplay = true;
+      } else needsReplay = true;
+      bound?.dispose();
+      deadline.dispose();
+    }
+  };
   let activeCandidate: Candidate | undefined;
   let activeStarted = 0;
   let activeParent: string | undefined;
@@ -1796,6 +2344,200 @@ export async function probeControls(
   const stateId = options.stateId ?? "";
   let queue: Candidate[] = [];
   const nestedQueue: Array<{ candidate: Candidate; parent: string }> = [];
+  /** Top-level probe clicks that sent requests, for the held replay. */
+  const heldQueue: Candidate[] = [];
+  /**
+   * One held replay on a fresh copy: restore, then replay the action with its
+   * requests held. Counts against the state deadline; never publishes a
+   * probe result. False ends the phase (the state budget is spent).
+   */
+  const heldAttempt = async (
+    item: HeldItem,
+    reach: (page: Page) => Promise<void>,
+    notes: string[],
+  ): Promise<boolean> => {
+    const held = options.heldReplay;
+    if (!held) return false;
+    selector = item.selector;
+    progress("held replay");
+    const deadline = new Deadline(
+      "control",
+      Math.max(
+        1,
+        Math.min(
+          3 * held.delayMs + controlTimeoutMs + restoreBudgetMs,
+          state.remaining(),
+        ),
+      ),
+      () => `${selector} (${activity})`,
+      { signal: state.signal },
+    );
+    let bound: ReturnType<typeof deadlinePage> | undefined;
+    let timeline: TimelineCollector | undefined;
+    try {
+      await deadline.run(async () => {
+        const realPage = await ensurePage(deadline);
+        bound = deadlinePage(realPage, deadline);
+        const page = bound.page;
+        needsReplay = true;
+        progress("held replay: restore");
+        replaying += 1;
+        try {
+          await reach(page);
+        } finally {
+          replaying -= 1;
+        }
+        await takeBaseline(page);
+        deadline.check();
+        const recorder = new TimelineCollector(page, {
+          clock,
+          filmstrips: options.filmstrips,
+          filmstripPage: realPage,
+        });
+        timeline = recorder;
+        progress("held replay");
+        await replayHeld({
+          page,
+          routePage: realPage,
+          item,
+          delayMs: held.delayMs,
+          withinMs: held.withinMs,
+          waitMs: options.waitMs,
+          policy: safety ? "third-party" : "app",
+          timeline: recorder,
+          clock,
+        });
+      });
+      deadline.check();
+      return true;
+    } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason;
+      retire();
+      if (
+        state.signal.aborted ||
+        (error instanceof DeadlineExpired && error.scope === "state")
+      ) {
+        notes.push(
+          `not reached: probe budget (state deadline at ${item.selector})`,
+        );
+        return false;
+      }
+      notes.push(
+        error instanceof DeadlineExpired || deadline.signal.aborted
+          ? `${item.selector}: held replay timed out`
+          : `${item.selector}: held replay failed: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
+      );
+      return true;
+    } finally {
+      if (timeline) {
+        await timeline.finishPending("held replay interrupted");
+        appendTimelines(timeline);
+      }
+      needsReplay = true;
+      if (retireAfterAttempt) {
+        retire();
+        retireAfterAttempt = false;
+      }
+      bound?.dispose();
+      deadline.dispose();
+      progress("done");
+    }
+  };
+  /** Web steps first, in step order, then probe clicks in enumeration order. */
+  const heldPhase = async () => {
+    const held = options.heldReplay;
+    if (!held) return;
+    const items: Array<{
+      item: HeldItem;
+      reach: (page: Page) => Promise<void>;
+    }> = [
+      ...[...held.steps]
+        .sort((a, b) => a.stepIndex - b.stepIndex)
+        .map((step) => ({
+          item: {
+            of: "web-step" as const,
+            kind: step.action,
+            selector: step.selector,
+            name: step.action,
+            stepIndex: step.stepIndex,
+            perform: step.perform,
+            repeat: step.repeat,
+          },
+          reach: step.reach,
+        })),
+      ...[...heldQueue]
+        .sort(
+          (a, b) =>
+            (a.order ?? Number.POSITIVE_INFINITY) -
+            (b.order ?? Number.POSITIVE_INFINITY),
+        )
+        .map((candidate) => ({
+          item: {
+            of: "probe-click" as const,
+            kind: "click" as const,
+            selector: candidate.selector,
+            name: candidate.name,
+            prepare: async (page: Page) => {
+              await page
+                .locator(candidate.path)
+                .first()
+                .hover({ timeout: 1500 })
+                .catch(() => undefined);
+              await page.waitForTimeout(120);
+            },
+            perform: async (page: Page) => {
+              await installInstrumentation(page, intent);
+              try {
+                await page
+                  .locator(candidate.path)
+                  .first()
+                  .click({ timeout: 1500, noWaitAfter: true });
+              } finally {
+                await cleanupInstrumentation(page);
+              }
+            },
+            repeat: async (page: Page, timeoutMs: number) => {
+              await page
+                .locator(candidate.path)
+                .first()
+                .click({ timeout: timeoutMs, noWaitAfter: true });
+            },
+          },
+          reach: restore,
+        })),
+    ];
+    const summary = {
+      delayMs: held.delayMs,
+      queued: items.length,
+      ran: 0,
+      notes: [] as string[],
+    };
+    artifact.heldReplay = summary;
+    if (items.length === 0) return;
+    if (held.delayMs <= held.withinMs) {
+      summary.notes.push(
+        "unjudgeable: checks.loading.delayMs must exceed checks.progressWithinMs",
+      );
+      return;
+    }
+    for (const [index, entry] of items.entries()) {
+      const left = items.length - index;
+      if (index >= MAX_HELD_REPLAYS) {
+        summary.notes.push(
+          `not reached: ${left} held replays beyond the cap of ${MAX_HELD_REPLAYS}`,
+        );
+        break;
+      }
+      if (state.remaining() < 3 * held.delayMs + controlTimeoutMs) {
+        summary.notes.push(`not reached: probe budget (${left} held replays)`);
+        break;
+      }
+      const before = timelines?.actions.length ?? 0;
+      const go = await heldAttempt(entry.item, entry.reach, summary.notes);
+      if ((timelines?.actions.length ?? 0) > before) summary.ran += 1;
+      if (!go) break;
+    }
+  };
   /** Copy a result probed at an earlier state onto this state's control. */
   const reuse = (
     candidate: Candidate,
@@ -1917,8 +2659,16 @@ export async function probeControls(
       const planned: Candidate[] = [];
       for (const candidate of candidates) {
         const key = keyOf.get(candidate) ?? candidate.path;
-        const entry = ledger.lookup(partition, key);
+        const requested = options.requestedActions?.some(
+          (r) =>
+            r.selector === candidate.path || r.selector === candidate.selector,
+        );
+        const entry = requested ? undefined : ledger.lookup(partition, key);
         const allocation = ledger.allocation(partition, key);
+        if (requested && !candidate.unavailable) {
+          planned.push(candidate);
+          continue;
+        }
         if (ledger.planned(partition)) {
           // Each round probes only its requeued work; earlier rounds' rows stay.
           const mine =
@@ -2033,14 +2783,36 @@ export async function probeControls(
         best.exploration.finish();
       }
     };
+    /**
+     * Once there is an action to replay held, the clicks leave it part of
+     * the state budget: on a page with more controls than time, the held
+     * replay would otherwise never run.
+     */
+    const heldReserveMs = options.heldReplay
+      ? Math.min(
+          0.3 * stateTimeoutMs,
+          2 * (3 * options.heldReplay.delayMs + controlTimeoutMs),
+        )
+      : 0;
+    const reserved = () =>
+      heldReserveMs > 0 &&
+      (heldQueue.length > 0 || (options.heldReplay?.steps.length ?? 0) > 0) &&
+      state.remaining() < heldReserveMs;
     for (const candidate of queue) {
       state.check();
+      if (reserved()) {
+        for (const rest of queue.slice(queue.indexOf(candidate)))
+          if (!handled.has(rest)) notReached(rest, "held replay reserve");
+        break;
+      }
       // Top-level controls of a rank go before nested items of that rank.
       if (ledger?.planned(partition))
         await drain(ledger.priority(partition, candidate));
       const preSkip =
         candidate.intentReason ??
         (destructive.test(candidate.name) ? "destructive name" : undefined);
+      if (preSkip === "destructive name" && safety)
+        safety.skipped.destructive += 1;
       if (preSkip) {
         const result: ProbeResult = {
           ...skippedResult(candidate, preSkip),
@@ -2076,7 +2848,7 @@ export async function probeControls(
       const outcome = await runAttempt(
         candidate,
         "observe",
-        async (page, motion, collector, deadline) => {
+        async (page, motion, collector, deadline, timeline) => {
           const explanation = explanationsByCandidate.get(candidate);
           // Intent skips (selected options, drag handles) are never hovered
           // or focused either, so they are checked before sampling.
@@ -2121,6 +2893,7 @@ export async function probeControls(
             candidate.path,
             options.waitMs,
             motion,
+            timeline,
             candidate.name,
             intent,
             effects,
@@ -2129,8 +2902,17 @@ export async function probeControls(
             },
             attemptTimings,
             clock,
+            onBlocked,
+            lateContentMs,
           );
           deadline.check();
+          if (options.heldReplay && !outcome.error) {
+            const last = timeline.lastAction();
+            if (last?.source === "probe-click" && heldCandidate(last.requests))
+              heldQueue.push(candidate);
+          }
+          if (!outcome.error)
+            snapSuspect = suspectSnap(candidate, timeline.lastAction());
           const result: ProbeResult = outcome.error
             ? skippedResult(candidate, `not clickable: ${outcome.error}`)
             : {
@@ -2153,6 +2935,15 @@ export async function probeControls(
           };
         },
       );
+      const suspect = snapSuspect;
+      snapSuspect = undefined;
+      if (
+        suspect &&
+        outcome?.result &&
+        !outcome.result.skipped &&
+        (outcome.items ?? []).length === 0
+      )
+        await confirmSnap(suspect);
       const tasks: NestedTask[] = [];
       const nested: ProbeResult[] = [];
       let nestedComplete = true;
@@ -2242,6 +3033,8 @@ export async function probeControls(
         const skip =
           item.intentReason ??
           (destructive.test(item.name) ? "destructive name" : undefined);
+        if (skip === "destructive name" && safety)
+          safety.skipped.destructive += 1;
         if (skip) {
           const result: ProbeResult = {
             ...skippedResult(item, skip, parentName),
@@ -2278,7 +3071,7 @@ export async function probeControls(
         const value = await runAttempt(
           item,
           "nested menu",
-          async (page, motion, _collector, deadline) => {
+          async (page, motion, _collector, deadline, timeline) => {
             for (const parent of parents) {
               const window = await beginEffectWindow(page, options.waitMs);
               try {
@@ -2304,6 +3097,7 @@ export async function probeControls(
               item.path,
               options.waitMs,
               motion,
+              timeline,
               `${parentName} › ${item.name}`,
               intent,
               effects,
@@ -2312,6 +3106,8 @@ export async function probeControls(
               },
               attemptTimings,
               clock,
+              onBlocked,
+              lateContentMs,
             );
             const items = openedRoots.length
               ? await enumerate(
@@ -2395,6 +3191,11 @@ export async function probeControls(
       }
     }
     await drain(Number.POSITIVE_INFINITY);
+    // Held replays use the reserve the clicks left them, before the
+    // explanation and collection passes take what remains.
+    effects = undefined;
+    await heldPhase();
+    effects = undefined;
     // Glyph links receive explanations without becoming click candidates.
     for (const explanation of explanations.filter(
       (item) => !sampled.has(item.selector),
@@ -2646,6 +3447,7 @@ export async function probeControls(
       );
     }
     artifact.motion ??= initialMotion?.evidence(artifact.reason);
+    if (timelines) options.onTimelines?.(timelines);
     artifact.results = artifact.results
       .map((result, index) => ({ result, index }))
       .sort(
@@ -2662,6 +3464,7 @@ export async function probeControls(
     await context.unroute("**/*", onContextRoute).catch(() => undefined);
     state.dispose();
     options.flowBudget?.finish(Math.max(0, clock() - stateStarted));
+    if (safety) artifact.safety = safety;
     progress("complete");
   }
   return artifact;

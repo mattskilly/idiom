@@ -1,11 +1,27 @@
+import { evidencePath } from "../artifact-path.js";
+
+export { evidencePath } from "../artifact-path.js";
+
 import { readFile, realpath } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { tupleCoordinateKey } from "../baseline/coordinate.js";
+import { decodeFrame } from "../capture/filmstrips.js";
 import {
   captureTupleKey,
   expectedCaptureTupleKeys,
 } from "../capture/resolve.js";
+import { actionTimelineArtifactSchema } from "../checks/artifact-schema.js";
+import { FILMSTRIP_LIMITS } from "../checks/filmstrip-schema.js";
+import type { ActionTimeline } from "../checks/types.js";
 import { IdiomError } from "../errors.js";
 import { loadRunTuples } from "../review/artifacts.js";
 import {
@@ -34,26 +50,38 @@ function inside(root: string, target: string) {
   return path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
 }
 
-/** Evidence must be declared by a validated finding and stay within its owning run. */
-export async function evidencePath(
-  runDirectory: string,
-  path: string,
+/**
+ * A caller-supplied path resolved against the bound root. The nearest existing
+ * ancestor is resolved through symlinks, so a link cannot carry a write out.
+ */
+export async function insideRoot(
+  root: string,
+  supplied: string,
+  label = "path",
 ): Promise<string> {
+  const target = resolve(root, supplied);
+  const physicalRoot = await realpath(root);
+  let existing = target;
+  let rest = "";
+  for (;;) {
+    try {
+      existing = await realpath(existing);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = dirname(existing);
+      if (parent === existing) break;
+      rest = join(basename(existing), rest);
+      existing = parent;
+    }
+  }
   if (
-    isAbsolute(path) ||
-    /\\|\0/.test(path) ||
-    !inside(runDirectory, resolve(runDirectory, path))
+    /\0/.test(supplied) ||
+    !(inside(root, target) || inside(physicalRoot, target)) ||
+    !inside(physicalRoot, join(existing, rest))
   )
     throw new IdiomError(
-      `Evidence path escapes its source run: ${path}. Obtain a fresh check.`,
-    );
-  const [root, target] = await Promise.all([
-    realpath(runDirectory),
-    realpath(resolve(runDirectory, path)),
-  ]);
-  if (!inside(root, target))
-    throw new IdiomError(
-      `Evidence symlink escapes its source run: ${path}. Obtain a fresh check.`,
+      `${label} must be inside the bound project root ${root}: ${supplied}`,
     );
   return target;
 }
@@ -84,6 +112,7 @@ export function findingDetail(
       colorScheme: finding.colorScheme,
       combination: finding.combination,
     },
+    filmstrip: finding.evidence.filmstrip,
     cropPath:
       crop === undefined ? undefined : resolve(record.runDirectory, crop),
     evidencePaths: screenshots.map((path) =>
@@ -93,7 +122,38 @@ export function findingDetail(
       crop === undefined
         ? "unavailable: original finding has no visual evidence"
         : "available",
+    timeline:
+      finding.evidence.timeline === undefined
+        ? undefined
+        : {
+            id: finding.evidence.timeline.id,
+            path: resolve(
+              record.runDirectory,
+              finding.evidence.timeline.artifact,
+            ),
+          },
   };
+}
+
+/** Attach the referenced action; old or missing timelines are not an error. */
+async function timelineDetail(
+  runDirectory: string,
+  reference: { artifact: string; id: string },
+): Promise<
+  | { status: "available"; record: ActionTimeline }
+  | { status: "unavailable: recapture" }
+> {
+  try {
+    const path = await evidencePath(runDirectory, reference.artifact);
+    const parsed = actionTimelineArtifactSchema.parse(
+      JSON.parse(await readFile(path, "utf8")),
+    );
+    const record = parsed.actions.find((action) => action.id === reference.id);
+    if (record) return { status: "available", record };
+  } catch {
+    // Fall through: consumers recapture rather than fail the lookup.
+  }
+  return { status: "unavailable: recapture" };
 }
 
 type RunEvidence = {
@@ -288,10 +348,46 @@ export class EvidenceStore {
   }
   async issue(id: string): Promise<CallToolResult> {
     const found = await this.lookup(id);
+    const reference = found.representative.evidence.timeline;
+    const detail =
+      reference === undefined || found.detail.timeline === undefined
+        ? found.detail
+        : {
+            ...found.detail,
+            timeline: {
+              ...found.detail.timeline,
+              ...(await timelineDetail(found.run.runDirectory, reference)),
+            },
+          };
     const response = result(
       `Evidence for ${id}: ${found.representative.explanation}`,
-      found.detail,
+      detail,
     );
+    const filmstrip = found.representative.evidence.filmstrip;
+    if (filmstrip?.sheet) {
+      try {
+        const data = await readFile(
+          await evidencePath(found.run.runDirectory, filmstrip.sheet),
+        );
+        if (data.length > FILMSTRIP_LIMITS.bytes)
+          throw new Error("filmstrip exceeds encoded size limit");
+        const png = decodeFrame(data);
+        if (
+          png.width > FILMSTRIP_LIMITS.width ||
+          png.height > FILMSTRIP_LIMITS.height
+        )
+          throw new Error("filmstrip exceeds dimension limits");
+        response.content.push({
+          type: "image",
+          mimeType: "image/png",
+          data: data.toString("base64"),
+        });
+      } catch (error) {
+        throw new IdiomError(
+          `Cannot read referenced evidence ${filmstrip.sheet}: ${String(error)}. Run idiom_check to regenerate it.`,
+        );
+      }
+    }
     const paths = found.representative.evidence.screenshots;
     const selected =
       paths.find((path) => /(^|\/)crops\//.test(path)) ?? paths[0];

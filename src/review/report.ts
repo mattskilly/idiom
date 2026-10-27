@@ -72,7 +72,7 @@ function quickLimitsMarkdown(targets: string[]): string[] {
   return [
     "## Quick-review limits",
     "",
-    `Only the supplied public URL${targets.length === 1 ? " was" : "s were"} visited; Idiom did not crawl links or submit forms:`,
+    `Only the supplied public URL${targets.length === 1 ? " was" : "s were"} visited; Idiom did not crawl links, and form submission and non-GET requests were blocked while probing:`,
     "",
     ...targets.map((target) => `- ${text(target)}`),
     "",
@@ -192,11 +192,17 @@ export function advisoryMarkdown(review: AdvisoryReview): string[] {
         `Section: ${text(section)}${sectionHeading === undefined ? "" : ` (${text(sectionHeading)})`} · ${text(finding.state)}/${text(finding.viewport)}${finding.colorScheme === undefined ? "" : `/${finding.colorScheme}`}`,
         "",
         text(finding.explanation),
+        ...(finding.evidence.filmstrip?.sheet
+          ? [
+              `Filmstrip: [${text(finding.evidence.filmstrip.sheet)}](${finding.evidence.filmstrip.sheet})`,
+              "",
+            ]
+          : []),
         "",
         ...(finding.fix === undefined ? [] : [`Fix: ${text(finding.fix)}`, ""]),
         ...finding.acceptance.map((line) => `Done when: ${text(line)}`),
         "",
-        `Evidence: ${finding.evidence.screenshots.map((path) => `[${path}](${path})`).join(" · ")}`,
+        `${finding.evidence.filmstrip?.sheet ? `Filmstrip: [${finding.evidence.filmstrip.sheet}](${finding.evidence.filmstrip.sheet}) · ` : ""}Evidence: ${finding.evidence.screenshots.map((path) => `[${path}](${path})`).join(" · ")}`,
         "",
       );
   }
@@ -450,6 +456,12 @@ export function renderReport(options: {
                 "",
               ]),
           text(finding.explanation),
+          ...(finding.evidence.filmstrip?.sheet
+            ? [
+                `Filmstrip: [${text(finding.evidence.filmstrip.sheet)}](${finding.evidence.filmstrip.sheet})`,
+                "",
+              ]
+            : []),
           "",
         );
         const pageEvidence = pageFindingEvidence(finding, options.page);
@@ -525,6 +537,12 @@ export function renderReport(options: {
         `Fingerprint: \`${finding.fingerprint}\``,
         "",
         text(finding.explanation),
+        ...(finding.evidence.filmstrip?.sheet
+          ? [
+              `Filmstrip: [${text(finding.evidence.filmstrip.sheet)}](${finding.evidence.filmstrip.sheet})`,
+              "",
+            ]
+          : []),
         "",
         ...("decision" in suppressed
           ? [

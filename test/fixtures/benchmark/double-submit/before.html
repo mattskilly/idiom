@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><head><title>Profile</title><style>body{font:16px sans-serif;margin:24px}</style></head><body>
+<main><h1>Profile</h1>
+<form id="profile"><label>Name <input id="name" name="name" value="Ada"></label> <button id="save" type="submit">Save</button></form>
+<p id="result"></p></main>
+<script>
+document.querySelector("#profile").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const result = document.querySelector("#result");
+  try {
+    const response = await fetch("/api/save", { method: "POST", body: JSON.stringify({ name: document.querySelector("#name").value }) });
+    result.textContent = response.ok ? "Saved" : "Could not save";
+  } catch {
+    result.textContent = "Could not save";
+  }
+});
+</script></body></html>

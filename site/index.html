@@ -174,7 +174,7 @@ footer a:hover { color:var(--redline-ink); }
   <p class="kicker">Design QA</p>
   <div class="col">
     <div class="select"><span class="tag">Heading · Archivo 700</span><i class="h tl"></i><i class="h tr"></i><i class="h bl"></i><i class="h br"></i><h1>Your agent built it. Idiom checks it the way a designer would.</h1></div>
-    <p class="lede standfirst">One command captures every state of your app, finds the defects people notice, and says how to fix each one.</p>
+    <p class="lede standfirst">One command captures every state of your app and what happens between them, finds the defects people notice, and says how to fix each one.</p>
   </div>
   <div class="term" role="region" aria-label="Example idiom check output" tabindex="0"><pre><span class="p"># example output</span>
 <span class="p">$</span> idiom check studio
@@ -198,7 +198,7 @@ footer a:hover { color:var(--redline-ink); }
   <h2>It looks at the app your users see, not just the code.</h2>
   <ol class="steps">
     <li><span class="n">Learn</span><p>Idiom reads your design tokens and <code>DESIGN.md</code>, or <code>idiom init</code> writes them with you.</p></li>
-    <li><span class="n">Render</span><p>It opens your running app in a real browser and captures every state you care about (empty, error, signed in) at each viewport, in light and dark. It clicks controls to see whether they do anything, and never sends requests that change your data.</p></li>
+    <li><span class="n">Render</span><p>It opens your running app in a real browser and captures every state you care about (empty, error, signed in) at each viewport, in light and dark. It clicks controls to see whether they do anything and records what happens during every load and click: what moved, what appeared and what animated. It replays requests as a slow network would to see what a user waits through, and never sends requests that change your data.</p></li>
     <li><span class="n">Critique</span><p>More than 60 measured checks, plus your intended design if you have one. Top issues come first, ranked by how noticeable each problem is and how prominent the element is. Symptoms that share one cause become one issue. It waits for entrance animations to finish, then judges only what is on screen: anything in a closed menu, a collapsed section or still invisible is skipped and counted, not measured.</p></li>
     <li><span class="n">Repair</span><p>Every finding carries the element, the measurement, a cropped screenshot and a fix your agent can apply, or <code>idiom fix</code> hands them to it.</p></li>
     <li><span class="n">Verify</span><p>Idiom renders the same states again and confirms the problem is gone. The exit code is the verdict, so it works in CI.</p></li>
@@ -249,9 +249,9 @@ footer a:hover { color:var(--redline-ink); }
   <p class="fix"><span>Done when</span> A label that reads naturally, such as “Text on primary”.</p>
 </article>
   </div>
-  <div class="col"><p>It also checks the basics every product should get right:</p></div>
+  <div class="col"><p>It also catches what a screenshot can't show, because it happens between states: content that jumps when you click, a button that shows nothing while its request is pending or can be pressed twice, and panels or content that snap into place with no transition.</p><p>And it checks the basics every product should get right:</p></div>
   <ul class="also">
-    <li>low contrast</li><li>broken links</li><li>broken or stretched images</li><li>fonts that fail to load</li><li>missing focus styles</li><li>lines too long to read</li><li>orphaned words</li><li>layout shift</li><li>targets too small to tap</li><li>uneven spacing</li><li>clipped and overlapping text</li><li>error text left on screen</li><li>sizes off your design system</li>
+    <li>low contrast</li><li>broken links</li><li>broken or stretched images</li><li>fonts that fail to load</li><li>missing focus styles</li><li>lines too long to read</li><li>orphaned words</li><li>layout shift on load</li><li>targets too small to tap</li><li>uneven spacing</li><li>clipped and overlapping text</li><li>error text left on screen</li><li>sizes off your design system</li>
   </ul>
 </section>
 
@@ -272,11 +272,11 @@ footer a:hover { color:var(--redline-ink); }
   <p class="kicker">With your agent</p>
   <h2>Built for the loop your agent already runs.</h2>
   <ol class="steps">
-    <li><span class="n">1</span><p><b>Check.</b> After a UI change, the agent runs <code>idiom check &lt;flow&gt;</code> and gets every finding in fix order, with a crop of each.</p></li>
+    <li><span class="n">1</span><p><b>Check.</b> After a UI change, the agent runs <code>idiom check &lt;flow&gt;</code> and gets every finding in fix order, with a crop of each. In Claude Code, Idiom's plugin reminds the agent when it edits UI and before it stops.</p></li>
     <li><span class="n">2</span><p><b>Fix.</b> It fixes the blocking ones and runs the check again until it is clean. Findings it disagrees with go to you, never quietly away.</p></li>
     <li><span class="n">3</span><p><b>Gate.</b> In CI or autobuild, <code>idiom check &lt;flow&gt; --baseline &lt;run&gt; --fail-on major</code> fails only on new problems.</p></li>
   </ol>
-  <p class="note">Works with Claude Code, Codex, Cursor and autobuild, from the CLI or as MCP tools: <code>claude mcp add idiom -- npx -y @mattskilly/idiom mcp</code>. Your decisions are stored in the repo, so the same finding is not raised twice.</p>
+  <p class="note">Works with Claude Code, Codex, Cursor and autobuild, from the CLI or as MCP tools for every step of the loop: <code>claude mcp add idiom -- npx -y @mattskilly/idiom mcp</code>. Over MCP, a problem that happens between states comes with a filmstrip of what the user saw. After an autonomous build, <code>idiom sweep --all</code> reviews every flow and ranks the cleanup. Your decisions are stored in the repo, so the same finding is not raised twice.</p>
 </section>
 
 <section id="status">

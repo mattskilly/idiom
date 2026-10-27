@@ -132,6 +132,15 @@ test("review --page captures the page at desktop and mobile, light only", async 
     ["page-1", "desktop", "light"],
     ["page-1", "mobile", "light"],
   ]);
+  // Page review stays a static capture; only quick review probes.
+  expect(
+    result.captures.some(
+      (tuple) =>
+        tuple.probe !== undefined ||
+        tuple.probeSafety !== undefined ||
+        tuple.probePageBudgetMs !== undefined,
+    ),
+  ).toBe(false);
 });
 
 test("review --page without a model warns that critique degraded", async () => {

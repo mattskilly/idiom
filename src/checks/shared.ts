@@ -1,4 +1,6 @@
 import type {
+  ActionTimeline,
+  ActionTimelineArtifact,
   CheckResult,
   CheckTuple,
   DeterministicCheckId,
@@ -447,4 +449,49 @@ export function scanResult(
 export function v2Observations(tuple: CheckTuple) {
   const observation = tuple.observations;
   return observation?.version === 2 ? observation : undefined;
+}
+
+export type TimelineEvidence =
+  | { status: "unavailable"; reason: string }
+  | {
+      status: "ran";
+      timelines: ActionTimelineArtifact;
+      truncated: ActionTimeline["truncated"][number][];
+      /** Truncation and partial reasons, ready for a rule's coverage. */
+      reason?: string | undefined;
+    };
+
+/** The coverage contract temporal rules read action timelines through. */
+export function timelineEvidence(tuple: CheckTuple): TimelineEvidence {
+  const timelines = tuple.timelines;
+  if (timelines === undefined)
+    return {
+      status: "unavailable",
+      reason: "unavailable: recapture (no action timelines in this capture)",
+    };
+  if (timelines.status === "unavailable")
+    return {
+      status: "unavailable",
+      reason: timelines.reason ?? "action timelines unavailable",
+    };
+  const truncated = [
+    ...new Set(timelines.actions.flatMap((action) => action.truncated)),
+  ];
+  const reasons = [
+    ...new Set([
+      ...(timelines.reason ? [timelines.reason] : []),
+      ...timelines.actions.flatMap((action) =>
+        action.status !== "ran" && action.reason ? [action.reason] : [],
+      ),
+      ...(timelines.truncated.actions > 0
+        ? [`${timelines.truncated.actions} actions beyond the timeline limit`]
+        : []),
+    ]),
+  ];
+  return {
+    status: "ran",
+    timelines,
+    truncated,
+    ...(reasons.length ? { reason: reasons.join("; ") } : {}),
+  };
 }

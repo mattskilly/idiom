@@ -14,7 +14,7 @@ idiom capture <flow>         # deterministic browser capture
 idiom check <flow>           # every deterministic finding, in fix order
 idiom baseline record|accept [flow]  # record or accept the regression baseline
 idiom fix <flow>             # bounded local agent repairs with calibrated proof
-idiom sweep <flow>           # checks + per-surface model sweep, uncapped
+idiom sweep [flow] --all     # whole-product polish (choose a flow or --all)
 idiom learn <observation>    # turn a human-found miss into a check or ruling
 idiom compare <flow>         # before/after composites between two stored captures
 idiom coverage               # routes no flow captures
@@ -44,7 +44,7 @@ cd /path/to/any/uninitialized-directory
 idiom quick http://127.0.0.1:3000/
 ```
 
-Add explicit pages to the same command when you already know the routes; Idiom preserves their order and does not crawl links or submit forms:
+Add explicit pages to the same command when you already know the routes; Idiom preserves their order, does not crawl links, and blocks form submission while it probes:
 
 ```sh
 idiom quick \
@@ -55,6 +55,26 @@ idiom quick \
 
 The command captures every supplied page at desktop (1440×900) and mobile (390×844) sizes in both light and dark colour schemes. It runs the deterministic checks and prints the exact `report.md` and `report.html` paths. By default, the timestamped result is written beneath `idiom-quick-reports/`; use `--out <dir>` for an exact new directory.
 
+### The interaction probe
+
+Quick review also interacts with each page once, at the first selected viewport in light (the same rule configured flows use). It hovers, focuses and clicks the page's controls so the probe-based rules (dead control, duplicate entry, motion and the other temporal rules) have evidence on a page you have never configured.
+
+- **Budget.** Each page gets 45 000 ms for the keyboard focus sweep and the click probe together, and at most 40 controls. The focus sweep may use at most a third of it. The page's own controls go before shared navigation. Change the time with `--probe-budget <ms>` (a positive integer up to 600000). Controls the budget or the cap never reached are counted in the report.
+- **Static review.** `--no-probe` skips the probe entirely and gives a static review. `--probe-budget` cannot be combined with it.
+
+Quick review targets pages you may not own, so the probe is strict:
+
+- Only `GET`, `HEAD` and `OPTIONS` requests leave the browser. Every other method is blocked, including requests to paths that look like a development server.
+- Top-level navigation to another origin is blocked. A redirect the page took on load (for example to `www.`) counts as the page's own origin.
+- Form submission is vetoed, whether by a submit button, Enter, `requestSubmit()` or `form.submit()`. The page's own handlers still run, and anything they send is held to the request rule above.
+- Downloads are cancelled, new windows are closed, and `window.open` and `print` do nothing.
+- Notification, geolocation, camera, microphone and screen-share prompts are denied.
+- A page's "leave this page?" prompt is answered so the page can be reloaded between controls.
+- Service workers are blocked on the probed capture, so no request bypasses these rules.
+- Controls whose names look destructive (delete, remove, sign out, unsubscribe, purchase, pay and similar) are never clicked; they are counted as skipped.
+
+The report's **Coverage and limits** section has an **Interaction** paragraph per page. It says how many controls were clicked, what was skipped and why, how many were not reached, and how many navigations, submissions, downloads, new windows, permission prompts and non-GET requests were blocked. The probe artifact in each probed tuple's `observations.json` carries the same counts as `probe.safety` ([schemas](schemas.md)). The CLI's final line ends with `probed N controls, skipped M, not probed K`, or `probe off`.
+
 Compare one page against an intended design with `--design`, without a project:
 
 ```sh
@@ -64,7 +84,7 @@ idiom quick http://127.0.0.1:3000/pricing --design https://example.com/pricing
 
 The value can be a local PNG, JPEG or WebP image, a local HTML file or directory, a live site URL, or a Figma frame URL. A Claude share URL counts as an HTML design. Any other HTTP(S) URL is captured as a live reference site. A Figma frame URL is fetched with `FIGMA_TOKEN` and pinned under `.idiom/designs/` beside the working directory, as in a project ([Figma frames](configuration.md#figma-frames)). `--design` compares one page, so pass a single URL. See [design comparison](configuration.md#design-comparison).
 
-Read the final **Quick-review limits** section as part of the result. It names the fixture-dependent error and empty states, authenticated surfaces, form/interaction destinations, and product/design judgments that a public-page pass cannot cover. To cover those, run `idiom init`, declare a flow, and use `idiom review <flow>`.
+Read the final **Quick-review limits** section as part of the result. It names the fixture-dependent error and empty states, authenticated surfaces, destinations behind forms or other interactions, and product/design judgments that a public-page pass cannot cover. To cover those, run `idiom init`, declare a flow, and use `idiom review <flow>`.
 
 Quick review requires no Idiom files, product or design documents, flow manifest, interview, Git repository, or model credentials. It deliberately refuses to run in or below a directory that already contains `.idiom/project.json`; use that project's configured flow so quick review cannot bypass its states or guidance.
 
@@ -292,6 +312,8 @@ Probe, time-budget and colour-scheme settings are in [configuration.md](configur
 
 ## check
 
+Temporal findings include an optional `filmstrip` path in `--json`, including baseline comparisons and grouped representatives. `screenshot` still names static evidence. Markdown reports link the contact sheet, and HTML reports show it inline with horizontal scrolling, including deferred findings. Stored reports embed the PNG and need no browser session to regenerate. See [filmstrip configuration](configuration.md#capture-settings) for explicit action requests and offsets.
+
 `idiom check` protects the flow against regressions by default. On the first check without a reachable baseline it records the already captured clean HEAD, announces the acceptance, and passes: existing defects become pre-existing. Commit the generated `.idiom/baselines/<flow>.json` (and the pixel directory for a published flow). Later checks report **New**, **Fixed**, and **Pre-existing** findings with the baseline SHA, and gate only new live deterministic occurrences. The capture runs once; repeated checks never advance the baseline automatically.
 
 Initialize on the branch state you want to preserve. A dirty or historical capture cannot initialize a HEAD baseline: commit or stash, capture clean HEAD and retry, or use `--all` to inspect every open finding. Once a baseline exists, checks can compare dirty working changes normally. After intentional changes, run `idiom baseline accept <flow>` and commit the updated record. This is model-free and repeatable:
@@ -400,6 +422,47 @@ use stderr.
 
 ## sweep
 
+After an autonomous build, once a batch of builds lands, run a whole-product polish sweep:
+
+```sh
+idiom sweep --all --emit-tickets .autobuild/tickets/triage
+idiom sweep --all --deterministic-only --max-tickets 5
+```
+
+All-mode validates every manifest first, then makes fresh captures in filename order.
+It runs the complete deterministic and temporal check registry, the budgeted interaction
+probe, and a per-surface model sweep. `--deterministic-only` skips providers and
+model-only spec reads and needs no model credentials; capture and probing still run.
+The existing project `model` configuration remains required.
+
+Findings across flows sharing proven token, component or authored-style evidence
+become one cause proposal. Proposals use the existing salience × prominence ranking.
+`--max-tickets <n>` is a positive safe integer, default **10**. It caps new tickets
+after grouping, eligibility and open-ticket finding-id deduplication; existing owners
+remain linked and human edits stay intact. All findings remain in their source runs,
+and `--fail-on` evaluates even findings outside the ticket budget.
+
+Inspect `.idiom/reports/polish-*/polish.md`, `polish.html` and `polish.json` for the
+ranked list, omission count, all severity/rule totals, original per-flow reports,
+states, viewport sizes, tuple outcomes, model status and probe/check coverage.
+Probe budgets, reused controls, unsupported Electron probing and missing temporal
+prerequisites remain visible limitations. Failed captures keep successful evidence;
+a failed flow does not prevent later flows from running. Partial work is marked
+incomplete/degraded and must never be read as a clean product.
+
+Emitted tickets have bounded member acceptance, selectors and measured values,
+real screenshot/crop links and a paste-ready repair instruction. Original source
+occurrences live in hidden immutable verification sidecars, partitioned by flow and
+tuple. After repairs, run **every printed `idiom verify <flow> --spec <sidecar>`
+command**, including its project argument; a shared ticket's main body spans flows
+and is not itself a single-flow verification spec. Missing filmstrips and manual
+model verification are disclosed. Review and groom proposals manually; emission
+never promotes tickets or dispatches cleanup work.
+
+Choose exactly one of a named flow or `--all`. All-mode rejects `--from` and
+`--latest`; named-flow sweep retains both replay modes (mutually exclusive),
+`--prod`, `--port`, JSON and advisory exits.
+
 `idiom sweep` is the deeper pass to run when the deterministic checks are clean but the build still needs a designer's eye. It captures the flow, runs every deterministic check, then asks the configured model to critique each surface (flow state) on its own, with zoomed crops of the small details and the measured geometry (heights, widths, radii, gaps to the nearest control, contrast and declared component sizes) in the prompt, so it compares numbers instead of estimating pixels:
 
 ```sh
@@ -421,7 +484,7 @@ Point `design.specFile` at a written spec to have each surface compared against 
 }
 ```
 
-Unlike `review`, a sweep reports every finding, ranked by severity with measured findings ahead of model findings at the same severity, and writes `sweep.json` (per-surface status, crops and counts) beside the usual reports. A surface whose critique fails is listed as failed while the other surfaces keep their findings. Sweep findings live in the run's `findings.json`, so `idiom decide`, `idiom tickets --cluster` and the HTML report work on them unchanged. `review` is unchanged; sweep is an additional, model-assisted mode and needs the same `model` configuration.
+Unlike `review`, a sweep reports every finding, ranked by severity with measured findings ahead of model findings at the same severity, and writes `sweep.json` (per-surface status, crops and counts) beside the usual reports. A surface whose critique fails is listed as failed while the other surfaces keep their findings. Sweep findings live in the run's `findings.json`, so `idiom decide`, `idiom tickets --cluster` and the HTML report work on them unchanged. `review` is unchanged; sweep needs the same `model` configuration. Named-flow finding display retains its severity/layer ordering; ticket proposals use salience × prominence and the shared ticket budget.
 
 ## learn
 
@@ -582,6 +645,8 @@ The results are advisory. They are written to `advisory.json` in the run directo
 `idiom review <flow>` runs the advisory pass whenever the flow declares `content` and the model layer runs, so `--deterministic-only` skips it. `idiom check <flow> --advisory` runs it beside the deterministic checks and prints the advisory entries before the `Full report:` line; check's exit code and `blocking` count ignore them. Without `--advisory`, check makes no model calls. Each pattern costs one model request per run; `--states` narrows a fresh capture to the patterns you are working on.
 
 ## report
+
+Temporal finding cards display their contact sheets before static evidence. The sheet labels requested offsets and original sampled times, marks unavailable/unsettled cells, and uses red outlines at the subject's recorded position. Missing legacy filmstrip evidence has no synthetic replacement.
 
 Open a report in the default browser by run ID, or omit the ID to select the newest `report.html` by modification time (with a stable run-name tie-break):
 
@@ -877,6 +942,8 @@ Proposals land in `tasks/triage/`. Ready/doing/done destinations, configured rea
 Deduplication checks individual members before grouping, across arbitrary Markdown filenames at the requested tracker root and its state directories, plus the source tracker. Canonical names, historical aliases/fingerprints and legacy standalone filenames remain authoritative after renaming, promotion or consolidation. Existing tickets are never overwritten or extended. If a component gains new findings, only uncovered members receive a new proposal; multiple owner files produce a per-member conflict while unrelated work proceeds. Canonical publication checkpoints accepted members as ticketed without replacing verification status. Custom drafts and unaccepted check proposals do not checkpoint lifecycle status.
 
 ## verify
+
+Temporal findings add optional before/after contact sheets to `before-after.md`, HTML and `attachments.json`. Before uses the original stored pixels; both ordinary recaptures explicitly request the same semantic action so a passing fix still has an after sheet. Probe ordinals alone never establish a match. Missing or ambiguous actions are reported unavailable and do not change calibrated verification verdicts. Paired sheets share a region and scale; uncaptured portions of a wider common region appear grey and partial, and the original sheet is retained. All attachments remain under the verification output after temporary captures are removed.
 
 Verify one or more machine-readable findings embedded in a ticket spec:
 

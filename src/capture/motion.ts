@@ -1,4 +1,5 @@
 import type { Page } from "playwright";
+import { linkRecording } from "../checks/temporal-evidence.js";
 import type {
   MotionAction,
   MotionArtifact,
@@ -32,7 +33,10 @@ export class MotionCollector {
     if (typeof preference === "boolean") this.reducedMotion = preference;
   }
 
-  async start(identity: ActionIdentity): Promise<{
+  async start(
+    identity: ActionIdentity,
+    recording?: string,
+  ): Promise<{
     finish(reason?: string): Promise<void>;
     dispose(): Promise<void>;
   }> {
@@ -644,7 +648,7 @@ export class MotionCollector {
                   change.reason = reason;
                 }
             }
-            this.actions.push(action);
+            this.actions.push(linkRecording(action, recording));
           } catch (error) {
             this.actions.push({
               ...identity,

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Directory batches</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d1d1f; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px; }
+  ul.results { margin: 0; padding: 0; list-style: none; }
+  ul.results li { box-sizing: border-box; height: 50px; padding: 8px 0; }
+  #results { position: relative; min-height: 150px; }
+  .skeleton { position: absolute; inset: 0; height: 150px; background: repeating-linear-gradient(#f2f2f2 0 40px, #fff 40px 50px); }
+  .note { color: #555; }
+  footer { max-width: 720px; margin: 0 auto; padding: 24px; color: #555; }
+</style>
+</head>
+<body>
+<main>
+  <h1>People</h1>
+  <button id="load" type="button">Load results</button>
+  <section id="results" aria-live="polite"><div class="skeleton" aria-hidden="true"></div></section>
+  <p class="note">The directory updates every hour.</p>
+</main>
+<footer>Contact the directory team to correct an entry.</footer>
+<script>
+  document.getElementById("load").addEventListener("click", async () => {
+    await Promise.all([0, 1, 2].map(async index => {
+      const response = await fetch(`/batch/${index}`);
+      const person = await response.json();
+      const list = document.createElement("ul");
+      list.className = `results batch-${index}`;
+      const item = document.createElement("li");
+      item.textContent = person;
+      list.append(item);
+      document.getElementById("results").append(list);
+    }));
+    document.querySelector(".skeleton").remove();
+  });
+</script>
+</body>
+</html>

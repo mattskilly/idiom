@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Motion lab</title><style>
+body { font: 16px system-ui; padding: 32px; margin: 0; } button { padding: 12px; }
+li { height: 40px; background: #f4f4f4; margin: 4px 0; }
+</style></head><body>
+<h1>Groceries</h1>
+<button id="add">Add item</button> <button id="drop">Drop last item</button>
+<ul id="items" aria-label="Groceries"><li>Apples</li><li>Bread</li><li>Coffee</li></ul>
+<script>
+add.onclick = () => { const li = document.createElement("li"); li.textContent = "Dates"; items.append(li); };
+drop.onclick = () => items.lastElementChild?.remove();
+</script>
+</body></html>

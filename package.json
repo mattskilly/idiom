@@ -1,6 +1,6 @@
 {
   "name": "@mattskilly/idiom",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Design acceptance for AI-built software.",
   "type": "module",
   "license": "Apache-2.0",
@@ -31,7 +31,8 @@
   "files": [
     "dist/",
     "templates/",
-    ".claude-plugin/"
+    ".claude-plugin/",
+    "hooks/"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",

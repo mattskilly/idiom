@@ -18,6 +18,9 @@ export type SummaryFinding = {
   problem: string;
   fix: string[];
   screenshot?: string | undefined;
+  filmstrip?: string | undefined;
+  /** The action timeline the finding was measured from. */
+  timeline?: { id: string; path: string } | undefined;
   deferred?: boolean | undefined;
   occurrenceOnly?: boolean | undefined;
 };
@@ -47,10 +50,29 @@ export function summarizeFinding(
     ...(selector === undefined ? {} : { selector }),
     problem: finding.explanation,
     fix: finding.acceptance,
+    ...(finding.evidence.filmstrip?.sheet
+      ? {
+          filmstrip: displayPath(
+            base,
+            `${result.runDirectory}/${finding.evidence.filmstrip.sheet}`,
+          ),
+        }
+      : {}),
     ...(screenshot === undefined
       ? {}
       : {
           screenshot: displayPath(base, `${result.runDirectory}/${screenshot}`),
+        }),
+    ...(finding.evidence.timeline === undefined
+      ? {}
+      : {
+          timeline: {
+            id: finding.evidence.timeline.id,
+            path: displayPath(
+              base,
+              `${result.runDirectory}/${finding.evidence.timeline.artifact}`,
+            ),
+          },
         }),
   };
 }

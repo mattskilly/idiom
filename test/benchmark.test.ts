@@ -1,7 +1,9 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { type Browser, chromium } from "playwright";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { signalChecks } from "../src/checks/registry.js";
 import type { ObservationArtifact } from "../src/checks/types.js";
 import { run as runCli } from "../src/cli.js";
@@ -18,8 +20,11 @@ import {
 import {
   fixture,
   type ReviewedFixture,
+  type ReviewOptions,
   reviewFixture,
+  reviewStates,
 } from "./benchmark-support.js";
+import { type LoadingServer, startLoadingServer } from "./loading-support.js";
 
 /**
  * Design partner benchmark (dogfooding request #43): the seven chrome defects a
@@ -656,3 +661,391 @@ test("native selects beside the product's custom selects are flagged; all-native
     ),
   ).toEqual([]);
 }, 60_000);
+
+/**
+ * Loading feedback (file-199): the probe's held replay slows each action's
+ * responses and watches what the user would see. Every case is served over
+ * HTTP so the fixtures' fetches reach a real (counting) server.
+ */
+describe("loading feedback while requests are held", () => {
+  let server: LoadingServer;
+  beforeAll(async () => {
+    server = await startLoadingServer();
+  });
+  afterAll(async () => {
+    await server.close();
+  });
+  const review = (path: string) =>
+    reviewFixture(browser, "", {
+      url: `${server.origin}/${path}`,
+      probe: true,
+    });
+  const rules = (findings: ReviewedFixture) =>
+    findings
+      .filter(({ candidate }) =>
+        ["loading-state-missing", "double-submit"].includes(candidate.category),
+      )
+      .map(({ candidate }) => ({
+        rule: candidate.rule,
+        selector: candidate.selectorHint,
+        timeline: candidate.timeline,
+        problem: candidate.explanation,
+      }));
+
+  test("a fetch with no pending feedback is found; aria-busy and a label fix it", async () => {
+    const before = rules(await review("loading-state/before.html"));
+    expect(before).toEqual([
+      expect.objectContaining({
+        rule: "idiom:loading-state-missing",
+        selector: "#load",
+        timeline: "slow-probe-1",
+        problem: expect.stringMatching(/GET \/api\/items/),
+      }),
+    ]);
+    expect(rules(await review("loading-state/after.html"))).toEqual([]);
+  }, 90_000);
+
+  test("an enabled submit sends a duplicate POST, which is blocked; disabling it fixes both", async () => {
+    const before = rules(await review("double-submit/before.html"));
+    expect(before.map(({ rule }) => rule).sort()).toEqual([
+      "idiom:double-submit",
+      "idiom:loading-state-missing",
+    ]);
+    expect(rules(await review("double-submit/after.html"))).toEqual([]);
+  }, 90_000);
+
+  test("a route change that empties main is found despite nav highlight and announcer; a skeleton fixes it", async () => {
+    const before = rules(await review("route-change/before.html"));
+    expect(before).toEqual([
+      expect.objectContaining({
+        rule: "idiom:loading-state-missing",
+        problem: expect.stringMatching(
+          /^Navigating to \/orders left the main content empty/,
+        ),
+      }),
+    ]);
+    expect(rules(await review("route-change/after.html"))).toEqual([]);
+  }, 90_000);
+
+  test.each([
+    "skeleton-swap",
+    "document-nav",
+    "optimistic",
+    "fire-and-forget",
+    "disabled-trigger",
+    "safe-only",
+    "carousel",
+  ])(
+    "exclusion %s reports neither rule",
+    async (name) => {
+      expect(rules(await review(`loading-exclusions/${name}.html`))).toEqual(
+        [],
+      );
+    },
+    90_000,
+  );
+
+  test("no non-GET request ever reached the server", () => {
+    expect(server.nonGet).toEqual([]);
+  });
+});
+
+/**
+ * Everything transitions (file-200): content that swaps, expands, lists,
+ * announces or routes with no transition snaps. Each `before` must produce
+ * one major `idiom:motion-snap`; each `after` (the fix the finding
+ * recommends) and each deliberate non-defect must produce none. Runs under
+ * the harness default, prefers-reduced-motion: reduce, so the probe's
+ * normal-motion confirmation is what finds the snaps.
+ */
+describe("everything transitions", () => {
+  let server: Server;
+  let origin = "";
+  beforeAll(async () => {
+    server = createServer(async (req, res) => {
+      const path = new URL(req.url ?? "/", "http://localhost").pathname;
+      try {
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(await fixture(path.slice(1)));
+      } catch {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+  const review = async (name: string, options: ReviewOptions = {}) => {
+    const served = name.startsWith("motion-route/");
+    const { findings, tuples } = await reviewStates(
+      browser,
+      [
+        {
+          state: "editor",
+          html: served ? "" : await fixture(name),
+          ...(served ? { url: `${origin}/${name}` } : {}),
+        },
+      ],
+      { probe: true, ...options },
+    );
+    return {
+      snaps: findings
+        .map(({ candidate }) => candidate)
+        .filter((candidate) => candidate.rule === "idiom:motion-snap"),
+      findings,
+      tuple: tuples[0],
+    };
+  };
+  test.each([
+    ["motion-tabs", "content-swap"],
+    ["motion-segmented", "content-swap"],
+    ["motion-accordion", "expand-collapse"],
+    ["motion-list", "list-item"],
+    ["motion-toast", "status"],
+    ["motion-route", "route"],
+  ])(
+    "%s snaps before (%s) and transitions after",
+    async (name, kind) => {
+      const before = await review(`${name}/before.html`);
+      expect(before.snaps).toEqual([
+        expect.objectContaining({
+          severity: "major",
+          verification: expect.objectContaining({
+            params: expect.objectContaining({ kind }),
+          }),
+        }),
+      ]);
+      const [snap] = before.snaps;
+      expect(snap?.fix).toMatch(/150ms ease-out/);
+      expect(snap?.fix).toContain(
+        kind === "expand-collapse"
+          ? "grid-template-rows"
+          : kind === "route"
+            ? "startViewTransition"
+            : "opacity",
+      );
+      // The evidence is the normal-motion replay; the motion audit stays reduced.
+      const evidence = before.tuple?.timelines?.actions.find(
+        (action) => action.id === snap?.timeline,
+      );
+      expect(evidence).toMatchObject({
+        confirmation: true,
+        reducedMotion: false,
+      });
+      const observations = before.tuple?.observations;
+      expect(
+        observations?.version === 2 ? observations.motion?.reducedMotion : 0,
+      ).toBe(true);
+      const after = await review(`${name}/after.html`);
+      expect(after.snaps).toEqual([]);
+    },
+    60_000,
+  );
+  test("twelve snapping tabs make one finding listing every tab", async () => {
+    const { snaps } = await review("motion-tabs/before.html");
+    const actions = snaps[0]?.verification.params?.actions as unknown[];
+    // Tab 1 is already selected; tabs 2 and 3 each swap the panel slot.
+    expect(actions.length).toBeGreaterThanOrEqual(2);
+  }, 60_000);
+  test.each(["motion-tabs/before.html", "motion-list/before.html"])(
+    "%s is judged directly in a normal-motion capture",
+    async (name) => {
+      const { snaps, tuple } = await review(name, { reducedMotion: false });
+      expect(snaps).toHaveLength(1);
+      expect(
+        tuple?.timelines?.actions.some((action) => action.confirmation),
+      ).toBe(false);
+    },
+    60_000,
+  );
+  test.each([
+    "motion-counter/after.html",
+    "motion-small/after.html",
+    "motion-focus/after.html",
+    "motion-hover/after.html",
+    "motion-reduce-honoring/after.html",
+  ])(
+    "non-defect %s reports no snap",
+    async (name) => {
+      const { snaps, findings } = await review(name);
+      expect(snaps).toEqual([]);
+      if (name.startsWith("motion-reduce-honoring"))
+        expect(
+          findings.filter(
+            ({ candidate }) => candidate.rule === "idiom:motion-reduced",
+          ),
+        ).toEqual([]);
+    },
+    60_000,
+  );
+});
+
+/**
+ * Interaction shift (file-198): content displaced by an action is found in
+ * each `before` fixture and absent from its `after`. Every fixture probes its
+ * one control, so the action timeline is recorded as capture records it.
+ */
+const shifts = (findings: ReviewedFixture, category = "interaction-shift") =>
+  findings
+    .filter(({ candidate }) => candidate.category === category)
+    .map(({ candidate }) => candidate);
+
+const delayedResults = async (page: import("playwright").Page) => {
+  await page.route("http://idiom.test/results", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await route.fulfill({
+      json: ["Ada Lovelace", "Grace Hopper", "Katherine Johnson"],
+    });
+  });
+};
+
+test("interaction shift: an in-flow notice pushes the page; an overlay does not", async () => {
+  const before = shifts(
+    await reviewFixture(
+      browser,
+      await fixture("interaction-shift-push/before.html"),
+      { probe: true },
+    ),
+  );
+  expect(before).toHaveLength(1);
+  const [hit] = before;
+  expect(hit?.severity).toBe("major");
+  expect(hit?.selectorHint).toBe('div[role="status"]');
+  expect(hit?.timeline).toBe("probe-1");
+  expect(hit?.explanation).toContain("48px down");
+  expect(hit?.explanation).toContain("body > main");
+  expect(hit?.explanation).not.toContain("late:");
+  expect(hit?.fix).toContain("Overlay instead of pushing");
+  const after = await reviewFixture(
+    browser,
+    await fixture("interaction-shift-push/after.html"),
+    { probe: true },
+  );
+  expect(shifts(after)).toEqual([]);
+}, 60_000);
+
+test("interaction shift: results arriving 700ms after the click are a late shift; reserved space is not", async () => {
+  const before = shifts(
+    await reviewFixture(
+      browser,
+      await fixture("interaction-shift-late/before.html"),
+      { probe: true, routes: delayedResults },
+    ),
+  );
+  expect(before).toHaveLength(1);
+  const [hit] = before;
+  expect(hit?.selectorHint).toBe("ul.results");
+  expect(hit?.explanation).toContain("late: async content arrived");
+  expect(hit?.explanation).toContain("p.note (120px)");
+  const time = Number(/(\d+)ms after input/.exec(hit?.explanation ?? "")?.[1]);
+  expect(time).toBeGreaterThan(500);
+  expect(hit?.fix).toContain("min-height: 120px");
+  const after = await reviewFixture(
+    browser,
+    await fixture("interaction-shift-late/after.html"),
+    { probe: true, routes: delayedResults },
+  );
+  expect(shifts(after)).toEqual([]);
+}, 60_000);
+
+test("interaction shift: staggered late batches report separate jumps; reserved space is clean", async () => {
+  const routes = async (page: import("playwright").Page) => {
+    await page.route("http://idiom.test/batch/*", async (route) => {
+      const index = Number(
+        new URL(route.request().url()).pathname.split("/").at(-1),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 700 + index * 300));
+      await route.fulfill({ json: ["Ada", "Grace", "Katherine"][index] });
+    });
+  };
+  const before = shifts(
+    await reviewFixture(
+      browser,
+      await fixture("interaction-shift-batches/before.html"),
+      { probe: true, routes },
+    ),
+  );
+  expect(before).toHaveLength(3);
+  expect(
+    before.map((hit) => /batch-\d/.exec(hit.selectorHint ?? "")?.[0]).sort(),
+  ).toEqual(["batch-0", "batch-1", "batch-2"]);
+  for (const hit of before) {
+    expect(hit).toMatchObject({ severity: "major", timeline: "probe-1" });
+    expect(hit.explanation).toContain("late: async content arrived");
+    expect(hit.explanation).toContain("p.note (50px)");
+    expect(hit.fix).toContain("min-height: 50px");
+  }
+  const after = await reviewFixture(
+    browser,
+    await fixture("interaction-shift-batches/after.html"),
+    { probe: true, routes },
+  );
+  expect(shifts(after)).toEqual([]);
+}, 60_000);
+
+test("interaction shift: a message that snaps in is reported; one that animates open is not", async () => {
+  const before = shifts(
+    await reviewFixture(
+      browser,
+      await fixture("interaction-shift-animated/before.html"),
+      { probe: true },
+    ),
+  );
+  expect(before.map((candidate) => candidate.selectorHint)).toEqual([
+    "div.saved",
+  ]);
+  expect(before[0]?.explanation).toContain("body > main > form");
+  const after = await reviewFixture(
+    browser,
+    await fixture("interaction-shift-animated/after.html"),
+    { probe: true },
+  );
+  expect(shifts(after)).toEqual([]);
+}, 60_000);
+
+test("layout shift: names the promo that arrived late in load; a reserved slot is clean", async () => {
+  // Served, so the load timeline's init script runs on a real navigation.
+  const before = shifts(
+    await reviewFixture(
+      browser,
+      await fixture("layout-shift-late-content/before.html"),
+      { serve: true, settleMs: 800 },
+    ),
+    "layout-shift",
+  );
+  expect(before).toHaveLength(1);
+  const [hit] = before;
+  expect(hit?.severity).toBe("major");
+  expect(hit?.explanation).toContain(
+    "came from late content: aside.promo was inserted (360px)",
+  );
+  expect(hit?.timeline).toBe("load");
+  expect(hit?.fix).toContain("min-height: 360px");
+  const after = await reviewFixture(
+    browser,
+    await fixture("layout-shift-late-content/after.html"),
+    { serve: true, settleMs: 800 },
+  );
+  expect(shifts(after, "layout-shift")).toEqual([]);
+}, 60_000);
+
+test("interaction shift: scrolling, the effect region, sorting, filtering, overlays and off-screen movement are not shifts", async () => {
+  for (const name of [
+    "scroll",
+    "effect-region",
+    "reorder",
+    "filter",
+    "overlay",
+    "offscreen",
+  ]) {
+    const findings = await reviewFixture(
+      browser,
+      await fixture(`interaction-shift-exclusions/${name}.html`),
+      { probe: true },
+    );
+    expect(shifts(findings), name).toEqual([]);
+  }
+}, 120_000);

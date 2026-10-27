@@ -1,0 +1,8 @@
+<!doctype html><style>
+body { margin: 0; background: white; }
+#content { position: absolute; top: 100px; left: 100px; width: 100px; }
+#subject { height: 50px; background: #00f; }
+#insert { height: 60px; background: #0f0; }
+</style>
+<button id="go" onclick="setTimeout(() => content.insertAdjacentHTML('afterbegin', '<div id=insert></div>'), 600)">Insert</button>
+<main id="content"><div id="subject"></div></main>

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Journal</title>
+<style>
+  body { margin: 0; font: 18px/1.6 system-ui, sans-serif; color: #1d1d1f; }
+  .promo { box-sizing: border-box; height: 360px; padding: 32px; background: #e8f0ff; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px; }
+  main p { margin: 0 0 16px; }
+</style>
+</head>
+<body>
+<div id="promo-slot" style="min-height: 360px"></div>
+<main>
+  <h1>Field notes</h1>
+  <p>The first frost arrived early this year, and the garden beds needed covering before the end of the week.</p>
+  <p>Seedlings started indoors in late winter were moved to the cold frame, where they will harden off for two weeks.</p>
+  <p>Next season's plan keeps the brassicas in the north bed and moves the beans beside the fence for more light.</p>
+  <p>Compost from the autumn leaves should be ready by spring if it is turned every few weeks through the winter.</p>
+  <p>The rain barrel overflowed twice in October, so a second barrel will go beside the shed before the spring rains.</p>
+</main>
+<script>
+  addEventListener("load", () => {
+    setTimeout(() => {
+      const promo = document.createElement("aside");
+      promo.className = "promo";
+      promo.textContent = "Subscribe for weekly field notes.";
+      document.getElementById("promo-slot").append(promo);
+    }, 300);
+  });
+</script>
+</body>
+</html>

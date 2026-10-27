@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Exclusion</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d1d1f; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px; }
+  .rows { height: 960px; }
+  .row { box-sizing: border-box; height: 40px; padding: 8px 0; border-bottom: 1px solid #eee; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tasks</h1>
+  <button id="open-only" type="button">Show open tasks</button>
+  <div class="rows">
+    <div class="row" data-id="alder">Alder review</div>
+    <div class="row" data-id="aspen">Aspen review</div>
+    <div class="row" data-id="beech" data-done="true">Beech review</div>
+    <div class="row" data-id="birch">Birch review</div>
+    <div class="row" data-id="cedar">Cedar review</div>
+    <div class="row" data-id="cherry" data-done="true">Cherry review</div>
+    <div class="row" data-id="chestnut">Chestnut review</div>
+    <div class="row" data-id="cypress">Cypress review</div>
+    <div class="row" data-id="dogwood">Dogwood review</div>
+    <div class="row" data-id="elm" data-done="true">Elm review</div>
+    <div class="row" data-id="fir">Fir review</div>
+    <div class="row" data-id="ginkgo">Ginkgo review</div>
+    <div class="row" data-id="hawthorn">Hawthorn review</div>
+    <div class="row" data-id="hazel" data-done="true">Hazel review</div>
+    <div class="row" data-id="hemlock">Hemlock review</div>
+    <div class="row" data-id="hickory">Hickory review</div>
+    <div class="row" data-id="holly">Holly review</div>
+    <div class="row" data-id="juniper">Juniper review</div>
+    <div class="row" data-id="larch" data-done="true">Larch review</div>
+    <div class="row" data-id="linden">Linden review</div>
+    <div class="row" data-id="magnolia">Magnolia review</div>
+    <div class="row" data-id="maple">Maple review</div>
+    <div class="row" data-id="oak">Oak review</div>
+    <div class="row" data-id="pine">Pine review</div>
+  </div>
+  <p>Tasks sync with the shared calendar.</p>
+</main>
+<script>
+  document.getElementById("open-only").addEventListener("click", () => {
+    for (const row of document.querySelectorAll(".row[data-done]")) row.remove();
+  });
+</script>
+</body>
+</html>

@@ -8,6 +8,10 @@ import type { RunRecord } from "../capture/run-record.js";
 import type { Coordinate } from "../capture/scope.js";
 import type { CaptureTupleSelection } from "../capture/types.js";
 import type { CheckTuple } from "../checks/types.js";
+import {
+  type QuickInteraction,
+  renderInteractionSentences,
+} from "../quick/interaction.js";
 import { type Flow, stateChainLabel } from "../schemas/flow.js";
 import type { Project } from "../schemas/project.js";
 import { escapeHtml } from "./html.js";
@@ -32,6 +36,8 @@ export type ReportCoverage = {
   commits: Array<{ label: string; value: string }>;
   limitations: string[];
   surfaceCoverage?: SurfaceCoverage | undefined;
+  /** Quick review only: what the interaction probe did on each page. */
+  interaction?: QuickInteraction | undefined;
 };
 
 export type SurfaceCoverageEntry = {
@@ -181,6 +187,7 @@ export function buildReviewCoverage(options: {
   allFlows?: Flow[] | undefined;
   tuples: CoverageTuple[];
   commit: string;
+  interaction?: QuickInteraction | undefined;
 }): ReportCoverage {
   const record = options.record;
   const states = record
@@ -324,6 +331,9 @@ export function buildReviewCoverage(options: {
     commits: [{ label: "Captured commit", value: options.commit }],
     limitations,
     ...(surfaceCoverage === undefined ? {} : { surfaceCoverage }),
+    ...(options.interaction === undefined
+      ? {}
+      : { interaction: options.interaction }),
   };
 }
 
@@ -467,6 +477,19 @@ export function renderCoverageMarkdown(coverage: ReportCoverage): string {
     ),
     "",
     ...surfaceLines,
+    ...(coverage.interaction === undefined
+      ? []
+      : [
+          "### Interaction",
+          "",
+          ...renderInteractionSentences(coverage.interaction).map((sentence) =>
+            coverage.interaction?.status === "probed" &&
+            coverage.interaction.pages.length > 1
+              ? `- ${markdownText(sentence)}`
+              : markdownText(sentence),
+          ),
+          "",
+        ]),
     "Limitations:",
     "",
     ...coverage.limitations.map(
@@ -516,7 +539,17 @@ export function renderCoverageHtml(coverage: ReportCoverage): string {
     surfaces === undefined
       ? ""
       : `<h3>Project surfaces</h3><dl>${renderSurfaceGroupHtml("Judged in this review", surfaces.judged)}${renderSurfaceGroupHtml("Governed by another flow, not judged here", surfaces.governedNotJudged)}${renderSurfaceGroupHtml("Ungoverned (no flow captures this surface)", surfaces.ungoverned)}</dl>`;
-  return `<section class="panel coverage" aria-labelledby="coverage-heading"><h2 id="coverage-heading">Coverage and limits</h2><p>${escapeHtml(coverage.purpose)}</p><dl><dt>Flow</dt><dd>${escapeHtml(coverage.flow)}</dd><dt>States</dt><dd>${coverage.states.length} of ${coverage.declaredStateCount} declared (${states})</dd><dt>Viewports</dt><dd>${viewports}</dd><dt>Colour schemes</dt><dd>${schemes}</dd><dt>Successful tuples</dt><dd>${coverage.successfulTuples} of ${coverage.selectedTuples} selected</dd>${coverage.commits.map(({ label, value }) => `<dt>${escapeHtml(label)}</dt><dd><code>${escapeHtml(value)}</code></dd>`).join("")}</dl>${surfaceHtml}<h3>Limitations</h3><ul>${coverage.limitations.map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("")}</ul></section>`;
+  return `<section class="panel coverage" aria-labelledby="coverage-heading"><h2 id="coverage-heading">Coverage and limits</h2><p>${escapeHtml(coverage.purpose)}</p><dl><dt>Flow</dt><dd>${escapeHtml(coverage.flow)}</dd><dt>States</dt><dd>${coverage.states.length} of ${coverage.declaredStateCount} declared (${states})</dd><dt>Viewports</dt><dd>${viewports}</dd><dt>Colour schemes</dt><dd>${schemes}</dd><dt>Successful tuples</dt><dd>${coverage.successfulTuples} of ${coverage.selectedTuples} selected</dd>${coverage.commits.map(({ label, value }) => `<dt>${escapeHtml(label)}</dt><dd><code>${escapeHtml(value)}</code></dd>`).join("")}</dl>${surfaceHtml}${interactionHtml(coverage.interaction)}<h3>Limitations</h3><ul>${coverage.limitations.map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("")}</ul></section>`;
+}
+
+function interactionHtml(interaction: QuickInteraction | undefined): string {
+  if (interaction === undefined) return "";
+  const sentences = renderInteractionSentences(interaction);
+  const body =
+    interaction.status === "probed" && interaction.pages.length > 1
+      ? `<ul>${sentences.map((sentence) => `<li>${escapeHtml(sentence)}</li>`).join("")}</ul>`
+      : sentences.map((sentence) => `<p>${escapeHtml(sentence)}</p>`).join("");
+  return `<h3>Interaction</h3>${body}`;
 }
 
 function renderSurfaceGroupHtml(

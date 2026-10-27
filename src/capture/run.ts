@@ -2,6 +2,7 @@ import { appendFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { loadDesignComponents } from "../checks/design-components.js";
 import { loadTokenDeclarations } from "../checks/observe.js";
+import { linkRecording, recordingKey } from "../checks/temporal-evidence.js";
 import { captureDesigns, figmaFrameLoader } from "../design/capture.js";
 import { classifyDocument } from "../document.js";
 import { IdiomError } from "../errors.js";
@@ -73,6 +74,7 @@ import {
   probeCoordinates,
   resolveCaptureScope,
 } from "./scope.js";
+import { mergeTimelines, withTimelineIds } from "./timeline.js";
 import { type ControlTiming, skipped, slowestControls } from "./timings.js";
 import type {
   BrowserLauncher,
@@ -138,11 +140,17 @@ function mapStrings(value: unknown, map: (value: string) => string): unknown {
   if (typeof value === "string") return map(value);
   if (Array.isArray(value)) return value.map((entry) => mapStrings(entry, map));
   if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        key,
-        mapStrings(entry, map),
-      ]),
+    return linkRecording(
+      {
+        ...value,
+        ...Object.fromEntries(
+          Object.entries(value).map(([key, entry]) => [
+            key,
+            mapStrings(entry, map),
+          ]),
+        ),
+      },
+      recordingKey(value),
     );
   }
   return value;
@@ -165,6 +173,15 @@ function mapResult(
     result.observations,
     map,
   ) as TupleResult["observations"];
+  const timelines =
+    result.timelines === undefined
+      ? {}
+      : {
+          timelines: mapStrings(
+            result.timelines,
+            map,
+          ) as TupleResult["timelines"],
+        };
   if (result.ok) {
     return {
       ...result,
@@ -172,6 +189,7 @@ function mapResult(
       console: records,
       axe,
       observations,
+      ...timelines,
     };
   }
   return {
@@ -180,6 +198,7 @@ function mapResult(
     console: records,
     axe,
     observations,
+    ...timelines,
     message: map(result.message),
   };
 }
@@ -212,6 +231,7 @@ export function canonicalizeOrigin(
 }
 
 type CaptureOptions = {
+  filmstripRequests?: import("./types.js").FilmstripRequest[] | undefined;
   projectDirectory: string;
   project: Project;
   flow: Flow;
@@ -678,6 +698,13 @@ async function captureOwned(
               resolution.value.state,
             ),
             project,
+            filmstripRequests: options.filmstripRequests?.filter(
+              (r) =>
+                r.state === selected.state.id &&
+                r.viewport === selected.viewport.name &&
+                (r.colorScheme === undefined ||
+                  r.colorScheme === selected.colorScheme),
+            ),
             state: resolution.value.state,
             viewport: selected.viewport,
             colorScheme: selected.colorScheme,
@@ -727,10 +754,40 @@ async function captureOwned(
               captured.observations?.version === 2
                 ? captured.observations.focusVisible
                 : undefined;
+            // This round re-navigated: only its probe clicks are new.
+            const roundTimelines = captured.timelines && {
+              ...captured.timelines,
+              // A web step's held replay repeats each round; keep the first.
+              actions: captured.timelines.actions.filter(
+                (action) =>
+                  action.source === "probe-click" ||
+                  action.source === "probe-hover" ||
+                  (action.source === "slow-replay" &&
+                    !(
+                      action.held?.of === "web-step" &&
+                      previous.artifact.result?.timelines?.actions.some(
+                        (earlier) =>
+                          earlier.source === "slow-replay" &&
+                          earlier.held?.of === "web-step" &&
+                          earlier.stepIndex === action.stepIndex,
+                      )
+                    )),
+              ),
+            };
+            const filmstrips =
+              captured.filmstrips?.merge(previous.artifact.result.filmstrips) ??
+              previous.artifact.result.filmstrips;
             Object.assign(captured, {
               ...previous.artifact.result,
               probeMs: captured.probeMs,
             });
+            captured.filmstrips = filmstrips;
+            captured.timelines = withTimelineIds(
+              mergeTimelines(
+                previous.artifact.result.timelines,
+                roundTimelines,
+              ),
+            );
             captured.observations = {
               ...previous.artifact.result.observations,
               probe,

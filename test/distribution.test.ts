@@ -455,7 +455,7 @@ test.each(["legacy", "auto"] as const)(
     );
     try {
       await client.connect(transport);
-      expect((await client.listTools()).tools).toHaveLength(8);
+      expect((await client.listTools()).tools).toHaveLength(15);
       const response = await client.callTool({
         name: "idiom_flows",
         arguments: {},
@@ -479,6 +479,64 @@ test("packed plugin resolves the existing skill and adjacent init guide and vali
     args: ["-y", "@mattskilly/idiom", "mcp"],
   });
   expect(manifest.skills).toEqual(["./templates/idiom"]);
+  for (const file of [
+    "hooks/hooks.json",
+    "hooks/lib.mjs",
+    "hooks/post-tool-use.mjs",
+    "hooks/stop.mjs",
+  ])
+    expect(packedFiles).toContain(file);
+  const hookConfig = JSON.parse(
+    await readFile(join(runtimeRoot, "hooks/hooks.json"), "utf8"),
+  );
+  expect(manifest.hooks).toBeUndefined();
+  expect(hookConfig.hooks.PostToolUse[0].matcher).toBe(
+    "^(Edit|Write|MultiEdit)$",
+  );
+  const application = join(temporaryDirectory, "hook application with spaces");
+  await mkdir(application);
+  expect(
+    (await invoke(runtimeEntry, ["init", "--yes"], application)).code,
+  ).toBe(0);
+  await writeFile(
+    join(application, "Page.tsx"),
+    "export const Page = 'packed';",
+  );
+  const runHook = async (entry: string, input: object) => {
+    const { stdout, stderr } = await new Promise<{
+      stdout: string;
+      stderr: string;
+    }>((resolve, reject) => {
+      const child = execFile(
+        process.execPath,
+        [join(runtimeRoot, `hooks/${entry}.mjs`)],
+        { cwd: application },
+        (error, stdout, stderr) =>
+          error ? reject(error) : resolve({ stdout, stderr }),
+      );
+      child.stdin?.end(
+        JSON.stringify({ cwd: application, session_id: "packed", ...input }),
+      );
+    });
+    expect(stderr).toBe("");
+    return stdout ? JSON.parse(stdout) : undefined;
+  };
+  expect(hookConfig.hooks.PostToolUse[0].hooks[0].command).toBe(
+    `node "\${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.mjs"`,
+  );
+  expect(hookConfig.hooks.Stop[0].hooks[0].command).toBe(
+    `node "\${CLAUDE_PLUGIN_ROOT}/hooks/stop.mjs"`,
+  );
+  expect(
+    (
+      await runHook("post-tool-use", {
+        tool_name: "Write",
+        tool_input: { file_path: "Page.tsx" },
+      })
+    ).hookSpecificOutput.additionalContext,
+  ).toContain("Page.tsx");
+  expect((await runHook("stop", {})).decision).toBe("block");
+  expect(await runHook("stop", {})).toBeUndefined();
   for (const directory of manifest.skills) {
     expect(
       await readFile(join(runtimeRoot, directory, "SKILL.md"), "utf8"),
@@ -620,6 +678,9 @@ test("built stdio keeps setup stdout off the wire and cleans children after canc
       ]),
     ).resolves.toBe(0);
     await gone(secondPid);
+    await expect(
+      readFile(join(project, ".idiom/agent-hooks/state.json")),
+    ).rejects.toThrow();
     expect(buffer).toBe("");
     expect(lines.length).toBeGreaterThan(3);
     for (const line of lines)

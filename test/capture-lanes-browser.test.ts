@@ -141,7 +141,20 @@ test("capture lanes preserve benchmark evidence, screenshots and finding fingerp
       for (const path of await files(captured.runDirectory)) {
         if (path.endsWith(".png"))
           screenshots[path] = await readFile(join(captured.runDirectory, path));
-        else if (path.endsWith(".json"))
+        else if (path.endsWith("timelines.json")) {
+          // Timelines are wall-clock measurements; their structure is stable.
+          const timelines = JSON.parse(
+            await readFile(join(captured.runDirectory, path), "utf8"),
+          ) as { actions: Array<Record<string, unknown>> };
+          artifacts[path] = timelines.actions.map(
+            ({ id, source, kind, selector }) => ({
+              id,
+              source,
+              kind,
+              selector,
+            }),
+          );
+        } else if (path.endsWith(".json"))
           artifacts[path] = withoutTiming(
             JSON.parse(
               await readFile(join(captured.runDirectory, path), "utf8"),

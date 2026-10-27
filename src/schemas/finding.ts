@@ -199,7 +199,10 @@ export const findingCategories = [
   "image-distortion",
   "broken-image",
   "layout-shift",
+  "interaction-shift",
   "design-drift",
+  "loading-state-missing",
+  "double-submit",
   "hierarchy",
   "density",
   "brand-alignment",
@@ -260,6 +263,32 @@ export const findingSchema = z
         designDrift: designDriftEvidenceSchema.optional(),
         references: z.array(z.string().trim().min(1)).optional(),
         artifacts: z.array(artifactPathSchema).optional(),
+        /** The action timeline this finding was measured from. */
+        timeline: z
+          .object({ artifact: artifactPathSchema, id: z.string().min(1) })
+          .strict()
+          .optional(),
+        filmstrip: z
+          .object({
+            sheet: artifactPathSchema.optional(),
+            manifest: artifactPathSchema,
+            action: z.string().min(1),
+            status: z.enum(["complete", "partial", "unavailable"]),
+            reason: z.string().optional(),
+            width: z.number().int().positive().optional(),
+            height: z.number().int().positive().optional(),
+            bytes: z.number().int().positive().optional(),
+            generationMs: z.number().finite().nonnegative().optional(),
+            limits: z
+              .object({
+                width: z.number().int().positive(),
+                height: z.number().int().positive(),
+                bytes: z.number().int().positive(),
+              })
+              .strict(),
+          })
+          .strict()
+          .optional(),
         domSnippet: z.string().optional(),
         consoleExcerpt: z.string().optional(),
         axeNodes: z.array(z.unknown()).optional(),

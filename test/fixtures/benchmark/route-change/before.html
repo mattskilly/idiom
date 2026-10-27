@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><head><title>Home</title><style>body{font:16px sans-serif;margin:0} header{padding:12px 24px;background:#f4f4f4} .nav-link{margin-right:8px} .nav-link.active{font-weight:700} .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)} main{padding:24px;min-height:200px}</style></head><body>
+<header><nav aria-label="Main"><button type="button" class="nav-link active" aria-current="page" data-route="/route-change/before.html">Home</button><button type="button" class="nav-link" data-route="/orders">Orders</button></nav></header>
+<div id="announcer" class="sr-only" aria-live="polite"></div>
+<main id="view"><h1>Home</h1><p>Welcome back.</p></main>
+<script>
+for (const link of document.querySelectorAll(".nav-link"))
+  link.addEventListener("click", async () => {
+    history.pushState({}, "", link.dataset.route);
+    for (const other of document.querySelectorAll(".nav-link")) {
+      other.classList.toggle("active", other === link);
+      if (other === link) other.setAttribute("aria-current", "page");
+      else other.removeAttribute("aria-current");
+    }
+    document.title = link.textContent;
+    document.querySelector("#announcer").textContent = link.textContent;
+    const view = document.querySelector("#view");
+    view.innerHTML = "";
+    const response = await fetch(`/api/page?route=${encodeURIComponent(link.dataset.route)}`);
+    const page = await response.json();
+    view.innerHTML = `<h1>${page.title}</h1><p>${page.body}</p>`;
+  });
+</script></body></html>

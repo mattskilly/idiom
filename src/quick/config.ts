@@ -8,6 +8,36 @@ import {
   projectSchema,
 } from "../schemas/project.js";
 
+/**
+ * Quick review's interaction probe: one per-page wall-clock allowance for
+ * the focus sweep and the click probe, and a control cap half the configured
+ * default. Third-party pages carry large shared navigation, and the probe
+ * orders a page's own controls first, so the cap cuts the least informative
+ * tail.
+ */
+export const QUICK_PROBE_BUDGET_MS = 45_000;
+export const QUICK_PROBE_MAX_CONTROLS = 40;
+/** Keeps the probe well inside capture.maxMinutes. */
+export const QUICK_PROBE_BUDGET_MAX_MS = 600_000;
+
+export function parseProbeBudget(value: string | number): number {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : /^\d+$/.test(value.trim())
+        ? Number(value.trim())
+        : Number.NaN;
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < 1 ||
+    parsed > QUICK_PROBE_BUDGET_MAX_MS
+  )
+    throw new IdiomError(
+      `--probe-budget must be a positive integer number of milliseconds up to ${QUICK_PROBE_BUDGET_MAX_MS}`,
+    );
+  return parsed;
+}
+
 export type QuickConfiguration = {
   urls: string[];
   project: Project;
@@ -71,6 +101,8 @@ export function createQuickConfiguration(
     statePrefix?: string | undefined;
     checks?: ChecksSettings | undefined;
     viewports?: Array<"desktop" | "mobile"> | undefined;
+    /** Quick review's probe settings; page review passes none. */
+    probe?: { maxControls: number } | undefined;
   } = {},
 ): QuickConfiguration {
   const urls = normalizeQuickUrls(values);
@@ -111,7 +143,11 @@ export function createQuickConfiguration(
       model: "unavailable-in-quick-review",
       maxFindings: 5,
     },
-    ...(options.checks === undefined ? {} : { checks: options.checks }),
+    ...(options.checks !== undefined
+      ? { checks: options.checks }
+      : options.probe !== undefined
+        ? { checks: { probe: { maxControls: options.probe.maxControls } } }
+        : {}),
   });
   const flow = flowSchema.parse({
     id: options.flowId ?? "quick-review",

@@ -1,16 +1,32 @@
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { tupleCoordinateKey } from "../baseline/coordinate.js";
+import { selectBaselineRecord } from "../baseline/resolve.js";
+import {
+  baselineDirectory,
+  baselinePath,
+  readBaselineFile,
+} from "../baseline/store.js";
 import { summarizeFinding } from "../baseline/summary.js";
 import { selectColorSchemes, selectViewports } from "../capture/resolve.js";
 import type { CaptureDependencies } from "../capture/run.js";
+import {
+  baselineRecordCommand,
+  renderBaselineRecord,
+} from "../commands/baseline.js";
 import { checkWithReview } from "../commands/check.js";
 import { contextCommand } from "../commands/context.js";
+import { coverageCommand, renderCoverage } from "../commands/coverage.js";
 import { decideCommand } from "../commands/decide.js";
+import { addDesignCommand } from "../commands/design.js";
+import { initProject, initSummaryLines } from "../commands/init.js";
+import { renderSweepSummary, sweepCommand } from "../commands/sweep.js";
 import { verifyCommand } from "../commands/verify.js";
+import { figmaToken } from "../design/figma/client.js";
+import { isFigmaHost } from "../design/source.js";
 import { IdiomError } from "../errors.js";
 import {
   eligibleRecords,
@@ -18,15 +34,25 @@ import {
   takeFixSnapshot,
 } from "../fix/check.js";
 import { repairPrompt } from "../fix/prompt.js";
+import type { GenerateFlow } from "../flows/generate.js";
+import { interactionTail } from "../quick/interaction.js";
 import { type QuickDependencies, runQuick } from "../quick/run.js";
 import { loadRunTuples } from "../review/artifacts.js";
 import type { CatalogFinding } from "../review/catalog.js";
+import type { ReviewDependencies } from "../review/run.js";
 import { projectIssueSummary } from "../review/summary.js";
 import { type Finding, findingSchema } from "../schemas/finding.js";
+import {
+  emitClusterTickets,
+  renderClusterTicketsResult,
+} from "../tickets/emit.js";
+import { resolveTicketTarget } from "../tickets/target.js";
 import { loadProjectContext, validateProject } from "../validation.js";
 import {
   EvidenceStore,
+  evidencePath,
   findingDetail,
+  insideRoot,
   result,
   safeIdentifier,
 } from "./evidence.js";
@@ -35,6 +61,10 @@ import type { Execution, ToolExecutionQueue } from "./execution.js";
 export type McpDependencies = {
   capture?: CaptureDependencies | undefined;
   quick?: QuickDependencies | undefined;
+  /** Test seam: critique adapters and environment for sweep; capture still comes from `capture`. */
+  review?: Omit<ReviewDependencies, "capture"> | undefined;
+  /** Test seam: offline site-flow generation for idiom_init. */
+  init?: { generateFlows?: GenerateFlow | undefined } | undefined;
 };
 const identifier = z
   .string()
@@ -57,6 +87,23 @@ const list = <T extends z.ZodType<string>>(item: T) =>
       (values) => new Set(values).size === values.length,
       "Lists must not contain duplicates",
     );
+const relativePath = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(
+    (value) => !isAbsolute(value) && !value.includes("\0"),
+    "Use a path relative to the bound project root",
+  );
+const humanReason = z
+  .string()
+  .refine((value) => value.trim().length > 0, "Reason must not be blank")
+  .describe("Human-supplied reason, preserved verbatim");
+const httpUrl = z
+  .url()
+  .refine((value) => /^https?:\/\//i.test(value), "URL must use HTTP(S)");
+const commitGuidance =
+  "Commit the baseline file deliberately; record only after intentional changes, on clean committed HEAD.";
 const reference = z.strictObject({
   id: identifier.describe(
     "Original finding ID returned by check, issue or fix-plan",
@@ -74,7 +121,26 @@ export function registerIdiomTools(
   const configured = { project: root };
   const capture = (execution: Execution) =>
     execution.capture(dependencies.capture);
-  const review = (execution: Execution) => ({ capture: capture(execution) });
+  const review = (execution: Execution): ReviewDependencies => ({
+    ...dependencies.review,
+    capture: capture(execution),
+  });
+  /** Ticket destinations, including tracker-configured ones, stay in the bound project. */
+  const ticketDestination = async (out: string | undefined) => {
+    const { projectDirectory } = await loadProjectContext(configured);
+    if (out !== undefined) await insideRoot(root, out, "Ticket directory");
+    const target = await resolveTicketTarget({
+      projectDirectory,
+      out,
+      cwd: root,
+    });
+    await insideRoot(
+      projectDirectory,
+      target.outputDirectory,
+      "Ticket output directory",
+    );
+    return target;
+  };
   function register<S extends z.ZodRawShape>(
     name: string,
     description: string,
@@ -108,7 +174,7 @@ export function registerIdiomTools(
   });
   register(
     "idiom_quick",
-    "Review a public page at an absolute HTTP(S) URL with zero configuration and no model. Returns ranked Top 5 issues, complete evidence IDs and absolute report paths; writes local reports and captures desktop/mobile in light/dark. For configured flows or intended designs use idiom_check. For requested repairs use idiom_fix_plan, then idiom_verify.",
+    "Review a public page at an absolute HTTP(S) URL with zero configuration and no model. Returns ranked Top 5 issues, complete evidence IDs and absolute report paths; writes local reports, captures desktop/mobile in light/dark and safely probes controls once per page (first viewport, light; only GET/HEAD/OPTIONS requests leave the browser; destructive-looking controls are skipped). For configured flows or intended designs use idiom_check. For requested repairs use idiom_fix_plan, then idiom_verify.",
     z.strictObject({
       url: z
         .url()
@@ -119,12 +185,29 @@ export function registerIdiomTools(
         .describe(
           "Preset viewports; defaults to both desktop (1440x900) and mobile (390x844)",
         ),
+      probe: z
+        .boolean()
+        .optional()
+        .describe(
+          "Run the safe interaction probe once per page at the first viewport in light; default true",
+        ),
+      probeBudgetMs: z
+        .number()
+        .int()
+        .positive()
+        .max(600000)
+        .optional()
+        .describe(
+          "Per-page probe budget in ms, default 45000 (CLI --probe-budget)",
+        ),
     }),
     false,
     async (args, execution) => {
       const output = await runQuick({
         urls: [args.url],
         viewports: args.viewports,
+        probe: args.probe,
+        probeBudgetMs: args.probeBudgetMs,
         project: root,
         literal: true,
         materializeAllDeterministic: true,
@@ -188,7 +271,7 @@ export function registerIdiomTools(
         ),
       }));
       return result(
-        `Quick review: ${findings.length} findings, ${issues.length} issues. Top ${Math.min(5, issues.length)} issues returned. Report: ${output.reportPath}`,
+        `Quick review: ${findings.length} findings, ${issues.length} issues, ${interactionTail(output.interaction)}. Top ${Math.min(5, issues.length)} issues returned. Report: ${output.reportPath}`,
         {
           runId: basename(output.runDirectory),
           topIssues: issueDetails.slice(0, 5),
@@ -203,6 +286,7 @@ export function registerIdiomTools(
           ...(output.checkCoverage === undefined
             ? {}
             : { checkCoverage: output.checkCoverage }),
+          interaction: output.interaction,
           reports: {
             markdown: output.reportPath,
             html: output.htmlReportPath,
@@ -215,7 +299,7 @@ export function registerIdiomTools(
   );
   register(
     "idiom_check",
-    "Capture a configured flow, run deterministic UI checks and compare declared intended designs (HTML, Figma, images or live sites). Returns ranked Top 5 issues with selectors, measurements, fix instructions, crops, counts and baseline new/fixed/pre-existing comparison. all=true reviews every live finding without recording/comparing a baseline. Attach references with CLI idiom design add; a human chooses conflicting references with idiom decide --choose. For requested repairs use idiom_fix_plan, then idiom_verify.",
+    "Capture a configured flow, run deterministic UI checks and compare declared intended designs (HTML, Figma, images or live sites). Returns ranked Top 5 issues with selectors, measurements, fix instructions, crops, counts and baseline new/fixed/pre-existing comparison. all=true reviews every live finding without recording/comparing a baseline. Attach references with idiom_design_add; a human chooses between conflicting references with idiom_choose. For requested repairs use idiom_fix_plan, then idiom_verify.",
     z.strictObject({
       flow: identifier.describe("Configured flow manifest ID"),
       states: list(selection)
@@ -245,6 +329,7 @@ export function registerIdiomTools(
         },
         materializeAllDeterministic: true,
         captureFailureIsError: true,
+        recordAgentCheck: true,
         dependencies: review(execution),
       });
       const validated = await validateProject({
@@ -498,7 +583,7 @@ export function registerIdiomTools(
   );
   register(
     "idiom_flows",
-    "List validated configured flows with their titles, ordered states, viewports and color schemes. If no manifests exist, suggests idiom init --flows. Read-only; no browser or model.",
+    "List validated configured flows with their titles, ordered states, viewports and color schemes. If no manifests exist, suggests idiom_init with flows:true. Every configured tool validates first; validation errors return as tool errors. Read-only; no browser or model.",
     z.strictObject({}),
     true,
     async () => {
@@ -510,10 +595,14 @@ export function registerIdiomTools(
         throw error;
       });
       if (!entries.some((name) => name.endsWith(".json")))
-        return result("No flows configured. Run idiom init --flows.", {
-          flows: [],
-          guidance: "Run idiom init --flows",
-        });
+        return result(
+          "No flows configured. Call idiom_init with flows:true (or run idiom init --flows).",
+          {
+            flows: [],
+            guidance:
+              "Call idiom_init with flows:true (or run idiom init --flows)",
+          },
+        );
       const validated = await validateProject(configured);
       const flows = validated.flows
         .map(({ flow }) => ({
@@ -541,10 +630,7 @@ export function registerIdiomTools(
       decision: z
         .enum(["accept", "reject"])
         .describe("Explicit human judgment"),
-      reason: z
-        .string()
-        .refine((value) => value.trim().length > 0, "Reason must not be blank")
-        .describe("Human-supplied reason, preserved verbatim"),
+      reason: humanReason,
     }),
     false,
     async ({ id, decision, reason }) => {
@@ -566,6 +652,452 @@ export function registerIdiomTools(
       return result(
         `Recorded ${output.accepted} accepted, ${output.rejected} rejected. Decision log: ${output.path}`,
         output,
+      );
+    },
+  );
+  register(
+    "idiom_init",
+    "Scaffold PRODUCT.md, DESIGN.md and .idiom in the bound project root without data loss, non-interactively (never overwrites changed files, never wires Autobuild). flows:true also generates a site flow from filesystem and running local routes. Returns files created/replaced/unchanged/preserved and next steps.",
+    z.strictObject({
+      flows: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Generate .idiom/flows/site.json from filesystem and running local routes",
+        ),
+      surface: identifier
+        .optional()
+        .describe("Project surface for the generated site flow"),
+    }),
+    false,
+    async ({ flows, surface }) => {
+      // The default writer is process.stdout, which belongs to the protocol.
+      const notes: string[] = [];
+      const output = await initProject({
+        project: root,
+        cwd: root,
+        yes: true,
+        flows,
+        surface,
+        generateFlows: dependencies.init?.generateFlows,
+        confirm: async () => false,
+        write: (message) => {
+          notes.push(message.trimEnd());
+        },
+      });
+      const generated =
+        "stateCount" in output.flows && output.flows.content !== undefined;
+      const nextSteps = [
+        "Fill PRODUCT.md and DESIGN.md with the human, then call idiom_context.",
+        ...(generated
+          ? ["Call idiom_flows, then idiom_check with flow site."]
+          : [
+              "Author a flow in .idiom/flows, or call idiom_init with flows:true while the app is running, then call idiom_flows.",
+            ]),
+        ...(output.systemLearning.kind === "available-noninteractive"
+          ? [
+              "Design-token sources detected: run idiom system --learn (CLI-only) to preview and confirm learned rules.",
+            ]
+          : []),
+        ...(output.autobuild.kind === "available-noninteractive"
+          ? [
+              "Autobuild detected: run idiom init interactively (CLI-only) to review and approve verification wiring.",
+            ]
+          : []),
+      ];
+      const lines = initSummaryLines(output).map((line) =>
+        line === "Next: idiom validate site; idiom capture site"
+          ? "Next: idiom_flows; idiom_check site"
+          : line,
+      );
+      const flowOutcome =
+        "stateCount" in output.flows
+          ? (({ content: _content, ...rest }) => rest)(output.flows)
+          : output.flows;
+      return result([...notes, ...lines].join("\n"), {
+        projectDirectory: output.projectDirectory,
+        created: output.created,
+        replaced: output.replaced,
+        unchanged: output.unchanged,
+        skipped: output.skipped,
+        autobuild: output.autobuild,
+        systemLearning: output.systemLearning,
+        flows: flowOutcome,
+        notes,
+        nextSteps,
+      });
+    },
+  );
+  register(
+    "idiom_design_add",
+    "Attach an intended design to an authored state in a flow manifest: a local HTML file/directory or PNG/JPEG/WebP image inside the bound root, a prototype URL, or a Figma frame URL. Writes only the flow manifest. Figma frames need FIGMA_TOKEN in the MCP server's environment; no argument accepts credentials.",
+    z.strictObject({
+      state: identifier.describe("Authored state ID"),
+      source: z
+        .string()
+        .trim()
+        .min(1)
+        .describe(
+          "HTTP(S) URL, Figma frame URL with node-id, or a path relative to the bound root",
+        ),
+      flow: identifier
+        .optional()
+        .describe("Disambiguate the state across flow manifests"),
+      name: identifier
+        .optional()
+        .describe(
+          "Add or replace a named reference, keeping the state's other references",
+        ),
+      viewport: selection
+        .optional()
+        .describe("Compare this reference only at this project viewport"),
+    }),
+    false,
+    async (args) => {
+      const figma = isFigmaHost(args.source);
+      if (!/^https?:/i.test(args.source))
+        await insideRoot(root, args.source, "Design source");
+      if (figma)
+        try {
+          figmaToken();
+        } catch (error) {
+          throw new IdiomError(
+            `${error instanceof Error ? error.message : String(error)} Set FIGMA_TOKEN in the MCP server's environment (the client config's env) and restart the server.`,
+          );
+        }
+      const output = await addDesignCommand({
+        ...args,
+        project: root,
+        cwd: root,
+      });
+      return result(
+        `${output.changed ? "Set" : "Kept"} design for ${args.state}: ${output.source} (${output.file})`,
+        { ...output, figma },
+      );
+    },
+  );
+  register(
+    "idiom_choose",
+    "Record a human's choice between disagreeing intended-design references for one idiom:design-decision finding. A human must name the intended reference and supply the reason; the tool records exactly that reference, never infers one, and preserves the reason verbatim. Writes the project decision log.",
+    z.strictObject({
+      id: identifier.describe(
+        "Canonical idiom:design-decision finding ID (not a group)",
+      ),
+      reference: z
+        .string()
+        .trim()
+        .min(1)
+        .describe("Reference name the human chose, as listed in the finding"),
+      reason: humanReason,
+    }),
+    false,
+    async ({ id, reference, reason }) => {
+      if (id.startsWith("quick:"))
+        throw new IdiomError(
+          "Quick-only evidence cannot record project decisions. Initialize a flow and run idiom_check first.",
+        );
+      const found = await evidence.lookup(id);
+      const isGroup = found.run.groups.some((group) => group.id === id);
+      const output = await decideCommand({
+        ...configured,
+        cwd: root,
+        ...(isGroup ? { group: id } : { finding: found.representative.id }),
+        choose: reference,
+        reason,
+        preserveReason: true,
+      });
+      return result(
+        `Recorded design choice ${reference}. Decision log: ${output.path}`,
+        { ...output, choice: reference },
+      );
+    },
+  );
+  register(
+    "idiom_tickets",
+    "Emit accepted findings as clustered ticket proposals (grouped by component and category) into a file-tracker triage directory inside the bound project. Only human-accepted findings become tickets; tickets land in triage, never ready, and are promoted by a human. Returns absolute ticket paths.",
+    z.strictObject({
+      findings: list(identifier)
+        .optional()
+        .describe("Accepted finding IDs; omitted means every accepted finding"),
+      out: relativePath
+        .optional()
+        .describe(
+          "Ticket directory relative to the bound root; defaults to the file tracker's triage",
+        ),
+    }),
+    false,
+    async ({ findings, out }) => {
+      await ticketDestination(out);
+      const output = await emitClusterTickets({
+        ...configured,
+        cwd: root,
+        findingIds: findings,
+        out,
+      });
+      return result(renderClusterTicketsResult(output), {
+        outputDirectory: output.outputDirectory,
+        createdPaths: output.createdPaths,
+        outcomes: output.outcomes,
+        ineligible: output.ineligible,
+      });
+    },
+  );
+  register(
+    "idiom_sweep",
+    "Capture a configured flow, run every deterministic check, then a per-surface model critique with crops and measured geometry. Returns every ranked finding and report paths; optionally emits clustered proposals into triage. Model credentials come only from the server's environment; a degraded critique is a completed result. Use all:true for a whole-product cleanup set; deterministicOnly runs without model credentials. maxTickets caps new tickets after grouping and deduplication.",
+    z.strictObject({
+      flow: identifier
+        .optional()
+        .describe(
+          "Configured flow manifest ID; exactly one of flow or all is required",
+        ),
+      all: z.boolean().default(false),
+      deterministicOnly: z.boolean().default(false),
+      maxTickets: z
+        .number()
+        .int()
+        .positive()
+        .max(Number.MAX_SAFE_INTEGER)
+        .default(10),
+      from: identifier
+        .optional()
+        .describe("Sweep this existing immutable capture run ID"),
+      latest: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Sweep the newest fully passing capture of this flow at HEAD",
+        ),
+      emitTickets: relativePath
+        .optional()
+        .describe(
+          "Emit clustered proposals into this triage directory, relative to the bound root",
+        ),
+    }),
+    false,
+    async (
+      { flow, all, deterministicOnly, maxTickets, from, latest, emitTickets },
+      execution,
+    ) => {
+      if (emitTickets !== undefined) await ticketDestination(emitTickets);
+      const summary = await sweepCommand({
+        flow,
+        all,
+        deterministicOnly,
+        maxTickets,
+        project: root,
+        cwd: root,
+        from,
+        latest: latest || undefined,
+        emitTickets,
+        dependencies: review(execution),
+      });
+      const normalizeRecord = async (record: CatalogFinding) => ({
+        ...record,
+        evidencePaths: await Promise.all(
+          [
+            ...record.finding.evidence.screenshots,
+            ...(record.finding.evidence.artifacts ?? []),
+          ].map((path) => evidencePath(record.runDirectory, path)),
+        ),
+      });
+      const normalizeProposal = async (
+        proposal: import("../sweep/types.js").SweepProposal,
+      ) => ({
+        ...proposal,
+        cluster: {
+          ...proposal.cluster,
+          members: await Promise.all(
+            proposal.cluster.members.map(async (member) => ({
+              ...member,
+              record: await normalizeRecord(member.record),
+            })),
+          ),
+        },
+      });
+      const output = {
+        ...summary,
+        findings: summary.findings.map((finding) => ({
+          ...finding,
+          ...(finding.screenshot === undefined
+            ? {}
+            : { screenshot: resolve(root, finding.screenshot) }),
+        })),
+        ...("scope" in summary
+          ? {
+              flows: summary.flows.map((entry) =>
+                entry.status === "failed"
+                  ? entry
+                  : {
+                      ...entry,
+                      summary: {
+                        ...entry.summary,
+                        findings: entry.summary.findings.map((f) => ({
+                          ...f,
+                          ...(f.screenshot === undefined
+                            ? {}
+                            : { screenshot: resolve(root, f.screenshot) }),
+                        })),
+                      },
+                    },
+              ),
+            }
+          : {}),
+        ...("scope" in summary
+          ? {
+              sourceFindings: await Promise.all(
+                summary.sourceFindings.map(normalizeRecord),
+              ),
+              occurrences: await Promise.all(
+                summary.occurrences.map(normalizeRecord),
+              ),
+              proposals: await Promise.all(
+                summary.proposals.map(normalizeProposal),
+              ),
+              ...(summary.tickets === undefined
+                ? {}
+                : {
+                    tickets: {
+                      ...summary.tickets,
+                      selectedClusters: await Promise.all(
+                        (summary.tickets.selectedClusters ?? []).map(
+                          async (cluster) => ({
+                            ...cluster,
+                            members: await Promise.all(
+                              cluster.members.map(async (member) => ({
+                                ...member,
+                                record: await normalizeRecord(member.record),
+                              })),
+                            ),
+                          }),
+                        ),
+                      ),
+                    },
+                  }),
+            }
+          : {}),
+        degraded: summary.outcome.kind === "degraded",
+      };
+      const key = process.env.ANTHROPIC_API_KEY?.trim();
+      if (key && JSON.stringify(output).includes(key))
+        throw new IdiomError(
+          "Sweep output unexpectedly contained a model credential; refusing to return it.",
+        );
+      return result(
+        `${renderSweepSummary(summary).trimEnd()}${output.degraded ? `\n${"scope" in summary ? "Sweep incomplete" : "Model critique degraded"}: ${summary.outcome.kind === "degraded" ? summary.outcome.reason : ""}` : ""}`,
+        output,
+      );
+    },
+  );
+  register(
+    "idiom_coverage",
+    "List the app's routes and which configured flows capture them, so routes no flow captures are visible (silence about an uncaptured route is not approval). Discovers app/ and pages/ routes, or crawls same-origin links from a running page. Read-only; no capture or model.",
+    z.strictObject({
+      crawl: httpUrl
+        .optional()
+        .describe("Discover routes from the links on this running page"),
+    }),
+    true,
+    async ({ crawl }) => {
+      const summary = await coverageCommand({
+        project: root,
+        cwd: root,
+        crawl,
+      });
+      return result(renderCoverage(summary).trimEnd(), summary);
+    },
+  );
+  register(
+    "idiom_baseline",
+    "Show or record a flow's compact deterministic finding baseline. show reads recorded commits and which record applies at HEAD; record captures (or reuses from/latest) a clean committed HEAD and writes the baseline file. Commit that file deliberately, only after intentional changes. Never changes Git.",
+    z
+      .strictObject({
+        action: z
+          .enum(["show", "record"])
+          .describe("show reads the baseline; record writes a new record"),
+        flow: identifier
+          .optional()
+          .describe(
+            "Configured flow ID; optional when exactly one flow exists",
+          ),
+        from: identifier
+          .optional()
+          .describe("record only: use this existing immutable capture run ID"),
+        latest: z
+          .boolean()
+          .default(false)
+          .describe(
+            "record only: use the newest fully passing capture at HEAD",
+          ),
+      })
+      .refine(
+        (args) =>
+          args.action === "record" ||
+          (args.from === undefined && args.latest !== true),
+        "from and latest apply only to action record",
+      ),
+    false,
+    async ({ action, flow, from, latest }, execution) => {
+      if (action === "record") {
+        const output = await baselineRecordCommand({
+          flow,
+          project: root,
+          cwd: root,
+          from,
+          latest: latest || undefined,
+          dependencies: review(execution),
+        });
+        return result(`${renderBaselineRecord(output)} ${commitGuidance}`, {
+          ...output,
+          commitGuidance,
+        });
+      }
+      const validated = await validateProject({ ...configured, flow });
+      if (flow === undefined && validated.flows.length !== 1)
+        throw new IdiomError(
+          `baseline show needs a flow; choose one of: ${validated.flows.map(({ flow }) => flow.id).join(", ")}`,
+        );
+      const selected = validated.flows[0]?.flow;
+      if (selected === undefined) throw new IdiomError(`unknown flow ${flow}`);
+      const path = baselinePath(
+        baselineDirectory(validated.projectDirectory, validated.project),
+        selected.id,
+      );
+      const file = await readBaselineFile(path);
+      if (file === undefined || file.records.length === 0) {
+        const guidance = `No baseline recorded for ${selected.id}. On clean committed HEAD call idiom_baseline with action record (or let idiom_check record the first one), then commit ${path} deliberately.`;
+        return result(guidance, {
+          flow: selected.id,
+          path,
+          records: [],
+          applied: null,
+          guidance,
+        });
+      }
+      const applied = await selectBaselineRecord({
+        projectDirectory: validated.projectDirectory,
+        file,
+      });
+      const records = file.records.map((entry) => ({
+        commit: entry.commit,
+        recordedAt: entry.recordedAt,
+        idiomVersion: entry.idiomVersion,
+        tupleCount: entry.tuples.length,
+        findingCount: entry.tuples.reduce(
+          (total, tuple) => total + tuple.findings.length,
+          0,
+        ),
+      }));
+      return result(
+        `Baseline ${selected.id}: ${records.length} record(s) in ${path}; ${applied === undefined ? "none applies at HEAD (no recorded commit is an ancestor)" : `applies ${applied.record.commit.slice(0, 12)}, ${applied.distance} commit(s) behind HEAD`}. ${commitGuidance}`,
+        {
+          flow: selected.id,
+          path,
+          records,
+          applied: applied?.record.commit ?? null,
+          distance: applied?.distance ?? null,
+          commitGuidance,
+        },
       );
     },
   );

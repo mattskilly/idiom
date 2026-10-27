@@ -1,6 +1,7 @@
 import type { InferredComponent } from "../checks/design-components.js";
 import type { TokenDeclarations } from "../checks/observe.js";
 import type {
+  ActionTimelineArtifact,
   ObservationArtifact,
   ScreenshotGeometry,
 } from "../checks/types.js";
@@ -81,6 +82,9 @@ export type TupleCapture = {
   console: ConsoleRecord[];
   axe: unknown;
   observations?: ObservationArtifact | undefined;
+  /** Action timelines; written to timelines.json, never into observations. */
+  timelines?: ActionTimelineArtifact | undefined;
+  filmstrips?: import("./filmstrips.js").FilmstripCapture | undefined;
   mismatches: ExpectationMismatch[];
   startedAt: string;
   endedAt: string;
@@ -111,6 +115,8 @@ export type TupleFailure = {
   console: ConsoleRecord[];
   axe?: unknown;
   observations?: ObservationArtifact | undefined;
+  timelines?: ActionTimelineArtifact | undefined;
+  filmstrips?: import("./filmstrips.js").FilmstripCapture | undefined;
   mismatches: ExpectationMismatch[];
   startedAt: string;
   endedAt: string;
@@ -118,7 +124,14 @@ export type TupleFailure = {
 
 export type TupleResult = TupleCapture | TupleFailure;
 
+export type FilmstripRequest = CaptureTupleSelection & {
+  identity: import("../checks/filmstrip-schema.js").FilmstripIdentity;
+  offsetsMs: number[];
+};
+
 export type BrowserTuple = CaptureHooks & {
+  filmstripBudget?: import("./filmstrips.js").FilmstripBudget | undefined;
+  filmstripRequests?: FilmstripRequest[] | undefined;
   designReference?: import("../design/source.js").DesignSource | undefined;
   shell?: string | undefined;
   /** Reuse an equal-layout screenshot while collecting this tuple's own evidence. */
@@ -142,6 +155,18 @@ export type BrowserTuple = CaptureHooks & {
    * is reused instead of clicked again.
    */
   probeLedger?: import("./probe-ledger.js").ProbeLedger | undefined;
+  /**
+   * `third-party`: arbitrary URLs (quick review). Only safe-method requests,
+   * no cross-origin top-level navigation, no submission or permission
+   * prompts; the probe artifact carries a `safety` ledger.
+   */
+  probeSafety?: "third-party" | undefined;
+  /**
+   * One wall-clock allowance for the focus sweep and the click probe
+   * together, overriding `checks.probe.stateTimeoutMs` for this tuple. The
+   * sweep may use at most a third of it.
+   */
+  probePageBudgetMs?: number | undefined;
   /** A published flow's tuple: record images and failed image requests. */
   published?: boolean | undefined;
 };

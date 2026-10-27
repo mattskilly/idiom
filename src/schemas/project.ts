@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { validGlob } from "../../hooks/lib.mjs";
+import { filmstripConfigSchema } from "../checks/filmstrip-schema.js";
 import { parseCssColor } from "../checks/shared.js";
 import { designTokensSchema } from "../system/learn/schema.js";
 import {
@@ -418,9 +420,11 @@ export const checksConfigSchema = z
           )
           .default([]),
         selectors: z.array(z.string().trim().min(1)).default([]),
+        /** Smallest visible change (px) a content snap must reach. */
+        minExtentPx: z.number().finite().positive().default(24),
       })
       .strict()
-      .default({ maxMs: 150, durations: [], selectors: [] }),
+      .default({ maxMs: 150, durations: [], selectors: [], minExtentPx: 24 }),
     fieldGroups: z
       .object({
         inner: z.number().min(0).default(4),
@@ -461,6 +465,11 @@ export const checksConfigSchema = z
     alarm: alarmSchema,
     naming: namingSchema,
     progressWithinMs: z.number().int().positive().default(1000),
+    /** The probe's held replay: how long the action's responses are held. */
+    loading: z
+      .object({ delayMs: z.number().int().positive().default(1500) })
+      .strict()
+      .prefault({}),
     emptyState: emptyStateSchema,
     page: pageSchema.optional(),
     bandEdges: z
@@ -523,6 +532,13 @@ export const checksConfigSchema = z
       .object({
         enabled: z.boolean().default(true),
         max: z.number().finite().min(0).default(0.1),
+      })
+      .strict()
+      .prefault({}),
+    interactionShift: z
+      .object({
+        enabled: z.boolean().default(true),
+        minDistance: z.number().finite().min(0).default(4),
       })
       .strict()
       .prefault({}),
@@ -685,6 +701,9 @@ const projectInputSchema = z
     colorSchemes: colorSchemesSchema.optional(),
     capture: z
       .object({
+        filmstrips: filmstripConfigSchema.default(() =>
+          filmstripConfigSchema.parse({}),
+        ),
         timezoneId: z.string().default("America/New_York"),
         locale: z.string().default("en-US"),
         colorScheme: colorSchemeSchema.default("light"),
@@ -713,6 +732,22 @@ const projectInputSchema = z
       .strict(),
     baselines: z
       .object({ directory: z.string().min(1) })
+      .strict()
+      .optional(),
+    agent: z
+      .object({
+        hooks: z.boolean().optional(),
+        uiGlobs: z
+          .array(
+            z
+              .string()
+              .refine(
+                validGlob,
+                "must be a project-relative glob using *, ? or **; braces, negation and extglobs are unsupported",
+              ),
+          )
+          .optional(),
+      })
       .strict()
       .optional(),
     checks: checksConfigSchema.default(defaultChecksSettings),

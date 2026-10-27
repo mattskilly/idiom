@@ -8,6 +8,7 @@ import { writeTupleArtifacts } from "../src/capture/artifacts.js";
 import { createBrowserLauncher } from "../src/capture/browser.js";
 import { observationArtifactSchema } from "../src/checks/artifact-schema.js";
 import { runDeterministicChecks } from "../src/checks/registry.js";
+import { timelineEvidence } from "../src/checks/shared.js";
 import type { MotionArtifact } from "../src/checks/types.js";
 import { initProject } from "../src/commands/init.js";
 import { loadCaptureRun } from "../src/review/artifacts.js";
@@ -184,6 +185,15 @@ test("web-step evidence survives screenshot, storage, offline review and combine
     // fade observed by the probe and step has just one finding per direction.
     const combinedCandidates = keys(required(combined.observations.motion));
     expect(new Set(combinedCandidates).size).toBe(combinedCandidates.length);
+    // Timelines: the load, both steps and the probe's clicks, never replays.
+    const ids = combined.timelines?.actions.map((action) => action.id) ?? [];
+    expect(ids.slice(0, 3)).toEqual(["load", "step-1", "step-2"]);
+    expect(ids.filter((id) => id?.startsWith("probe-")).length).toBeGreaterThan(
+      0,
+    );
+    expect(JSON.stringify(combined.observations.probe)).not.toContain(
+      "timelines",
+    );
     await writeFile(
       join(directory, ".idiom/project.json"),
       JSON.stringify(project),
@@ -205,6 +215,44 @@ test("web-step evidence survives screenshot, storage, offline review and combine
         (c) => c.candidate.category === "motion",
       ),
     ).toHaveLength(2);
+    const stored = required(loaded.tuples[0]);
+    expect(stored.timelines?.actions.map((action) => action.id)).toEqual([
+      "load",
+      "step-1",
+      "step-2",
+    ]);
+    expect(stored.artifactPaths).toContain("closed/desktop/timelines.json");
+    expect(timelineEvidence(stored).status).toBe("ran");
+    // A run captured before timelines loads unchanged and asks for recapture.
+    const timelinesPath = join(
+      directory,
+      ".idiom/reports/motion-run/closed/desktop/timelines.json",
+    );
+    const timelinesBytes = await readFile(timelinesPath);
+    await rm(timelinesPath);
+    const legacy = await loadCaptureRun({
+      runDirectory: join(directory, ".idiom/reports/motion-run"),
+      expectedFlow: "motion",
+    });
+    const legacyTuple = required(legacy.tuples[0]);
+    expect(legacyTuple.timelines).toBeUndefined();
+    expect(legacyTuple.artifactPaths).not.toContain(
+      "closed/desktop/timelines.json",
+    );
+    expect(timelineEvidence(legacyTuple)).toEqual({
+      status: "unavailable",
+      reason: "unavailable: recapture (no action timelines in this capture)",
+    });
+    expect(
+      runDeterministicChecks(legacy.tuples).candidates.map(
+        (c) => c.candidate.fingerprintHint ?? c.candidate.selectorHint,
+      ),
+    ).toEqual(
+      runDeterministicChecks(loaded.tuples).candidates.map(
+        (c) => c.candidate.fingerprintHint ?? c.candidate.selectorHint,
+      ),
+    );
+    await writeFile(timelinesPath, timelinesBytes);
     const review = await runReview({
       project: directory,
       flow: "motion",

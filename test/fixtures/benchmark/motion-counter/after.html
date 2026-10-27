@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Motion lab</title><style>
+body { font: 16px system-ui; padding: 32px; margin: 0; } button { padding: 12px; }
+#count { font-size: 40px; }
+</style></head><body>
+<h1>Cart</h1>
+<p>Items: <span id="count">9</span></p>
+<button id="plus">Add one</button>
+<p>Hello, <span id="echo">guest</span></p>
+<button id="name">Use full name</button>
+<script>plus.onclick = () => { count.textContent = String(Number(count.textContent) + 1); }; name.onclick = () => { echo.textContent = "Alexandra Montgomery-Whitfield"; };</script>
+</body></html>

@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tupleCoordinateKey as importCoordinate } from "../baseline/coordinate.js";
 import { snapshotSource } from "../capture/resolve.js";
 import type { CaptureDependencies } from "../capture/run.js";
 import { runCapture } from "../capture/run.js";
@@ -65,6 +66,12 @@ import {
 } from "./artifacts.js";
 import { loadReviewCatalog, persistCatalogFindingNames } from "./catalog.js";
 import { attachCrops } from "./crops.js";
+import { attachFilmstrips } from "./filmstrips.js";
+
+async function attachVisualEvidence(...args: Parameters<typeof attachCrops>) {
+  return attachFilmstrips(args[0], await attachCrops(...args), args[2]);
+}
+
 import {
   applyRulesToDrafts,
   buildDeterministicDrafts,
@@ -73,6 +80,7 @@ import {
   dedupeSuppressedFindings,
   type FindingDraft,
   finalizeDeterministicOccurrences,
+  finalizeFindingOccurrences,
   finalizeFindingSelection,
   finalizeFindings,
   nameFindingDrafts,
@@ -132,6 +140,14 @@ export type ReviewRunResult = PaintedCoverageReport & {
   /** Findings past the review's attention cap (model.maxFindings). */
   deferredFindings: Finding[];
   deterministicOccurrences?: Finding[];
+  /** Sweep evidence before viewport deduplication. Never a catalog input. */
+  occurrences?: Finding[];
+  probes?:
+    | Array<{
+        coordinate: string;
+        probe?: import("../checks/types.js").ProbeArtifact | undefined;
+      }>
+    | undefined;
   /** Material and deferred findings grouped by element and rule (#52). */
   groups: FindingGroup[];
   /** Legacy run-wide primary-action signal; scoring uses tuple context. */
@@ -145,6 +161,14 @@ export type ReviewRunResult = PaintedCoverageReport & {
   /** The advisory design-intent review written to advisory.json. */
   advisory?: { path: string; review: AdvisoryReview } | undefined;
 };
+
+/** Only capture execution failures are recoverable at the product controller. */
+export class SweepCaptureError extends Error {
+  constructor(cause: unknown) {
+    super(safeDegradationReason(cause), { cause });
+    this.name = "SweepCaptureError";
+  }
+}
 
 const MAX_DEGRADATION_REASON_LENGTH = 600;
 
@@ -272,10 +296,6 @@ export async function runReview(options: {
       "materializeAllDeterministic requires deterministic-only review",
     );
   const sweepMode = options.mode === "sweep";
-  if (sweepMode && options.deterministicOnly === true)
-    throw new IdiomError(
-      "a sweep always runs the model critique; it cannot be deterministic-only",
-    );
   const checkCancelled = () =>
     options.dependencies?.capture?.signal?.throwIfAborted();
   checkCancelled();
@@ -305,7 +325,10 @@ export async function runReview(options: {
         options.deterministicOnly !== true &&
         !sweepMode));
   const surfaceFlows = await loadDeclaredSurfaceFlows(validated);
-  const spec = sweepMode ? await loadSpec(validated) : undefined;
+  const spec =
+    sweepMode && !options.deterministicOnly
+      ? await loadSpec(validated)
+      : undefined;
 
   if (
     options.prod === true &&
@@ -346,6 +369,11 @@ export async function runReview(options: {
       port: options.port,
       refreshDesign: options.refreshDesign,
       dependencies: options.dependencies?.capture,
+    }).catch((error) => {
+      checkCancelled();
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      if (sweepMode) throw new SweepCaptureError(error);
+      throw error;
     });
     runDirectory = capture.runDirectory;
   } else {
@@ -675,19 +703,19 @@ export async function runReview(options: {
         : validated.project.model.maxFindings,
     catalog,
   });
-  const findings = await attachCrops(
+  const findings = await attachVisualEvidence(
     runDirectory,
     selection.material,
     loaded.tuples,
   );
-  const deferredFindings = await attachCrops(
+  const deferredFindings = await attachVisualEvidence(
     runDirectory,
     selection.deferred,
     loaded.tuples,
   );
   const deterministicOccurrences =
     options.includeDeterministicOccurrences === true
-      ? await attachCrops(
+      ? await attachVisualEvidence(
           runDirectory,
           finalizeDeterministicOccurrences({
             runId: loaded.runId,
@@ -697,6 +725,22 @@ export async function runReview(options: {
           loaded.tuples,
         )
       : undefined;
+  const occurrences = sweepMode
+    ? await attachVisualEvidence(
+        runDirectory,
+        finalizeFindingOccurrences({
+          runId: loaded.runId,
+          drafts: [...deterministic.kept, ...modelKeptDrafts],
+          catalog,
+        }),
+        loaded.tuples,
+      )
+    : undefined;
+  if (occurrences !== undefined)
+    await writeFile(
+      join(runDirectory, "occurrences.json"),
+      `${JSON.stringify(occurrences, null, 2)}\n`,
+    );
   const groups = groupRepeatedFindings(
     [...findings, ...deferredFindings],
     coordinateIndex([...deterministic.kept, ...modelKeptDrafts]),
@@ -763,10 +807,13 @@ export async function runReview(options: {
       ),
       ...[reportOptions.findings, reportOptions.deferred ?? []]
         .flat()
-        .flatMap(
-          (finding) =>
-            finding.evidence.designDrift?.crops?.map((crop) => crop.path) ?? [],
-        ),
+        .flatMap((finding) => [
+          ...(finding.evidence.designDrift?.crops?.map((crop) => crop.path) ??
+            []),
+          ...(finding.evidence.filmstrip?.sheet
+            ? [finding.evidence.filmstrip.sheet]
+            : []),
+        ]),
     ]),
   ];
   const screenshots = new Map(
@@ -808,10 +855,30 @@ export async function runReview(options: {
   checkCancelled();
   return {
     ...(issueRankingContext === undefined ? {} : { issueRankingContext }),
+    ...(occurrences === undefined ? {} : { occurrences }),
+    probes: loaded.tuples.map((tuple) => ({
+      coordinate: importCoordinate(tuple),
+      probe:
+        tuple.observations?.version === 2
+          ? tuple.observations.probe
+          : undefined,
+    })),
     scope: loaded.record,
     timings,
     reportCoverage: reportOptions.reportCoverage,
     ...reportedCheckCoverage(reviewed.coverage),
+    ...(sweepMode
+      ? {
+          checkCoverage: reviewed.coverage.map(({ tuple, coverage }) => ({
+            ...coverage,
+            state: tuple.state,
+            viewport: tuple.viewport,
+            ...(tuple.colorScheme === undefined
+              ? {}
+              : { colorScheme: tuple.colorScheme }),
+          })),
+        }
+      : {}),
     runDirectory,
     findingsPath,
     deferredFindings,

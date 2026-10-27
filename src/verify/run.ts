@@ -27,6 +27,10 @@ import {
   evaluateVerification,
   type VerificationEvaluation,
 } from "./evaluate.js";
+import {
+  verificationFilmstripRequests,
+  verificationFilmstrips,
+} from "./filmstrips.js";
 import { renderVerificationHtmlReport } from "./html-report.js";
 import {
   assertReplaceable,
@@ -187,11 +191,20 @@ export async function runVerify(options: {
       against: options.against,
       gitTopology: options.dependencies?.gitTopology,
     });
+    const historicalPixels = await loadCaptureRun({
+      runDirectory: baseline.runDirectory,
+      expectedFlow: options.flow,
+    });
+    const filmstripRequests = verificationFilmstripRequests(
+      findings,
+      historicalPixels.tuples,
+    );
     capturesRoot = await mkdtemp(join(tmpdir(), "idiom-verify-captures-"));
     checkCancelled();
     const runA = await runCapture({
       projectDirectory: validated.projectDirectory,
       project: validated.project,
+      filmstripRequests,
       flow,
       out: join(capturesRoot, "current-a"),
       deduplicateCombinations: false,
@@ -203,6 +216,7 @@ export async function runVerify(options: {
     const runB = await runCapture({
       projectDirectory: validated.projectDirectory,
       project: validated.project,
+      filmstripRequests,
       flow,
       out: join(capturesRoot, "current-b"),
       deduplicateCombinations: false,
@@ -347,6 +361,13 @@ export async function runVerify(options: {
       });
     }
 
+    const filmstripImages = await verificationFilmstrips({
+      findings,
+      baseline: { runDirectory: baseline.runDirectory, tuples: baselineTuples },
+      after: { runDirectory: runB.runDirectory, tuples: loadedB.tuples },
+      output: staging,
+      manifest,
+    });
     let evaluation: VerificationEvaluation | undefined;
     let diagnostic: string | undefined;
     try {
@@ -436,6 +457,7 @@ export async function runVerify(options: {
         currentRunB: loadedB.runId,
         manifest,
         comparisons,
+        filmstripImages,
         reportCoverage,
         ...(evaluation === undefined
           ? { diagnostic: diagnostic ?? "unknown comparison failure" }

@@ -7,6 +7,8 @@ import {
 export async function quickCommand(options: {
   urls: string[];
   design?: string | undefined;
+  probe?: boolean | undefined;
+  probeBudgetMs?: string | number | undefined;
   project?: string | undefined;
   cwd?: string | undefined;
   out?: string | undefined;

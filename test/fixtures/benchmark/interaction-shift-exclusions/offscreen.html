@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Exclusion</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d1d1f; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px; }
+  .spacer { height: 1000px; }
+  .later { padding: 16px 0; border-top: 1px solid #ddd; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Changelog</h1>
+  <button id="older" type="button">Load older entries</button>
+  <div class="spacer"></div>
+  <div id="entries"></div>
+  <section class="later"><h2>Archive</h2><p>Entries before 2020 live in the archive.</p></section>
+</main>
+<script>
+  document.getElementById("older").addEventListener("click", () => {
+    const entry = document.createElement("article");
+    entry.className = "entry";
+    entry.style.height = "120px";
+    entry.textContent = "Version 1.0: the first public release.";
+    document.getElementById("entries").append(entry);
+  });
+</script>
+</body>
+</html>

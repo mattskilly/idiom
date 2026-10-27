@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><head><title>Exclusion</title><style>body{font:16px sans-serif;margin:24px}</style></head><body>
+<main><h1>Settings</h1><button id="apply" type="button">Apply</button><p id="result"></p></main>
+<script>
+const button = document.querySelector("#apply");
+button.addEventListener("click", async () => {
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/save", { method: "POST", body: "{}" });
+    document.querySelector("#result").textContent = response.ok ? "Applied" : "Could not apply";
+  } catch {
+    document.querySelector("#result").textContent = "Could not apply";
+  } finally {
+    button.disabled = false;
+  }
+});
+</script></body></html>

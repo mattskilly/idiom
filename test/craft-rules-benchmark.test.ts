@@ -109,7 +109,7 @@ const expected: Record<
   "orphan-word": { severity: "minor", mentions: ["“now”"] },
   "image-distortion": { severity: "major", mentions: ["40×20"] },
   "broken-image": { severity: "major", mentions: ["broken image"] },
-  "layout-shift": { severity: "minor", mentions: ["cumulative layout shift"] },
+  "layout-shift": { severity: "major", mentions: ["cumulative layout shift"] },
 };
 
 describe("craft rule fixture pairs", () => {

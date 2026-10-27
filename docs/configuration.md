@@ -35,11 +35,30 @@ unchanged and flows need no `surface` field.
 
 ### Capture settings
 
+Web capture records filmstrips by default. Configure them under `capture`:
+
+```json
+"filmstrips": {
+  "enabled": true,
+  "offsetsMs": [0, 50, 100, 200, 400, 800],
+  "actions": ["#open-panel", "load"]
+}
+```
+
+`actions` defaults to `[]`: retain pixels only for actions linked to temporal findings. A CSS selector explicitly retains every measured activation of that control, including hover and held replay; `load` requests the initial navigation. These requests use the existing guarded execution and budgets. `offsetsMs` must start at zero, strictly increase, contain 1–16 nonnegative integer milliseconds, and end at or before 5000ms. A separate settle frame is always included. Set `enabled: false` for diagnosis or paired cost measurements. Quick review uses the default configuration.
+
+Zero is actual input dispatch, after actionability waits and scrolling; load uses the navigation time origin. Settle is the original rule observation boundary, with an explicit unsettled flag at a deadline. Selected actions stay visually observed through the last offset before another action or restore. This tail does not extend rule windows. Unchanged compositor frames may be reused with their original timestamps; unobserved slots, interrupted documents and known timing misses beyond 35ms are marked unavailable.
+
+Frames use a fixed viewport-relative region containing the effect and moved elements, padded by 24 CSS pixels, with the viewport as fallback. Contact sheets keep every requested column, label sampling times and outline subjects at their measured positions. Each sheet is capped at 4096×1536 pixels and 4MiB encoded PNG; image cells scale uniformly. Transient compressed buffers are bounded to 16MiB per action and 64MiB per collector/capture lane. Decoding rejects images above 16 million pixels. Filmstrips are web-only; Electron and design-reference capture keep their existing behavior. Historical runs without filmstrips remain readable.
+
+
 The interaction probe is on by default for web flows; `checks.probe.enabled: false` turns it off, and a state's `probe: false` turns it off for that state. It runs once per state at its first selected viewport, preferring that viewport's light coordinate regardless of scheme declaration order. If light is excluded, it uses the first selected scheme without capturing an extra page. Set `checks.probe.everywhere: true` to probe every enabled selected coordinate; this setting alone never enables probes or overrides a state's `probe: false`. Probe evidence belongs only to its executed coordinate. A failed designated capture leaves its probe unavailable; sibling tuples do not retry it. Electron interaction probing remains unavailable.
 
 The probe has hard wall-clock budgets. `checks.probe.controlTimeoutMs` defaults to **5000ms** per attempted control, including explanation sampling, the click, its effect window and the cheap restore check. Full replay has its own restore deadline (the larger of the control budget and 15 seconds, bounded by the state's remaining flow share); its expiry is reported as `timed-out: restore` on the control that needed it. The effect window ends after about 150ms with no DOM, URL, focus or network activity, capped by `checks.probe.waitMs` (default 350ms). Tooltip explanation sampling retains its independent hover/focus windows.
 
 `checks.probe.stateTimeoutMs` defaults to **60000ms**. Web capture sizes one aggregate flow allowance from the wall clock. The run aims to finish within 400 seconds, keeping 20 seconds for merging, artifacts and checks. Probing may use the time left before that target on every capture lane, measured when each probe round starts. A round gives each state at most this duration, and the first round always gets at least this duration per lane. Later rounds run while unfinished work and wall time remain. Each round divides its allowance in proportion to assigned control counts, with one unit for a state's enumeration bookkeeping when it has no assigned controls. No state's share runs past the target. A finished state returns unused time to unfinished states, extending running deadlines as well as queued shares. Ordinary nested menu, panel and tab items have an additional cap of a quarter of their state's current share; they still count toward the flow allowance. In a planned flow, nested check candidates (the ranks below) are bounded only by the state deadline. This cap prevents nested work from consuming the whole share. Discovery follows at most three reveal steps and 20 controls per revealed surface. Standalone library probes without a flow allocation retain a per-state deadline. Expired attempts retain their selector and partial effects with `status: "timed-out"`, `timeoutScope` and a `skipped` reason. Their incomplete evidence cannot establish dead controls or duplicate entries. A timed-out page is retired; later assigned controls replay on a replacement. Native dialogs, print, file choosers, downloads and popups are suppressed throughout probing, and the mutation guard covers both the page and its context, including a popup's first request. Only declared state replay may send mutating requests.
+
+After the clicks, the probe runs a **held replay** of every probe click and web step whose action sent fetch, XHR or document requests (web steps first, at most six per state). Each replay restores a fresh copy, repeats the action and holds its same-site fetch/XHR requests (and a full-page navigation) for `checks.loading.delayMs` (default **1500ms**; it must exceed `checks.progressWithinMs`) to see what a user on a slow network sees. Held requests then go through the same mutation guard as any probe click, so the replay never sends a request the probe would not; for a pending non-safe request it activates the trigger once more and records any duplicate, which is aborted. Each replay costs about one restore plus `delayMs` and its settle, counted against the state's probe budget. Once an action qualifies, the clicks stop when less than the smaller of 30% of the state budget and two replays' worth remains; the controls left are reported `not reached: held replay reserve`. A replay that still does not fit is noted in coverage, never timed out. The replays feed `loading-state-missing` and `double-submit`.
 
 Restoring between controls is cheap when it can be. The probe moves the pointer off the page and compares a state fingerprint (URL, scroll, revealed regions, element count, text, state attributes including `class` and `data-*`, form values, and which elements render; hover tooltips excluded) with the baseline. Equal means the next control runs without a reload. Otherwise it tries blur, Escape and a visible close control in a newly revealed region, and gives transient classes another moment to revert. It fully replays the state when the ladder cannot recover the baseline. Navigation, popups and retired pages always require replay. Escape and close clicks keep the mutation guard active.
 
@@ -449,7 +468,10 @@ Besides the original ten checks, `check` and `review` run additional checks buil
 | `orphan-word` | on by default (`checks.orphanWord`): headings and button labels whose last line holds one short word, per viewport |
 | `image-distortion` | on by default (`checks.images`): images drawn with `object-fit: fill` more than 3% out of their natural aspect ratio |
 | `broken-image` | on by default (`checks.images`): visible images that failed to load or decode |
-| `layout-shift` | on by default (`checks.layoutShift`): cumulative layout shift during load above 0.1, naming the shifting elements |
+| `layout-shift` | on by default (`checks.layoutShift`), major: cumulative layout shift during load above 0.1, naming the shifting elements and, with a load timeline, the late content that caused the largest shift |
+| `interaction-shift` | on by default (`checks.interactionShift`), major: content outside what a probe click or web step changes moves at least 4px (`minDistance`) without animation because content was inserted, removed or resized; content arriving more than 500ms after input is reported even inside the action's own region |
+| `loading-state-missing` | on by default (needs the probe): an action whose result waits on a fetch/XHR request but shows no pending feedback within `checks.progressWithinMs` while the probe holds the response for `checks.loading.delayMs`; client-side route changes that leave the main content empty or unchanged |
+| `double-submit` | on by default (needs the probe): a trigger left enabled while its POST/PUT/PATCH/DELETE is pending, where a second activation issues a duplicate (observed and aborted, never sent) |
 
 Every rule, with why it matters, its severity, its source and how to configure or decide it, is listed in [rules.md](rules.md).
 
@@ -490,7 +512,7 @@ Both blocks are absent by default, including in `review --page`. Supplying eithe
 
 `word-break` uses text-node ranges, Unicode word/grapheme boundaries and visible line positions in headings and native/ARIA buttons. It reports one major finding per owner at every affected viewport, including inline-markup continuations. Normal space wrapping, explicit/soft hyphens and scripts with native intra-word wrapping conventions remain quiet. Vertical writing, unresolved automatic hyphenation, clamped candidates and defensive work limits produce explicit incomplete/unavailable coverage; independently confirmed splits still report. Merely enabling CSS hyphenation does not produce a finding.
 
-The font, link, focus, typography, image and layout-shift checks are on by default and configured independently:
+The font, link, focus, typography, image, layout-shift and interaction-shift checks are on by default and configured independently:
 
 ```json
 {
@@ -508,7 +530,8 @@ The font, link, focus, typography, image and layout-shift checks are on by defau
     "lineLength": { "enabled": true, "max": 90 },
     "orphanWord": { "enabled": true, "maxChars": 7 },
     "images": { "enabled": true, "distortionTolerance": 0.03 },
-    "layoutShift": { "enabled": true, "max": 0.1 }
+    "layoutShift": { "enabled": true, "max": 0.1 },
+    "interactionShift": { "enabled": true, "minDistance": 4 }
   }
 }
 ```
@@ -555,6 +578,7 @@ Configure the craft checks in `.idiom/project.json` (every field is optional); l
     "motion": { "maxMs": 150, "durations": [120, 150], "selectors": [".layers-panel"] },
     "fieldGroups": { "inner": 4, "between": 12 },
     "progressWithinMs": 1000,
+    "loading": { "delayMs": 1500 },
     "emptyState": {
       "regions": [{ "selector": "main.canvas", "items": ".block" }],
       "auto": true,
@@ -705,7 +729,7 @@ On a tuple whose captured input is no-hover touch (`hover: none` plus a coarse p
 
 Patterns are case-insensitive regular expressions and extend the built-in ones (undo/redo names, "unsaved", placeholder copy); selectors are resolved at capture time and stored with the observations. `disguisedControl.ignore` exempts a deliberate field-shaped trigger. Comboboxes, popup buttons (`aria-haspopup`) and launchers that show a keyboard shortcut (`⌘K`, a `<kbd>`) are never reported as disguised, and an ellipsis alone ("Save as…", "Loading…") is not placeholder copy.
 
-`motion` records actual geometry/opacity animation during existing web steps (`click`, `fill`, `press`, `select`) and the opt-in interaction probe. The probe is on by default (as above). Semantic panels, drawers, menus, popovers and dialogs are recognized automatically; `checks.motion.selectors` adds custom surfaces. Tooltips are checked for observed duration and reduced motion, with no missing-transition warning for tiny tooltips. The defaults are `maxMs: 150`, `durations: []` (no discrete scale), and `selectors: []`. Durations use milliseconds; delays and disabled effects do not count. Findings name the surface, action, property and measured value. Progressive JavaScript motion avoids a snap finding but has unavailable duration assessment.
+`motion` records actual geometry/opacity animation during existing web steps (`click`, `fill`, `press`, `select`) and the opt-in interaction probe. The probe is on by default (as above). Semantic panels, drawers, menus, popovers and dialogs are recognized automatically; `checks.motion.selectors` adds custom surfaces. Tooltips are checked for observed duration and reduced motion, with no missing-transition warning for tiny tooltips. The defaults are `maxMs: 150`, `durations: []` (no discrete scale), `selectors: []`, and `minExtentPx: 24`. Beyond these surfaces, `motion` reads the action timelines for content that snaps: tab and segmented-control swaps, inline expand/collapse, list items added or removed, toasts and status messages, and client-side route changes (`idiom:motion-snap`). A snap is a visible change of at least `minExtentPx` pixels with no animation or transition on the changed element or an ancestor and no View Transition; text-only changes, focus rings and changes to the clicked control are ignored. Each surface and kind of change is one finding listing every action, and its fix names a transition from `durations` (else 150–250ms ease-out) and the property to animate. Durations use milliseconds; delays and disabled effects do not count. Findings name the surface, action, property and measured value. Progressive JavaScript motion avoids a snap finding but has unavailable duration assessment.
 
 Choose the media preference in `.idiom/project.json` for each audit:
 
@@ -713,7 +737,7 @@ Choose the media preference in `.idiom/project.json` for each audit:
 { "capture": { "reducedMotion": false } }
 ```
 
-This normal-motion capture reports snapped surface toggles as minor findings. For a reduced-motion audit, use `"capture": { "reducedMotion": true }` (the default): actual running motion is major, and disabled transitions pass. Idiom uses the selected preference once; it does not replay actions under another preference. Review with `idiom review <flow> --from <runId> --deterministic-only` uses the stored action evidence. Recapture older runs to enable this check. URL-only captures without probing and unsupported capture paths, including Electron, show unavailable coverage; incomplete windows explain their limitations and cannot establish a missing transition.
+This normal-motion capture reports snapped surface toggles as major findings, and judges every content change directly. For a reduced-motion audit, use `"capture": { "reducedMotion": true }` (the default): actual running motion is major, and disabled transitions pass. Under reduced motion an instant change is correct, so in this default capture the probe replays each suspected content snap once under normal motion to confirm it (at most one replay per surface and kind of change, six per state); the replay is evidence only, and the reduced-motion audit is unchanged. Snaps are judged only from normal-motion windows. Web steps are judged in a `reducedMotion: false` capture, or when the probe confirmed the same surface; other unconfirmed changes are listed as not judged in coverage. Overlay surface snaps still need `reducedMotion: false`. Review with `idiom review <flow> --from <runId> --deterministic-only` uses the stored action evidence. Recapture older runs to enable this check. URL-only captures without probing and unsupported capture paths, including Electron, show unavailable coverage; incomplete windows explain their limitations and cannot establish a missing transition.
 
 `mirrored-control` compares declared pairs per capture. Selectors are resolved at capture time; recapture after adding a pair. `axis` describes the mirror line: `vertical` (the default) means left/right panels, `horizontal` means top/bottom. Each panel is inferred as the outermost ancestor on the control's side; if either control has no such panel, distances are measured to the mirror axis through their nearest shared ancestor (or the viewport centre). A selector that matches nothing skips the pair with a coverage note. Kind and type comparisons exclude hidden graphics and clipped accessibility labels, and retain the computed font of visible text inside `display:contents` wrappers and literal `::before`/`::after` glyphs. Unsupported generated content (such as CSS counters) reports unavailable coverage for that pair; other configured pairs still run, with pair-specific coverage notes. Captures without this text/font evidence also show unavailable coverage and need recapturing.
 

@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><title>Exclusion</title><style>body{font:16px sans-serif;margin:24px}</style></head><body>
+<main><h1>Report</h1><button id="show" type="button">Show report</button><section id="report"></section><p id="footer">Footer text below the report.</p></main>
+<script>
+document.querySelector("#show").addEventListener("click", async () => {
+  const report = document.querySelector("#report");
+  report.innerHTML = '<div class="skeleton" style="height:40px;background:#eee"></div>';
+  const response = await fetch("/api/items");
+  const items = await response.json();
+  report.innerHTML = '<div style="height:200px">' + items.join(", ") + "</div>";
+});
+</script></body></html>

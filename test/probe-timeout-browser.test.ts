@@ -1,7 +1,10 @@
 import { type Browser, chromium, type Download, type Page } from "playwright";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { probeControls } from "../src/capture/probe.js";
-import type { ProbeArtifact } from "../src/checks/types.js";
+import type {
+  ActionTimelineArtifact,
+  ProbeArtifact,
+} from "../src/checks/types.js";
 // @ts-expect-error Local JS fixture intentionally runs directly in Node too.
 import { fixtureServer } from "./fixtures/probe-timeouts/server.mjs";
 
@@ -532,3 +535,38 @@ test("static DOM, observations and screenshot are saved before the disposable pr
     await session.close();
   }
 }, 7000);
+
+test("a probe deadline retains the interrupted click's timeline", async () => {
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    const navigate = async (active: Page) => {
+      await active.goto(`${fixture.url}/continuous-effect`, {
+        waitUntil: "domcontentloaded",
+      });
+    };
+    await navigate(page);
+    let timelines: ActionTimelineArtifact | undefined;
+    const result = await probeControls({
+      page,
+      restore: navigate,
+      skip: ["button:not(#print)"],
+      maxControls: 1,
+      waitMs: 2000,
+      controlTimeoutMs: 1000,
+      stateTimeoutMs: 4000,
+      onTimelines: (recorded) => {
+        timelines = recorded;
+      },
+    });
+    expect(find(result, "#print")?.status).toBe("timed-out");
+    const clicks = timelines?.actions.filter((a) => a.source === "probe-click");
+    expect(clicks).toHaveLength(1);
+    const action = clicks?.[0];
+    expect(action?.settled).toBe(false);
+    expect(action?.status).not.toBe("ran");
+    expect(action?.reason).toMatch(/attempt timed-out|action interrupted/);
+  } finally {
+    await context.close();
+  }
+});

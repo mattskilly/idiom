@@ -1,0 +1,17 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Motion lab</title><style>
+body { font: 16px system-ui; padding: 32px; margin: 0; } button { padding: 12px; }
+[role=tabpanel] { height: 200px; background: #f4f4f4; padding: 16px; }
+</style></head><body>
+<h1>Project</h1>
+<div role="tablist" aria-label="Project sections">
+<button role="tab" id="tab-1" aria-controls="panel-1" aria-selected="true">Overview</button>
+<button role="tab" id="tab-2" aria-controls="panel-2" aria-selected="false">Activity</button>
+<button role="tab" id="tab-3" aria-controls="panel-3" aria-selected="false">Settings</button>
+</div>
+<div id="panels" aria-label="Project panels">
+<section role="tabpanel" id="panel-1" aria-labelledby="tab-1"><h2>Overview</h2><p>Summary of the project.</p></section>
+<section role="tabpanel" id="panel-2" aria-labelledby="tab-2" hidden><h2>Activity</h2><p>Recent changes.</p></section>
+<section role="tabpanel" id="panel-3" aria-labelledby="tab-3" hidden><h2>Settings</h2><p>Project options.</p></section>
+</div>
+<script>for (const tab of document.querySelectorAll("[role=tab]")) tab.onclick = () => { for (const other of document.querySelectorAll("[role=tab]")) { other.setAttribute("aria-selected", String(other === tab)); document.getElementById(other.getAttribute("aria-controls")).hidden = other !== tab; } };</script>
+</body></html>

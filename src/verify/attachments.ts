@@ -25,6 +25,31 @@ export const attachmentManifestSchema = z
         path: z.literal("before-after.md"),
       })
       .strict(),
+    filmstrips: z
+      .array(
+        z
+          .object({
+            ordinal: z.number().int().positive(),
+            kind: z.string().min(1),
+            finding: z.string().min(1),
+            state: z.string().min(1),
+            viewport: z.string().min(1),
+            colorScheme: z.enum(["light", "dark"]).optional(),
+            before: relativePath.optional(),
+            after: relativePath.optional(),
+            beforeUnavailable: z.string().min(1).optional(),
+            afterUnavailable: z.string().min(1).optional(),
+            frames: z.array(relativePath).optional(),
+          })
+          .strict()
+          .refine(
+            (a) =>
+              !!a.before !== !!a.beforeUnavailable &&
+              !!a.after !== !!a.afterUnavailable,
+            "each side requires a path or an unavailable reason",
+          ),
+      )
+      .optional(),
     composites: z.array(
       z
         .object({
@@ -104,11 +129,24 @@ export async function validateAttachmentManifest(options: {
     kinds.add(composite.kind);
     paths.add(composite.path);
   }
+  for (const [index, item] of (parsed.data.filmstrips ?? []).entries()) {
+    if (
+      item.ordinal !== index + 1 ||
+      item.kind !== `idiom-filmstrip-${String(index + 1).padStart(3, "0")}`
+    )
+      throw new IdiomError("noncanonical filmstrip attachment identity");
+    if (kinds.has(item.kind))
+      throw new IdiomError("attachment kinds must be unique");
+    kinds.add(item.kind);
+    for (const path of [item.before, item.after, ...(item.frames ?? [])])
+      if (path) {
+        if (paths.has(path))
+          throw new IdiomError("attachment paths must be unique");
+        paths.add(path);
+      }
+  }
   if (options.requireFiles !== false) {
-    for (const path of [
-      parsed.data.report.path,
-      ...parsed.data.composites.map(({ path }) => path),
-    ]) {
+    for (const path of [parsed.data.report.path, ...paths]) {
       const absolute = resolve(options.outputDirectory, path);
       const escaped = relative(resolve(options.outputDirectory), absolute);
       if (
@@ -124,7 +162,14 @@ export async function validateAttachmentManifest(options: {
       join(options.outputDirectory, parsed.data.report.path),
       "utf8",
     );
-    for (const composite of parsed.data.composites) {
+    for (const composite of [
+      ...parsed.data.composites,
+      ...(parsed.data.filmstrips ?? []).flatMap((f) =>
+        [f.before, f.after].flatMap((path) =>
+          path ? [{ kind: f.kind, path }] : [],
+        ),
+      ),
+    ]) {
       if (!report.includes(composite.kind) || !report.includes(composite.path))
         throw new IdiomError(
           `attachment manifest/report drift for ${composite.kind}`,

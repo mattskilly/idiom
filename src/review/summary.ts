@@ -21,6 +21,7 @@ export type CheckGroup = {
   problem: string;
   fix: string[];
   screenshot?: string | undefined;
+  filmstrip?: string | undefined;
   /** Every member is past the review's attention cap. */
   deferred?: true | undefined;
   members: Array<{
@@ -71,6 +72,9 @@ export function projectIssueSummary(options: {
         : { selector: representative.selector }),
       problem: representative.problem,
       fix: representative.fix,
+      ...(representative.filmstrip
+        ? { filmstrip: representative.filmstrip }
+        : {}),
       ...(representative.screenshot === undefined
         ? {}
         : { screenshot: representative.screenshot }),

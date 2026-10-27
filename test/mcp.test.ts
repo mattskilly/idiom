@@ -33,18 +33,25 @@ const call = (
   args: Record<string, unknown> = {},
 ) => client.callTool({ name, arguments: args }) as Promise<CallToolResult>;
 
-test("uninitialized server advertises exactly eight described strict schemas and survives tool errors", async () => {
+test("uninitialized server advertises exactly fifteen described strict schemas and survives tool errors", async () => {
   const directory = await root();
   const client = await connect({ project: directory });
   const { tools } = await client.listTools();
   expect(tools.map((tool) => tool.name).sort()).toEqual([
+    "idiom_baseline",
     "idiom_check",
+    "idiom_choose",
     "idiom_context",
+    "idiom_coverage",
     "idiom_decide",
+    "idiom_design_add",
     "idiom_fix_plan",
     "idiom_flows",
+    "idiom_init",
     "idiom_issue",
     "idiom_quick",
+    "idiom_sweep",
+    "idiom_tickets",
     "idiom_verify",
   ]);
   for (const tool of tools) {
@@ -68,8 +75,8 @@ test("uninitialized server advertises exactly eight described strict schemas and
   for (const route of [
     "configured flow",
     "intended designs",
-    "idiom design add",
-    "idiom decide --choose",
+    "idiom_design_add",
+    "idiom_choose",
     "idiom_fix_plan",
     "idiom_verify",
   ]) {
@@ -81,7 +88,10 @@ test("uninitialized server advertises exactly eight described strict schemas and
       minItems: 1,
       items: { enum: ["desktop", "mobile"] },
     },
+    probe: { type: "boolean" },
+    probeBudgetMs: { type: "integer", maximum: 600000 },
   });
+  expect(quick?.description).toContain("safely probes controls");
   expect(
     tools.find((tool) => tool.name === "idiom_verify")?.inputSchema.properties,
   ).toMatchObject({
@@ -131,11 +141,29 @@ test("invalid inputs are tool errors; missing/empty flows differ from malformed 
       "idiom_quick",
       { url: "https://example.com", viewports: ["mobile", "mobile"] },
     ],
+    ["idiom_quick", { url: "https://example.com", probeBudgetMs: 0 }],
+    ["idiom_quick", { url: "https://example.com", probeBudgetMs: -1 }],
+    ["idiom_quick", { url: "https://example.com", probeBudgetMs: 1.5 }],
+    ["idiom_quick", { url: "https://example.com", probeBudgetMs: 600001 }],
+    ["idiom_quick", { url: "https://example.com", probe: "yes" }],
+    [
+      "idiom_quick",
+      { url: "https://example.com", probe: false, probeBudgetMs: 1000 },
+    ],
     ["idiom_check", { flow: "../escape" }],
     ["idiom_check", { flow: "checkout", states: ["cart", "cart"] }],
     ["idiom_context", { project: directory }],
     ["idiom_fix_plan", { flow: "checkout", top: 0 }],
     ["idiom_decide", { id: "finding-1", decision: "accept", reason: "  " }],
+    ["idiom_tickets", { out: "/tmp/elsewhere" }],
+    ["idiom_tickets", { out: "../elsewhere" }],
+    ["idiom_sweep", { flow: "checkout", emitTickets: "/tmp/triage" }],
+    ["idiom_choose", { id: "finding-1", reference: "figma", reason: " " }],
+    ["idiom_baseline", { action: "show", from: "run-1" }],
+    ["idiom_baseline", { action: "show", latest: true }],
+    ["idiom_coverage", { crawl: "file:///etc/passwd" }],
+    ["idiom_init", { flows: true, project: "/elsewhere" }],
+    ["idiom_design_add", { state: "home", source: "../outside.html" }],
     [
       "idiom_verify",
       { flow: "checkout", findings: [{ id: "finding-1", runId: "../x" }] },
@@ -149,7 +177,7 @@ test("invalid inputs are tool errors; missing/empty flows differ from malformed 
   await rm(flows, { recursive: true });
   expect(toolData(await call(client, "idiom_flows"))).toEqual({
     flows: [],
-    guidance: "Run idiom init --flows",
+    guidance: "Call idiom_init with flows:true (or run idiom init --flows)",
   });
   const { mkdir } = await import("node:fs/promises");
   await mkdir(flows);
@@ -188,7 +216,7 @@ test.each([
         ? "npx playwright install chromium"
         : "Free the configured port",
     );
-    expect((await client.listTools()).tools).toHaveLength(8);
+    expect((await client.listTools()).tools).toHaveLength(15);
   },
 );
 
@@ -266,7 +294,7 @@ test("a persistent SDK session cancels active and queued work, closes late launc
   ).toBe(true);
   const error = await call(client, "idiom_flows");
   expect(error.isError).toBe(true);
-  expect((await client.listTools()).tools).toHaveLength(8);
+  expect((await client.listTools()).tools).toHaveLength(15);
   expect(
     await readFile(join(directory, "missing"), "utf8").catch(() => "absent"),
   ).toBe("absent");
@@ -338,4 +366,105 @@ test("activity without an MCP progress token emits no progress notifications", a
     (await call(client, "idiom_quick", { url: "https://example.com" })).isError,
   ).toBe(true);
   expect(notified).not.toHaveBeenCalled();
+});
+
+test("idiom_quick probes by default, reports progress and returns the interaction", async () => {
+  const directory = await root();
+  const captured: Array<{
+    probe?: boolean | undefined;
+    budget?: number | undefined;
+  }> = [];
+  const browserLauncher = async () =>
+    ({
+      version: "Mock Chromium",
+      async capture(tuple) {
+        captured.push({
+          probe: tuple.probe,
+          budget: tuple.probePageBudgetMs,
+        });
+        if (tuple.probe)
+          tuple.onProbeProgress?.({
+            completed: 0,
+            selector: "#go",
+            phase: "observe",
+          });
+        return {
+          ok: true,
+          status: 200,
+          dom: "<!doctype html><html><body><h1>Quick</h1></body></html>",
+          screenshot: Buffer.from("png"),
+          console: [],
+          axe: { violations: [] },
+          observations: {
+            version: 1,
+            viewport: { width: 1, height: 1 },
+            document: {
+              scrollWidth: 1,
+              scrollHeight: 1,
+              clientWidth: 1,
+              clientHeight: 1,
+            },
+            elements: [],
+            headings: [],
+            tokens: { status: "not-configured" },
+          },
+          mismatches: [],
+          startedAt: "2026-10-26T00:00:00.000Z",
+          endedAt: "2026-10-26T00:00:01.000Z",
+        };
+      },
+      async close() {},
+    }) satisfies BrowserSession;
+  const server = createIdiomMcpServer({
+    project: directory,
+    dependencies: { quick: { browserLauncher } },
+  });
+  const client = new Client(
+    { name: "quick-probe-test", version: "1" },
+    { supportedProtocolVersions: ["2025-11-25"] },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  cleanups.push(async () => {
+    await client.close();
+    await server.close();
+  });
+  const messages: string[] = [];
+  const response = (await client.callTool(
+    {
+      name: "idiom_quick",
+      arguments: { url: "https://example.com", probeBudgetMs: 2000 },
+    },
+    {
+      onprogress: (event) => {
+        if (event.message) messages.push(event.message);
+      },
+    },
+  )) as CallToolResult;
+  expect(response.isError).not.toBe(true);
+  expect(captured.filter((tuple) => tuple.probe)).toEqual([
+    { probe: true, budget: 2000 },
+  ]);
+  expect(messages.some((message) => message.startsWith("Probe #go"))).toBe(
+    true,
+  );
+  expect(
+    toolData<{ interaction: { status: string; budgetMs: number } }>(response)
+      .interaction,
+  ).toMatchObject({ status: "probed", budgetMs: 2000 });
+
+  captured.length = 0;
+  const off = await client.callTool({
+    name: "idiom_quick",
+    arguments: { url: "https://example.com", probe: false },
+  });
+  expect(captured.some((tuple) => tuple.probe)).toBe(false);
+  expect(toolData<{ interaction: unknown }>(off).interaction).toEqual({
+    status: "off",
+  });
+  expect(JSON.stringify((off as CallToolResult).content)).toContain(
+    "probe off",
+  );
 });

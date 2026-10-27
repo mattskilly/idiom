@@ -391,7 +391,7 @@ describe("layout-shift", () => {
   test("0.1 passes, 0.11 is reported naming the shifting elements", () => {
     expect(run(layoutShiftCheck, shift(0.1)).candidates).toEqual([]);
     const [candidate] = run(layoutShiftCheck, shift(0.11)).candidates;
-    expect(candidate?.severity).toBe("minor");
+    expect(candidate?.severity).toBe("major");
     expect(candidate?.selectorHint).toBe("section");
     expect(candidate?.explanation).toContain("main > h1");
   });

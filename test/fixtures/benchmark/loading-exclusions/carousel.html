@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><title>Exclusion</title><style>body{font:16px sans-serif;margin:24px}</style></head><body>
+<main><h1>Home</h1><div id="ticker" aria-hidden="true">Slide 1</div><button id="share" type="button">Share</button></main>
+<script>
+let slide = 1;
+setInterval(() => { slide = (slide % 5) + 1; document.querySelector("#ticker").textContent = "Slide " + slide; }, 200);
+document.querySelector("#share").addEventListener("click", () => {
+  fetch("/api/track?event=share").catch(() => undefined);
+});
+</script></body></html>

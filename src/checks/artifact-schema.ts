@@ -195,6 +195,7 @@ export const motionArtifactSchema = z
       z
         .object({
           source: z.enum(["probe-hover", "probe-click", "web-step"]),
+          timelineId: z.string().min(1).optional(),
           selector: z.string().min(1),
           name: z.string(),
           stepIndex: z.number().int().positive().optional(),
@@ -247,6 +248,347 @@ export const motionArtifactSchema = z
     (artifact) => artifact.status === "ran" || !!artifact.reason,
     "incomplete motion collection requires a reason",
   );
+
+const timelineStatusSchema = z.enum(["ran", "partial", "unavailable"]);
+/**
+ * One visible change root an action produced, classified in-page where the
+ * live DOM (ancestry, ARIA, hidden reveals) is still available. Policy —
+ * thresholds, preference, grouping — stays in the motion check.
+ */
+export const visibleChangeSchema = z
+  .object({
+    /** The appeared/disappeared root, or the resized region. */
+    selector: z.string().min(1),
+    /** The grouping surface: a panel slot, list, live region or `main`. */
+    container: z.string().min(1),
+    containerName: z.string().max(120),
+    kind: z.enum([
+      "content-swap",
+      "expand-collapse",
+      "list-item",
+      "status",
+      "route",
+    ]),
+    /** `${kind}|${container}`: how the probe and the check group changes. */
+    key: z.string().min(1),
+    direction: z.enum(["in", "out", "resize"]),
+    before: rectSchema.nullable(),
+    after: rectSchema.nullable(),
+    /** Pixels: the smaller side of an appearing box, or a resize delta. */
+    extent: finite.nonnegative(),
+    /** Only text changed (counters, echoes); never a snap. */
+    textOnly: z.boolean(),
+    /** Indices into this action's `animations` covering the change. */
+    animations: z.array(z.number().int().nonnegative()),
+    /** Inline style changed over 3+ frames: a script-driven tween. */
+    progressive: z.boolean(),
+  })
+  .strict();
+const timelinePointSchema = z.object({ x: finite, y: finite }).strict();
+/**
+ * What the user experienced during one action. Times are milliseconds since
+ * the action started: in-page facts on the page clock, request times on the
+ * capture process clock. The two clocks differ by one evaluate round trip.
+ */
+const pendingIndicatorKindSchema = z.enum([
+  "progressbar",
+  "busy",
+  "spinner",
+  "status-text",
+  "control-text",
+  "progress-text",
+  "skeleton",
+  "trigger-disabled",
+  "trigger-busy",
+  "trigger-pressed",
+]);
+const heldChangeSchema = z
+  .object({ time: finite, selector: z.string().min(1) })
+  .strict();
+const heldIndicatorSchema = z
+  .object({
+    kind: pendingIndicatorKindSchema,
+    selector: z.string().min(1),
+    time: finite,
+    text: z.string().max(80).optional(),
+  })
+  .strict();
+/**
+ * What the probe's held replay saw while the action's requests were held.
+ * In-page times (indicators, changes, releases) are milliseconds since the
+ * action was dispatched, on the page clock; request start times are on the
+ * capture process clock, since the action began.
+ */
+export const heldReplaySchema = z
+  .object({
+    of: z.enum(["web-step", "probe-click"]),
+    delayMs: z.number().int().positive(),
+    withinMs: z.number().int().positive(),
+    /** False when the action's dispatch was never observed in the page. */
+    dispatched: z.boolean(),
+    requests: z.array(
+      z
+        .object({
+          method: z.string().min(1),
+          path: z.string(),
+          resourceType: z.string(),
+          startTime: finite,
+          releasedAt: finite.nullable(),
+          /** The guard let it through after the hold (a safe method). */
+          forwarded: z.boolean(),
+          /** A main-frame document navigation. */
+          navigation: z.boolean(),
+        })
+        .strict(),
+    ),
+    releasedAt: finite.nullable(),
+    indicator: heldIndicatorSchema.nullable(),
+    indicators: z
+      .array(
+        heldIndicatorSchema
+          .extend({ inMain: z.boolean(), progressText: z.boolean() })
+          .strict(),
+      )
+      .max(12),
+    firstChange: heldChangeSchema.nullable(),
+    firstMainChange: heldChangeSchema.nullable(),
+    changedAfterRelease: z.boolean(),
+    changeAfterReleaseAt: finite.nullable(),
+    mainChangedAfterRelease: z.boolean(),
+    mainChangeAfterReleaseAt: finite.nullable(),
+    mainSelector: z.string().min(1),
+    mainEmpty: z
+      .object({ from: finite, to: finite.nullable() })
+      .strict()
+      .nullable(),
+    routeChange: z
+      .object({ from: z.string(), to: z.string(), time: finite })
+      .strict()
+      .nullable(),
+    trigger: z
+      .object({
+        checkedAt: finite.nullable(),
+        enabled: z.boolean().nullable(),
+      })
+      .strict(),
+    secondActivation: z
+      .object({
+        attempted: z.boolean(),
+        at: finite.optional(),
+        reason: z.string().optional(),
+        duplicates: z.array(
+          z
+            .object({
+              method: z.string().min(1),
+              path: z.string(),
+              time: finite,
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+    notes: z.array(z.string()),
+  })
+  .strict();
+export type HeldReplay = z.infer<typeof heldReplaySchema>;
+export type PendingIndicatorKind = z.infer<typeof pendingIndicatorKindSchema>;
+
+export const actionTimelineSchema = z
+  .object({
+    id: z.string().min(1).optional(),
+    source: z.enum([
+      "load",
+      "web-step",
+      "probe-click",
+      "probe-hover",
+      "slow-replay",
+    ]),
+    kind: z.string().min(1),
+    selector: z.string().min(1).optional(),
+    name: z.string(),
+    stepIndex: z.number().int().positive().optional(),
+    /** Document path only; never the query. */
+    url: z.string(),
+    /** Epoch milliseconds. */
+    startedAt: finite,
+    /** Epoch origin of the in-page timeline clock. */
+    clockOrigin: finite.optional(),
+    durationMs: finite.nonnegative(),
+    /** False when the window ended at its bound rather than at quiet. */
+    settled: z.boolean(),
+    status: timelineStatusSchema,
+    reason: z.string().min(1).optional(),
+    truncated: z.array(
+      z.enum([
+        "frames",
+        "elements",
+        "changes",
+        "shifts",
+        "mutations",
+        "animations",
+        "requests",
+        "visibleChanges",
+      ]),
+    ),
+    /** Document path when the window began (detects client-side routes). */
+    fromUrl: z.string().optional(),
+    /** The prefers-reduced-motion preference the window was recorded under. */
+    reducedMotion: z.boolean().optional(),
+    /**
+     * A probe replay, under normal motion, of the preceding window with the
+     * same source and selector. Evidence for motion snaps only: not a user
+     * action of its own.
+     */
+    confirmation: z.literal(true).optional(),
+    /** Every layout-shift entry, including those after recent input. */
+    shifts: z.array(
+      z
+        .object({
+          time: finite,
+          value: finite.nonnegative(),
+          hadRecentInput: z.boolean(),
+          sources: z.array(
+            z
+              .object({
+                selector: z.string().min(1),
+                previousRect: rectSchema,
+                currentRect: rectSchema,
+              })
+              .strict(),
+          ),
+        })
+        .strict(),
+    ),
+    /**
+     * frames[0] is the baseline of the tracked set; later frames hold only
+     * elements whose scroll-compensated position or size changed, or that
+     * joined the tracked set after a scroll.
+     */
+    frames: z.array(
+      z
+        .object({
+          time: finite,
+          scroll: timelinePointSchema,
+          scrollers: z.array(
+            z
+              .object({ selector: z.string().min(1), x: finite, y: finite })
+              .strict(),
+          ),
+          elements: z.array(
+            z
+              .object({
+                selector: z.string().min(1),
+                /** Viewport-relative. */
+                rect: rectSchema,
+                /** Cumulative scroll of the element's scroll chain. */
+                offset: timelinePointSchema,
+              })
+              .strict(),
+          ),
+        })
+        .strict(),
+    ),
+    mutations: z.array(
+      z
+        .object({
+          time: finite,
+          type: z.enum(["insert", "remove"]),
+          selector: z.string().min(1),
+          rect: rectSchema.nullable(),
+        })
+        .strict(),
+    ),
+    animations: z.array(
+      z
+        .object({
+          target: z.string().min(1),
+          pseudoElement: z.string().min(1).optional(),
+          kind: z.enum(["transition", "animation", "web-animation"]),
+          properties: z.array(z.string()),
+          durationMs: finite.nonnegative().nullable(),
+          delayMs: finite,
+          iterations: z.union([finite.nonnegative(), z.literal("infinite")]),
+          startTime: finite,
+          endTime: finite.nullable(),
+        })
+        .strict(),
+    ),
+    requests: z.array(
+      z
+        .object({
+          method: z.string().min(1),
+          resourceType: z.string(),
+          path: z.string(),
+          startTime: finite,
+          endTime: finite.nullable(),
+          status: z.number().int().nullable(),
+          outcome: z.enum(["ok", "failed", "blocked", "pending"]),
+        })
+        .strict(),
+    ),
+    viewTransition: z
+      .object({
+        used: z.boolean(),
+        kind: z.enum(["same-document", "cross-document"]).optional(),
+      })
+      .strict(),
+    effectRegion: z
+      .object({
+        control: z.string().min(1).optional(),
+        controls: z.array(z.string().min(1)),
+        commonAncestor: z.string().min(1).optional(),
+      })
+      .strict(),
+    /** Present exactly on `slow-replay` actions. */
+    held: heldReplaySchema.optional(),
+    visibleChanges: z.array(visibleChangeSchema).optional(),
+  })
+  .strict()
+  .refine(
+    (action) => action.status === "ran" || !!action.reason,
+    "incomplete timeline requires a reason",
+  )
+  .refine(
+    (action) =>
+      (action.source === "slow-replay") === (action.held !== undefined),
+    "held facts belong to exactly the slow-replay actions",
+  );
+export const actionTimelineArtifactSchema = z
+  .object({
+    version: z.literal(1),
+    status: timelineStatusSchema,
+    reason: z.string().min(1).optional(),
+    limits: z
+      .object({
+        frames: z.number().int().positive(),
+        elements: z.number().int().positive(),
+        changesPerFrame: z.number().int().positive(),
+        shifts: z.number().int().positive(),
+        mutations: z.number().int().positive(),
+        animations: z.number().int().positive(),
+        requests: z.number().int().positive(),
+        actions: z.number().int().positive(),
+        visibleChanges: z.number().int().positive().optional(),
+      })
+      .strict(),
+    /** Actions dropped beyond limits.actions. */
+    truncated: z.object({ actions: z.number().int().nonnegative() }).strict(),
+    actions: z.array(actionTimelineSchema),
+  })
+  .strict()
+  .refine(
+    (artifact) => artifact.status === "ran" || !!artifact.reason,
+    "incomplete timeline collection requires a reason",
+  )
+  .refine(
+    (artifact) => artifact.actions.length <= artifact.limits.actions,
+    "timeline actions exceed their recorded limit",
+  );
+export type ActionTimeline = z.infer<typeof actionTimelineSchema>;
+export type VisibleChange = z.infer<typeof visibleChangeSchema>;
+export type ActionTimelineArtifact = z.infer<
+  typeof actionTimelineArtifactSchema
+>;
 
 const rgbSchema = z
   .object({
@@ -526,8 +868,44 @@ const probeCollectionSchema = z
   })
   .strict();
 
+const countSchema = z.number().int().nonnegative();
+const probeSafetySchema = z
+  .object({
+    policy: z.literal("third-party"),
+    origins: z.array(z.string().min(1)),
+    requests: z
+      .object({
+        sent: z.record(z.string().min(1), countSchema),
+        blocked: z.record(z.string().min(1), countSchema),
+      })
+      .strict(),
+    blocked: z
+      .object({
+        crossOriginNavigation: countSchema,
+        formSubmission: countSchema,
+        download: countSchema,
+        popup: countSchema,
+        windowOpen: countSchema,
+        beforeunload: countSchema,
+        permission: countSchema,
+      })
+      .strict(),
+    skipped: z.object({ destructive: countSchema }).strict(),
+  })
+  .strict();
+
 const probeSchema = z
   .object({
+    safety: probeSafetySchema.optional(),
+    heldReplay: z
+      .object({
+        delayMs: z.number().int().positive(),
+        queued: countSchema,
+        ran: countSchema,
+        notes: z.array(z.string()),
+      })
+      .strict()
+      .optional(),
     status: z.enum(["ran", "partial", "timed-out"]),
     selector: z.string().min(1).optional(),
     step: z.string().min(1).optional(),

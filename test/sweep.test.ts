@@ -239,21 +239,29 @@ test("sweep keeps every finding, ranks severity first and measured before model,
   expect(text).toContain("  editor:");
 }, 60_000);
 
-test("sweep refuses deterministic-only and a missing configured spec file", async () => {
+test("deterministic-only skips providers and spec reads; normal sweep validates the spec", async () => {
   const project = await sweepProject();
-  await expect(
-    runReview({
-      project,
-      flow: "studio-lab",
-      from: runId,
-      mode: "sweep",
-      deterministicOnly: true,
-    }),
-  ).rejects.toThrow(/deterministic-only/);
   const path = join(project, ".idiom", "project.json");
   const config = JSON.parse(await readFile(path, "utf8"));
   config.design.specFile = "missing/SPECS.md";
   await writeFile(path, JSON.stringify(config, null, 2));
+  const summary = await sweepCommand({
+    project,
+    flow: "studio-lab",
+    from: runId,
+    deterministicOnly: true,
+    dependencies: {
+      createCritiqueAdapter() {
+        throw new Error("must not create provider");
+      },
+      claudeCodeRunner: async () => {
+        throw new Error("must not call Claude");
+      },
+    },
+  });
+  expect(summary.outcome).toEqual({ kind: "deterministic-only" });
+  expect(summary.findings.length).toBeGreaterThan(0);
+  expect(summary.findings.every((f) => f.layer === "deterministic")).toBe(true);
   await expect(
     sweepCommand({ project, flow: "studio-lab", from: runId }),
   ).rejects.toThrow(/design\.specFile "missing\/SPECS\.md"/);
@@ -301,4 +309,53 @@ test("the sweep CLI renders the ranked list and gates only when asked", async ()
   expect(output.join("")).toMatch(
     /sweep failed: \d+ open finding\(s\) at or above major/,
   );
+}, 60_000);
+
+test("named-flow sweep defaults to ten tickets and preserves the uncapped omitted tail for gating", async () => {
+  const project = await sweepProject();
+  const review = {
+    critique: {
+      async critique(input: CritiqueInput) {
+        const state = input.screenshots[0]?.state ?? "";
+        return critiqueResult({
+          findings:
+            state === "editor"
+              ? Array.from({ length: 12 }, (_, i) =>
+                  candidate(state, {
+                    selectorHint: `#extra-${i}`,
+                    explanation: `Unique issue ${i}.`,
+                    severity: "major",
+                  }),
+                )
+              : [],
+        });
+      },
+    },
+  };
+  const summary = await sweepCommand({
+    flow: "studio-lab",
+    project,
+    from: runId,
+    emitTickets: join(project, "tickets/triage"),
+    dependencies: review,
+  });
+  expect(summary.tickets?.createdPaths).toHaveLength(10);
+  expect(summary.tickets?.omittedCount).toBeGreaterThan(0);
+  expect(summary.findings.filter((f) => f.layer === "model")).toHaveLength(12);
+  const code = await run(
+    [
+      "sweep",
+      "studio-lab",
+      "--project",
+      project,
+      "--from",
+      runId,
+      "--max-tickets",
+      "1",
+      "--fail-on",
+      "major",
+    ],
+    { review, stdout: () => {}, stderr: () => {} },
+  );
+  expect(code).toBe(1);
 }, 60_000);

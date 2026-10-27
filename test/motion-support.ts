@@ -1,4 +1,9 @@
-import type { CheckTuple, ObservationArtifactV2 } from "../src/checks/types.js";
+import type {
+  ActionTimeline,
+  CheckTuple,
+  ObservationArtifactV2,
+  VisibleChange,
+} from "../src/checks/types.js";
 export const emptyObservation: ObservationArtifactV2 = {
   version: 2,
   viewport: { width: 800, height: 600 },
@@ -35,3 +40,29 @@ export function required<T>(value: T | null | undefined): T {
     throw new Error("missing fixture value");
   return value;
 }
+
+export const swap: VisibleChange = {
+  selector: "#panel-2",
+  container: "#panels",
+  containerName: "Project panels",
+  kind: "content-swap",
+  key: "content-swap|#panels",
+  direction: "in",
+  before: null,
+  after: { x: 0, y: 100, width: 600, height: 200 },
+  extent: 200,
+  textOnly: false,
+  animations: [],
+  progressive: false,
+};
+export type Animation = ActionTimeline["animations"][number];
+export const fade: Animation = {
+  target: "#panel-2",
+  kind: "animation",
+  properties: ["opacity"],
+  durationMs: 150,
+  delayMs: 0,
+  iterations: 1,
+  startTime: 10,
+  endTime: 160,
+};

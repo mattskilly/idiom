@@ -10,7 +10,7 @@ const guide = await readIdiomSkillFile("init.md");
 test("the distributed Idiom skill has valid manual-invocation front matter", async () => {
   const skill = await readIdiomSkillTemplate();
   const lines = skill.split("\n");
-  expect(lines.length).toBeLessThanOrEqual(100);
+  expect(lines.length).toBeLessThanOrEqual(115);
   expect(lines[0]).toBe("---");
   expect(skill).toMatch(/^---\nname: idiom\n/);
   expect(skill).toMatch(/\ndescription: \S[^\n]+\n/);
@@ -226,5 +226,30 @@ test("the skill prefers supported MCP tools without changing human judgment or v
   expect(skill).toContain("never silently retry a tool error via CLI");
   expect(skill).toContain("explicit reason for decisions");
   expect(skill).toContain("verification only");
-  expect(skill).toContain("model review, explore, init, references, tickets");
+  expect(skill).toContain(
+    "page review, explore, rulings/learn, references, per-finding tickets",
+  );
+  for (const tool of [
+    "idiom_init",
+    "idiom_design_add",
+    "idiom_choose",
+    "idiom_tickets",
+    "idiom_sweep",
+    "idiom_coverage",
+    "idiom_baseline",
+  ])
+    expect(skill).toContain(`\`${tool}\``);
+});
+
+test("batch-landed sweep emits bounded proposals without promotion or acceptance", async () => {
+  const skill = await readIdiomSkillTemplate();
+  expect(skill.indexOf("## Sweep mode")).toBeLessThan(
+    skill.indexOf("## Review mode"),
+  );
+  expect(skill).toContain("After a batch of builds lands");
+  expect(skill).toContain(
+    "sweep --all --emit-tickets .autobuild/tickets/triage",
+  );
+  expect(skill).toContain("without inventing accept/reject decisions");
+  expect(skill).toContain("promote them, launch dispatch or implement cleanup");
 });
