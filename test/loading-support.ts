@@ -8,6 +8,7 @@ export type LoadingServer = {
   origin: string;
   /** Requests other than GET/HEAD the app server received. */
   nonGet: string[];
+  requests: string[];
   close(): Promise<void>;
 };
 
@@ -17,9 +18,11 @@ export type LoadingServer = {
  */
 export async function startLoadingServer(): Promise<LoadingServer> {
   const nonGet: string[] = [];
+  const requests: string[] = [];
   const server: Server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const method = request.method ?? "GET";
+    requests.push(`${method} ${url.pathname}`);
     if (method !== "GET" && method !== "HEAD")
       nonGet.push(`${method} ${url.pathname}`);
     const json = (value: unknown, status = 200) => {
@@ -67,6 +70,7 @@ export async function startLoadingServer(): Promise<LoadingServer> {
   return {
     origin: `http://127.0.0.1:${port}`,
     nonGet,
+    requests,
     close: () =>
       new Promise<void>((resolve) => {
         server.closeAllConnections();

@@ -666,11 +666,9 @@ export async function flowReminder(context, budget) {
     const flow = JSON.parse(await readSmall(path, budget));
     if (typeof flow.id !== "string" || !flow.id.trim())
       throw new Error("invalid flow");
-    flows.push(
-      `${flow.id.replace(/[\r\n\t]/g, " ").slice(0, 80)} (all states)`,
-    );
+    flows.push(`${flow.id.replace(/[\r\n\t]/g, " ").slice(0, 80)}`);
   }
-  return `Run idiom_check for ${flows.join(", ")}${files.length > flows.length ? ", and all remaining configured flows/states" : ""}.`;
+  return `Run idiom check --changed (or idiom_check with changed: true) for configured flows: ${flows.join(", ")}${files.length > flows.length ? ", and remaining configured flows" : ""}.`;
 }
 
 export async function readInput(budget) {

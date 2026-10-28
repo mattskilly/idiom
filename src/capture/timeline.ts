@@ -9,6 +9,7 @@ import {
   ensureVisibilityDom,
   installVisibilityDom,
 } from "../checks/visibility-dom.js";
+import { rememberRequest, rememberResponse } from "./failure-identity.js";
 import type { FilmstripCapture } from "./filmstrips.js";
 import { ignoredRequest } from "./request-policy.js";
 
@@ -1474,7 +1475,7 @@ function timelineRecorder(config: RecorderConfig): void {
 
 type RequestRecord = ActionTimeline["requests"][number];
 
-type TimelineExtras = Pick<ActionTimeline, "held">;
+type TimelineExtras = Pick<ActionTimeline, "held" | "failure">;
 
 function unavailableAction(
   identity: TimelineIdentity,
@@ -1676,7 +1677,7 @@ export class TimelineCollector {
       } catch {
         path = request.url().split(/[?#]/)[0] ?? "";
       }
-      records.set(request, {
+      const record: RequestRecord = {
         method: request.method(),
         resourceType: request.resourceType(),
         path,
@@ -1684,12 +1685,23 @@ export class TimelineCollector {
         endTime: null,
         status: null,
         outcome: "pending",
-      });
+      };
+      records.set(request, record);
+      const type = request.resourceType();
+      if (type === "fetch" || type === "xhr")
+        rememberRequest(record, {
+          method: request.method(),
+          url: request.url(),
+          resourceType: type,
+        });
     };
     const onFinished = (request: Request) => {
       const record = records.get(request);
       if (!record) return;
       record.endTime = at();
+      const timing = request.timing();
+      if (timing.responseEnd >= 0)
+        rememberResponse(record, timing.startTime + timing.responseEnd);
       record.outcome = "ok";
       void request
         .response()
@@ -1924,6 +1936,7 @@ const sourceRank = {
   "probe-click": 2,
   "probe-hover": 2.5,
   "slow-replay": 3,
+  "failure-replay": 4,
 } as const;
 function ordered(actions: ActionTimeline[]): ActionTimeline[] {
   return actions
@@ -1940,6 +1953,11 @@ function ordered(actions: ActionTimeline[]): ActionTimeline[] {
             (a.action.held?.of === "web-step"
               ? (a.action.stepIndex ?? 0) - (b.action.stepIndex ?? 0)
               : 0)
+          : 0) ||
+        (a.action.source === "failure-replay"
+          ? Number(a.action.failure?.of === "probe-click") -
+              Number(b.action.failure?.of === "probe-click") ||
+            (a.action.stepIndex ?? 0) - (b.action.stepIndex ?? 0)
           : 0) ||
         a.action.startedAt - b.action.startedAt ||
         a.index - b.index,
@@ -1996,6 +2014,7 @@ export function withTimelineIds(
   let probe = 0;
   let hover = 0;
   let slowProbe = 0;
+  let failureProbe = 0;
   const idOf = (action: ActionTimeline): string => {
     switch (action.source) {
       case "load":
@@ -2006,6 +2025,10 @@ export function withTimelineIds(
         return `hover-${++hover}`;
       case "probe-click":
         return `probe-${++probe}`;
+      case "failure-replay":
+        return action.failure?.of === "web-step"
+          ? `failure-step-${action.stepIndex ?? 0}`
+          : `failure-probe-${++failureProbe}`;
       case "slow-replay":
         return action.held?.of === "web-step"
           ? `slow-step-${action.stepIndex ?? 0}`

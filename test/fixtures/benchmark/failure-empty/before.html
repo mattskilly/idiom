@@ -1,0 +1,4 @@
+<!doctype html><html lang="en"><title>Failure recovery</title><style>body{font:16px system-ui;padding:40px}button{padding:12px}main{padding:20px}</style><button id="load">Load</button><main><div id="result">Initial content</div></main><script>
+const button=document.querySelector('#load'), result=document.querySelector('#result');
+button.onclick=async()=>{result.innerHTML="";try{const response=await fetch("/api/items");if(!response.ok)throw new Error("failed");await response.json();result.innerHTML='<p>Three items loaded</p>';button.disabled=false;button.removeAttribute('aria-busy');}catch(error){result.innerHTML="";}};
+</script></html>

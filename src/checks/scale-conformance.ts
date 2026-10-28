@@ -1,5 +1,12 @@
 import { isElementPainted, paintedGate } from "./painted.js";
 import {
+  applyScaleRulings,
+  type ClusterOccurrence,
+  type ScaleCluster,
+  scaleNoun,
+  spacingFamily,
+} from "./scale-clusters.js";
+import {
   canonicalColor,
   colorDelta,
   effectiveBackground,
@@ -16,7 +23,12 @@ import {
   unavailable,
   verify,
 } from "./shared.js";
-import { spacingFindings } from "./spacing-scale.js";
+import {
+  type SpacingMember,
+  spacingCandidates,
+  spacingFindings,
+  spacingOccurrences,
+} from "./spacing-scale.js";
 import type {
   CheckResult,
   ChecksConfig,
@@ -86,6 +98,14 @@ type Group = {
 type Analysis = {
   groups: Group[];
   notes: Map<CheckTuple, string[]>;
+  /** Set only when config.scaleQuestions is present. */
+  questions?:
+    | {
+        spacing: Map<CheckTuple, FindingCandidate[]>;
+        drift: Map<CheckTuple, FindingCandidate[]>;
+        unanswered: ScaleCluster[];
+      }
+    | undefined;
 };
 
 const configuredOrder: ScaleRole[] = [
@@ -727,7 +747,193 @@ function analyse(
         });
   }
   for (const group of groups.values()) group.owner = owner(group.observations);
-  return { groups: [...groups.values()], notes };
+  if (config.scaleQuestions === undefined)
+    return { groups: [...groups.values()], notes };
+  return withQuestions(tuples, config, [...groups.values()], notes);
+}
+
+type Source =
+  | { kind: "observation"; observation: Observation }
+  | { kind: "spacing"; member: SpacingMember };
+
+/**
+ * Hold repeated declared-scale drift in one context as a design-system
+ * question. Only occurrences that would already be findings take part;
+ * everything outside a qualifying cluster is reported exactly as before.
+ */
+function withQuestions(
+  tuples: readonly CheckTuple[],
+  config: ChecksConfig,
+  groups: Group[],
+  notes: Map<CheckTuple, string[]>,
+): Analysis {
+  const occurrences: Array<ClusterOccurrence<Source>> = [];
+  for (const group of groups) {
+    if (group.mode !== "declared") continue;
+    for (const observation of group.observations) {
+      const value = observation.value;
+      const source = { kind: "observation" as const, observation };
+      const base = {
+        tuple: observation.tuple,
+        element: observation.element,
+        role: observation.role,
+        source,
+      };
+      if (
+        value.kind === "px" &&
+        (observation.property === "height" || observation.property === "radius")
+      )
+        occurrences.push({
+          ...base,
+          property: observation.property,
+          value: { kind: "px", px: value.px },
+          longhand:
+            observation.property === "height"
+              ? "height"
+              : "borderTopLeftRadius",
+        });
+      else if (value.kind === "color" && observation.property === "border")
+        occurrences.push({
+          ...base,
+          property: "border",
+          value: { kind: "color", canonical: value.color },
+          longhand: "borderTopColor",
+        });
+    }
+  }
+  const members = spacingOccurrences(tuples, config.scales.spacing);
+  for (const member of members)
+    occurrences.push({
+      tuple: member.tuple,
+      element: member.element as SignalledElement,
+      property: spacingFamily(member.property),
+      value: { kind: "px", px: member.px },
+      longhand: member.property,
+      source: { kind: "spacing", member },
+    });
+  const applied = applyScaleRulings(
+    occurrences,
+    config.scales,
+    config.scaleQuestions?.rulings ?? [],
+  );
+  // Only occurrences held by a question or resolved by a ruling leave the
+  // findings; values the engine cannot cluster (a full or elliptical
+  // radius) are reported exactly as before.
+  const removed = new Set(
+    [...applied.resolved, ...applied.held].map(({ source }) => source),
+  );
+  const removedObservations = new Set(
+    [...removed].flatMap((source) =>
+      source.kind === "observation" ? [source.observation] : [],
+    ),
+  );
+  const removedMembers = new Set(
+    [...removed].flatMap((source) =>
+      source.kind === "spacing" ? [source.member] : [],
+    ),
+  );
+  const residual = groups.flatMap((group) => {
+    if (group.mode !== "declared") return [group];
+    const observations = group.observations.filter(
+      (observation) => !removedObservations.has(observation),
+    );
+    if (observations.length === 0) return [];
+    return [{ ...group, observations, owner: owner(observations) }];
+  });
+  const drift = new Map<CheckTuple, FindingCandidate[]>();
+  const ownerNotes = new Map<CheckTuple, { held: number; questions: number }>();
+  for (const cluster of applied.clusters) {
+    const first = [...cluster.occurrences].sort((left, right) =>
+      tupleSortKey(left.tuple).localeCompare(tupleSortKey(right.tuple)),
+    )[0];
+    if (first === undefined) continue;
+    if (cluster.status === "drift") {
+      const candidate = driftCandidate(cluster, config);
+      drift.set(first.tuple, [...(drift.get(first.tuple) ?? []), candidate]);
+    } else {
+      const entry = ownerNotes.get(first.tuple) ?? { held: 0, questions: 0 };
+      entry.held += cluster.count;
+      entry.questions += 1;
+      ownerNotes.set(first.tuple, entry);
+    }
+  }
+  for (const [tuple, { held, questions }] of ownerNotes)
+    notes.set(tuple, [
+      ...(notes.get(tuple) ?? []),
+      `${held} ${plural(held, "occurrence")} held as ${questions} design-system ${plural(questions, "question")}`,
+    ]);
+  const resolvedOwner = [...applied.resolved].sort((left, right) =>
+    tupleSortKey(left.tuple).localeCompare(tupleSortKey(right.tuple)),
+  )[0]?.tuple;
+  if (resolvedOwner !== undefined)
+    notes.set(resolvedOwner, [
+      ...(notes.get(resolvedOwner) ?? []),
+      `${applied.resolved.length} ${plural(applied.resolved.length, "occurrence")} resolved by recorded ruling`,
+    ]);
+  return {
+    groups: residual,
+    notes,
+    questions: {
+      spacing: spacingCandidates(
+        members.filter((member) => !removedMembers.has(member)),
+        config.scales.spacing,
+      ),
+      drift,
+      unanswered: applied.clusters.filter(
+        (cluster) => cluster.status === "unanswered",
+      ),
+    },
+  };
+}
+
+function driftCandidate(
+  cluster: ScaleCluster<Source> & {
+    ruling?: { id: string } | undefined;
+  },
+  config: ChecksConfig,
+): FindingCandidate {
+  const spacing = cluster.property.startsWith("spacing:");
+  const first = cluster.occurrences[0] as ClusterOccurrence<Source>;
+  const scale = cluster.nearestSteps.steps.join("/");
+  const targets = [
+    ...new Map(
+      cluster.occurrences.map(({ element, longhand }) => [
+        `${element.selector}\0${longhand}`,
+        { selector: element.selector, property: longhand },
+      ]),
+    ).values(),
+  ];
+  const noun = scaleNoun(cluster.property);
+  return {
+    category: "scale-conformance",
+    severity: "minor",
+    rule: spacing
+      ? "idiom:off-scale-spacing"
+      : `idiom:off-scale-${cluster.property}`,
+    selectorHint: first.element.selector,
+    fingerprintHint: `scale-cluster:${cluster.choiceKey}`,
+    explanation: `${cluster.count} ${noun} occurrences at ${cluster.value} on ${cluster.componentLabel} in ${cluster.context.landmark} at ${cluster.context.viewport}; kept as drift by ${cluster.ruling?.id ?? "a recorded ruling"}. Scale is ${scale} (${cluster.scaleSource}). Occurrences: ${targets.map((target) => `${target.selector} ${target.property}`).join(", ")}.`,
+    acceptance: [
+      `No ${cluster.componentLabel} in ${cluster.context.landmark} renders ${noun} ${cluster.value}; use a declared value (${scale}).`,
+    ],
+    verification: verify("scale-conformance", {
+      property: spacing ? "spacing" : cluster.property,
+      ...(cluster.role === undefined ? {} : { role: cluster.role }),
+      value: cluster.value,
+      scale: spacing ? config.scales.spacing : cluster.nearestSteps.steps,
+      context: cluster.context,
+      targets,
+    }),
+    evidenceTuples: [
+      ...new Set(
+        [...cluster.occurrences]
+          .sort((left, right) =>
+            tupleSortKey(left.tuple).localeCompare(tupleSortKey(right.tuple)),
+          )
+          .map(({ tuple }) => tuple),
+      ),
+    ],
+  };
 }
 
 const analyses = new WeakMap<
@@ -899,12 +1105,18 @@ export const scaleConformanceCheck: DeterministicCheck = {
     const candidates = analysis.groups
       .filter((group) => group.owner === tuple)
       .map(candidateFor);
-    candidates.push(
-      ...(spacingFindings(
-        tuples?.includes(tuple) ? tuples : [tuple],
-        config.scales.spacing,
-      ).get(tuple) ?? []),
-    );
+    if (analysis.questions === undefined)
+      candidates.push(
+        ...(spacingFindings(
+          tuples?.includes(tuple) ? tuples : [tuple],
+          config.scales.spacing,
+        ).get(tuple) ?? []),
+      );
+    else
+      candidates.push(
+        ...(analysis.questions.spacing.get(tuple) ?? []),
+        ...(analysis.questions.drift.get(tuple) ?? []),
+      );
     return {
       coverage: {
         check: this.id,
@@ -916,3 +1128,17 @@ export const scaleConformanceCheck: DeterministicCheck = {
     };
   },
 };
+
+/**
+ * The run's unanswered design-system questions: qualifying clusters of
+ * declared-scale drift with no recorded answer. Reuses the analysis the
+ * check already ran for the same tuples and config; empty when the run
+ * cannot ask questions (no `config.scaleQuestions`).
+ */
+export function scaleQuestions(
+  tuples: readonly CheckTuple[],
+  config: ChecksConfig,
+): ScaleCluster[] {
+  if (config.scaleQuestions === undefined) return [];
+  return analysisFor(tuples, config).questions?.unanswered ?? [];
+}

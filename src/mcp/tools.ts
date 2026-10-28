@@ -17,12 +17,17 @@ import {
   baselineRecordCommand,
   renderBaselineRecord,
 } from "../commands/baseline.js";
-import { checkWithReview } from "../commands/check.js";
+import { type CheckSummary, checkWithReview } from "../commands/check.js";
+import {
+  checkChanged,
+  renderChangedSelection,
+} from "../commands/check-changed.js";
 import { contextCommand } from "../commands/context.js";
 import { coverageCommand, renderCoverage } from "../commands/coverage.js";
 import { decideCommand } from "../commands/decide.js";
 import { addDesignCommand } from "../commands/design.js";
 import { initProject, initSummaryLines } from "../commands/init.js";
+import { rulingCommand } from "../commands/ruling.js";
 import { renderSweepSummary, sweepCommand } from "../commands/sweep.js";
 import { verifyCommand } from "../commands/verify.js";
 import { figmaToken } from "../design/figma/client.js";
@@ -39,7 +44,7 @@ import { interactionTail } from "../quick/interaction.js";
 import { type QuickDependencies, runQuick } from "../quick/run.js";
 import { loadRunTuples } from "../review/artifacts.js";
 import type { CatalogFinding } from "../review/catalog.js";
-import type { ReviewDependencies } from "../review/run.js";
+import type { ReviewDependencies, ReviewRunResult } from "../review/run.js";
 import { projectIssueSummary } from "../review/summary.js";
 import { type Finding, findingSchema } from "../schemas/finding.js";
 import {
@@ -297,11 +302,142 @@ export function registerIdiomTools(
       );
     },
   );
+  async function projectCheckedRun(
+    flowId: string,
+    all: boolean,
+    summary: CheckSummary,
+    output: ReviewRunResult,
+  ): Promise<CallToolResult> {
+    const validated = await validateProject({
+      ...configured,
+      flow: flowId,
+    });
+    const flow = validated.flows[0]?.flow;
+    if (!flow) throw new IdiomError(`Unknown flow ${flowId}`);
+    const loaded = await loadRunTuples(validated, flow, output.runDirectory);
+    const failures = loaded.tuples.flatMap((tuple) =>
+      tuple.failure ? [`${tuple.failure.stage}: ${tuple.failure.message}`] : [],
+    );
+    if (failures.length)
+      throw new IdiomError(
+        `Capture failed: ${failures.join("; ")}. Report: ${output.reportPath}`,
+      );
+    const originals = findingSchema
+      .array()
+      .parse(JSON.parse(await readFile(output.findingsPath, "utf8")));
+    // Baseline summaries contain exact new occurrences, rather than capped representatives.
+    const live = summary.baseline
+      ? (output.deterministicOccurrences ?? originals).filter((finding) =>
+          summary.findings.some(
+            (item) =>
+              item.id === finding.id &&
+              item.where === tupleCoordinateKey(finding),
+          ),
+        )
+      : originals.filter((finding) =>
+          summary.findings.some((item) => item.id === finding.id),
+        );
+    const summaries = new Map(
+      live.map((finding) => {
+        const summary = summarizeFinding(finding, output, root);
+        return [
+          finding.id,
+          {
+            ...summary,
+            ...(summary.screenshot === undefined
+              ? {}
+              : { screenshot: resolve(root, summary.screenshot) }),
+          },
+        ];
+      }),
+    );
+    const projection = projectIssueSummary({
+      findings: live,
+      groups: summary.baseline ? [] : output.groups,
+      summaries,
+      primaryActionSelectors: output.primaryActionSelectors,
+    });
+    const details = originals.map((finding) =>
+      findingDetail(record(finding, output.runDirectory)),
+    );
+    const issues = projection.issues.map((issue) => ({
+      ...issue,
+      representative: details.find((detail) =>
+        projection.groups
+          .find((group) => group.id === issue.id)
+          ?.members.some((member) => member.id === detail.id),
+      ),
+    }));
+    evidence.remember({
+      runDirectory: output.runDirectory,
+      findings: originals,
+      groups: output.groups,
+      issues: projection.issues,
+      quick: false,
+    });
+    const questions = summary.designSystemQuestions ?? [];
+    return result(
+      `Check ${flowId}: ${summary.findings.length} new/live occurrences, ${issues.length} issues; ${summary.preExisting ?? 0} pre-existing, ${summary.fixed?.length ?? 0} fixed. ${summary.baselineRecorded ? "Automatically recorded the initial baseline; commit its file. " : ""}${questions.length === 0 ? "" : `Design system questions (${questions.length}), held instead of findings; answer with idiom_decide add-step|drift: ${questions.map((question) => `${question.id} — ${question.question}`).join(" ")} `}Report: ${summary.reportPath}`,
+      {
+        flow: flowId,
+        ...(questions.length === 0 ? {} : { designSystemQuestions: questions }),
+        runId: basename(output.runDirectory),
+        topIssues: issues.slice(0, 5),
+        ...(all ? { issues, findings: details } : {}),
+        groups: projection.groups,
+        verificationReferences: details.map(
+          (detail) => detail.verificationReference,
+        ),
+        counts: {
+          new: summary.findings.length,
+          fixed: summary.fixed?.length ?? 0,
+          preExisting: summary.preExisting ?? 0,
+          findings: originals.length,
+          groups: output.groups.length,
+          issues: issues.length,
+          blocking: summary.blocking,
+          captures: { total: loaded.tuples.length, failed: 0 },
+        },
+        baseline: summary.baseline ?? {
+          applied: false,
+          reason: summary.baselineNotApplied ?? "all=true: full live findings",
+        },
+        baselineRecorded: summary.baselineRecorded,
+        newFindings: live.map((finding) =>
+          findingDetail(record(finding, output.runDirectory)),
+        ),
+        preExistingFindings: summary.preExistingFindings?.map((item) => ({
+          ...item,
+          ...(item.screenshot === undefined
+            ? {}
+            : { screenshot: resolve(root, item.screenshot) }),
+        })),
+        fixed: summary.fixed,
+        coverage: summary.coverage,
+        ...(summary.checkCoverage === undefined
+          ? {}
+          : { checkCoverage: summary.checkCoverage }),
+        reports: {
+          markdown: output.reportPath,
+          html: output.htmlReportPath,
+          findings: output.findingsPath,
+        },
+      },
+    );
+  }
   register(
     "idiom_check",
     "Capture a configured flow, run deterministic UI checks and compare declared intended designs (HTML, Figma, images or live sites). Returns ranked Top 5 issues with selectors, measurements, fix instructions, crops, counts and baseline new/fixed/pre-existing comparison. all=true reviews every live finding without recording/comparing a baseline. Attach references with idiom_design_add; a human chooses between conflicting references with idiom_choose. For requested repairs use idiom_fix_plan, then idiom_verify.",
     z.strictObject({
-      flow: identifier.describe("Configured flow manifest ID"),
+      flow: identifier
+        .optional()
+        .describe("Configured flow manifest ID; optional with changed"),
+      changed: z
+        .union([z.literal(true), z.string().trim().min(1)])
+        .optional()
+        .describe(
+          "Select states affected by Git changes; true uses the default merge base, a string names a base",
+        ),
       states: list(selection)
         .optional()
         .describe("Exact configured state IDs; omitted means every state"),
@@ -319,6 +455,46 @@ export function registerIdiomTools(
     }),
     false,
     async (args, execution) => {
+      if (args.changed !== undefined) {
+        const changed = await checkChanged({
+          ...configured,
+          flow: args.flow,
+          changed: args.changed,
+          all: args.all,
+          scope: {
+            states: args.states?.join(","),
+            viewports: args.viewports?.join(","),
+          },
+          materializeAllDeterministic: true,
+          captureFailureIsError: true,
+          dependencies: review(execution),
+        });
+        const checks = [];
+        for (const entry of changed.checks) {
+          execution.signal.throwIfAborted();
+          if (entry.status === "not-checked") checks.push(entry);
+          else {
+            const projected = await projectCheckedRun(
+              entry.flow,
+              args.all,
+              entry.summary,
+              entry.review,
+            );
+            checks.push({
+              flow: entry.flow,
+              status: entry.status,
+              ...(projected.structuredContent as Record<string, unknown>),
+            });
+          }
+        }
+        return result(renderChangedSelection(changed), {
+          selection: changed.selection,
+          checkedStates: changed.checkedStates,
+          checks,
+        });
+      }
+      if (!args.flow)
+        throw new IdiomError("flow is required unless changed is supplied");
       const { summary, review: output } = await checkWithReview({
         ...configured,
         flow: args.flow,
@@ -332,122 +508,7 @@ export function registerIdiomTools(
         recordAgentCheck: true,
         dependencies: review(execution),
       });
-      const validated = await validateProject({
-        ...configured,
-        flow: args.flow,
-      });
-      const flow = validated.flows[0]?.flow;
-      if (!flow) throw new IdiomError(`Unknown flow ${args.flow}`);
-      const loaded = await loadRunTuples(validated, flow, output.runDirectory);
-      const failures = loaded.tuples.flatMap((tuple) =>
-        tuple.failure
-          ? [`${tuple.failure.stage}: ${tuple.failure.message}`]
-          : [],
-      );
-      if (failures.length)
-        throw new IdiomError(
-          `Capture failed: ${failures.join("; ")}. Report: ${output.reportPath}`,
-        );
-      const originals = findingSchema
-        .array()
-        .parse(JSON.parse(await readFile(output.findingsPath, "utf8")));
-      // Baseline summaries contain exact new occurrences, rather than capped representatives.
-      const live = summary.baseline
-        ? (output.deterministicOccurrences ?? originals).filter((finding) =>
-            summary.findings.some(
-              (item) =>
-                item.id === finding.id &&
-                item.where === tupleCoordinateKey(finding),
-            ),
-          )
-        : originals.filter((finding) =>
-            summary.findings.some((item) => item.id === finding.id),
-          );
-      const summaries = new Map(
-        live.map((finding) => {
-          const summary = summarizeFinding(finding, output, root);
-          return [
-            finding.id,
-            {
-              ...summary,
-              ...(summary.screenshot === undefined
-                ? {}
-                : { screenshot: resolve(root, summary.screenshot) }),
-            },
-          ];
-        }),
-      );
-      const projection = projectIssueSummary({
-        findings: live,
-        groups: summary.baseline ? [] : output.groups,
-        summaries,
-        primaryActionSelectors: output.primaryActionSelectors,
-      });
-      const details = originals.map((finding) =>
-        findingDetail(record(finding, output.runDirectory)),
-      );
-      const issues = projection.issues.map((issue) => ({
-        ...issue,
-        representative: details.find((detail) =>
-          projection.groups
-            .find((group) => group.id === issue.id)
-            ?.members.some((member) => member.id === detail.id),
-        ),
-      }));
-      evidence.remember({
-        runDirectory: output.runDirectory,
-        findings: originals,
-        groups: output.groups,
-        issues: projection.issues,
-        quick: false,
-      });
-      return result(
-        `Check ${args.flow}: ${summary.findings.length} new/live occurrences, ${issues.length} issues; ${summary.preExisting ?? 0} pre-existing, ${summary.fixed?.length ?? 0} fixed. ${summary.baselineRecorded ? "Automatically recorded the initial baseline; commit its file. " : ""}Report: ${summary.reportPath}`,
-        {
-          flow: args.flow,
-          runId: basename(output.runDirectory),
-          topIssues: issues.slice(0, 5),
-          ...(args.all ? { issues, findings: details } : {}),
-          groups: projection.groups,
-          verificationReferences: details.map(
-            (detail) => detail.verificationReference,
-          ),
-          counts: {
-            new: summary.findings.length,
-            fixed: summary.fixed?.length ?? 0,
-            preExisting: summary.preExisting ?? 0,
-            findings: originals.length,
-            groups: output.groups.length,
-            issues: issues.length,
-            blocking: summary.blocking,
-            captures: { total: loaded.tuples.length, failed: 0 },
-          },
-          baseline: summary.baseline ?? {
-            applied: false,
-            reason: "all=true: full live findings",
-          },
-          baselineRecorded: summary.baselineRecorded,
-          newFindings: live.map((finding) =>
-            findingDetail(record(finding, output.runDirectory)),
-          ),
-          preExistingFindings: summary.preExistingFindings?.map((item) => ({
-            ...item,
-            ...(item.screenshot === undefined
-              ? {}
-              : { screenshot: resolve(root, item.screenshot) }),
-          })),
-          fixed: summary.fixed,
-          coverage: summary.coverage,
-          ...(summary.checkCoverage === undefined
-            ? {}
-            : { checkCoverage: summary.checkCoverage }),
-          reports: {
-            markdown: output.reportPath,
-            html: output.htmlReportPath,
-            findings: output.findingsPath,
-          },
-        },
-      );
+      return projectCheckedRun(args.flow, args.all, summary, output);
     },
   );
   register(
@@ -624,16 +685,53 @@ export function registerIdiomTools(
   );
   register(
     "idiom_decide",
-    "Record an explicit human accept/reject judgment with a reason for one canonical finding or exactly one durable group's members. Writes the project decision log with instance scope; never accepts siblings implicitly, changes Git or repairs source. Quick-only evidence cannot receive project decisions.",
+    "Record an explicit human accept/reject judgment with a reason for one canonical finding or exactly one durable group's members. Writes the project decision log with instance scope; never accepts siblings implicitly, changes Git or repairs source. Quick-only evidence cannot receive project decisions. For a design system question (a ruling-N id from idiom_check), add-step records the value as a token step for its context in the design file (token optional, defaults to the suggestion) and drift keeps reporting it as one grouped issue; skip by not answering.",
     z.strictObject({
-      id: identifier.describe("Canonical finding or group ID"),
+      id: identifier.describe(
+        "Canonical finding or group ID, or a design system question's ruling-N",
+      ),
       decision: z
-        .enum(["accept", "reject"])
-        .describe("Explicit human judgment"),
+        .enum(["accept", "reject", "add-step", "drift"])
+        .describe(
+          "Explicit human judgment: accept/reject a finding, add-step/drift a design system question",
+        ),
+      token: z
+        .string()
+        .trim()
+        .min(1)
+        .optional()
+        .describe("add-step only: token name; defaults to the suggestion"),
       reason: humanReason,
     }),
     false,
-    async ({ id, decision, reason }) => {
+    async ({ id, decision, token, reason }) => {
+      const scaleAnswer = decision === "add-step" || decision === "drift";
+      if (/^ruling-[1-9]\d*$/.test(id)) {
+        if (!scaleAnswer)
+          throw new IdiomError(
+            `${id} is a design system question; answer it with add-step or drift`,
+          );
+        const output = await rulingCommand({
+          ...configured,
+          decision: id,
+          addStep: decision === "add-step",
+          drift: decision === "drift",
+          ...(token === undefined ? {} : { token }),
+          reason,
+          // The tool call is the recorded human answer, as for decisions.
+          dependencies: { confirm: async () => true },
+        });
+        return result(
+          `Recorded ${id} (${decision}${output.resolution?.scale?.token === undefined ? "" : ` \`${output.resolution.scale.token}\``}) in ${output.path}`,
+          output,
+        );
+      }
+      if (scaleAnswer)
+        throw new IdiomError(
+          `${decision} answers a design system question (ruling-N); use accept or reject for ${id}`,
+        );
+      if (token !== undefined)
+        throw new IdiomError("token is only used with add-step");
       if (id.startsWith("quick:"))
         throw new IdiomError(
           "Quick-only evidence cannot record project decisions. Initialize a flow and run idiom_check first.",

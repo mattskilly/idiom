@@ -23,6 +23,7 @@ import { duplicateEntryCheck } from "./duplicate-entry.js";
 import { elementOverlapCheck } from "./element-overlap.js";
 import { emptyStateCheck } from "./empty-state.js";
 import { errorTextCheck } from "./error-text.js";
+import { errorStateMissingCheck, retryBlockedCheck } from "./failure-state.js";
 import { fieldGroupCheck } from "./field-group.js";
 import { focusVisibleCheck } from "./focus-visible.js";
 import { fontLoadingCheck } from "./font-loading.js";
@@ -148,6 +149,8 @@ export const signalChecks: DeterministicCheck[] = [
   designDriftCheck,
   loadingStateMissingCheck,
   doubleSubmitCheck,
+  errorStateMissingCheck,
+  retryBlockedCheck,
 ];
 
 export function checksConfigFrom(
@@ -239,6 +242,7 @@ export function checksConfigFrom(
         chip: [...merged.scales.roles.chip],
         divider: [...merged.scales.roles.divider],
       },
+      suggestAfter: merged.scales.suggestAfter,
     },
     ...(merged.targetSize === undefined
       ? {}
@@ -261,6 +265,7 @@ export function checksConfigFrom(
     naming: { surfaces: { ...merged.naming.surfaces } },
     progressWithinMs: merged.progressWithinMs,
     loading: { delayMs: merged.loading.delayMs },
+    failure: { ...merged.failure },
     emptyState: {
       regions: merged.emptyState.regions.map(({ selector, items }) => ({
         selector,

@@ -1075,6 +1075,7 @@ test("checks.scales defaults, validates and resolves role selectors at capture (
     radius: { control: [], card: [], panel: [], chip: [] },
     border: { divider: [], control: [] },
     roles: { control: [], card: [], panel: [], chip: [], divider: [] },
+    suggestAfter: 5,
   });
   const parsed = checksConfigSchema.parse({
     scales: {

@@ -1,3 +1,4 @@
+import { errorStateMissingCheck, retryBlockedCheck } from "./failure-state.js";
 import type { FilmstripIdentity } from "./filmstrip-schema.js";
 import { interactionShiftCheck } from "./interaction-shift.js";
 import { layoutShiftCheck } from "./layout-shift.js";
@@ -37,6 +38,7 @@ export function actionIdentity(action: ActionTimeline): FilmstripIdentity {
     name: action.name,
     ...(action.selector === undefined ? {} : { selector: action.selector }),
     ...(action.stepIndex === undefined ? {} : { stepIndex: action.stepIndex }),
+    ...(action.failure === undefined ? {} : { failureOf: action.failure.of }),
     ...(action.held === undefined ? {} : { heldOf: action.held.of }),
   };
 }
@@ -50,7 +52,8 @@ export function sameAction(
     a.selector === b.selector &&
     a.name === b.name &&
     a.stepIndex === b.stepIndex &&
-    a.heldOf === b.heldOf
+    a.heldOf === b.heldOf &&
+    a.failureOf === b.failureOf
   );
 }
 /** Action-linked rules share this lookup. Never infer identity from a probe ordinal. */
@@ -109,6 +112,8 @@ export function temporalCandidates(
     motionCheck,
     loadingStateMissingCheck,
     doubleSubmitCheck,
+    errorStateMissingCheck,
+    retryBlockedCheck,
     layoutShiftCheck,
     interactionShiftCheck,
   ].flatMap(

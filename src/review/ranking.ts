@@ -72,6 +72,8 @@ export const categorySalience = {
   "design-drift": 4,
   "loading-state-missing": 4,
   "double-submit": 4,
+  "error-state-missing": 4,
+  "retry-blocked": 4,
   hierarchy: 4,
   density: 4,
   "brand-alignment": 4,

@@ -6,6 +6,8 @@ export const RULING_START = "<!-- idiom:ruling:start -->";
 export const RULING_END = "<!-- idiom:ruling:end -->";
 const METADATA_PREFIX = "<!-- idiom:ruling:metadata ";
 
+type ScaleAnswer = NonNullable<RulingResolution["scale"]>;
+
 export type ParsedDesignLaw = {
   prose: string;
   resolutions: RulingResolution[];
@@ -21,9 +23,11 @@ export function renderRulingBlock(
 ): string {
   const parsed = rulingResolutionSchema.parse(resolution);
   const human =
-    parsed.outcome === "rule"
-      ? (parsed.wording as string)
-      : "No rule needed — this decision is deliberately left to the surface.";
+    parsed.scale !== undefined
+      ? scaleRulingText(parsed.scale)
+      : parsed.outcome === "rule"
+        ? (parsed.wording as string)
+        : "No rule needed — this decision is deliberately left to the surface.";
   return [
     RULING_START,
     `${METADATA_PREFIX}${JSON.stringify(parsed)} -->`,
@@ -33,6 +37,23 @@ export function renderRulingBlock(
     ...(parsed.reason === undefined ? [] : ["", `Reason: ${parsed.reason}`]),
     RULING_END,
   ].join(eol);
+}
+
+const scaleNouns: Record<ScaleAnswer["property"], string> = {
+  "spacing:padding": "padding",
+  "spacing:margin": "margin",
+  "spacing:gap": "gap",
+  height: "height",
+  radius: "radius",
+  border: "border colour",
+};
+
+/** The human sentence recorded for a design-system answer. */
+export function scaleRulingText(scale: ScaleAnswer): string {
+  const where = `${scale.context.component} in ${scale.context.landmark} at ${scale.context.viewport}`;
+  return scale.answer === "add-step"
+    ? `Add the \`${scale.token}\` step: ${scale.value} ${scaleNouns[scale.property]} for ${where}.`
+    : `Keep reporting ${scale.value} ${scaleNouns[scale.property]} on ${where} as drift.`;
 }
 
 export function parseRulingBlocks(source: string): ParsedDesignLaw {

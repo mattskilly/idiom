@@ -238,7 +238,7 @@ test("strict project config and lightweight parser agree on agent configuration"
 });
 
 test.each(["Edit", "Write", "MultiEdit"])(
-  "%s emits provider context with all configured flows/states",
+  "%s emits provider context suggesting changed checks for configured flows",
   async (tool) => {
     const root = await fixture();
     await writeFile(
@@ -254,11 +254,10 @@ test.each(["Edit", "Write", "MultiEdit"])(
     expect(result.hookSpecificOutput.additionalContext).toContain(
       "src/components/Card.tsx",
     );
+    expect(result.hookSpecificOutput.additionalContext).toContain("checkout");
+    expect(result.hookSpecificOutput.additionalContext).toContain("account");
     expect(result.hookSpecificOutput.additionalContext).toContain(
-      "checkout (all states)",
-    );
-    expect(result.hookSpecificOutput.additionalContext).toContain(
-      "account (all states)",
+      "idiom check --changed",
     );
     expect((await state(root)).pending[0].path).toBe("src/components/Card.tsx");
   },
@@ -282,7 +281,7 @@ test("flow lists are explicitly bounded and missing flows direct configuration",
     );
   const message = (await edit(root)).output.hookSpecificOutput
     .additionalContext;
-  expect(message).toContain("and all remaining configured flows/states");
+  expect(message).toContain("and remaining configured flows");
   expect(message.length).toBeLessThan(1300);
 });
 

@@ -67,7 +67,9 @@ export async function verificationFilmstrips(options: {
       finding.category === "motion" ||
       finding.category === "layout-shift" ||
       finding.category === "loading-state-missing" ||
-      finding.category === "double-submit";
+      finding.category === "double-submit" ||
+      finding.category === "error-state-missing" ||
+      finding.category === "retry-blocked";
     if (!temporal) continue;
     const ordinal = collection.length + 1;
     const item: NonNullable<AttachmentManifest["filmstrips"]>[number] = {

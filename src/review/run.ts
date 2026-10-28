@@ -14,6 +14,7 @@ import {
 } from "../checks/painted.js";
 import { projectChecksConfig } from "../checks/project-config.js";
 import { runDeterministicChecks } from "../checks/registry.js";
+import { scaleQuestions } from "../checks/scale-conformance.js";
 import { AnthropicCritiqueAdapter } from "../critique/anthropic.js";
 import {
   ClaudeCodeCritiqueAdapter,
@@ -67,6 +68,7 @@ import {
 import { loadReviewCatalog, persistCatalogFindingNames } from "./catalog.js";
 import { attachCrops } from "./crops.js";
 import { attachFilmstrips } from "./filmstrips.js";
+import { scaleQuestionDecisions } from "./scale-questions.js";
 
 async function attachVisualEvidence(...args: Parameters<typeof attachCrops>) {
   return attachFilmstrips(args[0], await attachCrops(...args), args[2]);
@@ -154,6 +156,8 @@ export type ReviewRunResult = PaintedCoverageReport & {
   primaryActionSelectors?: string[];
   issueRankingContext?: IssueRankingContext;
   unruledDecisionCount: number;
+  /** Unanswered scale clusters, each standing for the findings it withholds. */
+  designSystemQuestions: UnruledDecision[];
   discardedDecisionObservations: number;
   outcome: ReviewOutcome;
   /** Sweep mode only: the per-surface record written to sweep.json. */
@@ -407,11 +411,23 @@ export async function runReview(options: {
   ].sort();
   const clock = options.dependencies?.monotonicNow ?? (() => performance.now());
   const checksStarted = clock();
+  const checksConfig = await projectChecksConfig(validated);
   const reviewed = runDeterministicChecks(
     loaded.tuples,
     loaded.expectedTupleKeys,
-    await projectChecksConfig(validated),
+    checksConfig,
   );
+  // Deterministic, so asked on every review outcome; the findings they
+  // stand for are already withheld from the candidates.
+  const scaleDecisions = await scaleQuestionDecisions({
+    runDirectory,
+    clusters: scaleQuestions(loaded.tuples, checksConfig),
+    resolvedFingerprints: new Set(
+      (checksConfig.scaleQuestions?.rulings ?? []).map(
+        (ruling) => ruling.fingerprint,
+      ),
+    ),
+  });
   const checksTiming = {
     status: "measured" as const,
     ms: Math.max(0, clock() - checksStarted),
@@ -685,13 +701,19 @@ export async function runReview(options: {
     };
   }
 
-  if (outcome.kind === "full") {
+  if (outcome.kind === "full" || scaleDecisions.length > 0) {
     const rulingNames = await loadRulingNames({
       projectDirectory: validated.projectDirectory,
     });
-    unruledDecisions = nameUnruledDecisions(rulingNames, aggregatedDecisions);
+    unruledDecisions = nameUnruledDecisions(rulingNames, [
+      ...(outcome.kind === "full" ? aggregatedDecisions : []),
+      ...scaleDecisions,
+    ]);
     await persistRulingNames(rulingNames);
   }
+  const designSystemQuestions = unruledDecisions.filter(
+    (decision) => decision.scaleCluster !== undefined,
+  );
 
   checkCancelled();
   const selection = finalizeFindingSelection({
@@ -814,6 +836,11 @@ export async function runReview(options: {
             ? [finding.evidence.filmstrip.sheet]
             : []),
         ]),
+      ...designSystemQuestions.flatMap((decision) =>
+        (decision.scaleCluster?.examples ?? []).flatMap((example) =>
+          example.crop === undefined ? [] : [example.crop],
+        ),
+      ),
     ]),
   ];
   const screenshots = new Map(
@@ -892,7 +919,9 @@ export async function runReview(options: {
     htmlReportPath,
     findingCount: findings.length,
     ...(loaded.build === undefined ? {} : { build: loaded.build }),
-    unruledDecisionCount: unruledDecisions.length,
+    unruledDecisionCount:
+      unruledDecisions.length - designSystemQuestions.length,
+    designSystemQuestions,
     discardedDecisionObservations,
     outcome,
     ...(sweep === undefined ? {} : { sweep }),

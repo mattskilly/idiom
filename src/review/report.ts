@@ -112,6 +112,58 @@ function fencedEvidence(
   return [label, "", `${fence}${language}`, normalized, fence, ""];
 }
 
+/**
+ * Repeated off-scale values asked as one question each, in place of the
+ * findings they stand for. Renders nothing when there are none.
+ */
+export function designSystemQuestionsMarkdown(
+  decisions: UnruledDecision[] | undefined,
+): string[] {
+  const questions = (decisions ?? []).filter(
+    (decision) => decision.scaleCluster !== undefined,
+  );
+  if (questions.length === 0) return [];
+  const lines = [
+    `## Design system questions (${questions.length})`,
+    "",
+    "Each repeats one off-scale value in one context. Its occurrences are held here instead of being reported as separate findings until you answer.",
+    "",
+  ];
+  for (const decision of questions) {
+    const cluster = decision.scaleCluster as NonNullable<
+      UnruledDecision["scaleCluster"]
+    >;
+    lines.push(
+      `### ${text(decision.id)}: ${text(cluster.value)} on ${text(cluster.componentLabel)}`,
+      "",
+      text(decision.question),
+      "",
+      `- Occurrences: ${cluster.count} (${cluster.distinctStates} state${cluster.distinctStates === 1 ? "" : "s"}, ${cluster.distinctElements} element${cluster.distinctElements === 1 ? "" : "s"})`,
+      `- Context: ${text(cluster.context.component)} in ${text(cluster.context.landmark)} at ${text(cluster.context.viewport)}`,
+      `- Declared scale: ${text(decision.nearestLawExcerpt)}`,
+      `- Suggested token: \`${cluster.suggestedToken}\``,
+      "",
+      "Examples:",
+      "",
+      ...cluster.examples.map(
+        (example) =>
+          `- ${text(example.screenshot)} — \`${example.selector.replaceAll("`", "'")}\`${example.crop === undefined ? "" : ` — [crop](${example.crop})`}`,
+      ),
+      "",
+      "Answer:",
+      "",
+      "```sh",
+      `idiom ruling --decision ${decision.id} --add-step [--token ${cluster.suggestedToken}]`,
+      `idiom ruling --decision ${decision.id} --drift`,
+      "```",
+      "",
+      "Skip by not answering; it is asked again next run.",
+      "",
+    );
+  }
+  return lines;
+}
+
 function screenshotPathForLabel(
   tuples: CheckTuple[],
   label: string,
@@ -289,6 +341,11 @@ export function renderReport(options: {
   // Page reviews are standalone and take no part in rulings.
   const rulings =
     options.outcome.kind !== "quick" && options.page === undefined;
+  if (options.outcome.kind !== "quick")
+    lines.push(...designSystemQuestionsMarkdown(options.unruledDecisions));
+  const modelDecisions = options.unruledDecisions?.filter(
+    (decision) => decision.scaleCluster === undefined,
+  );
   if (rulings) lines.push("## Unruled decisions", "");
   if (rulings && options.outcome.kind !== "full") {
     lines.push(
@@ -304,9 +361,9 @@ export function renderReport(options: {
         `${discarded} incomplete or unsupported observation${discarded === 1 ? " was" : "s were"} discarded; unruled-decision analysis may be incomplete.`,
         "",
       );
-    if ((options.unruledDecisions?.length ?? 0) === 0)
+    if ((modelDecisions?.length ?? 0) === 0)
       lines.push("None qualified across multiple states in this review.", "");
-    for (const decision of options.unruledDecisions ?? []) {
+    for (const decision of modelDecisions ?? []) {
       lines.push(
         `### ${text(decision.id)}: ${text(decision.choiceKey)}`,
         "",

@@ -249,7 +249,7 @@ footer a:hover { color:var(--redline-ink); }
   <p class="fix"><span>Done when</span> A label that reads naturally, such as “Text on primary”.</p>
 </article>
   </div>
-  <div class="col"><p>It also catches what a screenshot can't show, because it happens between states: content that jumps when you click, a button that shows nothing while its request is pending or can be pressed twice, and panels or content that snap into place with no transition.</p><p>And it checks the basics every product should get right:</p></div>
+  <div class="col"><p>It also catches what a screenshot can't show, because it happens between states: content that jumps when you click, a button that shows nothing while its request is pending or can be pressed twice, an action that fails silently or can't be retried when its request fails, and panels or content that snap into place with no transition.</p><p>And it checks the basics every product should get right:</p></div>
   <ul class="also">
     <li>low contrast</li><li>broken links</li><li>broken or stretched images</li><li>fonts that fail to load</li><li>missing focus styles</li><li>lines too long to read</li><li>orphaned words</li><li>layout shift on load</li><li>targets too small to tap</li><li>uneven spacing</li><li>clipped and overlapping text</li><li>error text left on screen</li><li>sizes off your design system</li>
   </ul>
@@ -258,7 +258,7 @@ footer a:hover { color:var(--redline-ink); }
 <section id="design">
   <p class="kicker">Your design</p>
   <h2>Hold the build to the design you meant.</h2>
-  <div class="col"><p>Point Idiom at your intended design and it reports where the build drifts: spacing, size, colour and missing or extra elements, measured on the real render. When designs disagree with each other, it asks you to choose once and remembers.</p></div>
+  <div class="col"><p>Point Idiom at your intended design and it reports where the build drifts: spacing, size, colour and missing or extra elements, measured on the real render. When designs disagree with each other, it asks you to choose once and remembers. When the same off-scale value keeps turning up in one place, it asks once whether your design system is missing a step, instead of filing every occurrence.</p></div>
   <div class="sources">
     <div><b>Figma</b><p>A frame link with a personal access token. Works alongside Figma's own MCP server.</p></div>
     <div><b>Claude Design or HTML</b><p>An exported HTML file or folder, or a Claude share link.</p></div>
@@ -272,7 +272,7 @@ footer a:hover { color:var(--redline-ink); }
   <p class="kicker">With your agent</p>
   <h2>Built for the loop your agent already runs.</h2>
   <ol class="steps">
-    <li><span class="n">1</span><p><b>Check.</b> After a UI change, the agent runs <code>idiom check &lt;flow&gt;</code> and gets every finding in fix order, with a crop of each. In Claude Code, Idiom's plugin reminds the agent when it edits UI and before it stops.</p></li>
+    <li><span class="n">1</span><p><b>Check.</b> After a UI change, the agent runs <code>idiom check &lt;flow&gt;</code> and gets every finding in fix order, with a crop of each. <code>idiom check --changed</code> checks only the states its change touches. In Claude Code, Idiom's plugin reminds the agent when it edits UI and before it stops.</p></li>
     <li><span class="n">2</span><p><b>Fix.</b> It fixes the blocking ones and runs the check again until it is clean. Findings it disagrees with go to you, never quietly away.</p></li>
     <li><span class="n">3</span><p><b>Gate.</b> In CI or autobuild, <code>idiom check &lt;flow&gt; --baseline &lt;run&gt; --fail-on major</code> fails only on new problems.</p></li>
   </ol>

@@ -29,6 +29,16 @@ import {
   sampleExplanation,
 } from "./explanations.js";
 import {
+  DEFAULT_FAILURE,
+  eligibleFailureRequests,
+  type FailureSettings,
+  failureEligibility,
+  failureKey,
+  MAX_FAILURE_REPLAYS,
+  replayFailure,
+} from "./failure.js";
+import { type ReplayRequest, replayRequests } from "./failure-identity.js";
+import {
   type HeldItem,
   heldCandidate,
   MAX_HELD_REPLAYS,
@@ -99,6 +109,7 @@ export type ProbeOptions = CaptureHooks & {
    * `delayMs`. `steps` are the state's web steps that sent requests; probe
    * clicks are queued as they run. Absent: no held replay.
    */
+  failureReplay?: (FailureSettings & { completed?: string[] }) | undefined;
   heldReplay?:
     | { delayMs: number; withinMs: number; steps: HeldStep[] }
     | undefined;
@@ -106,6 +117,8 @@ export type ProbeOptions = CaptureHooks & {
 
 /** A web step whose action sent requests, replayable on a fresh page. */
 export type HeldStep = {
+  sourceAction?: import("../checks/types.js").ActionTimeline;
+  requests?: ReplayRequest[];
   stepIndex: number;
   action: HeldItem["kind"];
   selector: string;
@@ -2345,7 +2358,21 @@ export async function probeControls(
   let queue: Candidate[] = [];
   const nestedQueue: Array<{ candidate: Candidate; parent: string }> = [];
   /** Top-level probe clicks that sent requests, for the held replay. */
-  const heldQueue: Candidate[] = [];
+  const heldQueue: Array<{
+    candidate: Candidate;
+    sourceAction: import("../checks/types.js").ActionTimeline;
+  }> = [];
+  const failureSummary = options.failureReplay
+    ? {
+        ...DEFAULT_FAILURE,
+        ...options.failureReplay,
+        completed: [...(options.failureReplay.completed ?? [])],
+        queued: 0,
+        ran: 0,
+        notes: [] as string[],
+      }
+    : undefined;
+  if (failureSummary) artifact.failureReplay = failureSummary;
   /**
    * One held replay on a fresh copy: restore, then replay the action with its
    * requests held. Counts against the state deadline; never publishes a
@@ -2355,6 +2382,9 @@ export async function probeControls(
     item: HeldItem,
     reach: (page: Page) => Promise<void>,
     notes: string[],
+    original?: import("../checks/types.js").ActionTimeline,
+    requests: ReplayRequest[] = [],
+    runLoading = true,
   ): Promise<boolean> => {
     const held = options.heldReplay;
     if (!held) return false;
@@ -2365,7 +2395,12 @@ export async function probeControls(
       Math.max(
         1,
         Math.min(
-          3 * held.delayMs + controlTimeoutMs + restoreBudgetMs,
+          3 * held.delayMs +
+            controlTimeoutMs +
+            restoreBudgetMs +
+            (failureSummary
+              ? failureSummary.feedbackWithinMs + controlTimeoutMs
+              : 0),
           state.remaining(),
         ),
       ),
@@ -2388,6 +2423,7 @@ export async function probeControls(
           replaying -= 1;
         }
         await takeBaseline(page);
+        needsReplay = false;
         deadline.check();
         const recorder = new TimelineCollector(page, {
           clock,
@@ -2396,17 +2432,78 @@ export async function probeControls(
         });
         timeline = recorder;
         progress("held replay");
-        await replayHeld({
-          page,
-          routePage: realPage,
-          item,
-          delayMs: held.delayMs,
-          withinMs: held.withinMs,
-          waitMs: options.waitMs,
-          policy: safety ? "third-party" : "app",
-          timeline: recorder,
-          clock,
-        });
+        if (runLoading)
+          await replayHeld({
+            page,
+            routePage: realPage,
+            item,
+            delayMs: held.delayMs,
+            withinMs: held.withinMs,
+            waitMs: options.waitMs,
+            policy: safety ? "third-party" : "app",
+            timeline: recorder,
+            clock,
+          });
+        if (failureSummary && original && requests.length) {
+          const key = failureKey(item.selector, original.requests);
+          const eligibility = failureEligibility(
+            original,
+            recorder.lastAction(),
+          );
+          const eligibleRequests = eligibility
+            ? eligibleFailureRequests(
+                original,
+                recorder.lastAction(),
+                eligibility,
+                requests,
+              )
+            : [];
+          if (eligibility && eligibleRequests.length)
+            failureSummary.queued += 1;
+          if (!eligibility || !eligibleRequests.length)
+            failureSummary.notes.push(
+              `${item.selector}: response-gated visible result was not established`,
+            );
+          else if (failureSummary.completed.includes(key))
+            failureSummary.notes.push(
+              `${item.selector}: already replayed in an earlier round`,
+            );
+          else if (failureSummary.completed.length >= MAX_FAILURE_REPLAYS)
+            failureSummary.notes.push(
+              `not reached: failure replay cap of ${MAX_FAILURE_REPLAYS}`,
+            );
+          else if (deadline.remaining() < failureSummary.feedbackWithinMs + 500)
+            failureSummary.notes.push(
+              `${item.selector}: not reached: probe budget before failure mode`,
+            );
+          else {
+            progress("failure replay: restore");
+            if (needsReplay || !(await settle(page, deadline))) {
+              replaying += 1;
+              try {
+                await reach(page);
+              } finally {
+                replaying -= 1;
+              }
+            }
+            await takeBaseline(page);
+            needsReplay = false;
+            progress("failure replay");
+            // Count an attempt once, including interrupted evidence, across rounds.
+            failureSummary.completed.push(key);
+            failureSummary.ran += 1;
+            await replayFailure({
+              page,
+              routePage: realPage,
+              item,
+              requests: eligibleRequests,
+              eligibility,
+              settings: failureSummary,
+              timeline: recorder,
+              clock,
+            });
+          }
+        }
       });
       deadline.check();
       return true;
@@ -2429,6 +2526,10 @@ export async function probeControls(
       );
       return true;
     } finally {
+      if (failureSummary)
+        for (const note of notes)
+          if (!failureSummary.notes.includes(note))
+            failureSummary.notes.push(note);
       if (timeline) {
         await timeline.finishPending("held replay interrupted");
         appendTimelines(timeline);
@@ -2450,6 +2551,8 @@ export async function probeControls(
     const items: Array<{
       item: HeldItem;
       reach: (page: Page) => Promise<void>;
+      original?: import("../checks/types.js").ActionTimeline | undefined;
+      requests?: ReplayRequest[] | undefined;
     }> = [
       ...[...held.steps]
         .sort((a, b) => a.stepIndex - b.stepIndex)
@@ -2464,14 +2567,16 @@ export async function probeControls(
             repeat: step.repeat,
           },
           reach: step.reach,
+          original: step.sourceAction,
+          requests: step.requests,
         })),
       ...[...heldQueue]
         .sort(
           (a, b) =>
-            (a.order ?? Number.POSITIVE_INFINITY) -
-            (b.order ?? Number.POSITIVE_INFINITY),
+            (a.candidate.order ?? Number.POSITIVE_INFINITY) -
+            (b.candidate.order ?? Number.POSITIVE_INFINITY),
         )
-        .map((candidate) => ({
+        .map(({ candidate, sourceAction }) => ({
           item: {
             of: "probe-click" as const,
             kind: "click" as const,
@@ -2504,6 +2609,8 @@ export async function probeControls(
             },
           },
           reach: restore,
+          original: sourceAction,
+          requests: replayRequests(sourceAction),
         })),
     ];
     const summary = {
@@ -2513,28 +2620,55 @@ export async function probeControls(
       notes: [] as string[],
     };
     artifact.heldReplay = summary;
+
     if (items.length === 0) return;
-    if (held.delayMs <= held.withinMs) {
+    if (held.delayMs <= held.withinMs && !failureSummary) {
       summary.notes.push(
         "unjudgeable: checks.loading.delayMs must exceed checks.progressWithinMs",
       );
       return;
     }
+    const seenFailures = new Set<string>();
     for (const [index, entry] of items.entries()) {
+      if (failureSummary && entry.original) {
+        const key = failureKey(entry.item.selector, entry.original.requests);
+        if (seenFailures.has(key)) continue;
+        seenFailures.add(key);
+      }
       const left = items.length - index;
       if (index >= MAX_HELD_REPLAYS) {
         summary.notes.push(
           `not reached: ${left} held replays beyond the cap of ${MAX_HELD_REPLAYS}`,
         );
-        break;
+        if (
+          !failureSummary ||
+          !entry.original ||
+          !failureEligibility(entry.original)
+        ) {
+          failureSummary?.notes.push(
+            `${entry.item.selector}: not reached: loading evidence cap and no normal response-gating evidence`,
+          );
+          continue;
+        }
       }
       if (state.remaining() < 3 * held.delayMs + controlTimeoutMs) {
         summary.notes.push(`not reached: probe budget (${left} held replays)`);
+        failureSummary?.notes.push(
+          `not reached: probe budget (${left} action replays)`,
+        );
         break;
       }
       const before = timelines?.actions.length ?? 0;
-      const go = await heldAttempt(entry.item, entry.reach, summary.notes);
-      if ((timelines?.actions.length ?? 0) > before) summary.ran += 1;
+      const go = await heldAttempt(
+        entry.item,
+        entry.reach,
+        summary.notes,
+        entry.original,
+        entry.requests,
+        index < MAX_HELD_REPLAYS,
+      );
+      if (index < MAX_HELD_REPLAYS && (timelines?.actions.length ?? 0) > before)
+        summary.ran += 1;
       if (!go) break;
     }
   };
@@ -2791,7 +2925,12 @@ export async function probeControls(
     const heldReserveMs = options.heldReplay
       ? Math.min(
           0.3 * stateTimeoutMs,
-          2 * (3 * options.heldReplay.delayMs + controlTimeoutMs),
+          2 *
+            (3 * options.heldReplay.delayMs +
+              controlTimeoutMs +
+              (options.failureReplay
+                ? options.failureReplay.feedbackWithinMs + controlTimeoutMs
+                : 0)),
         )
       : 0;
     const reserved = () =>
@@ -2909,7 +3048,7 @@ export async function probeControls(
           if (options.heldReplay && !outcome.error) {
             const last = timeline.lastAction();
             if (last?.source === "probe-click" && heldCandidate(last.requests))
-              heldQueue.push(candidate);
+              heldQueue.push({ candidate, sourceAction: last });
           }
           if (!outcome.error)
             snapSuspect = suspectSnap(candidate, timeline.lastAction());
@@ -3428,6 +3567,10 @@ export async function probeControls(
         if (!handled.has(candidate)) notReached(candidate, reason, parent);
     }
   } finally {
+    if (failureSummary && artifact.status !== "ran")
+      failureSummary.notes.push(
+        artifact.reason ?? "probe interrupted before replay coverage completed",
+      );
     if (artifact.status !== "ran" && explanationIdentities.length) {
       const missing = new ExplanationCollector(options.page);
       for (const candidate of explanationIdentities) {

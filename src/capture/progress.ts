@@ -4,6 +4,7 @@ import type {
   ProgressArtifact,
   ProgressStep,
 } from "../checks/types.js";
+import { type FeedbackWindow, installFeedback } from "./feedback.js";
 
 type StepIdentity = Pick<ProgressStep, "stepIndex" | "action" | "selector">;
 type Hit = {
@@ -45,6 +46,7 @@ export class ProgressCollector {
       ? this.page.locator(identity.selector)
       : undefined;
     try {
+      await this.page.evaluate(installFeedback);
       await this.page.evaluate(
         ({ selector, token, action, waitForAction }) => {
           const scope = window as BrowserWindow;
@@ -54,75 +56,15 @@ export class ProgressCollector {
             : performance.now();
           let firstMs: number | null = null;
           let hit: Hit | null = null;
-          const rendered = (element: Element): boolean => {
-            if (element.getClientRects().length === 0) return false;
-            const style = getComputedStyle(element);
-            if (style.visibility !== "visible") return false;
-            for (
-              let current: Element | null = element;
-              current;
-              current = current.parentElement
-            ) {
-              const ancestor = getComputedStyle(current);
-              if (ancestor.display === "none" || Number(ancestor.opacity) <= 0)
-                return false;
-            }
-            return true;
-          };
-          const selectorFor = (element: Element): string => {
-            if (element === document.documentElement) return "html";
-            if (element === document.body) return "body";
-            if (
-              element.id &&
-              document.querySelectorAll(`#${CSS.escape(element.id)}`).length ===
-                1
-            )
-              return `#${CSS.escape(element.id)}`;
-            for (const attr of ["data-testid", "aria-label", "role"]) {
-              const value = element.getAttribute(attr);
-              if (!value) continue;
-              const candidate = `${element.tagName.toLowerCase()}[${attr}=${JSON.stringify(value)}]`;
-              if (document.querySelectorAll(candidate).length === 1)
-                return candidate;
-            }
-            const classes = [...element.classList].sort().slice(0, 3);
-            if (classes.length) {
-              const candidate = `${element.tagName.toLowerCase()}${classes.map((value) => `.${CSS.escape(value)}`).join("")}`;
-              if (document.querySelectorAll(candidate).length === 1)
-                return candidate;
-            }
-            const parts: string[] = [];
-            let current: Element | null = element;
-            while (current !== null && current !== document.body) {
-              const siblings: Element[] = current.parentElement
-                ? [...current.parentElement.children].filter(
-                    (child) => child.tagName === current?.tagName,
-                  )
-                : [];
-              parts.unshift(
-                siblings.length > 1
-                  ? `${current.tagName.toLowerCase()}:nth-of-type(${siblings.indexOf(current) + 1})`
-                  : current.tagName.toLowerCase(),
-              );
-              current = current.parentElement;
-            }
-            return `body > ${parts.join(" > ")}`;
-          };
-          const normalize = (value: string | null | undefined) =>
-            (value ?? "").replace(/\s+/g, " ").trim();
-          const textOf = (element: Element) =>
-            normalize(
-              element.getAttribute("aria-label") ||
-                (element instanceof HTMLElement
-                  ? element.innerText
-                  : element.textContent),
-            );
-          const progressSelector =
-            "[role=progressbar], progress, [aria-busy=true]";
-          const statusSelector =
-            "[role=status], [role=log], [aria-live]:not([aria-live=off]), output";
-          const progressWords =
-            /\b(loading|saving|generating|working|processing|thinking|uploading|sending|submitting|please wait)\b/i;
+          const {
+            rendered,
+            selectorFor,
+            normalize,
+            textOf,
+            progressSelector,
+            statusSelector,
+            progressWords,
+          } = (window as unknown as FeedbackWindow).__idiomFeedback;
           let progressBaseline = new WeakSet<Element>(
             [...document.querySelectorAll(progressSelector)].filter(rendered),
           );

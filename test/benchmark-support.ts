@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { AxeBuilder } from "@axe-core/playwright";
-import type { Browser, Page } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 import { PNG } from "pngjs";
 import {
   ExplanationCollector,
@@ -30,6 +31,7 @@ import {
 } from "../src/checks/registry.js";
 import type {
   ActionTimelineArtifact,
+  ChecksConfig,
   CheckTuple,
   FindingCandidate,
   ObservationArtifact,
@@ -42,7 +44,9 @@ import {
 import type { ColorScheme } from "../src/schemas/project.js";
 import { checkMarks, checksConfigSchema } from "../src/schemas/project.js";
 
-const directory = join(import.meta.dirname, "fixtures/benchmark");
+const directory = fileURLToPath(
+  new URL("fixtures/benchmark/", import.meta.url),
+);
 
 export async function fixture(name: string): Promise<string> {
   const css = await readFile(join(directory, "chrome.css"), "utf8");
@@ -95,6 +99,10 @@ export type ReviewOptions = {
   serve?: boolean;
   /** Extra routes for a served fixture, such as delayed endpoints. */
   routes?: (page: Page) => Promise<void>;
+  /** Install context-wide fixture routes/init scripts before any page exists. */
+  prepareContext?: (context: BrowserContext) => Promise<void>;
+  /** Ask design-system questions, as a project run does. */
+  scaleQuestions?: ChecksConfig["scaleQuestions"];
 };
 
 /**
@@ -137,7 +145,11 @@ export async function reviewStates(
     url?: string;
   }>,
   options: Omit<ReviewOptions, "state" | "focus"> = {},
-): Promise<{ findings: ReviewedFixture; tuples: CheckTuple[] }> {
+): Promise<{
+  findings: ReviewedFixture;
+  tuples: CheckTuple[];
+  config: ChecksConfig;
+}> {
   const settings = checksConfigSchema.parse(options.checks ?? {});
   const inferredComponents = inferredComponentInputs(
     options.design === undefined
@@ -160,8 +172,8 @@ export async function reviewStates(
           options.reducedMotion === false ? "no-preference" : "reduce",
         ...(colorScheme === undefined ? {} : { colorScheme }),
         permissions: ["clipboard-read", "clipboard-write"],
+        ...(options.prepareContext ? { serviceWorkers: "block" as const } : {}),
       });
-      const page = await context.newPage();
       // Scheme pairs need distinct artifacts; single-scheme paths are unchanged.
       const tupleDirectory =
         options.colorSchemes === undefined
@@ -169,18 +181,20 @@ export async function reviewStates(
           : `${state}/desktop/${colorScheme}`;
       const served = options.serve === true || options.routes !== undefined;
       try {
+        await options.prepareContext?.(context);
+        const page = await context.newPage();
         if (served) {
           await page.route("http://idiom.test/", (route) =>
             route.fulfill({ contentType: "text/html", body: html }),
           );
           await options.routes?.(page);
         }
-        const load = async () => {
-          if (served) await page.goto("http://idiom.test/");
-          else if (url === undefined) await page.setContent(html);
-          else await page.goto(url);
+        const load = async (activePage: Page = page) => {
+          if (served) await activePage.goto("http://idiom.test/");
+          else if (url === undefined) await activePage.setContent(html);
+          else await activePage.goto(url);
           if (options.settleMs !== undefined)
-            await page.waitForTimeout(options.settleMs);
+            await activePage.waitForTimeout(options.settleMs);
         };
         // A served fixture records its load as capture does.
         const loadTimeline = served ? new TimelineCollector(page) : undefined;
@@ -287,6 +301,7 @@ export async function reviewStates(
           };
         if (options.probe && observations.version === 2) {
           const probe = await probeControls({
+            failureReplay: settings.failure,
             heldReplay: {
               delayMs: settings.loading.delayMs,
               withinMs: settings.progressWithinMs,
@@ -362,6 +377,8 @@ export async function reviewStates(
   const config = checksConfigFrom(settings);
   if (options.brief !== undefined && config.page !== undefined)
     config.page = { ...config.page, brief: { text: options.brief } };
+  if (options.scaleQuestions !== undefined)
+    config.scaleQuestions = options.scaleQuestions;
   const findings = runDeterministicChecks(
     tuples,
     undefined,
@@ -370,5 +387,5 @@ export async function reviewStates(
     candidate,
     state: tuple.state,
   }));
-  return { findings, tuples };
+  return { findings, tuples, config };
 }

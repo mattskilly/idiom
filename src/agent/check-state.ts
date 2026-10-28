@@ -57,7 +57,15 @@ export async function beginCheckRecording(options: {
 
 export async function completeCheckRecording(
   recording: CheckRecording | undefined,
-  coverage: ReportCoverage | undefined,
+  coverage:
+    | Pick<
+        ReportCoverage,
+        | "selectedTuples"
+        | "successfulTuples"
+        | "failedTuples"
+        | "unresolvedTuples"
+      >
+    | undefined,
   signal?: AbortSignal,
 ): Promise<void> {
   if (

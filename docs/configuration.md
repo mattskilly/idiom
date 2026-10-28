@@ -1057,3 +1057,12 @@ compare Figma's single family with the first family in the app's stack.
 Variable names come from Figma's variables endpoint, which only Enterprise plans
 expose. Elsewhere the comparison still runs and provenance records
 `variables: "unavailable: …"`.
+
+
+Failure recovery checks are major and enabled by default when probing runs:
+
+```json
+{"checks":{"failure":{"mode":"status","status":500,"feedbackWithinMs":2000}}}
+```
+
+Use `network` to simulate a failed connection (the configured status is retained but ignored). Status mode accepts integer HTTP error statuses 400–599. The positive integer deadline is measured after each injected failure. Failure replays share the loading replay's reach/restore work and probe budget, including quick's per-page allowance, with a six-action cap per state. Only response-gated fetch/XHR actions qualify. Matched requests terminate locally, while other requests retain the probe guard. A handled failure or visible usable retry suppresses both rules. Disable probing to omit replay; earlier captures need recapture for failure evidence.

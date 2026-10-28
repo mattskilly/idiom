@@ -65,6 +65,8 @@ export {
   rulingCoordinateSchema,
   rulingPrecedentSchema,
   rulingResolutionSchema,
+  type ScaleClusterDecision,
+  scaleClusterSchema,
   type UnruledDecision,
   unruledDecisionSchema,
 } from "./ruling.js";

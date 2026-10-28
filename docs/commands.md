@@ -351,6 +351,28 @@ Unlike `review`, `check` lists every open finding, including those past the revi
 
 Every check and its settings are listed in [configuration.md](configuration.md#checks). The baseline directory setting is in [configuration.md](configuration.md#baselines).
 
+### Check only changed states
+
+```sh
+idiom check checkout --changed              # one validated flow
+idiom check --changed                       # every validated flow, affected states only
+idiom check checkout --changed main         # explicit base commit/ref
+idiom check --changed=main --json --fail-on never
+idiom check checkout --changed --states cart,receipt --viewports mobile
+```
+
+Put the flow **before** `--changed`: a word immediately after bare `--changed` is its optional base. Ordinary `check` still requires a flow. Without a base, Idiom uses the merge base of HEAD and the locally available remote default branch (preferring origin), then local main/master when remote metadata is absent. If neither a default branch nor a merge base is available, it uses HEAD and explains the fallback. No fetch occurs. A missing repository, unborn HEAD or invalid explicit base is an error.
+
+The diff includes committed changes from base to HEAD, staged changes, unstaged changes and nonignored untracked files, including deletions and both sides of renames. Next app/pages, SvelteKit, Astro and Remix route files and unambiguous colocated files select states at that route. Other sources follow transitive static imports, re-exports, relative paths and tsconfig aliases. A route-local component imported elsewhere selects those routes too. Dynamic URL paths, pathless groups and expanded/chained states use their validated URLs. Runtime rendering and monorepo package graphs beyond tsconfig resolution are not inferred.
+
+Layouts and their dependencies, global CSS entry points, Tailwind/theme config, `DESIGN.md`, design tokens and `.idiom/` configuration select every candidate state. A changed file with no route owner or known importer (including deleted shared sources), an uncertain edge inside a global module, a malformed tsconfig and unsupported route conventions also fall back to every state, with the triggering file and reason shown. Narrower uncertainty stays narrow: states whose URL is runtime-derived (`urlFrom`) or whose target is not web join every source edit's selection, and so do the routes whose import walk reached an unresolved, nonliteral or malformed import. That file's `uncertainties` lists why they were added. Runtime builtins such as `node:fs` are external, not unresolved. A known route with no configured states, no changes or an empty explicit-state intersection selects nothing: no server, browser, review, baseline write or successful-check acknowledgment is produced.
+
+Text says `checked N of M states`, explains every file mapping and all-state fallback, and lists skipped `flow/state` identities as `not checked`. N counts successfully checked states; selected counts are separate. Changed JSON is a `{ selection, checkedStates, checks }` envelope. `selection.git` contains requested/resolved base and fallback explanation; `selection.files` contains every changed path, mapping kind/reason, routes, import chains where available and affected states. `selected`, `skipped`, `candidates` and `fallbackFiles` disclose the final scope. Each `checks` entry has its flow and `checked` or `not-checked` status; only checked entries have a normal `summary` and run/report fields within it. Skipped states never count as passing.
+
+Changed mode compares an existing recorded baseline by default, but **never initializes or advances a baseline**. Without a reachable baseline it reports live findings with a `baseline not applied` explanation, even on an uncommitted tree. Explicit `--since-baseline` and `--baseline-file` still require a usable record. `--baseline <runId>` suppresses findings already known in that stored run. Only a successfully recaptured tuple can establish a fix; omitted states remain uncovered. `--all` bypasses baseline comparison, and `--fail-on` gates new/open findings across checked flows with its usual severity policy (`never` disables the findings gate).
+
+`--changed` requires fresh capture and rejects `--from` and `--latest`. Named-flow `--states` intersects inferred states after validating the IDs; viewport/scheme scopes work normally. With no flow, `--states`, `--baseline <runId>` and `--baseline-file` require a flow name. All selected flow options are checked before the first capture. `--prod`, `--advisory` and `--emit-tickets` work per selected flow with that run's provenance. A batch publishes one hook acknowledgment only when all selected captures succeed; failure, cancellation and edits during checking prevent acknowledgment.
+
 ### Run in Autobuild
 
 For an Autobuild gate, initialize and commit the baseline so build worktrees inherit it; accept it again after intentional changes:

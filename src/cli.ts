@@ -20,6 +20,10 @@ import {
 } from "./commands/baseline.js";
 import { captureCommand } from "./commands/capture.js";
 import { checkCommand, renderCheckSummary } from "./commands/check.js";
+import {
+  checkChanged,
+  renderChangedSelection,
+} from "./commands/check-changed.js";
 import { compareCommand } from "./commands/compare.js";
 import {
   type ContextDependencies,
@@ -675,7 +679,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         writeOut(
           options.json === true
             ? JSON.stringify(result, null, 2)
-            : `Reviewed ${flow}: ${result.findingCount} finding(s), ${result.unruledDecisionCount} unruled decision(s)${result.build === undefined ? "" : ` · production build ${result.build.id}`} — ${result.reportPath}`,
+            : `Reviewed ${flow}: ${result.findingCount} finding(s), ${result.unruledDecisionCount} unruled decision(s)${result.designSystemQuestions.length === 0 ? "" : `, ${result.designSystemQuestions.length} design system question(s)`}${result.build === undefined ? "" : ` · production build ${result.build.id}`} — ${result.reportPath}`,
         );
         if (options.json !== true && result.advisory !== undefined)
           writeErr(
@@ -781,7 +785,11 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
     .description(
       "capture and check for regressions; initialize clean HEAD once, then gate new findings",
     )
-    .argument("<flow>", "flow manifest id")
+    .argument("[flow]", "flow manifest id (required without --changed)")
+    .option(
+      "--changed [base]",
+      "check states affected by changes since base (default: merge base with the default branch); put flow before --changed",
+    )
     .option("--prod", "capture and check a fresh production build")
     .option(
       "--states <ids>",
@@ -850,8 +858,9 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
     )
     .action(
       async (
-        flow: string,
+        flow: string | undefined,
         options: {
+          changed?: true | string;
           refreshDesign?: boolean;
           from?: string;
           latest?: boolean;
@@ -874,6 +883,72 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         command: Command,
       ) => {
         const shared = command.optsWithGlobals<SharedOptions>();
+        if (options.changed !== undefined) {
+          const output = await checkChanged({
+            ...options,
+            flow,
+            changed: options.changed,
+            project: shared.project,
+            cwd: dependencies.cwd,
+            scope: {
+              states: options.states,
+              viewports: options.viewports,
+              schemes: options.schemes,
+            },
+            dependencies: reviewDependencies,
+          });
+          const checked = output.checks.filter(
+            (entry) => entry.status === "checked",
+          );
+          writeOut(
+            options.json
+              ? JSON.stringify(
+                  {
+                    selection: output.selection,
+                    checkedStates: output.checkedStates,
+                    checks: output.checks.map((entry) =>
+                      entry.status === "checked"
+                        ? {
+                            flow: entry.flow,
+                            status: entry.status,
+                            summary: entry.summary,
+                          }
+                        : entry,
+                    ),
+                  },
+                  null,
+                  2,
+                )
+              : [
+                  renderChangedSelection(output),
+                  ...checked.map((entry) =>
+                    [
+                      entry.summary.baselineNotApplied,
+                      renderCheckSummary(entry.summary, options).trimEnd(),
+                    ]
+                      .filter(Boolean)
+                      .join("\n"),
+                  ),
+                ].join("\n"),
+          );
+          for (const entry of checked)
+            writeErr(renderTimings(entry.summary.timings));
+          const rank = { blocker: 0, major: 1, minor: 2 } as const;
+          const threshold =
+            options.failOn === "never" ? -1 : rank[options.failOn];
+          const failing = checked
+            .flatMap((entry) => entry.summary.findings)
+            .filter((finding) => rank[finding.severity] <= threshold);
+          if (failing.length)
+            throw new IdiomError(
+              `check failed: ${failing.length} new/open finding(s) at or above ${options.failOn}`,
+            );
+          return;
+        }
+        if (!flow)
+          throw new IdiomError(
+            "check requires a flow unless --changed is supplied",
+          );
         const summary = await checkCommand({
           flow,
           project: shared.project,
@@ -1323,6 +1398,18 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
     .option("--candidate <number>", "one-based candidate ruling number")
     .option("--wording <text>", "record custom ruling wording")
     .option("--no-rule", "record that this decision deliberately needs no rule")
+    .option(
+      "--add-step",
+      "design-system question: add the value as a step for its context",
+    )
+    .option(
+      "--token <name>",
+      "token name for --add-step (defaults to the suggestion)",
+    )
+    .option(
+      "--drift",
+      "design-system question: keep reporting the value as drift (skip by not answering)",
+    )
     .action(
       async (
         options: {
@@ -1330,6 +1417,9 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           candidate?: string;
           wording?: string;
           rule?: boolean;
+          addStep?: boolean;
+          token?: string;
+          drift?: boolean;
         },
         command: Command,
       ) => {
@@ -1341,6 +1431,9 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           candidate: options.candidate,
           wording: options.wording,
           noRule: options.rule === false,
+          addStep: options.addStep,
+          token: options.token,
+          drift: options.drift,
           dependencies: dependencies.ruling,
           write: writeOut,
         });

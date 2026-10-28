@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -19,6 +20,7 @@ import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { initProject } from "../src/commands/init.js";
 import { findingSchema } from "../src/schemas/finding.js";
 import { commit, git } from "./baseline-support.js";
+import { changedFixture } from "./changed-support.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = join(import.meta.dirname, "..");
@@ -691,3 +693,45 @@ test("built stdio keeps setup stdout off the wire and cleans children after canc
     child.stdin.destroy();
   }
 }, 40000);
+
+test("packed changed checking loads the runtime TypeScript parser with runtime dependencies only", async () => {
+  const f = await changedFixture();
+  try {
+    await f.write(
+      "app/uncovered/page.tsx",
+      "export default function Page() { return <main />; }",
+    );
+    const response = await invoke(
+      runtimeEntry,
+      ["check", "--changed", "--json"],
+      f.directory,
+    );
+    expect(response.code, response.stderr).toBe(0);
+    const output = JSON.parse(response.stdout);
+    expect(output.selection.files[0]).toMatchObject({
+      path: "app/uncovered/page.tsx",
+      kind: "route",
+      routes: ["/uncovered"],
+    });
+    expect(output.checkedStates).toBe(0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("ordinary packed commands do not load the changed-check parser", async () => {
+  const parser = join(runtimeRoot, "node_modules/typescript");
+  const hidden = `${parser}.hidden`;
+  await rename(parser, hidden);
+  try {
+    const response = await invoke(
+      runtimeEntry,
+      ["--version"],
+      temporaryDirectory,
+    );
+    expect(response.code, response.stderr).toBe(0);
+    expect(response.stdout).toContain(originalVersion);
+  } finally {
+    await rename(hidden, parser);
+  }
+});

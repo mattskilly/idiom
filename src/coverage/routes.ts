@@ -43,6 +43,7 @@ async function walk(
   directory: string,
   visit: (path: string, entry: Dirent) => void,
   depth = 0,
+  privateDirectories = false,
 ): Promise<void> {
   if (depth > 12) return;
   let entries: Dirent[];
@@ -54,19 +55,50 @@ async function walk(
   for (const entry of entries) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (ignoredDirectories.has(entry.name) || entry.name.startsWith("_"))
+      if (
+        ignoredDirectories.has(entry.name) ||
+        (!privateDirectories && entry.name.startsWith("_"))
+      )
         continue;
-      await walk(path, visit, depth + 1);
+      await walk(path, visit, depth + 1, privateDirectories);
     } else visit(path, entry);
   }
 }
 
-/** Route roots: `app/` and `pages/` directories, in a monorepo or not. */
-async function routeRoots(
-  projectDirectory: string,
-): Promise<Array<{ kind: "app" | "pages"; path: string }>> {
-  const roots: Array<{ kind: "app" | "pages"; path: string }> = [];
-  const visitDirectories = async (directory: string, depth: number) => {
+export type RouteRoot = {
+  kind: "app" | "pages" | "svelte" | "remix";
+  path: string;
+  astro?: boolean;
+};
+export type RouteEntry = DiscoveredRoute & {
+  root: RouteRoot;
+  directory: string;
+};
+
+async function framework(
+  directory: string,
+  boundary: string,
+): Promise<string[]> {
+  try {
+    const manifest = JSON.parse(
+      await readFile(join(directory, "package.json"), "utf8"),
+    );
+    return Object.keys({
+      ...manifest.dependencies,
+      ...manifest.devDependencies,
+    });
+  } catch {
+    const parent = dirname(directory);
+    return directory === boundary || relative(boundary, parent).startsWith("..")
+      ? []
+      : framework(parent, boundary);
+  }
+}
+
+async function routeRoots(projectDirectory: string): Promise<RouteRoot[]> {
+  const roots: RouteRoot[] = [];
+  const boundary = resolve(projectDirectory);
+  const visit = async (directory: string, depth: number): Promise<void> => {
     if (depth > 4) return;
     let entries: Dirent[];
     try {
@@ -78,7 +110,22 @@ async function routeRoots(
       if (!entry.isDirectory() || ignoredDirectories.has(entry.name)) continue;
       const path = join(directory, entry.name);
       if (entry.name === "app" || entry.name === "pages") {
-        roots.push({ kind: entry.name, path });
+        const packages = await framework(directory, boundary);
+        if (
+          entry.name === "app" &&
+          packages.some((p) => p.startsWith("@remix-run/"))
+        )
+          roots.push({ kind: "remix", path: join(path, "routes") });
+        else
+          roots.push({
+            kind: entry.name,
+            path,
+            astro: packages.includes("astro"),
+          });
+        continue;
+      }
+      if (entry.name === "routes" && dirname(path).endsWith(`${sep}src`)) {
+        roots.push({ kind: "svelte", path });
         continue;
       }
       if (
@@ -87,10 +134,10 @@ async function routeRoots(
         ) ||
         depth > 0
       )
-        await visitDirectories(path, depth + 1);
+        await visit(path, depth + 1);
     }
   };
-  await visitDirectories(projectDirectory, 0);
+  await visit(boundary, 0);
   return roots;
 }
 
@@ -105,71 +152,127 @@ export function appRouteFromSegments(segments: string[]): string | undefined {
   return `/${kept.join("/")}`;
 }
 
-/** Every (route, source) pair the filesystem routers declare, in walk order. */
+/** Path-derived ownership also works for a route module removed by the diff. */
+export function routeForFile(
+  root: RouteRoot,
+  path: string,
+): string | undefined {
+  const local = relative(root.path, path);
+  if (local.startsWith("..") || local === "") return undefined;
+  const segments = local.split(sep);
+  const file = segments.at(-1) ?? "";
+  if (root.kind === "app")
+    return pageFile.test(file)
+      ? appRouteFromSegments(segments.slice(0, -1))
+      : undefined;
+  if (root.kind === "svelte") {
+    if (!/^\+page(?:\.server)?\.(?:svelte|ts|js)$/.test(file)) return undefined;
+    return appRouteFromSegments(segments.slice(0, -1))?.replace(
+      /=\w+(?=\])/g,
+      "",
+    );
+  }
+  if (root.kind === "remix") {
+    if (!/\.(?:tsx|ts|jsx|js)$/.test(file) || /\.d\.ts$/.test(file))
+      return undefined;
+    if (
+      segments.length > 2 ||
+      (segments.length === 2 && !/^route\./.test(file))
+    )
+      return undefined;
+    const name =
+      segments.length === 2 ? segments[0] : file.replace(/\.[^.]+$/, "");
+    if (!name || /[()[\]]/.test(name)) return undefined;
+    const parts = name.split(".").flatMap((part) => {
+      if (part === "_index" || part.startsWith("_")) return [];
+      if (part === "$") return ["[...rest]"];
+      if (part.startsWith("$")) return [`[${part.slice(1)}]`];
+      return [part.replace(/_$/, "")];
+    });
+    return `/${parts.join("/")}`;
+  }
+  const extension = root.astro ? astroPageFile : pagesRouterFile;
+  if (
+    !extension.test(file) ||
+    segments[0] === "api" ||
+    segments.some((part) => part.startsWith("_")) ||
+    /\.d\.[cm]?ts$/.test(file)
+  )
+    return undefined;
+  const name = file.replace(extension, "");
+  return `/${[...segments.slice(0, -1), ...(name === "index" ? [] : [name])].join("/")}`;
+}
+
+export async function discoverRouteTopology(projectDirectory: string) {
+  const roots = await routeRoots(projectDirectory);
+  const entries: RouteEntry[] = [];
+  const uncertainties: string[] = [];
+  const globals: string[] = [];
+  for (const root of roots) {
+    if (root.kind === "remix") {
+      for (const file of await readdir(dirname(root.path)).catch(
+        () => [] as string[],
+      ))
+        if (/^root\.[jt]sx?$/.test(file))
+          globals.push(join(dirname(root.path), file));
+    }
+    await walk(
+      root.path,
+      (path, entry) => {
+        if (
+          /^(?:layout|template|_app|_document|\+layout(?:\.server)?)\.[^.]+$/.test(
+            entry.name,
+          )
+        )
+          globals.push(path);
+        const route = routeForFile(root, path);
+        if (route !== undefined)
+          entries.push({
+            route,
+            source: relative(projectDirectory, path),
+            root,
+            directory: dirname(path),
+          });
+        else if (root.kind === "remix" && /\.[jt]sx?$/.test(entry.name))
+          uncertainties.push(path);
+      },
+      0,
+      root.kind === "remix",
+    );
+  }
+  // Remix parent modules render an Outlet for descendants; pathless layouts
+  // can own unrelated URL prefixes. Filename nesting, unlike URL prefixes,
+  // also respects trailing-underscore layout escapes.
+  const remixName = (entry: RouteEntry) =>
+    relative(entry.root.path, resolve(projectDirectory, entry.source))
+      .replace(/[/\\]route\.[jt]sx?$/, "")
+      .replace(/\.[jt]sx?$/, "");
+  for (const entry of entries) {
+    if (
+      entry.root.kind !== "remix" ||
+      /(?:^|[./])_index(?:\.|$)/.test(entry.source)
+    )
+      continue;
+    if (
+      entries.some(
+        (child) =>
+          child !== entry &&
+          child.root.path === entry.root.path &&
+          remixName(child).startsWith(`${remixName(entry)}.`),
+      )
+    )
+      globals.push(resolve(projectDirectory, entry.source));
+  }
+  return { roots, entries, uncertainties, globals };
+}
+
+/** Every (route, source) pair, before URL deduplication. */
 export async function discoverRouteEntries(
   projectDirectory: string,
 ): Promise<DiscoveredRoute[]> {
-  const found: DiscoveredRoute[] = [];
-  const boundary = resolve(projectDirectory);
-  const owners = new Map<string, Promise<boolean>>();
-  const isAstro = (directory: string): Promise<boolean> => {
-    const cached = owners.get(directory);
-    if (cached) return cached;
-    const lookup = (async () => {
-      try {
-        const manifest = JSON.parse(
-          await readFile(join(directory, "package.json"), "utf8"),
-        );
-        return (
-          Object.hasOwn(manifest?.dependencies ?? {}, "astro") ||
-          Object.hasOwn(manifest?.devDependencies ?? {}, "astro")
-        );
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
-        const parent = dirname(directory);
-        if (
-          directory === boundary ||
-          relative(boundary, parent).startsWith("..")
-        )
-          return false;
-        return isAstro(parent);
-      }
-    })();
-    owners.set(directory, lookup);
-    return lookup;
-  };
-  for (const root of await routeRoots(projectDirectory)) {
-    const extension =
-      root.kind === "pages" && (await isAstro(resolve(root.path)))
-        ? astroPageFile
-        : pagesRouterFile;
-    await walk(root.path, (path, entry) => {
-      const relativePath = relative(root.path, path);
-      const segments = relativePath.split(sep);
-      const source = relative(projectDirectory, path);
-      if (root.kind === "app") {
-        if (!pageFile.test(entry.name)) return;
-        const route = appRouteFromSegments(segments.slice(0, -1));
-        if (route !== undefined) found.push({ route, source });
-        return;
-      }
-      if (
-        !extension.test(entry.name) ||
-        segments[0] === "api" ||
-        segments.some((segment) => segment.startsWith("_")) ||
-        /\.d\.[cm]?ts$/.test(entry.name)
-      )
-        return;
-      const name = entry.name.replace(extension, "");
-      if (name.startsWith("_")) return;
-      const parts = [
-        ...segments.slice(0, -1),
-        ...(name === "index" ? [] : [name]),
-      ];
-      found.push({ route: `/${parts.join("/")}`, source });
-    });
-  }
-  return found;
+  return (await discoverRouteTopology(projectDirectory)).entries.map(
+    ({ route, source }) => ({ route, source }),
+  );
 }
 
 /** One entry per route (the first source found wins), sorted by route. */
@@ -285,17 +388,15 @@ export async function crawlRoutes(
 }
 
 export function routePattern(route: string): RegExp {
-  const body = route
-    .split("/")
-    .map((segment) => {
-      if (/^\[\[\.\.\.[^\]]+\]\]$/.test(segment)) return "(?:.*)";
-      if (/^\[\.\.\.[^\]]+\]$/.test(segment)) return ".+";
-      if (/^\[[^\]]+\]$/.test(segment)) return "[^/]+";
-      return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    })
-    .join("/")
-    .replace(/\/\(\?:\.\*\)$/, "(?:/.*)?");
-  return new RegExp(`^${body === "" ? "/" : body}/?$`);
+  let body = "";
+  for (const segment of route.split("/").slice(1)) {
+    if (/^\[\[\.\.\.[^\]]+\]\]$/.test(segment)) body += "(?:/.*)?";
+    else if (/^\[\[[^\]]+\]\]$/.test(segment)) body += "(?:/[^/]+)?";
+    else if (/^\[\.\.\.[^\]]+\]$/.test(segment)) body += "/.+";
+    else if (/^\[[^\]]+\]$/.test(segment)) body += "/[^/]+";
+    else body += `/${segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`;
+  }
+  return new RegExp(`^${body || "/"}/?$`);
 }
 
 function statePath(url: string): string | undefined {

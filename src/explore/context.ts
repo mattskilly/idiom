@@ -71,6 +71,10 @@ export async function loadExplorationContext(options: {
           id: steering.data.decision,
           gitTopology: options.gitTopology,
         });
+  if (decision?.scaleCluster !== undefined)
+    throw new IdiomError(
+      `${decision.id} is a design system question; answer it with idiom ruling --decision ${decision.id} --add-step or --drift`,
+    );
   const question =
     decision?.question ?? (steering.data.question as string).trim();
   const viewports = selectViewports(context.project, record.flow);

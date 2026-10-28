@@ -367,7 +367,7 @@ describe("landing-page copy follows the shipped command surface", () => {
   test("the version pin forces a re-audit, and the only install is the published package", () => {
     // Bump this literal deliberately at every release; the page must be
     // re-read against the shipped CLI each time.
-    expect(packageJson.version).toBe("0.12.0");
+    expect(packageJson.version).toBe("0.13.0");
     expect(source).toContain("npm install -g @mattskilly/idiom");
     expect(source).not.toMatch(/git\+ssh|\bbun add\b/);
     expect([...source.matchAll(/\bv\d+\.\d+\.\d+\b/g)]).toEqual([]);

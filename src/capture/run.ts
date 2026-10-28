@@ -32,6 +32,7 @@ import {
 import { createBrowserLauncher } from "./browser.js";
 import { createElectronLauncher } from "./electron.js";
 import { mergeExplanations } from "./explanations.js";
+import { failureKey } from "./failure.js";
 import { captureConcurrency, runCaptureLanes } from "./lanes.js";
 import { mergeMotion } from "./motion.js";
 import {
@@ -716,6 +717,11 @@ async function captureOwned(
               ? {
                   probe: true,
                   probeLedger,
+                  failureReplays:
+                    previous?.artifact.result?.observations?.version === 2
+                      ? previous.artifact.result.observations.probe
+                          ?.failureReplay?.completed
+                      : undefined,
                   enumerateProbe: session.planProbes && !probePass,
                   probeBudget: probePass
                     ? probeBudgets.get(tupleId(selected))
@@ -762,6 +768,22 @@ async function captureOwned(
                 (action) =>
                   action.source === "probe-click" ||
                   action.source === "probe-hover" ||
+                  (action.source === "failure-replay" &&
+                    !previous.artifact.result?.timelines?.actions.some(
+                      (earlier) =>
+                        earlier.source === "failure-replay" &&
+                        earlier.selector === action.selector &&
+                        earlier.failure !== undefined &&
+                        action.failure !== undefined &&
+                        failureKey(
+                          earlier.selector ?? earlier.name,
+                          earlier.failure.requests,
+                        ) ===
+                          failureKey(
+                            action.selector ?? action.name,
+                            action.failure.requests,
+                          ),
+                    )) ||
                   (action.source === "slow-replay" &&
                     !(
                       action.held?.of === "web-step" &&

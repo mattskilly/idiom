@@ -43,16 +43,21 @@ export function authoredSpacing(
   return result;
 }
 
-export function spacingFindings(
+export type SpacingMember = {
+  tuple: CheckTuple;
+  element: ObservedElementV2;
+  selector: string;
+  property: string;
+  px: number;
+};
+
+/** Every authored off-scale spacing longhand, in tuple then element order. */
+export function spacingOccurrences(
   tuples: readonly CheckTuple[],
   scale: ScalesConfig["spacing"],
-): Map<CheckTuple, FindingCandidate[]> {
-  const output = new Map<CheckTuple, FindingCandidate[]>();
-  if (!scale?.length) return output;
-  const groups = new Map<
-    string,
-    Array<{ tuple: CheckTuple; selector: string; property: string }>
-  >();
+): SpacingMember[] {
+  const members: SpacingMember[] = [];
+  if (!scale?.length) return members;
   for (const tuple of [...tuples].sort((a, b) =>
     tupleSortKey(a).localeCompare(tupleSortKey(b)),
   )) {
@@ -60,12 +65,29 @@ export function spacingFindings(
     for (const element of tuple.observations.elements)
       for (const { property, px } of authoredSpacing(element)) {
         if (spacingOnScale(px, scale)) continue;
-        const key = `${Math.round(px * 1000) / 1000}px`;
-        groups.set(key, [
-          ...(groups.get(key) ?? []),
-          { tuple, selector: element.selector, property },
-        ]);
+        members.push({
+          tuple,
+          element,
+          selector: element.selector,
+          property,
+          px,
+        });
       }
+  }
+  return members;
+}
+
+/** One candidate per off-scale value, owned by its first tuple. */
+export function spacingCandidates(
+  members: readonly SpacingMember[],
+  scale: ScalesConfig["spacing"],
+): Map<CheckTuple, FindingCandidate[]> {
+  const output = new Map<CheckTuple, FindingCandidate[]>();
+  if (!scale?.length) return output;
+  const groups = new Map<string, SpacingMember[]>();
+  for (const member of members) {
+    const key = `${Math.round(member.px * 1000) / 1000}px`;
+    groups.set(key, [...(groups.get(key) ?? []), member]);
   }
   for (const [value, members] of groups) {
     const first = members[0];
@@ -97,4 +119,11 @@ export function spacingFindings(
     output.set(first.tuple, [...(output.get(first.tuple) ?? []), candidate]);
   }
   return output;
+}
+
+export function spacingFindings(
+  tuples: readonly CheckTuple[],
+  scale: ScalesConfig["spacing"],
+): Map<CheckTuple, FindingCandidate[]> {
+  return spacingCandidates(spacingOccurrences(tuples, scale), scale);
 }

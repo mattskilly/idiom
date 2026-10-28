@@ -7,6 +7,7 @@ import type { ColorScheme } from "../schemas/project.js";
 import type {
   ActionTimeline,
   ActionTimelineArtifact,
+  FailureReplay,
   HeldReplay,
   PendingIndicatorKind,
   VisibleChange,
@@ -81,6 +82,8 @@ export const deterministicCheckIds = [
   "design-drift",
   "loading-state-missing",
   "double-submit",
+  "error-state-missing",
+  "retry-blocked",
 ] as const;
 
 export type DeterministicCheckId = (typeof deterministicCheckIds)[number];
@@ -541,6 +544,7 @@ export type MotionArtifact = {
 export type {
   ActionTimeline,
   ActionTimelineArtifact,
+  FailureReplay,
   HeldReplay,
   PendingIndicatorKind,
   VisibleChange,
@@ -618,6 +622,17 @@ export type ProbeArtifact = {
   results: ProbeResult[];
   motion?: MotionArtifact | undefined;
   collections?: ProbeCollection[] | undefined;
+  failureReplay?:
+    | {
+        mode: "status" | "network";
+        status: number;
+        feedbackWithinMs: number;
+        queued: number;
+        ran: number;
+        completed: string[];
+        notes: string[];
+      }
+    | undefined;
   /** The held (slow-network) replay of actions that sent requests. */
   heldReplay?:
     | { delayMs: number; queued: number; ran: number; notes: string[] }
@@ -1361,6 +1376,11 @@ export type ChecksConfig = {
   mirrored: MirroredPair[];
   fieldGroups: { inner: number; between: number };
   scales: ScalesConfig;
+  /**
+   * Present only on runs that can ask design-system questions (a project
+   * with a ruling channel). Absent leaves scale-conformance output unchanged.
+   */
+  scaleQuestions?: { rulings: ScaleRulingRecord[] } | undefined;
   luminanceParity: { primarySelectors: string[]; ignore: string[] };
   frame: { selector?: string | undefined; minLuminanceDelta: number };
   primaryRegion?:
@@ -1371,6 +1391,9 @@ export type ChecksConfig = {
   progressWithinMs: number;
   /** Optional so hand-built configs stay valid; read as `?? 1500`. */
   loading?: { delayMs: number } | undefined;
+  failure?:
+    | { mode: "status" | "network"; status: number; feedbackWithinMs: number }
+    | undefined;
   emptyState: {
     regions: Array<{ selector: string; items: string }>;
     auto: boolean;
@@ -1408,6 +1431,36 @@ export type ScalesConfig = {
   radius: Record<RadiusRole, RadiusValue[]>;
   border: Record<"divider" | "control", string[]>;
   roles: Record<ScaleRole, string[]>;
+  /** Optional so hand-built configs stay valid; read as `?? 5`. */
+  suggestAfter?: number | undefined;
+};
+
+/** Property families a design-system question can be asked about. */
+export type ScaleClusterProperty =
+  | "spacing:padding"
+  | "spacing:margin"
+  | "spacing:gap"
+  | "height"
+  | "radius"
+  | "border";
+
+/** Where a repeated off-scale value lives: landmark, component, viewport. */
+export type ScaleClusterContext = {
+  landmark: string;
+  component: string;
+  viewport: string;
+};
+
+/** A recorded human answer to a design-system question, read from DESIGN.md. */
+export type ScaleRulingRecord = {
+  id: string;
+  fingerprint: string;
+  answer: "add-step" | "drift";
+  property: ScaleClusterProperty;
+  /** `17px`, or a canonical colour. */
+  value: string;
+  context: ScaleClusterContext;
+  token?: string | undefined;
 };
 
 export type MirroredPair = {

@@ -282,7 +282,11 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 - **Why it matters:** Values off the scale accumulate into a layout that never quite lines up.
 - **Severity:** minor.
 - **Source:** Craft convention: dimensions and colours come from a small, declared scale.
-- **Configure or decide:** `checks.scales` declares spacing, control heights, radii, border colours and role selectors; decide findings with `idiom decide`. Without a declared scale, a value is compared only with peers in the same viewport, colour scheme and role, and dividers split into heading rules, table borders and other rules. Borders on inline text (dotted underlines, abbreviations) are not dividers, and radius is judged only on boxes with a visible background, border or shadow.
+- **Configure or decide:** `checks.scales` declares spacing, control heights, radii, border colours and role selectors; decide findings with `idiom decide`. Without a declared scale, a value is compared only with peers in the same viewport, colour scheme and role, and dividers split into heading rules, table borders and other rules. Borders on inline text (dotted underlines, abbreviations) are not dividers, and radius is judged only on boxes with a visible background, border or shadow. When one off-scale value repeats in one context, it becomes a single design-system question instead of separate findings (see below).
+
+When the same off-scale value keeps appearing in the same place, the system is probably missing a step rather than the page making the same mistake many times. In project runs (review, check, fix, baseline, verify), declared-scale drift (spacing, control heights, radii, border colours) is grouped by property, value and context. Values within 1px of each other count as one value, as do identical colours. The context is the nearest landmark, the component (the nearest `data-node-id`, the matching `checks.scales.roles` selector, the default role, or else the tag and its first class) and the viewport. A group needs at least `checks.scales.suggestAfter` occurrences (default 5) across at least two states or three distinct elements. Light and dark captures of an element count once, and two kinds of value never count toward a question: off-canvas content, such as a carousel's parked slides, and values that fall back from an unresolved custom property. A broken token is a defect, not a missing step. It then becomes one ruling question, for example "17px padding appears 34 times on .row-control in main at desktop, between your 16px and 24px steps. Add a step for this context, or keep reporting it as drift?". Reports and `idiom check` list it under "Design system questions" with the count, the nearest declared steps, a suggested token name and crops of three examples. Its occurrences are not counted as findings, so they never crowd the top issues.
+
+There are three answers. `idiom ruling --decision ruling-N --add-step [--token <name>]` (or `idiom_decide` with `add-step`) appends the step to DESIGN.md as a recorded ruling. Values in that context within 1px of the step are then on scale, and their findings close as resolved by ruling. `--drift` records that the value should keep being reported, and it comes back as one finding that lists every occurrence. To skip, don't answer: nothing is recorded, and the question is asked again next run. Idiom never edits `.idiom/project.json`, and the only thing it writes to DESIGN.md is a ruling you confirmed. Groups that don't qualify, and undeclared outliers, are reported as before. `idiom quick` asks no questions.
 
 ### `control-anatomy`
 
@@ -531,3 +535,20 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 - **Severity:** major.
 - **Source:** Usability heuristic: error prevention.
 - **Configure or decide:** `checks.loading.delayMs` sets how long the request is held, and `checks.progressWithinMs` sets when the second activation is tried; the interaction probe must run. Findings are decided with `idiom decide` or a `.idiom/rules.json` override.
+
+
+### `error-state-missing`
+
+- **Catches:** A response-gated fetch/XHR action that silently returns to rest after a locally injected failure. New or changed alert/status/live-region text, relevant aria-invalid, generic failure copy, or a meaningful visible result prevents a finding. Full-page navigation, beacons and independent/optimistic results are excluded. A handled failure or a usable action-related retry suppresses both failure rules.
+- **Why it matters:** A silent failure makes people assume their action worked.
+- **Severity:** major; enabled by default.
+- **Source:** Usability heuristic: visibility of system status and recovery from errors.
+- **Configure or decide:** `checks.failure.mode` is `status` (default) or `network`; `status` defaults to 500 (400–599); `feedbackWithinMs` defaults to 2000ms. The probe replays at most six actions per state within the shared probe/quick budget. Matched requests terminate locally without reaching the server; every other request retains the probe guard. Findings link the failure-replay timeline and filmstrip. Old captures require recapture. Use `idiom decide` or `.idiom/rules.json` overrides for decisions.
+
+### `retry-blocked`
+
+- **Catches:** After a locally injected failure and a complete recovery window, the activated trigger remains disabled, busy, hidden or inert, a pending indicator remains, or the main/action region lost its content. A visible failure message or a usable action-related retry suppresses the rule; initially empty content and replaced usable triggers are excluded.
+- **Why it matters:** People need a way to recover without reloading the page.
+- **Severity:** major; enabled by default.
+- **Source:** Usability heuristic: user control and recovery from errors.
+- **Configure or decide:** Shares `checks.failure` and the bounded replay scheduler with `error-state-missing`. The default recovery deadline is 2000ms after the last injected response. Interrupted or truncated windows cannot prove absence. Old captures require recapture. Findings name the requests and stuck UI, with timeline/filmstrip evidence and a measured recovery fix. Use `idiom decide` or `.idiom/rules.json` overrides for decisions.

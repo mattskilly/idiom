@@ -154,6 +154,7 @@ export type BrowserTuple = CaptureHooks & {
    * Flow-scoped probe results: a control already probed at an earlier state
    * is reused instead of clicked again.
    */
+  failureReplays?: string[] | undefined;
   probeLedger?: import("./probe-ledger.js").ProbeLedger | undefined;
   /**
    * `third-party`: arbitrary URLs (quick review). Only safe-method requests,

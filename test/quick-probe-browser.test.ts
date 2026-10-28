@@ -242,3 +242,48 @@ test("the quick focus sweep blocks cross-origin navigation", async () => {
     light.probe?.safety?.blocked.crossOriginNavigation,
   ).toBeGreaterThanOrEqual(1);
 }, 180_000);
+
+test("quick failure replay stays local and probe:false omits it", async () => {
+  const site = await serve((url, respond) => {
+    if (url === "/api/items") return respond('{"ok":true}', "application/json");
+    return respond(
+      `<!doctype html><html lang="en"><title>Recovery</title><button id="load">Load</button><main id="result">Initial content</main><script>document.querySelector('#load').onclick=async()=>{try{const r=await fetch('/api/items');if(!r.ok)throw new Error('failed');document.querySelector('#result').innerHTML='<p>Loaded items</p>';}catch(e){document.querySelector('#load').textContent='Load';}}</script></html>`,
+    );
+  });
+  const directory = await temporaryDirectory();
+  const result = await runQuick({
+    urls: [`${site.origin}/`],
+    literal: true,
+    viewports: ["desktop"],
+    cwd: directory,
+    out: join(directory, "failure"),
+    probeBudgetMs: 20000,
+  });
+  const observed = await observations(result.runDirectory, "light");
+  expect(observed.version).toBe(2);
+  if (observed.version !== 2) throw new Error("wrong version");
+  expect(observed.probe?.failureReplay?.ran).toBe(1);
+  expect(site.log.every((r) => SAFE.has(r.method))).toBe(true);
+  expect(observed.probe?.safety?.requests.sent.POST).toBeUndefined();
+  const raw = JSON.parse(
+    await readFile(
+      join(result.runDirectory, "page-1", "desktop", "light", "timelines.json"),
+      "utf8",
+    ),
+  );
+  expect(
+    raw.actions.find((a: { source: string }) => a.source === "failure-replay")
+      ?.failure.requests,
+  ).toEqual([expect.objectContaining({ path: "/api/items", delivered: true })]);
+  const off = await runQuick({
+    urls: [`${site.origin}/`],
+    literal: true,
+    viewports: ["desktop"],
+    cwd: directory,
+    out: join(directory, "off"),
+    probe: false,
+  });
+  const disabled = await observations(off.runDirectory, "light");
+  if (disabled.version !== 2) throw new Error("wrong version");
+  expect(disabled.probe?.failureReplay).toBeUndefined();
+}, 90000);

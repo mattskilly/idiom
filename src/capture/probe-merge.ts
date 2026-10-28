@@ -167,11 +167,37 @@ export function accumulateProbeRound(
           ],
         }
       : (previous.heldReplay ?? next.heldReplay);
+  const failure = next.failureReplay ?? previous.failureReplay;
   return {
     ...previous,
     results,
     ...(explanations ? { explanations } : {}),
     ...(previous.candidates ? {} : { candidates: next.candidates }),
     ...(held ? { heldReplay: held } : {}),
+    ...(failure
+      ? {
+          failureReplay: {
+            ...failure,
+            queued:
+              (previous.failureReplay?.queued ?? 0) +
+              (next.failureReplay?.queued ?? 0),
+            ran:
+              (previous.failureReplay?.ran ?? 0) +
+              (next.failureReplay?.ran ?? 0),
+            completed: [
+              ...new Set([
+                ...(previous.failureReplay?.completed ?? []),
+                ...(next.failureReplay?.completed ?? []),
+              ]),
+            ],
+            notes: [
+              ...new Set([
+                ...(previous.failureReplay?.notes ?? []),
+                ...(next.failureReplay?.notes ?? []),
+              ]),
+            ],
+          },
+        }
+      : {}),
   };
 }

@@ -1,0 +1,4 @@
+<!doctype html><html lang="en"><title>Failure recovery</title><style>body{font:16px system-ui;padding:40px}button{padding:12px}main{padding:20px}</style><button id="load">Load</button><main><div id="result">Initial content</div></main><script>
+const button=document.querySelector('#load'), result=document.querySelector('#result');
+button.onclick=async()=>{button.disabled=true;try{await new Promise((resolve,reject)=>{const x=new XMLHttpRequest();x.open("GET","/api/items");x.onload=()=>x.status>=400?reject(new Error("failed")):resolve();x.onerror=()=>reject(new Error("failed"));x.send();});result.innerHTML='<p>Three items loaded</p>';button.disabled=false;button.removeAttribute('aria-busy');}catch(error){button.disabled=true;}};
+</script></html>

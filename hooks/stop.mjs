@@ -1,6 +1,7 @@
 import {
   claimStop,
   createBudget,
+  flowReminder,
   initialChanges,
   readInput,
   readState,
@@ -39,8 +40,7 @@ try {
           console.log(
             JSON.stringify({
               decision: "block",
-              reason:
-                "UI changed since the last successful Idiom check. Run idiom_check for the configured flows (all states), or idiom check <flow>; if checking is impractical, explain why. This reminder blocks once per session until a successful check starts a new epoch.",
+              reason: `UI changed since the last successful Idiom check. ${await flowReminder(context, budget)} If checking is impractical, explain why. This reminder blocks once per session until a successful check starts a new epoch.`,
             }),
           );
         }

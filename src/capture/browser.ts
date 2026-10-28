@@ -17,6 +17,7 @@ import {
   type Project,
 } from "../schemas/project.js";
 import { ExplanationCollector } from "./explanations.js";
+import { replayRequests } from "./failure-identity.js";
 import { FilmstripBudget, FilmstripCapture } from "./filmstrips.js";
 import { sweepFocusVisible } from "./focus.js";
 import { createLinkChecker, type LinkChecker } from "./links.js";
@@ -324,6 +325,8 @@ async function captureInContext(
             stepIndex,
             action: step.action,
             selector,
+            sourceAction: action,
+            requests: timelines ? replayRequests(action) : [],
             reach: (page: Page) => reachBefore(page, stepIndex),
             perform: (page: Page) =>
               runAction(page, step).then(() => undefined),
@@ -387,7 +390,7 @@ async function captureInContext(
       createAxe: runtime.createAxe,
       // Freeze step evidence before replay/probe activity mutates the page.
       collectConsole: async () =>
-        steps.length > 0 || safety !== undefined ? [...records] : records,
+        steps.length > 0 || tuple.probe ? [...records] : records,
       tokens: tuple.tokens ?? { status: "not-configured" },
       screenshotOptions: deterministicScreenshotOptions(tuple.project),
       reuseScreenshot: tuple.reuseScreenshot,
@@ -525,6 +528,13 @@ async function captureInContext(
               onTimelines: (recorded) => {
                 probeTimelines = recorded;
               },
+              failureReplay:
+                tuple.enumerateProbe || tuple.designReference
+                  ? undefined
+                  : {
+                      ...tuple.project.checks.failure,
+                      completed: tuple.failureReplays ?? [],
+                    },
               heldReplay:
                 tuple.enumerateProbe || tuple.designReference
                   ? undefined
@@ -634,9 +644,7 @@ export function createBrowserLauncher(
           tuple.colorScheme ?? tuple.project.capture.colorScheme,
         ),
         // A service worker's fetches bypass context routing.
-        ...(tuple.probe && tuple.probeSafety === "third-party"
-          ? { serviceWorkers: "block" as const }
-          : {}),
+        ...(tuple.probe ? { serviceWorkers: "block" as const } : {}),
       });
       if (tuple.signal?.aborted) {
         void context.close().catch(() => undefined);

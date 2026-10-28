@@ -228,6 +228,8 @@ const scalesSchema = z
       })
       .strict()
       .default({ control: [], card: [], panel: [], chip: [], divider: [] }),
+    /** Off-scale repeats in one context that become a design-system question. */
+    suggestAfter: z.number().int().min(2).default(5),
   })
   .strict()
   .default({
@@ -236,6 +238,7 @@ const scalesSchema = z
     radius: { control: [], card: [], panel: [], chip: [] },
     border: { divider: [], control: [] },
     roles: { control: [], card: [], panel: [], chip: [], divider: [] },
+    suggestAfter: 5,
   });
 
 const diagnosticSelectors = z
@@ -468,6 +471,14 @@ export const checksConfigSchema = z
     /** The probe's held replay: how long the action's responses are held. */
     loading: z
       .object({ delayMs: z.number().int().positive().default(1500) })
+      .strict()
+      .prefault({}),
+    failure: z
+      .object({
+        mode: z.enum(["status", "network"]).default("status"),
+        status: z.number().int().min(400).max(599).default(500),
+        feedbackWithinMs: z.number().int().positive().default(2000),
+      })
       .strict()
       .prefault({}),
     emptyState: emptyStateSchema,

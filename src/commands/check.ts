@@ -63,12 +63,22 @@ export type CheckSummary = PaintedCoverageReport & {
   preExistingFindings?: SummaryFinding[];
   fixed?: BaselineComparisonSummary["fixed"];
   baseline?: BaselineComparisonSummary["baseline"];
+  baselineNotApplied?: string;
   baselineRecorded?: Awaited<ReturnType<typeof recordBaseline>>;
   blocking: number;
   /** With --baseline: findings already present there and left out. */
   preExisting?: number | undefined;
   /** With --advisory: the model's design-intent review; never gates. */
   advisory?: CheckAdvisory | undefined;
+  /** Repeated off-scale values held as questions instead of findings. */
+  designSystemQuestions?: CheckDesignSystemQuestion[] | undefined;
+};
+
+export type CheckDesignSystemQuestion = {
+  id: string;
+  question: string;
+  count: number;
+  suggestedToken: string;
 };
 
 export type CheckAdvisory = {
@@ -131,6 +141,7 @@ export async function checkCommand(
 /** Internal rich seam for controllers; normal check output stays unchanged. */
 export async function checkWithReview(
   options: CheckOptions & {
+    bootstrapBaseline?: boolean;
     materializeAllDeterministic?: boolean;
     /** Adapters need tuple diagnostics before an automatic baseline can fail. */
     captureFailureIsError?: boolean;
@@ -148,6 +159,7 @@ export async function checkWithReview(
     materializeAllDeterministic,
     captureFailureIsError,
     recordAgentCheck,
+    bootstrapBaseline,
     ...reviewOptions
   } = options;
   const selectors = [
@@ -159,7 +171,8 @@ export async function checkWithReview(
     throw new IdiomError(
       "--all, --baseline, --since-baseline and --baseline-file are mutually exclusive",
     );
-  const recordedMode = all !== true && baseline === undefined;
+  let recordedMode = all !== true && baseline === undefined;
+  let baselineNotApplied: string | undefined;
   let bootstrap: Parameters<typeof recordBaseline>[0] | undefined;
   if (recordedMode) {
     const validated = await validateProject(options);
@@ -177,7 +190,12 @@ export async function checkWithReview(
         throw new IdiomError(
           `no recorded baseline for "${flow.id}" reachable from HEAD in ${path}; run idiom baseline record ${flow.id} on a clean committed tree and commit it`,
         );
-      bootstrap = { validated, flow, runDirectory: "", requireHead: true };
+      if (bootstrapBaseline === false) {
+        recordedMode = false;
+        baselineNotApplied =
+          "baseline not applied: no reachable recorded baseline; changed checks never initialize one";
+      } else
+        bootstrap = { validated, flow, runDirectory: "", requireHead: true };
     }
   }
   const recording =
@@ -307,6 +325,17 @@ export async function checkWithReview(
         : { preExisting: open.length - live.length }),
     };
   }
+  if (baselineNotApplied !== undefined)
+    summary.baselineNotApplied = baselineNotApplied;
+  if (result.designSystemQuestions.length > 0)
+    summary.designSystemQuestions = result.designSystemQuestions.map(
+      (decision) => ({
+        id: decision.id,
+        question: decision.question,
+        count: decision.scaleCluster?.count ?? 0,
+        suggestedToken: decision.scaleCluster?.suggestedToken ?? "",
+      }),
+    );
   if (result.advisory !== undefined) {
     const base = options.cwd ?? process.cwd();
     summary.advisory = {
@@ -398,20 +427,23 @@ export function renderCheckSummary(
     all?: boolean | undefined;
   } = {},
 ): string {
-  const output = withAdvisory(
-    summary.groups !== undefined &&
-      summary.baseline === undefined &&
-      options.ungrouped !== true
-      ? summary.preExisting !== undefined
-        ? renderCheckGroups(summary, summary.groups)
-        : renderCheckIssues(
-            summary,
-            summary.groups,
-            summary.issues ?? collapseIssues(summary.groups, new Set()),
-            options,
-          )
-      : renderCheckFindings(summary),
-    summary.advisory,
+  const output = withDesignSystemQuestions(
+    withAdvisory(
+      summary.groups !== undefined &&
+        summary.baseline === undefined &&
+        options.ungrouped !== true
+        ? summary.preExisting !== undefined
+          ? renderCheckGroups(summary, summary.groups)
+          : renderCheckIssues(
+              summary,
+              summary.groups,
+              summary.issues ?? collapseIssues(summary.groups, new Set()),
+              options,
+            )
+        : renderCheckFindings(summary),
+      summary.advisory,
+    ),
+    summary.designSystemQuestions,
   );
   const notice =
     summary.baselineRecorded === undefined
@@ -423,6 +455,31 @@ export function renderCheckSummary(
       ? output
       : `${output}${renderClusterTicketsResult(summary.tickets)}\n`)
   );
+}
+
+/**
+ * One group for every repeated off-scale value held as a question, before
+ * the trailing `Full report:` line. Its occurrences are not findings, so
+ * they never enter the top issues.
+ */
+function withDesignSystemQuestions(
+  output: string,
+  questions: CheckDesignSystemQuestion[] | undefined,
+): string {
+  if (questions === undefined || questions.length === 0) return output;
+  const block = [
+    `Design system questions (${questions.length}):`,
+    ...questions.map(
+      (question) =>
+        `  ${question.id} — ${question.question} (${question.count} occurrences). Answer: idiom ruling --decision ${question.id} --add-step [--token ${question.suggestedToken}] | --drift`,
+    ),
+    "",
+  ];
+  const lines = output.replace(/\n$/, "").split("\n");
+  const last = lines.at(-1) ?? "";
+  if (last.startsWith("Full report: "))
+    return `${[...lines.slice(0, -1), ...block, last].join("\n")}\n`;
+  return `${[...lines, "", ...block].join("\n").trimEnd()}\n`;
 }
 
 /**

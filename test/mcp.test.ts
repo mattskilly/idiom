@@ -1,4 +1,11 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
@@ -11,6 +18,7 @@ import type { BrowserSession } from "../src/capture/types.js";
 import { initProject } from "../src/commands/init.js";
 import { evidencePath } from "../src/mcp/evidence.js";
 import { createIdiomMcpServer } from "../src/mcp/server.js";
+import { writeUnruledDecisions } from "../src/rulings/artifacts.js";
 import { mcpClient, toolData } from "./mcp-support.js";
 
 const cleanups: Array<() => Promise<unknown>> = [];
@@ -103,7 +111,10 @@ test("uninitialized server advertises exactly fifteen described strict schemas a
   });
   expect(
     tools.find((tool) => tool.name === "idiom_decide")?.inputSchema.properties,
-  ).toMatchObject({ decision: { enum: ["accept", "reject"] } });
+  ).toMatchObject({
+    decision: { enum: ["accept", "reject", "add-step", "drift"] },
+    token: { type: "string" },
+  });
   for (const name of ["idiom_context", "idiom_flows", "idiom_check"]) {
     const error = await call(
       client,
@@ -467,4 +478,78 @@ test("idiom_quick probes by default, reports progress and returns the interactio
   expect(JSON.stringify((off as CallToolResult).content)).toContain(
     "probe off",
   );
+});
+
+test("idiom_decide answers a design system question by its ruling id", async () => {
+  const directory = await root();
+  await initProject({ project: directory, yes: true });
+  const run = join(directory, ".idiom", "reports", "2026-10-27-check");
+  await mkdir(run, { recursive: true });
+  await writeUnruledDecisions(run, [
+    {
+      id: "ruling-1",
+      fingerprint: "scale-print",
+      choiceKey: "scale-cluster:v1 height 36px",
+      question: "36px height appears 6 times on controls in main at desktop…",
+      nearestLawExcerpt: "checks.scales.controlHeights: [32px, 40px]",
+      occurrences: [
+        { state: "editor", viewport: "desktop", screenshot: "editor/desktop" },
+      ],
+      candidates: [],
+      scaleCluster: {
+        property: "height",
+        value: "36px",
+        count: 6,
+        distinctStates: 1,
+        distinctElements: 6,
+        context: {
+          landmark: "main",
+          component: "control",
+          viewport: "desktop",
+        },
+        componentLabel: "controls",
+        nearestSteps: { below: "32px", above: "40px", steps: ["32px", "40px"] },
+        suggestedToken: "height-control-main",
+        examples: [
+          {
+            state: "editor",
+            viewport: "desktop",
+            screenshot: "editor/desktop",
+            selector: "#save",
+          },
+        ],
+      },
+    },
+  ]);
+  const client = await connect({ project: directory });
+  const accepted = await call(client, "idiom_decide", {
+    id: "ruling-1",
+    decision: "accept",
+    reason: "Looks right",
+  });
+  expect(accepted.isError).toBe(true);
+  expect(JSON.stringify(accepted.content)).toContain(
+    "answer it with add-step or drift",
+  );
+  const misrouted = await call(client, "idiom_decide", {
+    id: "finding-1",
+    decision: "drift",
+    reason: "Not a question",
+  });
+  expect(misrouted.isError).toBe(true);
+  expect(JSON.stringify(misrouted.content)).toContain(
+    "answers a design system question",
+  );
+  const added = await call(client, "idiom_decide", {
+    id: "ruling-1",
+    decision: "add-step",
+    token: "height-row",
+    reason: "Dense rows are a real size.",
+  });
+  expect(added.isError).not.toBe(true);
+  const law = await readFile(join(directory, "DESIGN.md"), "utf8");
+  expect(law).toContain(
+    "Add the `height-row` step: 36px height for control in main at desktop.",
+  );
+  expect(law).toContain("Reason: Dense rows are a real size.");
 });

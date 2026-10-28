@@ -393,6 +393,84 @@ export const heldReplaySchema = z
 export type HeldReplay = z.infer<typeof heldReplaySchema>;
 export type PendingIndicatorKind = z.infer<typeof pendingIndicatorKindSchema>;
 
+/** Failure facts use page-clock milliseconds since trusted dispatch. Request
+ * startTime alone uses the process clock since replay activation. Null is unknown. */
+export const failureReplaySchema = z
+  .object({
+    of: z.enum(["web-step", "probe-click"]),
+    sourceAction: z.string(),
+    mode: z.enum(["status", "network"]),
+    status: z.number().int().min(400).max(599),
+    feedbackWithinMs: z.number().int().positive(),
+    eligibility: z
+      .object({
+        basis: z.enum(["response", "release"]),
+        responseAt: finite,
+        changeAt: finite,
+        selector: z.string(),
+      })
+      .strict(),
+    dispatched: z.boolean(),
+    navigated: z.boolean(),
+    requests: z
+      .array(
+        z
+          .object({
+            method: z.string(),
+            path: z.string(),
+            resourceType: z.enum(["fetch", "xhr"]),
+            startTime: finite,
+            injectedAt: finite.nullable(),
+            delivered: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(60),
+    observationStart: finite.nullable(),
+    observationEnd: finite.nullable(),
+    feedback: z
+      .array(
+        z
+          .object({
+            time: finite,
+            selector: z.string(),
+            text: z.string().max(160),
+            kind: z.enum(["alert", "status", "live", "invalid", "error"]),
+          })
+          .strict(),
+      )
+      .max(40),
+    changes: z.array(heldChangeSchema).max(40),
+    trigger: z
+      .object({
+        disabled: z.boolean().nullable(),
+        busy: z.boolean().nullable(),
+        hidden: z.boolean().nullable(),
+        inert: z.boolean().nullable(),
+        initiallyEnabled: z.boolean().nullable(),
+      })
+      .strict(),
+    pending: z
+      .array(
+        z.object({ selector: z.string(), text: z.string().max(160) }).strict(),
+      )
+      .max(40)
+      .nullable(),
+    main: z
+      .object({
+        selector: z.string(),
+        initiallyEmpty: z.boolean().nullable(),
+        empty: z.boolean().nullable(),
+      })
+      .strict(),
+    retry: z.array(z.string()).max(40).nullable(),
+    complete: z.boolean(),
+    truncated: z.boolean(),
+    notes: z.array(z.string()),
+  })
+  .strict();
+export type FailureReplay = z.infer<typeof failureReplaySchema>;
+
 export const actionTimelineSchema = z
   .object({
     id: z.string().min(1).optional(),
@@ -402,6 +480,7 @@ export const actionTimelineSchema = z
       "probe-click",
       "probe-hover",
       "slow-replay",
+      "failure-replay",
     ]),
     kind: z.string().min(1),
     selector: z.string().min(1).optional(),
@@ -541,6 +620,7 @@ export const actionTimelineSchema = z
       .strict(),
     /** Present exactly on `slow-replay` actions. */
     held: heldReplaySchema.optional(),
+    failure: failureReplaySchema.optional(),
     visibleChanges: z.array(visibleChangeSchema).optional(),
   })
   .strict()
@@ -552,6 +632,11 @@ export const actionTimelineSchema = z
     (action) =>
       (action.source === "slow-replay") === (action.held !== undefined),
     "held facts belong to exactly the slow-replay actions",
+  )
+  .refine(
+    (action) =>
+      (action.source === "failure-replay") === (action.failure !== undefined),
+    "failure facts belong to exactly the failure-replay actions",
   );
 export const actionTimelineArtifactSchema = z
   .object({
@@ -897,6 +982,18 @@ const probeSafetySchema = z
 const probeSchema = z
   .object({
     safety: probeSafetySchema.optional(),
+    failureReplay: z
+      .object({
+        mode: z.enum(["status", "network"]),
+        status: z.number().int().min(400).max(599),
+        feedbackWithinMs: z.number().int().positive(),
+        queued: countSchema,
+        ran: countSchema,
+        completed: z.array(z.string()),
+        notes: z.array(z.string()),
+      })
+      .strict()
+      .optional(),
     heldReplay: z
       .object({
         delayMs: z.number().int().positive(),

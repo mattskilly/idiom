@@ -8,13 +8,13 @@ Anyone building UI with AI coding agents such as Claude Code, Codex or Cursor. I
 
 ## How it works
 
-1. **Check**: `idiom check <flow>` renders every state you declare at each viewport and colour scheme (`idiom quick <url>` does the same for the pages you name, with no setup) and runs more than 60 measured checks: contrast, broken links and images, fonts that fail to load, missing focus styles, controls that do nothing, duplicate entry points, content that jumps when you act, actions with no loading state or that can be submitted twice, changes that snap with no transition, spacing, alignment, sizes off your design system and more ([docs/rules.md](docs/rules.md)). Top issues come first, ranked by how noticeable each problem is and how prominent the element is ([ranking](docs/ranking.md)); symptoms that share one cause are grouped into one issue. Capture waits for entrance animations to finish, then only what is actually on screen is judged: content in a closed menu or collapsed section, and hidden, fully transparent or clipped-away elements are skipped and counted in the report, not measured.
+1. **Check**: `idiom check <flow>` renders every state you declare at each viewport and colour scheme (`idiom quick <url>` does the same for the pages you name, with no setup) and runs more than 60 measured checks: contrast, broken links and images, fonts that fail to load, missing focus styles, controls that do nothing, duplicate entry points, content that jumps when you act, actions with no loading state or that can be submitted twice, failures with no error message or no way to retry, changes that snap with no transition, spacing, alignment, sizes off your design system and more ([docs/rules.md](docs/rules.md)). Top issues come first, ranked by how noticeable each problem is and how prominent the element is ([ranking](docs/ranking.md)); symptoms that share one cause are grouped into one issue. Capture waits for entrance animations to finish, then only what is actually on screen is judged: content in a closed menu or collapsed section, and hidden, fully transparent or clipped-away elements are skipped and counted in the report, not measured.
 2. **Fix**: every finding names the element, the measurement and when it counts as fixed, with a cropped screenshot. `idiom fix <flow>` hands the top findings to Claude Code or Codex, then recaptures to verify each repair.
-3. **Guard**: the first `idiom check` on a committed HEAD records today's findings as a baseline. After that, checks and the GitHub Action fail only on new findings. Accept and reject decisions are stored in the repo, so a settled finding stays settled.
+3. **Guard**: `idiom check --changed` checks only the states your Git changes affect, following routes and imports, and lists the states it skipped. The first `idiom check` on a committed HEAD records today's findings as a baseline. After that, checks and the GitHub Action fail only on new findings. Accept and reject decisions are stored in the repo, so a settled finding stays settled.
 
 To find out whether controls work, Idiom probes them within coverage and time budgets, reuses equivalent results across states, and captures states concurrently. Probes restore the state between interactions. Idiom blocks every request that could change data (anything but GET, HEAD and OPTIONS), except the setup steps you declare. `idiom quick` probes too, more strictly, within 45 seconds per page (`--no-probe` to skip).
 
-Screenshots only show the states either side of an action, so Idiom also records what happens during it. Every page load, web step and probe click gets a timeline: layout shifts (including those right after input), elements that moved and when, content inserted or removed, animations and transitions, and the requests the action started. Actions that send requests are replayed with the responses held, as a slow network would, to see what the user waits through. Findings that happen between states come with a filmstrip, a contact sheet of frames showing what the user saw.
+Screenshots only show the states either side of an action, so Idiom also records what happens during it. Every page load, web step and probe click gets a timeline: layout shifts (including those right after input), elements that moved and when, content inserted or removed, animations and transitions, and the requests the action started. Actions that send requests are replayed with the responses held, as a slow network would, to see what the user waits through, and again with the request failing (answered locally, never reaching your server) to see whether the user is told and can retry. Findings that happen between states come with a filmstrip, a contact sheet of frames showing what the user saw.
 
 Under the hood the loop is Learn → Render → Critique → Repair → Verify → Remember.
 
@@ -38,6 +38,8 @@ idiom check store
 For one page with no setup, add `--design <source>` to `idiom quick`.
 
 `idiom design add` takes a Figma frame, HTML or an image. Declare a live site as `{ "site": "<url>" }` in the flow file. When element references disagree, `idiom decide --choose` records the intended reference for that element/property. See the [design comparison guide](docs/design-compare.md).
+
+When the same off-scale value keeps appearing in one place, for example 17px padding on every table-row control between 16px and 24px steps, Idiom asks one question instead of filing every occurrence: add a step to your design system, or keep reporting it as drift. Answer with `idiom ruling`; Idiom never changes DESIGN.md without a recorded answer.
 
 ## Use it from your agent
 
@@ -77,7 +79,7 @@ npm install -g @mattskilly/idiom
 idiom --version
 ```
 
-The version command prints `<version> (<short source commit>)`, for example `0.12.0 (a85659a)`. To pin a project to an exact release instead, add it as a dev dependency (`bun add -d --exact @mattskilly/idiom@0.12.0`) and run it with `bunx idiom` or `npx idiom`.
+The version command prints `<version> (<short source commit>)`, for example `0.13.0 (a85659a)`. To pin a project to an exact release instead, add it as a dev dependency (`bun add -d --exact @mattskilly/idiom@0.13.0`) and run it with `bunx idiom` or `npx idiom`.
 
 ### Browser setup
 

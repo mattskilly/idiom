@@ -274,6 +274,7 @@ export function contentSnaps(
       // Held-network replays belong to loading checks, not motion evidence.
       action.source !== "load" &&
       action.source !== "slow-replay" &&
+      action.source !== "failure-replay" &&
       action.status !== "unavailable" &&
       action.visibleChanges !== undefined,
   );

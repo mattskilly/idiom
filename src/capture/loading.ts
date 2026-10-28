@@ -5,6 +5,8 @@ import type {
   ProbeSafetyPolicy,
 } from "../checks/types.js";
 import { beginEffectWindow } from "./effect-window.js";
+import { rememberRequest, requestIdentity } from "./failure-identity.js";
+import { type FeedbackWindow, installFeedback } from "./feedback.js";
 import { ignoredRequest, probeRequestAllowed } from "./request-policy.js";
 import type { TimelineCollector } from "./timeline.js";
 
@@ -44,7 +46,7 @@ type PendingWindow = Window & {
 
 /**
  * The in-page pending watcher. Serializable: it closes over nothing in this
- * module (the progress heuristics are copied from progress.ts on purpose).
+ * module. Shared feedback predicates are installed in the document first.
  * Before the action it samples which subtrees mutate on their own; it arms
  * on the action's dispatch at the trigger and records, relative to it, what
  * the user could see while the action's requests were held. It only
@@ -60,75 +62,16 @@ function pendingWatcher(config: WatcherConfig): void {
   let releasedAt: number | null = null;
   const since = () => (startedAt === null ? 0 : performance.now() - startedAt);
 
-  const rendered = (element: Element | null): boolean => {
-    if (element === null || !element.isConnected) return false;
-    if (element.getClientRects().length === 0) return false;
-    const style = getComputedStyle(element);
-    if (style.visibility !== "visible") return false;
-    for (
-      let current: Element | null = element;
-      current;
-      current = current.parentElement
-    ) {
-      const ancestor = getComputedStyle(current);
-      if (ancestor.display === "none" || Number(ancestor.opacity) <= 0)
-        return false;
-    }
-    return true;
-  };
-  const selectorFor = (element: Element): string => {
-    if (element === document.documentElement) return "html";
-    if (element === document.body) return "body";
-    if (
-      element.id &&
-      document.querySelectorAll(`#${CSS.escape(element.id)}`).length === 1
-    )
-      return `#${CSS.escape(element.id)}`;
-    for (const attr of ["data-testid", "aria-label", "role"]) {
-      const value = element.getAttribute(attr);
-      if (!value) continue;
-      const candidate = `${element.tagName.toLowerCase()}[${attr}=${JSON.stringify(value)}]`;
-      if (document.querySelectorAll(candidate).length === 1) return candidate;
-    }
-    const classes = [...element.classList].sort().slice(0, 3);
-    if (classes.length) {
-      const candidate = `${element.tagName.toLowerCase()}${classes.map((value) => `.${CSS.escape(value)}`).join("")}`;
-      if (document.querySelectorAll(candidate).length === 1) return candidate;
-    }
-    const parts: string[] = [];
-    let current: Element | null = element;
-    while (current !== null && current !== document.body) {
-      const siblings: Element[] = current.parentElement
-        ? [...current.parentElement.children].filter(
-            (child) => child.tagName === current?.tagName,
-          )
-        : [];
-      parts.unshift(
-        siblings.length > 1
-          ? `${current.tagName.toLowerCase()}:nth-of-type(${siblings.indexOf(current) + 1})`
-          : current.tagName.toLowerCase(),
-      );
-      current = current.parentElement;
-    }
-    return `body > ${parts.join(" > ")}`;
-  };
-  const normalize = (value: string | null | undefined) =>
-    (value ?? "").replace(/\s+/g, " ").trim();
-  const textOf = (element: Element) =>
-    normalize(
-      element.getAttribute("aria-label") ||
-        (element instanceof HTMLElement
-          ? element.innerText
-          : element.textContent),
-    );
-  const progressSelector = "[role=progressbar], progress, [aria-busy=true]";
-  const statusSelector =
-    "[role=status], [role=log], [aria-live]:not([aria-live=off]), output";
-  const progressWords =
-    /\b(loading|saving|generating|working|processing|thinking|uploading|sending|submitting|please wait)\b/i;
-  const progressText = (text: string) =>
-    text !== "" && (progressWords.test(text) || /(?:…|\.\.\.)$/.test(text));
-  const skeletonPattern = /skeleton|shimmer|placeholder|loading/i;
+  const {
+    rendered,
+    selectorFor,
+    normalize,
+    textOf,
+    progressSelector,
+    statusSelector,
+    progressText,
+    skeletal,
+  } = (window as unknown as FeedbackWindow).__idiomFeedback;
   const transient =
     /^(?:data-(?:focus|hover|press|active|focus-visible)[\w-]*|tabindex)$/;
   const tooltipish = (element: Element) =>
@@ -253,15 +196,6 @@ function pendingWatcher(config: WatcherConfig): void {
   let mainChangeAfterReleaseAt: number | null = null;
   let mainEmpty: PendingFacts["mainEmpty"] = null;
 
-  const skeletal = (element: Element) =>
-    skeletonPattern.test(
-      typeof element.className === "string" ? element.className : "",
-    ) ||
-    [...element.attributes].some(
-      (attribute) =>
-        attribute.name.startsWith("data-") &&
-        skeletonPattern.test(`${attribute.name} ${attribute.value}`),
-    );
   const scan = () => {
     if (startedAt === null) return;
     for (const element of document.querySelectorAll(progressSelector)) {
@@ -646,6 +580,12 @@ export async function createHoldRoute(
       forwarded: probeRequestAllowed(request, options.policy),
       navigation,
     };
+    if (type === "fetch" || type === "xhr")
+      rememberRequest(record, {
+        method,
+        url: request.url(),
+        resourceType: type,
+      });
     requests.push(record);
     const wait = Math.max(0, Math.min(delayMs, capEnd - clock()));
     await new Promise<void>((resolve) => {
@@ -793,9 +733,15 @@ export async function replayHeld(options: {
     held.mainEmpty = facts.mainEmpty;
     held.routeChange = facts.routeChange;
   };
-  const snapshot = (): { held: HeldReplay } => ({
-    held: JSON.parse(JSON.stringify(held)) as HeldReplay,
-  });
+  const snapshot = (): { held: HeldReplay } => {
+    const copy = JSON.parse(JSON.stringify(held)) as HeldReplay;
+    for (const [index, record] of copy.requests.entries()) {
+      const source = held.requests[index];
+      const identity = source && requestIdentity(source);
+      if (identity) rememberRequest(record, identity);
+    }
+    return { held: copy };
+  };
   await item.prepare?.(page);
   const handle = await options.timeline.start(
     {
@@ -809,6 +755,7 @@ export async function replayHeld(options: {
   );
   let hold: Awaited<ReturnType<typeof createHoldRoute>> | undefined;
   try {
+    await page.evaluate(installFeedback);
     await page.evaluate(pendingWatcher, {
       token,
       selector: item.selector,

@@ -43,11 +43,13 @@ export const filmstripIdentitySchema = z
       "probe-click",
       "probe-hover",
       "slow-replay",
+      "failure-replay",
     ]),
     kind: z.string().min(1),
     selector: z.string().min(1).optional(),
     name: z.string(),
     stepIndex: z.number().int().positive().optional(),
+    failureOf: z.enum(["web-step", "probe-click"]).optional(),
     heldOf: z.enum(["web-step", "probe-click"]).optional(),
   })
   .strict();

@@ -203,6 +203,8 @@ export const findingCategories = [
   "design-drift",
   "loading-state-missing",
   "double-submit",
+  "error-state-missing",
+  "retry-blocked",
   "hierarchy",
   "density",
   "brand-alignment",

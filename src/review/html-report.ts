@@ -153,6 +153,32 @@ function coverageTable(options: ReviewHtmlOptions): string {
     .join("")}</tbody></table></section>`;
 }
 
+function designSystemSection(options: ReviewHtmlOptions): string {
+  if (options.outcome.kind === "quick") return "";
+  const questions = (options.unruledDecisions ?? []).filter(
+    (decision) => decision.scaleCluster !== undefined,
+  );
+  if (questions.length === 0) return "";
+  const articles = questions
+    .map((decision) => {
+      const cluster = decision.scaleCluster as NonNullable<
+        UnruledDecision["scaleCluster"]
+      >;
+      const examples = cluster.examples
+        .map((example) => {
+          const source =
+            example.crop === undefined
+              ? undefined
+              : options.screenshots.get(example.crop);
+          return `<li>${escapeHtml(example.screenshot)} — <code>${escapeHtml(example.selector)}</code>${source === undefined ? "" : `<br><img class="screenshot" src="${escapeHtmlAttribute(source)}" alt="${escapeHtmlAttribute(`Occurrence of ${cluster.value} at ${example.selector}`)}">`}</li>`;
+        })
+        .join("");
+      return `<article class="panel"><h3>${escapeHtml(decision.id)}: ${escapeHtml(cluster.value)} on ${escapeHtml(cluster.componentLabel)}</h3><p>${escapeHtml(decision.question)}</p><ul><li>Occurrences: ${cluster.count} (${cluster.distinctStates} state${cluster.distinctStates === 1 ? "" : "s"}, ${cluster.distinctElements} element${cluster.distinctElements === 1 ? "" : "s"})</li><li>Context: ${escapeHtml(cluster.context.component)} in ${escapeHtml(cluster.context.landmark)} at ${escapeHtml(cluster.context.viewport)}</li><li>Declared scale: ${escapeHtml(decision.nearestLawExcerpt)}</li><li>Suggested token: <code>${escapeHtml(cluster.suggestedToken)}</code></li></ul><h4>Examples</h4><ul>${examples}</ul>${preformatted("Answer", `idiom ruling --decision ${decision.id} --add-step [--token ${cluster.suggestedToken}]\nidiom ruling --decision ${decision.id} --drift`)}<p class="muted">Skip by not answering; it is asked again next run.</p></article>`;
+    })
+    .join("");
+  return `<section><h2>Design system questions (${questions.length})</h2><p>Each repeats one off-scale value in one context. Its occurrences are held here instead of being reported as separate findings until you answer.</p>${articles}</section>`;
+}
+
 function unruledSection(options: ReviewHtmlOptions): string {
   if (options.outcome.kind === "quick" || options.page !== undefined) return "";
   if (options.outcome.kind !== "full")
@@ -162,7 +188,9 @@ function unruledSection(options: ReviewHtmlOptions): string {
     discarded === 0
       ? ""
       : `<p>${discarded} incomplete or unsupported observation${discarded === 1 ? " was" : "s were"} discarded; unruled-decision analysis may be incomplete.</p>`;
-  const decisions = options.unruledDecisions ?? [];
+  const decisions = (options.unruledDecisions ?? []).filter(
+    (decision) => decision.scaleCluster === undefined,
+  );
   const content =
     decisions.length === 0
       ? "<p>None qualified across multiple states in this review.</p>"
@@ -272,6 +300,11 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
     })
     .join("");
   const deferred = options.deferred ?? [];
+  const questionCount = (options.unruledDecisions ?? []).filter(
+    (decision) => decision.scaleCluster !== undefined,
+  ).length;
+  const modelDecisionCount =
+    (options.unruledDecisions?.length ?? 0) - questionCount;
   const deferredSection = `<section><h2>Evaluated but not selected</h2><p>${options.outcome.kind === "quick" ? "Eligible findings outside the five-finding material cap." : "Eligible findings outside the configured material-finding cap."}</p>${
     deferred.length === 0
       ? "<p>None.</p>"
@@ -301,7 +334,7 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
       : `<section><h2>Page-review scope</h2><ul><li>Page: ${escapeHtml(options.page.url)}</li><li>Brief: ${escapeHtml(options.page.brief ?? "not supplied")}</li><li>Art direction: ${escapeHtml(options.page.direction ?? "not supplied")}</li><li>Focus areas: ${escapeHtml(options.page.focus.length === 0 ? "none" : options.page.focus.join(", "))}</li></ul><p>Only the brief is the source of truth for the offer and every statistic; claims were not fact-checked against the web.</p></section>`;
   return renderHtmlDocument({
     title: `${heading} review: ${options.flow}`,
-    body: `<header><h1>${escapeHtml(heading)} review: ${escapeHtml(options.flow)}</h1><p class="meta">${options.outcome.kind === "quick" ? "Source commit" : "Captured commit"}: ${escapeHtml(options.commit)}${options.outcome.kind === "quick" ? " (live URL capture; no Git source identity)" : ""}</p>${options.build === undefined ? "" : `<p class="meta">Production build: ${escapeHtml(options.build.id)}</p>`}<div class="summary">${badge(`${options.findings.length} actionable finding${options.findings.length === 1 ? "" : "s"}`)}${options.outcome.kind === "quick" || options.page !== undefined ? "" : ` ${badge(`${options.unruledDecisions?.length ?? 0} unruled decision${(options.unruledDecisions?.length ?? 0) === 1 ? "" : "s"}`)}`} ${badge(options.outcome.kind, options.outcome.kind === "full" ? "good" : "neutral")}</div><p>${escapeHtml(outcome)}</p><p class="muted">${options.outcome.kind === "quick" || options.page !== undefined ? "Each finding is reported independently." : "Findings and unruled decisions are independent. Findings are decided through idiom decide; rulings are recorded only through idiom ruling."}</p></header>${repeatedSection(options)}${options.reportCoverage === undefined ? "" : renderCoverageHtml(options.reportCoverage)}${pageScope}${unruledSection(options)}${stateSections}${suppressedSection(options.suppressed ?? [])}${deferredSection}${coverageTable(options)}${advisorySection(options.advisory)}${quickLimits}`,
+    body: `<header><h1>${escapeHtml(heading)} review: ${escapeHtml(options.flow)}</h1><p class="meta">${options.outcome.kind === "quick" ? "Source commit" : "Captured commit"}: ${escapeHtml(options.commit)}${options.outcome.kind === "quick" ? " (live URL capture; no Git source identity)" : ""}</p>${options.build === undefined ? "" : `<p class="meta">Production build: ${escapeHtml(options.build.id)}</p>`}<div class="summary">${badge(`${options.findings.length} actionable finding${options.findings.length === 1 ? "" : "s"}`)}${options.outcome.kind === "quick" || options.page !== undefined ? "" : ` ${badge(`${modelDecisionCount} unruled decision${modelDecisionCount === 1 ? "" : "s"}`)}`}${questionCount === 0 ? "" : ` ${badge(`${questionCount} design system question${questionCount === 1 ? "" : "s"}`)}`} ${badge(options.outcome.kind, options.outcome.kind === "full" ? "good" : "neutral")}</div><p>${escapeHtml(outcome)}</p><p class="muted">${options.outcome.kind === "quick" || options.page !== undefined ? "Each finding is reported independently." : "Findings and unruled decisions are independent. Findings are decided through idiom decide; rulings are recorded only through idiom ruling."}</p></header>${repeatedSection(options)}${options.reportCoverage === undefined ? "" : renderCoverageHtml(options.reportCoverage)}${pageScope}${designSystemSection(options)}${unruledSection(options)}${stateSections}${suppressedSection(options.suppressed ?? [])}${deferredSection}${coverageTable(options)}${advisorySection(options.advisory)}${quickLimits}`,
     printable: true,
   });
 }

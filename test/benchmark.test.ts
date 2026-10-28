@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { type Browser, chromium } from "playwright";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { signalChecks } from "../src/checks/registry.js";
+import { scaleQuestions } from "../src/checks/scale-conformance.js";
 import type { ObservationArtifact } from "../src/checks/types.js";
 import { run as runCli } from "../src/cli.js";
 import {
@@ -1049,3 +1050,185 @@ test("interaction shift: scrolling, the effect region, sorting, filtering, overl
     expect(shifts(findings), name).toEqual([]);
   }
 }, 120_000);
+
+describe("design-system questions: repeated off-scale spacing in one context", () => {
+  const scales = {
+    spacing: [4, 8, 16, 24],
+    roles: { control: [".row-control"] },
+  };
+  const review = async (name: string, checks: unknown = { scales }) =>
+    reviewStates(browser, [{ state: "orders", html: await fixture(name) }], {
+      checks,
+      scaleQuestions: { rulings: [] },
+    });
+  const spacing = (findings: ReviewedFixture) =>
+    findings
+      .map(({ candidate }) => candidate)
+      .filter((candidate) => candidate.rule === "idiom:off-scale-spacing");
+
+  test("17px row-control padding is one question, not a finding; 16px is clean", async () => {
+    const before = await review("scale-cluster/before.html");
+    const questions = scaleQuestions(before.tuples, before.config);
+    expect(questions).toHaveLength(1);
+    expect(questions[0]).toMatchObject({
+      property: "spacing:padding",
+      value: "17px",
+      count: 12,
+      distinctElements: 6,
+      context: { landmark: "main", component: "role:.row-control" },
+      nearestSteps: { below: "16px", above: "24px" },
+    });
+    expect(questions[0]?.question).toBe(
+      "17px padding appears 12 times on .row-control in main at desktop, between your 16px and 24px steps. Add a step for this context, or keep reporting it as drift?",
+    );
+    const clustered = new Set(
+      questions[0]?.occurrences.map(({ element }) => element.selector),
+    );
+    for (const candidate of spacing(before.findings))
+      expect(clustered.has(candidate.selectorHint ?? "")).toBe(false);
+    expect(spacing(before.findings)).toEqual([]);
+    // Without a ruling channel the same occurrences are today's one finding.
+    const today = await reviewStates(
+      browser,
+      [{ state: "orders", html: await fixture("scale-cluster/before.html") }],
+      { checks: { scales } },
+    );
+    expect(
+      spacing(today.findings).map((candidate) => candidate.fingerprintHint),
+    ).toEqual(["scale:spacing:17px"]);
+
+    const after = await review("scale-cluster/after.html");
+    expect(scaleQuestions(after.tuples, after.config)).toEqual([]);
+    expect(spacing(after.findings)).toEqual([]);
+  }, 60_000);
+
+  test.each([
+    ["small", 4],
+    ["two-elements", 8],
+    ["split-context", 12],
+  ])(
+    "%s.html asks nothing and reports its spacing as today",
+    async (name, targets) => {
+      const asked = await review(`scale-cluster-exclusions/${name}.html`);
+      expect(scaleQuestions(asked.tuples, asked.config)).toEqual([]);
+      const today = await reviewStates(
+        browser,
+        [
+          {
+            state: "orders",
+            html: await fixture(`scale-cluster-exclusions/${name}.html`),
+          },
+        ],
+        { checks: { scales } },
+      );
+      expect(asked.findings.map(({ candidate }) => candidate)).toEqual(
+        today.findings.map(({ candidate }) => candidate),
+      );
+      const [finding] = spacing(today.findings);
+      expect(
+        (finding?.verification.params as { targets?: unknown[] } | undefined)
+          ?.targets,
+      ).toHaveLength(targets);
+    },
+    60_000,
+  );
+
+  test("undeclared.html: without a declared scale there is nothing to add a step to", async () => {
+    const asked = await review("scale-cluster-exclusions/undeclared.html", {});
+    expect(scaleQuestions(asked.tuples, asked.config)).toEqual([]);
+    const today = await reviewStates(
+      browser,
+      [
+        {
+          state: "orders",
+          html: await fixture("scale-cluster-exclusions/undeclared.html"),
+        },
+      ],
+      {},
+    );
+    expect(asked.findings.map(({ candidate }) => candidate)).toEqual(
+      today.findings.map(({ candidate }) => candidate),
+    );
+  }, 60_000);
+});
+
+describe("failure recovery fixture pairs", () => {
+  let server: LoadingServer;
+  beforeAll(async () => {
+    server = await startLoadingServer();
+  });
+  afterAll(async () => {
+    await server.close();
+  });
+  test.each([
+    "alert",
+    "status",
+    "live",
+    "invalid",
+    "generic",
+    "linked-error",
+    "toast",
+    "banner",
+    "retry",
+    "navigation",
+    "navigation-fetch",
+    "optimistic",
+    "beacon",
+  ])(
+    "handled/excluded %s produces neither failure rule",
+    async (name) => {
+      const findings = await reviewFixture(browser, "", {
+        url: `${server.origin}/failure-exclusions/${name}.html`,
+        probe: true,
+        checks: {
+          loading: { delayMs: 450 },
+          progressWithinMs: 300,
+          failure: { feedbackWithinMs: 400 },
+        },
+      });
+      expect(
+        findings.filter((f) =>
+          ["error-state-missing", "retry-blocked"].includes(
+            f.candidate.category,
+          ),
+        ),
+      ).toEqual([]);
+    },
+    90000,
+  );
+  test.each([
+    "silent",
+    "disabled",
+    "busy",
+    "hidden",
+    "spinner",
+    "empty",
+    "xhr",
+    "late",
+  ])(
+    "%s is found before and handled after",
+    async (name) => {
+      const review = async (version: string) =>
+        (
+          await reviewFixture(browser, "", {
+            url: `${server.origin}/failure-${name}/${version}.html`,
+            probe: true,
+            checks: {
+              loading: { delayMs: 450 },
+              progressWithinMs: 300,
+              failure: { feedbackWithinMs: 400 },
+            },
+          })
+        ).map((f) => f.candidate.category);
+      const before = await review("before");
+      expect(before).toContain("error-state-missing");
+      // "late" disables its trigger after this 400ms window: silent, not yet blocked.
+      if (name !== "silent" && name !== "late")
+        expect(before).toContain("retry-blocked");
+      const after = await review("after");
+      expect(after).not.toContain("error-state-missing");
+      expect(after).not.toContain("retry-blocked");
+    },
+    90000,
+  );
+});
