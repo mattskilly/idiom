@@ -23,13 +23,18 @@ import {
   renderChangedSelection,
 } from "../commands/check-changed.js";
 import { contextCommand } from "../commands/context.js";
-import { coverageCommand, renderCoverage } from "../commands/coverage.js";
+import {
+  coverageCommand,
+  renderCoverage,
+  stateCoverageCommand,
+} from "../commands/coverage.js";
 import { decideCommand } from "../commands/decide.js";
 import { addDesignCommand } from "../commands/design.js";
 import { initProject, initSummaryLines } from "../commands/init.js";
 import { rulingCommand } from "../commands/ruling.js";
 import { renderSweepSummary, sweepCommand } from "../commands/sweep.js";
 import { verifyCommand } from "../commands/verify.js";
+import { renderStateCoverage, stateCoverageLine } from "../coverage/states.js";
 import { figmaToken } from "../design/figma/client.js";
 import { isFigmaHost } from "../design/source.js";
 import { IdiomError } from "../errors.js";
@@ -624,7 +629,7 @@ export function registerIdiomTools(
             : output.newFindings.length === 0;
         const success = output.passed && regressionFree === true;
         return result(
-          `Verification ${success ? "passed" : "failed"}: ${output.verdicts?.filter((verdict) => verdict.status === "fixed").length ?? 0}/${findings.length} fixed; ${output.newFindings?.length ?? "unknown"} introduced findings. Report: ${output.reportPath}`,
+          `Verification ${success ? "passed" : "failed"}: ${output.verdicts?.filter((verdict) => verdict.status === "fixed").length ?? 0}/${findings.length} fixed; ${output.newFindings?.length ?? "unknown"} introduced findings. ${(output.verdicts ?? []).map((v) => `${v.finding.id}: acceptance ${v.acceptance.status} — ${v.acceptance.reason}`).join("; ")} Report: ${output.reportPath}`,
           { ...output, sourceRun: source.runId, regressionFree, success },
         );
       } finally {
@@ -1089,20 +1094,43 @@ export function registerIdiomTools(
   );
   register(
     "idiom_coverage",
-    "List the app's routes and which configured flows capture them, so routes no flow captures are visible (silence about an uncaptured route is not approval). Discovers app/ and pages/ routes, or crawls same-origin links from a running page. Read-only; no capture or model.",
+    "List the app's routes and which configured flows capture them, so routes no flow captures are visible (silence about an uncaptured route is not approval). Discovers app/ and pages/ routes, or crawls same-origin links from a running page. Also returns state coverage: per flow and state, which viewports, colour schemes, reduced-motion modes, network replays, interactions, and data states the latest capture observed, with the change that covers each missing one (coverage of what was reviewed, not a quality measure). Read-only; no capture or model.",
     z.strictObject({
       crawl: httpUrl
         .optional()
         .describe("Discover routes from the links on this running page"),
+      states: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Return only state coverage (skips route discovery, so projects without filesystem routes work)",
+        ),
     }),
     true,
-    async ({ crawl }) => {
+    async ({ crawl, states }) => {
+      const stateCoverage = await stateCoverageCommand({
+        project: root,
+        cwd: root,
+      });
+      if (states)
+        return result(renderStateCoverage(stateCoverage).trimEnd(), {
+          states: stateCoverage,
+        });
       const summary = await coverageCommand({
         project: root,
         cwd: root,
         crawl,
       });
-      return result(renderCoverage(summary).trimEnd(), summary);
+      return result(
+        [
+          renderCoverage(summary).trimEnd(),
+          "",
+          ...stateCoverage.flows.map(
+            (flow) => `${flow.flow}: ${stateCoverageLine(flow)}`,
+          ),
+        ].join("\n"),
+        { ...summary, states: stateCoverage },
+      );
     },
   );
   register(

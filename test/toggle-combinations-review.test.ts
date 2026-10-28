@@ -12,6 +12,7 @@ import { expect, test } from "vitest";
 import { createBrowserLauncher } from "../src/capture/browser.js";
 import { expectedCaptureTupleKeys } from "../src/capture/resolve.js";
 import { runCapture } from "../src/capture/run.js";
+import { projectChecksConfig } from "../src/checks/project-config.js";
 import {
   checksConfigFrom,
   runDeterministicChecks,
@@ -188,12 +189,17 @@ test("runVerify retains attachments when distinct failing combinations become eq
       runDirectory: baseline.runDirectory,
       expectedFlow: flow.id,
     });
+    const effectiveConfig = await projectChecksConfig({
+      projectDirectory: directory,
+      project,
+    });
     const checked = runDeterministicChecks(
       loaded.tuples,
       expectedCaptureTupleKeys({ project, flow }),
-      checksConfigFrom(project.checks),
+      effectiveConfig,
     );
     const findings = buildDeterministicDrafts({
+      config: effectiveConfig,
       runId: "baseline",
       entries: checked.candidates.filter(
         ({ tuple, candidate }) =>
@@ -243,6 +249,7 @@ test("runVerify retains attachments when distinct failing combinations become eq
         },
       },
     });
+    expect(result.causes).toEqual([]);
     expect(result).toMatchObject({
       passed: true,
       outcome: "fixed",

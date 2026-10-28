@@ -6,6 +6,11 @@ import type { CheckCoverage, CheckTuple } from "../checks/types.js";
 import { tupleDesigns } from "../design/evidence.js";
 import type { DesignDescriptor } from "../design/types.js";
 import {
+  acceptanceDescription,
+  acceptanceText,
+  basisDescription,
+} from "../findings/presentation.js";
+import {
   type ReportCoverage,
   renderCoverageMarkdown,
 } from "../report/coverage.js";
@@ -243,6 +248,8 @@ export function advisoryMarkdown(review: AdvisoryReview): string[] {
         "",
         `Section: ${text(section)}${sectionHeading === undefined ? "" : ` (${text(sectionHeading)})`} · ${text(finding.state)}/${text(finding.viewport)}${finding.colorScheme === undefined ? "" : `/${finding.colorScheme}`}`,
         "",
+        `Basis: ${text(basisDescription(finding))}`,
+        `Machine condition: ${text(acceptanceDescription(finding.acceptance))}`,
         text(finding.explanation),
         ...(finding.evidence.filmstrip?.sheet
           ? [
@@ -252,7 +259,7 @@ export function advisoryMarkdown(review: AdvisoryReview): string[] {
           : []),
         "",
         ...(finding.fix === undefined ? [] : [`Fix: ${text(finding.fix)}`, ""]),
-        ...finding.acceptance.map((line) => `Done when: ${text(line)}`),
+        ...acceptanceText(finding).map((line) => `Done when: ${text(line)}`),
         "",
         `${finding.evidence.filmstrip?.sheet ? `Filmstrip: [${finding.evidence.filmstrip.sheet}](${finding.evidence.filmstrip.sheet}) · ` : ""}Evidence: ${finding.evidence.screenshots.map((path) => `[${path}](${path})`).join(" · ")}`,
         "",
@@ -495,7 +502,7 @@ export function renderReport(options: {
                 "",
               ]
             : []),
-          `Layer: ${finding.layer}${finding.layer === "model" ? ` · Confidence: ${finding.confidence}` : ""}`,
+          `Layer: ${finding.layer}${finding.basisDetails?.kind === "judged" && finding.basisDetails.confidence !== undefined ? ` · Confidence: ${finding.basisDetails.confidence}` : ""}`,
           "",
           ...(severityOverride === undefined
             ? []
@@ -512,6 +519,8 @@ export function renderReport(options: {
                 `References: ${finding.evidence.references?.map(text).join(" · ")}`,
                 "",
               ]),
+          `Basis: ${text(basisDescription(finding))}`,
+          `Machine condition: ${text(acceptanceDescription(finding.acceptance))}`,
           text(finding.explanation),
           ...(finding.evidence.filmstrip?.sheet
             ? [
@@ -562,7 +571,7 @@ export function renderReport(options: {
         lines.push(
           "Acceptance:",
           "",
-          ...finding.acceptance.map((criterion) => `- ${text(criterion)}`),
+          ...acceptanceText(finding).map((criterion) => `- ${text(criterion)}`),
           "",
         );
         if (finding.verification.kind === "deterministic-check")
@@ -593,6 +602,8 @@ export function renderReport(options: {
         "",
         `Fingerprint: \`${finding.fingerprint}\``,
         "",
+        `Basis: ${text(basisDescription(finding))}`,
+        `Machine condition: ${text(acceptanceDescription(finding.acceptance))}`,
         text(finding.explanation),
         ...(finding.evidence.filmstrip?.sheet
           ? [
@@ -627,7 +638,7 @@ export function renderReport(options: {
         (item) => item.fingerprint === finding.fingerprint,
       );
       lines.push(
-        `- ${finding.id} (${finding.severity}) — Layer: ${finding.layer}${finding.layer === "model" ? ` · Confidence: ${finding.confidence}` : ""} — ${text(finding.flow)} / ${text(finding.state)} / ${text(finding.viewport)}${finding.colorScheme === undefined ? "" : ` / ${finding.colorScheme}`}${finding.combination === undefined ? "" : ` [${text(finding.combination)}]`} — ${text(finding.explanation)}${severityOverride === undefined ? "" : ` — Severity override: ${severityOverride.original} -> ${severityOverride.effective} by rule ${text(severityOverride.override.id)} (${text(severityOverride.override.reason)})`}`,
+        `- ${finding.id} (${finding.severity}) — Layer: ${finding.layer}${finding.basisDetails?.kind === "judged" && finding.basisDetails.confidence !== undefined ? ` · Confidence: ${finding.basisDetails.confidence}` : ""} — ${text(finding.flow)} / ${text(finding.state)} / ${text(finding.viewport)}${finding.colorScheme === undefined ? "" : ` / ${finding.colorScheme}`}${finding.combination === undefined ? "" : ` [${text(finding.combination)}]`} — ${text(basisDescription(finding))} — ${text(finding.explanation)}${severityOverride === undefined ? "" : ` — Severity override: ${severityOverride.original} -> ${severityOverride.effective} by rule ${text(severityOverride.override.id)} (${text(severityOverride.override.reason)})`}`,
       );
       if (finding.evidence.designDrift)
         lines.push(

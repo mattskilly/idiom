@@ -1,3 +1,4 @@
+import { observed } from "../findings/observation.js";
 import { defaultChecksSettings } from "../schemas/project.js";
 import {
   scanResult,
@@ -6,6 +7,7 @@ import {
   unavailable,
   verify,
 } from "./shared.js";
+import { actionIdentity } from "./temporal-evidence.js";
 import {
   contains,
   type Displacement,
@@ -28,7 +30,7 @@ const FRAME_SLACK_MS = 20;
 
 export type ShiftCause = {
   selector: string;
-  kind: "insert" | "remove" | "resize";
+  kind: "insert" | "remove" | "resize" | "scrollbar";
   /** Milliseconds after the action started. */
   time: number;
   /**
@@ -62,6 +64,43 @@ export type InteractionShift = {
   moved: Displacement[];
 };
 
+export type ScrollbarShift = {
+  /** Milliseconds after the action started. */
+  time: number;
+  direction: "removed" | "added";
+  gutter: number;
+  lockedBy: string;
+};
+
+/**
+ * The first time the action locked or unlocked page scroll (the page
+ * stopped or started scrolling because of overflow: hidden or a fixed body)
+ * without a stable scrollbar gutter or right-side compensation, so the
+ * measured scrollbar's width was given to or taken from all content.
+ * Headless captures without layout scrollbars cannot observe this cause.
+ */
+export function scrollbarShift(
+  action: ActionTimeline,
+): ScrollbarShift | undefined {
+  const samples = action.rootScroll ?? [];
+  for (let index = 1; index < samples.length; index++) {
+    const before = samples[index - 1];
+    const after = samples[index];
+    if (!before || !after || before.scrollable === after.scrollable) continue;
+    const locked = after.scrollable ? before : after;
+    const open = after.scrollable ? after : before;
+    if (!locked.lockedBy || open.gutter <= 0) continue;
+    if (after.stableGutter || locked.compensation) return undefined;
+    return {
+      time: after.time,
+      direction: after.scrollable ? "added" : "removed",
+      gutter: open.gutter,
+      lockedBy: locked.lockedBy,
+    };
+  }
+  return undefined;
+}
+
 /** Late only when the content provably changed after the boundary. */
 export const isLate = (cause: ShiftCause) =>
   (cause.since ?? cause.time) > LATE_MS;
@@ -77,6 +116,7 @@ const area = (rect: Rect) => rect.width * rect.height;
 export function shiftCauses(
   action: ActionTimeline,
   moved: readonly Displacement[] = displacements(action),
+  viewport?: { width: number; height: number },
 ): ShiftCause[] {
   const bySelector = new Map(moved.map((entry) => [entry.selector, entry]));
   const causes: ShiftCause[] = [];
@@ -129,6 +169,24 @@ export function shiftCauses(
       delta: { dw: entry.resized.dw, dh: entry.resized.dh },
     });
   }
+  // html/body mutations are never causes; the scrollbar they lock is.
+  const scrollbar = viewport && scrollbarShift(action);
+  if (viewport && scrollbar) {
+    const scroll = scrollAt(action, scrollbar.time);
+    const strip = {
+      x: viewport.width - scrollbar.gutter + scroll.x,
+      y: scroll.y,
+      width: scrollbar.gutter,
+      height: viewport.height,
+    };
+    causes.push({
+      selector: "html",
+      kind: "scrollbar",
+      time: scrollbar.time,
+      rect: strip,
+      final: strip,
+    });
+  }
   return causes;
 }
 
@@ -148,7 +206,26 @@ export function attributeShift(
     slot.y < from.y + from.height && slot.y + slot.height > from.y;
   const eligible = causes.filter((cause) => {
     if (cause.time > candidate.peakAt + FRAME_SLACK_MS) return false;
+    // Everything the gutter moved moves sideways by at most its width.
+    if (cause.kind === "scrollbar")
+      return (
+        !vertical &&
+        Math.abs(candidate.peakDx) <= cause.rect.width + 1 &&
+        candidate.peakAt >= cause.time - FRAME_SLACK_MS
+      );
     const slot = cause.rect;
+    const movement = vertical ? candidate.peakDy : candidate.peakDx;
+    const change =
+      cause.kind === "resize"
+        ? vertical
+          ? (cause.delta?.dh ?? 0)
+          : (cause.delta?.dw ?? 0)
+        : cause.kind === "remove"
+          ? -1
+          : 1;
+    // Growing content pushes forward; shrinking content pulls back. A
+    // disappearing label cannot explain a section jumping down below it.
+    if (Math.sign(change) !== Math.sign(movement)) return false;
     if (cause.kind === "insert") {
       // The candidate ended up inside the new content: it is that content.
       if (contains(cause.final, candidate.end)) return false;
@@ -174,6 +251,7 @@ export function attributeShift(
   // Together the causes must be able to move it this far: a link that
   // grew a few pixels does not move a column by a page.
   const extent = (cause: ShiftCause) => {
+    if (cause.kind === "scrollbar") return cause.rect.width;
     if (cause.kind === "resize")
       return Math.abs(
         vertical ? (cause.delta?.dh ?? 0) : (cause.delta?.dw ?? 0),
@@ -183,8 +261,15 @@ export function attributeShift(
   };
   const distance = Math.abs(vertical ? candidate.peakDy : candidate.peakDx);
   const reach = eligible.reduce((sum, cause) => sum + extent(cause), 0);
-  if (distance > reach * 1.25 + 32) return undefined;
-  const rank = (cause: ShiftCause) => (cause.kind === "resize" ? 1 : 0);
+  // Insert/remove rects omit the gap or margin that appears/disappears with
+  // their slot. Keep that spacing allowance; resize deltas are measured
+  // directly and need only rounding slack.
+  const slack = eligible.some((cause) => cause.kind !== "resize") ? 32 : 4;
+  if (distance > reach * 1.25 + slack) return undefined;
+  // The scrollbar first: content it moved is not pushed by an insert to its
+  // left that happened in the same frame.
+  const rank = (cause: ShiftCause) =>
+    cause.kind === "scrollbar" ? -1 : cause.kind === "resize" ? 1 : 0;
   return eligible.sort(
     (a, b) =>
       rank(a) - rank(b) ||
@@ -262,12 +347,75 @@ export function interactionShifts(
   settings: { minDistance: number },
 ): InteractionShift[] {
   const journeys = displacements(action, settings.minDistance);
-  const causes = shiftCauses(action, journeys);
+  const causes = shiftCauses(action, journeys, viewport);
   const inserted = new Set(
     action.mutations
       .filter((mutation) => mutation.type === "insert")
       .map((mutation) => mutation.selector),
   );
+  const removed = action.mutations.filter(
+    (mutation) => mutation.type === "remove",
+  );
+  const before = (time: number, entry: Displacement) =>
+    time <= entry.peakAt + FRAME_SLACK_MS;
+  // Identity: a node removed before the movement (or removed with an
+  // ancestor) is gone; what its selector names afterwards is new content.
+  const replaced = (entry: Displacement) =>
+    removed.some(
+      (gone) =>
+        before(gone.time, entry) &&
+        (entry.selector === gone.selector ||
+          entry.selector.startsWith(`${gone.selector} > `)),
+    );
+  // Identity: a list whose members were taken out and new ones added in the
+  // same batch was repopulated (filtered or re-rendered results); a member
+  // that reuses its slot's selector is not established persistent content.
+  // Only a list counts: the entry needs a same-tag sibling that also moved.
+  // A sibling whose slot the new content takes over was swapped (a spinner
+  // replaced by results), which is no evidence of repopulation.
+  const slotOf = (selector: string, rect: Rect | null) =>
+    rect ?? journeys.find((entry) => entry.selector === selector)?.start;
+  const overlaps = (a: Rect, b: Rect) =>
+    a.x < b.x + b.width &&
+    b.x < a.x + a.width &&
+    a.y < b.y + b.height &&
+    b.y < a.y + a.height;
+  const swapped = (
+    gone: ActionTimeline["mutations"][number],
+    added: ActionTimeline["mutations"][number],
+  ) => {
+    if (parentOf(gone.selector) !== parentOf(added.selector)) return false;
+    const slot = slotOf(gone.selector, gone.rect);
+    return !slot || !added.rect || overlaps(slot, added.rect);
+  };
+  const repopulated = (entry: Displacement) => {
+    const home = parentOf(entry.selector);
+    if (!home) return false;
+    const tag = tagOf(entry.selector);
+    const listed = journeys.some(
+      (other) =>
+        other.baseline &&
+        other.selector !== entry.selector &&
+        parentOf(other.selector) === home &&
+        tagOf(other.selector) === tag &&
+        other.peak >= settings.minDistance,
+    );
+    if (!listed) return false;
+    return action.mutations.some(
+      (added) =>
+        added.type === "insert" &&
+        added.selector !== entry.selector &&
+        before(added.time, entry) &&
+        parentOf(added.selector) === home &&
+        tagOf(added.selector) === tag &&
+        removed.some(
+          (gone) =>
+            tagOf(gone.selector) === tag &&
+            Math.abs(gone.time - added.time) <= FRAME_SLACK_MS &&
+            !swapped(gone, added),
+        ),
+    );
+  };
   const baseline = journeys.filter((entry) => entry.baseline);
   const candidates = baseline.filter(
     (entry) =>
@@ -279,7 +427,12 @@ export function interactionShifts(
       area(entry.end) > 0 &&
       !root(entry.selector) &&
       // A re-rendered element that reuses its selector is new content.
-      !inserted.has(entry.selector),
+      !inserted.has(entry.selector) &&
+      ![...inserted].some((selector) =>
+        entry.selector.startsWith(`${selector} > `),
+      ) &&
+      !replaced(entry) &&
+      !repopulated(entry),
   );
 
   // Sorting or filtering inside a list: every moved member of a column of
@@ -336,24 +489,90 @@ export function interactionShifts(
   // rect; new content with a sample of the control taken after it arrived
   // (a control that moved with its container is not sampled again).
   const holdsControl = (cause: ShiftCause) => {
-    if (!clicked) return false;
+    if (!clicked || cause.kind === "scrollbar") return false;
     if (cause.kind === "insert")
       return clicked.endAt >= cause.time && contains(cause.final, clicked.end);
-    return contains(cause.rect, clicked.start);
+    // A disclosure's control can overflow its parent's measured box. A
+    // recorded DOM ancestor still identifies the panel the user toggled.
+    return (
+      contains(cause.rect, clicked.start) ||
+      clicked.selector.startsWith(`${cause.selector} > `)
+    );
   };
   const toggled = (cause: ShiftCause) =>
-    action.effectRegion.controls.includes(cause.selector) ||
-    holdsControl(cause) ||
-    panels.some(
-      (panel) => contains(panel, cause.rect) || contains(panel, cause.final),
-    );
+    cause.kind !== "scrollbar" &&
+    (action.effectRegion.controls.includes(cause.selector) ||
+      holdsControl(cause) ||
+      panels.some(
+        (panel) => contains(panel, cause.rect) || contains(panel, cause.final),
+      ));
 
   // The action took away what the user clicked in (a dismissed banner, an
   // unpinned panel): the page closing up behind it is the action's effect.
+  // Hiding it without removing it (display: none) collapses it to nothing.
   const dismissed = causes.some(
     (cause) =>
-      cause.kind === "remove" && cause.time <= LATE_MS && holdsControl(cause),
+      !isLate(cause) &&
+      holdsControl(cause) &&
+      (cause.kind === "remove" ||
+        (cause.kind === "resize" && area(cause.final) === 0)),
   );
+
+  // The action collapsed a container beside the one the user clicked in (a
+  // sidebar toggle): the clicked container moving over by exactly the space
+  // released, and everything in it, is the action's own effect.
+  const collapsed = clicked
+    ? journeys.filter(
+        (entry) =>
+          entry.baseline &&
+          !root(entry.selector) &&
+          entry.resized !== undefined &&
+          entry.resized.since <= LATE_MS &&
+          (entry.resized.dw < 0 || entry.resized.dh < 0),
+      )
+    : [];
+  // Moved back by exactly the space `entry` released, outside it.
+  const closesUp = (moved: Displacement, entry: Displacement) => {
+    if (contains(entry.start, moved.start)) return false;
+    if (contains(moved.start, entry.start)) return false;
+    const shrink = entry.resized ?? { dw: 0, dh: 0 };
+    const matches = (distance: number, change: number) =>
+      change < 0 && distance < 0 && Math.abs(distance - change) <= 2;
+    return matches(moved.peakDx, shrink.dw) || matches(moved.peakDy, shrink.dh);
+  };
+  const carriers = clicked
+    ? journeys.filter(
+        (carrier) =>
+          carrier.baseline &&
+          !root(carrier.selector) &&
+          carrier.peak >= settings.minDistance &&
+          contains(carrier.start, clicked.start),
+      )
+    : [];
+  const selfCollapsed = collapsed.filter((entry) =>
+    carriers.some((carrier) => closesUp(carrier, entry)),
+  );
+  const closers = carriers.filter((carrier) =>
+    selfCollapsed.some((entry) => closesUp(carrier, entry)),
+  );
+  const sameWay = (a: number, b: number) =>
+    Math.abs(b) < 1 || Math.sign(a) === Math.sign(b);
+  // Content that starts in the clicked container (it may overflow a
+  // scrolling container's box) moving with it, or anything closing up
+  // exactly the released space.
+  const startsIn = (outer: Rect, inner: Rect) =>
+    inner.x >= outer.x - 1 &&
+    inner.x < outer.x + outer.width &&
+    inner.y >= outer.y - 1 &&
+    inner.y < outer.y + outer.height;
+  const carried = (candidate: Displacement) =>
+    selfCollapsed.some((entry) => closesUp(candidate, entry)) ||
+    closers.some(
+      (carrier) =>
+        startsIn(carrier.start, candidate.start) &&
+        sameWay(candidate.peakDx, carrier.peakDx) &&
+        sameWay(candidate.peakDy, carrier.peakDy),
+    );
 
   const byCause = new Map<ShiftCause, Displacement[]>();
   for (const { candidate, cause } of candidates.flatMap((entry) =>
@@ -369,10 +588,16 @@ export function interactionShifts(
       continue;
     if (!cause) continue;
     const late = isLate(cause);
-    if (!late && (dismissed || toggled(cause))) continue;
+    const scrollbar = cause.kind === "scrollbar";
+    if (
+      !late &&
+      !scrollbar &&
+      (dismissed || toggled(cause) || carried(candidate))
+    )
+      continue;
     const inside = (rect: Rect) =>
       contains(rect, candidate.start) || contains(rect, candidate.end);
-    if (!late && regions.some(inside)) continue;
+    if (!late && !scrollbar && regions.some(inside)) continue;
     if (candidate.positions >= 2) continue;
     const covering = new Set(
       journeys
@@ -449,6 +674,11 @@ const tableCell = (selector: string) => {
   return tags.some((tag) => tag === "th" || tag === "td");
 };
 
+function parentOf(selector: string): string | undefined {
+  const index = selector.lastIndexOf(" > ");
+  return index < 0 ? undefined : selector.slice(0, index);
+}
+
 function tagOf(selector: string): string {
   const last =
     selector
@@ -469,6 +699,8 @@ export function shiftFix(
       ? px(cause.delta?.dh || cause.final.height)
       : px(cause.final.height);
   const selector = cause.selector;
+  if (cause.kind === "scrollbar")
+    return "Reserve the scrollbar's space so locking scroll cannot shift the page: set scrollbar-gutter: stable on html, or add padding-right equal to the scrollbar width (innerWidth - clientWidth) to body while scroll is locked.";
   if (mediaTags.test(tagOf(selector))) {
     const w = Math.round(cause.final.width);
     const h = Math.round(cause.final.height);
@@ -504,6 +736,7 @@ const verb = {
   insert: "was inserted",
   remove: "was removed",
   resize: "resized",
+  scrollbar: "gave up its scrollbar",
 } as const;
 
 export const interactionShiftCheck: DeterministicCheck = {
@@ -525,11 +758,55 @@ export const interactionShiftCheck: DeterministicCheck = {
         action.status === "unavailable"
       )
         continue;
-      for (const { cause, late, moved } of interactionShifts(
-        action,
-        viewport,
-        settings,
-      )) {
+      const shifts = interactionShifts(action, viewport, settings);
+      const scrollbar = scrollbarShift(action);
+      if (scrollbar) {
+        // Report the measured scrollbar change once for the whole page.
+        const subject = describeAction(action);
+        const moved = shifts
+          .filter(({ cause }) => cause.kind === "scrollbar")
+          .flatMap((shift) => shift.moved);
+        const names = moved
+          .slice(0, 5)
+          .map((entry) => `${entry.selector} (${px(entry.peak)})`);
+        const more = moved.length > 5 ? `, and ${moved.length - 5} more` : "";
+        candidates.push({
+          observation: observed(
+            actionIdentity(action),
+            {
+              durationMs: action.durationMs,
+              rootScroll: action.rootScroll,
+              ...(action.held ? { held: action.held } : {}),
+              ...(action.failure ? { failure: action.failure } : {}),
+            },
+            { elapsedMs: action.durationMs },
+          ),
+          category: this.id,
+          severity: "major",
+          rule: "idiom:interaction-shift",
+          selectorHint: "html",
+          fingerprintHint: "interaction-shift:scrollbar",
+          ...(action.id === undefined ? {} : { timeline: action.id }),
+          explanation: `After ${subject}, the page scrollbar was ${scrollbar.direction} (${scrollbar.lockedBy}), so all content shifts ${px(scrollbar.gutter)} horizontally ${Math.round(scrollbar.time)}ms after input on systems with classic scrollbars${names.length ? `: ${names.join(", ")}${more}` : ""}.`,
+          acceptance: [
+            `After ${subject}, locking or unlocking page scroll does not change the width available to content.`,
+          ],
+          fix: shiftFix(
+            {
+              selector: "html",
+              kind: "scrollbar",
+              time: scrollbar.time,
+              rect: { x: 0, y: 0, width: scrollbar.gutter, height: 0 },
+              final: { x: 0, y: 0, width: scrollbar.gutter, height: 0 },
+            },
+            false,
+            [],
+          ),
+          verification: verify(this.id, { minDistance: settings.minDistance }),
+        });
+      }
+      for (const { cause, late, moved } of shifts) {
+        if (cause.kind === "scrollbar") continue;
         const [lead] = moved;
         if (!lead) continue;
         const names = moved
@@ -538,6 +815,15 @@ export const interactionShiftCheck: DeterministicCheck = {
         const more = moved.length > 5 ? `, and ${moved.length - 5} more` : "";
         const subject = describeAction(action);
         candidates.push({
+          observation: observed(
+            actionIdentity(action),
+            {
+              durationMs: action.durationMs,
+              ...(action.held ? { held: action.held } : {}),
+              ...(action.failure ? { failure: action.failure } : {}),
+            },
+            { elapsedMs: action.durationMs },
+          ),
           category: this.id,
           severity: "major",
           rule: "idiom:interaction-shift",

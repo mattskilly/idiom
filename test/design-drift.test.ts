@@ -455,9 +455,15 @@ test("reference evidence is required and unchanged before verification can repor
           : {}),
       },
     });
-  expect(evaluate(current).findings.every((f) => f.status === "fixed")).toBe(
-    true,
-  );
+  expect(
+    evaluate(current)
+      .findings.filter((f) => f.status !== "fixed")
+      .map((f) => ({
+        selector: f.finding.verification.params?.selector,
+        property: f.finding.verification.params?.property,
+        reason: f.reason,
+      })),
+  ).toEqual([]);
   expect(
     evaluate(baseline).findings.every((f) => f.status === "reproduced"),
   ).toBe(true);

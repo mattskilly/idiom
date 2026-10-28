@@ -234,7 +234,7 @@ test("sweep keeps every finding, ranks severity first and measured before model,
   expect(text).toMatch(
     /^idiom sweep studio-lab: \d+ finding\(s\) across 2 surface\(s\), \d+ blocking — deterministic \d+, model 7/,
   );
-  expect(text).toContain("[model] spec-mismatch");
+  expect(text).toContain("[judged] spec-mismatch");
   expect(text).toContain("[measured]");
   expect(text).toContain("  editor:");
 }, 60_000);
@@ -269,6 +269,19 @@ test("deterministic-only skips providers and spec reads; normal sweep validates 
 
 test("the sweep CLI renders the ranked list and gates only when asked", async () => {
   const project = await sweepProject();
+  const { deterministicCheckIds } = await import("../src/checks/types.js");
+  await writeFile(
+    join(project, ".idiom/rules.json"),
+    JSON.stringify({
+      version: 1,
+      overrides: deterministicCheckIds.map((category) => ({
+        id: `isolate-${category}`,
+        action: "suppress",
+        match: { category },
+        reason: "This gate fixture isolates current judged suggestions.",
+      })),
+    }),
+  );
   const output: string[] = [];
   const review = {
     critique: {
@@ -299,8 +312,14 @@ test("the sweep CLI renders the ranked list and gates only when asked", async ()
   expect(output.join("")).toMatch(
     /idiom sweep studio-lab: \d+ finding\(s\) across 2 surface\(s\)/,
   );
-  expect(output.join("")).toContain("[major] [model] hierarchy");
-  const gated = await run([...argv, "--fail-on", "major"], {
+  expect(output.join("")).toContain("[major] [judged] hierarchy");
+  const defaultGate = await run([...argv, "--fail-on", "major"], {
+    stdout: () => undefined,
+    stderr: () => undefined,
+    review,
+  });
+  expect(defaultGate).toBe(0);
+  const gated = await run([...argv, "--fail-on", "major", "--fail-on-judged"], {
     stdout: () => undefined,
     stderr: (message) => output.push(message),
     review,
@@ -354,6 +373,7 @@ test("named-flow sweep defaults to ten tickets and preserves the uncapped omitte
       "1",
       "--fail-on",
       "major",
+      "--fail-on-judged",
     ],
     { review, stdout: () => {}, stderr: () => {} },
   );

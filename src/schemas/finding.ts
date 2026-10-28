@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { acceptanceSchema, basisDetailsSchema } from "./acceptance.js";
 
 export const artifactPathSchema = z
   .string()
@@ -255,6 +256,8 @@ export const findingSchema = z
     colorScheme: z.enum(["light", "dark"]).optional(),
     combination: z.string().optional(),
     layer: z.enum(["deterministic", "model"]),
+    basis: z.enum(["measured", "observed", "judged"]).optional(),
+    basisDetails: basisDetailsSchema.optional(),
     category: z.enum(findingCategories),
     severity: z.enum(["blocker", "major", "minor"]),
     confidence: z.number().min(0).max(1),
@@ -302,7 +305,7 @@ export const findingSchema = z
     suggestedArea: z.string().optional(),
     fix: z.string().min(1).optional(),
     focus: z.enum(pageFocusAreas).optional(),
-    acceptance: z.array(z.string()),
+    acceptance: z.union([acceptanceSchema, z.array(z.string())]),
     verification: z
       .object({
         kind: z.enum(["deterministic-check", "recapture-visual", "manual"]),
@@ -322,6 +325,78 @@ export const findingSchema = z
   })
   .strict()
   .superRefine((finding, context) => {
+    const basis =
+      finding.basis ?? (finding.layer === "model" ? "judged" : "measured");
+    if ((finding.layer === "model") !== (basis === "judged"))
+      context.addIssue({
+        code: "custom",
+        path: ["basis"],
+        message: "basis is inconsistent with layer",
+      });
+    if (finding.basisDetails && finding.basisDetails.kind !== basis)
+      context.addIssue({
+        code: "custom",
+        path: ["basisDetails"],
+        message: "details must match basis",
+      });
+    if (
+      !Array.isArray(finding.acceptance) &&
+      finding.acceptance.kind !== "legacy"
+    ) {
+      if (!finding.basis || !finding.basisDetails)
+        context.addIssue({
+          code: "custom",
+          path: ["basis"],
+          message: "new contracts require explicit basis and details",
+        });
+      if ((finding.acceptance.kind === "manual") !== (basis === "judged"))
+        context.addIssue({
+          code: "custom",
+          path: ["acceptance"],
+          message: "contract kind is inconsistent with basis",
+        });
+    }
+    if (
+      !Array.isArray(finding.acceptance) &&
+      finding.acceptance.kind === "rule"
+    ) {
+      const contract = finding.acceptance;
+      const original = contract.coordinate;
+      const key = (c: typeof original) =>
+        JSON.stringify([
+          c.flow,
+          c.state,
+          c.viewport,
+          c.colorScheme ?? "light",
+          c.combination,
+        ]);
+      if (!contract.requiredCoordinates.some((c) => key(c) === key(original)))
+        context.addIssue({
+          code: "custom",
+          path: ["acceptance", "requiredCoordinates"],
+          message: "must include the original coordinate",
+        });
+      if (
+        key(original) !==
+          key({
+            ...finding,
+            colorScheme: finding.colorScheme ?? original.colorScheme,
+          }) ||
+        contract.rule !== finding.rule ||
+        contract.check !== finding.verification.check
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["acceptance"],
+          message: "rule, evaluator and coordinate must match the finding",
+        });
+    }
+    if (basis === "observed" && !finding.basisDetails)
+      context.addIssue({
+        code: "custom",
+        path: ["basisDetails"],
+        message: "observed basis requires action and timing details",
+      });
     const aliases = finding.idAliases ?? [];
     const seen = new Set<string>();
     for (const [index, alias] of aliases.entries()) {
@@ -348,6 +423,37 @@ export const findingSchema = z
       }
       seen.add(alias);
     }
+  })
+  .transform((finding) => {
+    const basis =
+      finding.basis ?? (finding.layer === "model" ? "judged" : "measured");
+    const basisDetails =
+      finding.basisDetails ??
+      (basis === "judged"
+        ? {
+            kind: "judged" as const,
+            summary: "Model critique",
+            confidence: finding.confidence,
+          }
+        : {
+            kind: "measured" as const,
+            rule: finding.rule ?? finding.category,
+            summary:
+              "Measurement details were not recorded in this historical finding.",
+          });
+    return {
+      ...finding,
+      basis,
+      basisDetails,
+      acceptance: Array.isArray(finding.acceptance)
+        ? {
+            version: 1 as const,
+            kind: "legacy" as const,
+            doneWhen: finding.acceptance,
+          }
+        : finding.acceptance,
+    };
   });
 
+export type FindingInput = z.input<typeof findingSchema>;
 export type Finding = z.infer<typeof findingSchema>;

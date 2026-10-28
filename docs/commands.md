@@ -684,11 +684,25 @@ Discovery and named lookup are limited to direct children of `.idiom/reports/`. 
 ```sh
 idiom coverage                       # routes from Next.js app/ and pages/ directories
 idiom coverage --crawl http://localhost:3000/   # or same-origin links on a running page
+idiom coverage --states              # which states each flow's latest capture observed
 ```
 
 Coverage lists every route against the flows that capture it, so an uncaptured dashboard is a visible gap rather than silent approval, and prints the `routes` line that would capture the plain ones. Dynamic routes show the concrete paths flows used, e.g. `/p/[id] (e.g. /p/abc123)`.
 
 Exclusions are configured with [`coverage.exclude`](configuration.md#coverage).
+
+`--states` reports state coverage instead of routes. For each flow it reads the newest stored capture under `.idiom/reports` (passing or not, from any commit) and, for every state, marks each dimension observed, missing or not applicable:
+
+- **viewports**: every project viewport and every viewport the flow names;
+- **colour schemes**: light and dark;
+- **reduced motion**: on and off (one capture records one mode, so one is always missing until you capture the other);
+- **network**: fast (the ordinary capture), the slow-network held replay and the failure replay;
+- **interaction**: the probe reached the state's controls, and the focus sweep (which runs inside the probe pass) ran;
+- **data** (per flow): `empty`, `one`, `many` and `error`, when any state declares [`data`](configuration.md#declare-data-states).
+
+A dimension is observed only by a successful tuple (no capture failure, no expectation mismatch). Each missing dimension names the exact change that covers it, for example `add "mobile" to "viewports" in flow checkout`, `capture once with "capture": { "reducedMotion": false } in project.json` or `add a state with "data": "empty" to flow checkout, seeded by a "setup" command`. A dimension that cannot apply is **not applicable** and never enters the percentage: replays when no probed action sent requests, the probe and its focus sweep on Electron, the probe on a state with no controls, and data states when the flow declares none. The output is a per-flow table of observed versus applicable dimensions with the missing ones, then a `To cover:` list. `--json` returns the same data. `--states` skips route discovery, so it works without `app/` or `pages/`, and cannot be combined with `--crawl`.
+
+This is coverage of what was reviewed, not a measure of quality. Flow review reports and `idiom check` print the same summary as one `State coverage:` line.
 
 ## system
 
@@ -1107,3 +1121,12 @@ property values, a match method and a proposed fix with paired crops; Markdown a
 JSON retain this evidence too. To accept an intentional departure, use the normal
 `idiom decide` rejection/suppression decision for the finding. Comparison never
 edits application code or the reference.
+
+
+## Finding basis, severity gates and acceptance verification
+
+`check`, flow `review --since-baseline`, and single-flow/whole-product `sweep` severity gates count measured and observed findings by default. Add `--fail-on-judged` to include judged suggestions, including deferred current suggestions; `--fail-on never` disables severity gating. Flow baseline storage continues to classify deterministic occurrences only: opted-in judged suggestions are current critique, not baseline regressions. Page review retains its existing severity-option restriction. Advisory design review remains non-gating. Configured published-budget failures remain an independent review gate even with `--fail-on never`.
+
+Every verify finding includes `acceptance: { contract, status, reason }`. For new executable rule contracts, **passed** maps to fixed, **failed** to reproduced, and **not-recheckable** to unverifiable. Missing/ambiguous targets, incompatible settings, disabled checks and incomplete evidence cannot prove a pass. The existing rules evaluate both captures; A/B disagreement prevents proof. Cross-tuple contracts select their recorded sibling coordinates.
+
+Manual judged or historical model acceptance reports not-recheckable because human prose was not machine-proven, while existing calibrated visual-locus comparison still determines fixed/reproduced. Historical deterministic acceptance similarly reports not-recheckable while preserving coordinate-scoped legacy fingerprint verification. A changed visual locus or disappearing legacy fingerprint can therefore still produce a passing verification. `verification.kind: manual` remains unverifiable. Overall success still requires every finding verdict to be fixed and no new blockers; informational acceptance status adds no separate universal gate. Calibration, platform, design-reference, source-pinning and full-flow regression guards continue to apply. Reports and CLI show each acceptance reason, including when a global diagnostic prevents safe evaluation.

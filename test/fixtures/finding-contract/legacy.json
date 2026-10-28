@@ -1,0 +1,31 @@
+{
+  "id": "finding-3",
+  "idAliases": ["IDM-20260814a-3"],
+  "fingerprint": "9f2c41d0e6b8a75c3d1f0e9b2a4c6d8e0f1a2b3c4d5e6f708192a3b4c5d6e7f8",
+  "createdAt": "2026-08-14T18:22:04Z",
+  "commit": "b1946ac92492d2347c6235b4d2611184e0f7a8c3",
+  "flow": "booking",
+  "state": "expired",
+  "viewport": "mobile",
+  "layer": "deterministic",
+  "category": "contrast",
+  "severity": "major",
+  "confidence": 1,
+  "rule": "axe:color-contrast",
+  "evidence": {
+    "screenshots": ["expired/mobile/screenshot.png"],
+    "axeNodes": [
+      { "target": [".terminal-note"], "contrastRatio": 3.1, "required": 4.5 }
+    ]
+  },
+  "explanation": "The explanatory note on the expired state has insufficient contrast against its background.",
+  "suggestedArea": "expired-state terminal copy block",
+  "acceptance": [
+    "The expired-state note measures at least 4.5:1 contrast on both viewports."
+  ],
+  "verification": {
+    "kind": "deterministic-check",
+    "check": "contrast"
+  },
+  "status": "open"
+}

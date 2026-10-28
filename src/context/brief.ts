@@ -15,6 +15,7 @@ import {
 } from "../decisions/prohibitions.js";
 import { readDecisions } from "../decisions/read.js";
 import { IdiomError } from "../errors.js";
+import { acceptanceText } from "../findings/presentation.js";
 import { reachableProjectStores } from "../report/roots.js";
 import {
   anyReportRootExists,
@@ -127,7 +128,7 @@ function collectAcceptedWork(
       category: finding.category,
       surface: `${finding.flow}/${finding.state}/${finding.viewport}${finding.colorScheme === undefined ? "" : `/${finding.colorScheme}`}`,
       explanation: finding.explanation,
-      acceptance: finding.acceptance,
+      acceptance: acceptanceText(finding),
       tracker: trackerLabel(lifecycle),
       verification: lifecycle?.verification ?? "none",
     });
@@ -530,6 +531,8 @@ export function renderDesignBrief(brief: DesignBrief): string {
     "# Design brief",
     "",
     `Scope: ${brief.flow === undefined ? "project-wide" : `flow ${brief.flow}`}`,
+    "",
+    "Findings are measured (a deterministic rule with its measurement), observed (an action or probe with its timing and result), or judged (model critique with stated confidence when supplied). Treat judged findings as suggestions: severity gates count measured and observed findings by default; --fail-on-judged opts judged suggestions in.",
     "",
   ];
 

@@ -1,3 +1,4 @@
+import { observed } from "../findings/observation.js";
 import { ran, unavailable, verify } from "./shared.js";
 import type { DeterministicCheck, FindingCandidate } from "./types.js";
 
@@ -45,6 +46,16 @@ export const livenessCheck: DeterministicCheck = {
       const zero = numbers.length > 0 && numbers.every((n) => Number(n) === 0);
       const rule = `idiom:liveness-${zero ? "all-zero" : "unchanged"}`;
       candidates.push({
+        observation: observed(
+          {
+            source: "liveness",
+            kind: "sample",
+            selector: entry.selector,
+            name: entry.identity,
+          },
+          entry,
+          { elapsedMs: entry.elapsedMs },
+        ),
         category: this.id,
         severity: "major",
         rule,

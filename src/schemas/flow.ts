@@ -225,6 +225,10 @@ function siblingIssue(
     });
 }
 
+/** The data condition a state declares it shows, for state coverage. */
+export const dataStateSchema = z.enum(["empty", "one", "many", "error"]);
+export type DataState = z.infer<typeof dataStateSchema>;
+
 const webStateSchema = z
   .object({
     design: designDeclarationSchema.optional(),
@@ -249,6 +253,7 @@ const webStateSchema = z
     focus: z.string().trim().min(1).optional(),
     probe: z.boolean().optional(),
     fresh: z.boolean().optional(),
+    data: dataStateSchema.optional(),
     invariants: z.array(invariantSchema).optional(),
     // Declared siblings for sibling-chrome: run-wide, or within this flow.
     siblingGroup: nonblank.optional(),
@@ -416,6 +421,7 @@ const electronStateSchema = z
     focus: z.string().trim().min(1).optional(),
     probe: z.boolean().optional(),
     fresh: z.boolean().optional(),
+    data: dataStateSchema.optional(),
     invariants: z.array(invariantSchema).optional(),
     siblingGroup: nonblank.optional(),
     group: nonblank.optional(),

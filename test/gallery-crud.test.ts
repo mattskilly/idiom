@@ -238,6 +238,7 @@ test("menus and context menus found by a read-only probe satisfy the collection"
     expect(probe?.collections).toEqual([
       {
         selector: ".page-card",
+        elapsedMs: expect.any(Number),
         menus: [
           {
             trigger: "button",
@@ -249,6 +250,7 @@ test("menus and context menus found by a read-only probe satisfy the collection"
       },
       {
         selector: ".project-row",
+        elapsedMs: expect.any(Number),
         menus: [
           {
             trigger: "contextmenu",

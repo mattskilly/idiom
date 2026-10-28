@@ -255,7 +255,9 @@ const Finding = z.object({
   }),
   explanation: z.string(),
   suggestedArea: z.string().optional(),  // surface-level hint, NEVER a repo file path
-  acceptance: z.array(z.string()),       // bounded, observable criteria for the fix
+  basis: z.enum(["measured", "observed", "judged"]),
+  basisDetails: BasisDetails,             // rule measurement, action/timing/result, or stated confidence
+  acceptance: Acceptance,                // versioned rule, manual or legacy contract
   verification: z.object({
     kind: z.enum(["deterministic-check", "recapture-visual", "manual"]),
     check: z.string().optional(),        // checkId to re-run on verify
@@ -271,7 +273,7 @@ Notes:
 - `evidence.artifacts` — optional for backward compatibility and nonempty when deterministic review emits a finding. Paths are report-relative, remain inside the run, and are existence-checked before output. This lets failed states cite metadata without pretending it is a screenshot.
 - `evidence.references` — optional for stored-history compatibility. New model findings copy locally validated exact labels here; `reference-mismatch` model output cannot omit them.
 - `suggestedArea` — deliberately surface language ("expired-state terminal copy block"), never a file path: the dogfood app's spec standard forbids path prediction in tickets, and the finding text flows into tickets verbatim.
-- `acceptance` — written as observable facts, one per line; they become the ticket's acceptance criteria unchanged.
+- `acceptance.doneWhen` — observable human criteria, retained unchanged in tickets. The surrounding versioned object records whether and how a machine can recheck the rule.
 - `verification` — how `idiom verify` proves resolution: re-run a named deterministic check, do a masked visual/DOM comparison against this finding's evidence baseline, or (last resort) flag for manual confirmation.
 
 New findings always use the canonical short name. Historical findings without
@@ -577,7 +579,9 @@ Exact `urlFrom` patterns and the seed's real stdout labels are pinned down in ba
 ```json
 {
   "id": "finding-3",
-  "idAliases": ["IDM-20260814a-3"],
+  "idAliases": [
+    "IDM-20260814a-3"
+  ],
   "fingerprint": "9f2c41d0e6b8a75c3d1f0e9b2a4c6d8e0f1a2b3c4d5e6f708192a3b4c5d6e7f8",
   "createdAt": "2026-08-14T18:22:04Z",
   "commit": "b1946ac92492d2347c6235b4d2611184e0f7a8c3",
@@ -587,20 +591,81 @@ Exact `urlFrom` patterns and the seed's real stdout labels are pinned down in ba
   "layer": "deterministic",
   "category": "contrast",
   "severity": "major",
-  "confidence": 1.0,
+  "confidence": 1,
   "rule": "axe:color-contrast",
   "evidence": {
-    "screenshots": ["expired/mobile/screenshot.png"],
-    "axeNodes": [{ "target": [".terminal-note"], "contrastRatio": 3.1, "required": 4.5 }]
+    "screenshots": [
+      "expired/mobile/screenshot.png"
+    ],
+    "axeNodes": [
+      {
+        "target": [
+          ".terminal-note"
+        ],
+        "contrastRatio": 3.1,
+        "required": 4.5
+      }
+    ]
   },
-  "explanation": "The explanatory note on the expired state renders at 3.1:1 contrast against the background, below the 4.5:1 minimum for body text. On the mobile viewport this is the only text telling the recipient what happened and what to do next.",
+  "explanation": "The explanatory note on the expired state has insufficient contrast against its background.",
   "suggestedArea": "expired-state terminal copy block",
-  "acceptance": [
-    "The expired-state note text measures at least 4.5:1 contrast against its rendered background on both viewports.",
-    "The note remains visually subordinate to the state heading."
-  ],
-  "verification": { "kind": "deterministic-check", "check": "contrast" },
-  "status": "open"
+  "acceptance": {
+    "version": 1,
+    "kind": "rule",
+    "doneWhen": [
+      "The expired-state note measures at least 4.5:1 contrast on both viewports."
+    ],
+    "rule": "axe:color-contrast",
+    "check": "contrast",
+    "coordinate": {
+      "flow": "booking",
+      "state": "expired",
+      "viewport": "mobile"
+    },
+    "requiredCoordinates": [
+      {
+        "flow": "booking",
+        "state": "expired",
+        "viewport": "mobile"
+      },
+      {
+        "flow": "booking",
+        "state": "expired",
+        "viewport": "desktop"
+      }
+    ],
+    "target": {
+      "kind": "selectors",
+      "selectors": [
+        ".terminal-note"
+      ]
+    },
+    "condition": {
+      "kind": "rule-clear",
+      "parameters": {
+        "required": 4.5,
+        "unit": "ratio"
+      },
+      "settingsIdentity": "f9fea892daa53d62ed7906ad290b98cc6021dcb38fac12a7e547a9edee99d3d4",
+      "allowRemoval": false
+    }
+  },
+  "verification": {
+    "kind": "deterministic-check",
+    "check": "contrast"
+  },
+  "status": "open",
+  "basis": "measured",
+  "basisDetails": {
+    "kind": "measured",
+    "rule": "axe:color-contrast",
+    "summary": "The note measures 3.1:1 contrast; the required minimum is 4.5:1.",
+    "measurement": {
+      "contrastRatio": 3.1,
+      "required": 4.5,
+      "unit": "ratio"
+    }
+  }
 }
 ```
 
@@ -733,6 +798,11 @@ time descending with stable coordinate/selector/name ties. Entries contain
 (`completed` or `timed-out`). Stored reviews replay those historical timings;
 old records omit the list. Timings never participate in finding identity.
 
+`run.json` also records `capture.reducedMotion`, the `prefers-reduced-motion`
+mode every tuple was captured under (`project.capture.reducedMotion`). State
+coverage reads it; records written before it existed fall back to a tuple's
+motion artifact, and otherwise report both modes missing until recaptured.
+
 
 ## Design comparison evidence
 
@@ -825,3 +895,15 @@ The version-1 verification attachment manifest optionally adds `filmstrips[]`: c
 
 
 Failure replay extends observation v2 and timeline v1 without defaulting new fields in old artifacts. `probe.failureReplay` marks coverage even when no eligible actions exist, including queued/ran counts, completed action identities and cap/budget notes. Actions with source `failure-replay` carry strict `failure` facts: origin, source action, mode/status/deadline, response-gating evidence, dispatch/navigation, locally delivered requests, recovery interval, changed feedback, meaningful visible changes, final trigger/pending/main/retry state, completion and truncation. Null represents unknown observations. Page times are relative to trusted dispatch; request start times use the process clock. Private request URLs used for exact routing never serialize; artifacts contain method/path only. Filmstrip identity adds `failureOf` so normal and held siblings cannot own the failure recording.
+
+
+## Finding basis and acceptance contracts
+
+`basis` separates measured rule results, observed behavior, and judged model suggestions. Both measured and observed findings retain `layer: deterministic`; judged findings retain `layer: model`. `basisDetails` carries the actual measurement or action and timing/result, or the model's stated confidence. Missing historical timing is explicitly unavailable; exploration's synthetic confidence is not presented as model-stated confidence.
+
+`acceptance` is a strict version 1 object. All variants retain `doneWhen: string[]`. A `rule` contract also carries the public `rule`, registry `check`, original `coordinate`, `requiredCoordinates`, a `target` (`selectors`, `document` scope, or stable `action` identity), and `condition: { kind: "rule-clear", parameters, settingsIdentity, allowRemoval }`. Parameters are JSON values. The condition requires the existing rule to emit no violation for that target under the recorded effective settings, with usable target evidence. Timeline IDs locate report evidence; action source/kind/selector/name/step and replay origin identify the action across runs. Structural/document scope hints are never interpreted as CSS selectors. See [the complete example](../examples/booking/records/finding.json).
+
+A `manual` contract records judged human criteria without claiming executable proof. Historical acceptance arrays normalize to `legacy` contracts at the finding loader, without rewriting old ticket sidecars. Missing historical basis is derived only from `layer` (deterministic → measured; model → judged). Unknown versions, malformed new objects and inconsistent layer/basis combinations are rejected. Normalized JSON and embedded finding blocks expose objects; visible lists use `doneWhen`.
+
+
+New `run.json` records optionally retain `captureSettingsIdentity`, a hash of predicate-relevant capture settings and flow declarations. Loading a retained run reads its original hash rather than recomputing it from edited flow files; the contract separately pins the effective offline check configuration. No URLs, environment values or runtime resources are serialized into this identity. Current expectation declarations and captured invariant/component declarations must still prove that the original condition was rechecked. Design-image targets record their document region and reference; a transient cause element need not survive a repair.

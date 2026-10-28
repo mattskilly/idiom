@@ -41,6 +41,7 @@ import { type ReplayRequest, replayRequests } from "./failure-identity.js";
 import {
   type HeldItem,
   heldCandidate,
+  installNoiseRecorder,
   MAX_HELD_REPLAYS,
   replayHeld,
 } from "./loading.js";
@@ -51,9 +52,13 @@ import {
   type ProbeLedger,
   type ProbeLedgerEntry,
 } from "./probe-ledger.js";
+import type { ReplayLedger } from "./replay-ledger.js";
 import { ignoredRequest, probeRequestAllowed } from "./request-policy.js";
 import { mergeTimelines, TimelineCollector } from "./timeline.js";
 import type { CaptureHooks } from "./types.js";
+
+/** Pages whose documents carry the held replay's noise recorder. */
+const noiseRecorded = new WeakSet<Page>();
 
 export { probeRequestAllowed };
 
@@ -92,6 +97,11 @@ export type ProbeOptions = CaptureHooks & {
    * has a completed result is not clicked again; its result is reused.
    */
   ledger?: ProbeLedger | undefined;
+  /**
+   * Flow-scoped held replays of web steps: a step another state owns this
+   * round, or that already has a result, is not replayed here.
+   */
+  replayLedger?: ReplayLedger | undefined;
   /** This state's id, recorded as `reusedFrom` by later states. */
   stateId?: string | undefined;
   /** Ledger partition: the tuple's viewport and colour scheme. */
@@ -120,6 +130,8 @@ export type HeldStep = {
   sourceAction?: import("../checks/types.js").ActionTimeline;
   requests?: ReplayRequest[];
   stepIndex: number;
+  /** Identifies the replay across the flow's states (`replayKey`). */
+  replayKey?: string | undefined;
   action: HeldItem["kind"];
   selector: string;
   /** Reach the state before this step (steps 1..n-1) on `page`. */
@@ -2412,6 +2424,12 @@ export async function probeControls(
     try {
       await deadline.run(async () => {
         const realPage = await ensurePage(deadline);
+        // Before the restore loads the document, so carousels and tickers
+        // are seen rotating on their own from the start.
+        if (!noiseRecorded.has(realPage)) {
+          noiseRecorded.add(realPage);
+          await realPage.addInitScript(installNoiseRecorder);
+        }
         bound = deadlinePage(realPage, deadline);
         const page = bound.page;
         needsReplay = true;
@@ -2553,6 +2571,7 @@ export async function probeControls(
       reach: (page: Page) => Promise<void>;
       original?: import("../checks/types.js").ActionTimeline | undefined;
       requests?: ReplayRequest[] | undefined;
+      replayKey?: string | undefined;
     }> = [
       ...[...held.steps]
         .sort((a, b) => a.stepIndex - b.stepIndex)
@@ -2569,6 +2588,7 @@ export async function probeControls(
           reach: step.reach,
           original: step.sourceAction,
           requests: step.requests,
+          replayKey: step.replayKey,
         })),
       ...[...heldQueue]
         .sort(
@@ -2629,14 +2649,31 @@ export async function probeControls(
       return;
     }
     const seenFailures = new Set<string>();
+    const replays = options.replayLedger;
+    const planned = replays?.planned(partition) === true;
+    // Held replays counted against the cap: a web step another state replays
+    // for the flow is skipped and never pushes probe clicks past the cap.
+    let position = 0;
     for (const [index, entry] of items.entries()) {
+      const key = planned ? entry.replayKey : undefined;
+      if (replays && key !== undefined) {
+        const owner = replays.owner(partition, key);
+        // Already replayed (here in an earlier round, or elsewhere), or owned
+        // by another state this round: its result is copied after the round.
+        if (
+          replays.lookup(partition, key) ||
+          (owner !== undefined && owner !== stateId)
+        )
+          continue;
+      }
+      const slot = position++;
       if (failureSummary && entry.original) {
         const key = failureKey(entry.item.selector, entry.original.requests);
         if (seenFailures.has(key)) continue;
         seenFailures.add(key);
       }
       const left = items.length - index;
-      if (index >= MAX_HELD_REPLAYS) {
+      if (slot >= MAX_HELD_REPLAYS) {
         summary.notes.push(
           `not reached: ${left} held replays beyond the cap of ${MAX_HELD_REPLAYS}`,
         );
@@ -2659,16 +2696,37 @@ export async function probeControls(
         break;
       }
       const before = timelines?.actions.length ?? 0;
+      const completedBefore = failureSummary?.completed.length ?? 0;
       const go = await heldAttempt(
         entry.item,
         entry.reach,
         summary.notes,
         entry.original,
         entry.requests,
-        index < MAX_HELD_REPLAYS,
+        slot < MAX_HELD_REPLAYS,
       );
-      if (index < MAX_HELD_REPLAYS && (timelines?.actions.length ?? 0) > before)
+      if (slot < MAX_HELD_REPLAYS && (timelines?.actions.length ?? 0) > before)
         summary.ran += 1;
+      if (replays && key !== undefined) {
+        // This round's probe replays each step at most once.
+        const recorded = (timelines?.actions ?? []).filter(
+          (action) =>
+            (action.held?.of === "web-step" ||
+              action.failure?.of === "web-step") &&
+            action.stepIndex === entry.item.stepIndex,
+        );
+        if (
+          recorded.length &&
+          !recorded.some((action) => action.status === "unavailable")
+        )
+          replays.record(
+            partition,
+            key,
+            stateId,
+            recorded,
+            failureSummary?.completed.slice(completedBefore) ?? [],
+          );
+      }
       if (!go) break;
     }
   };
@@ -3386,6 +3444,7 @@ export async function probeControls(
     }
     if (options.collections?.length) artifact.collections = [];
     for (const itemSelector of options.collections ?? []) {
+      const collectionStarted = Date.now();
       const entry: ProbeCollection = { selector: itemSelector, menus: [] };
       artifact.collections?.push(entry);
       let triggers: Array<{ selector: string; name: string }> = [];
@@ -3492,6 +3551,7 @@ export async function probeControls(
         if (!value)
           entry.reason = `collection sampling timed-out: ${trigger.selector}`;
       }
+      entry.elapsedMs = Date.now() - collectionStarted;
     }
     effects = undefined;
     selector = "html";

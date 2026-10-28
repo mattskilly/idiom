@@ -1,3 +1,4 @@
+import { observed } from "../findings/observation.js";
 import { unavailable, verify } from "./shared.js";
 import type { DeterministicCheck, FindingCandidate } from "./types.js";
 
@@ -24,6 +25,24 @@ export const deadControlCheck: DeterministicCheck = {
       const label = result.name === "" ? result.selector : `"${result.name}"`;
       const toggle = toggles.has(result.selector);
       candidates.push({
+        observation: observed(
+          {
+            source: "probe-click",
+            kind: "click",
+            selector: result.selector,
+            name: result.name,
+          },
+          result,
+          result.elapsedMs === undefined
+            ? undefined
+            : {
+                elapsedMs: result.elapsedMs,
+                ...(result.timings
+                  ? { windowMs: result.timings.effectWindowMs }
+                  : {}),
+              },
+        ),
+        allowRemoval: true,
         category: this.id,
         severity: "major",
         rule: toggle

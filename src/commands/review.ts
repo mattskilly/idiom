@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   type BaselineComparisonSummary,
   summarizeBaselineComparison,
+  summarizeFinding,
 } from "../baseline/summary.js";
 import {
   type PageReviewDependencies,
@@ -14,7 +15,7 @@ import {
   type ReviewRunResult,
   runReview,
 } from "../review/run.js";
-import type { Finding } from "../schemas/finding.js";
+import { type Finding, findingSchema } from "../schemas/finding.js";
 import { isPublishedFlow } from "../schemas/flow.js";
 import { validateProject } from "../validation.js";
 
@@ -55,7 +56,10 @@ export async function reviewCommand(options: {
   dependencies?: ReviewDependencies | undefined;
 }): Promise<
   ReviewRunResult & {
-    comparison?: BaselineComparisonSummary & { unclassified: number };
+    comparison?: BaselineComparisonSummary & {
+      unclassified: number;
+      currentJudged?: import("../baseline/summary.js").SummaryFinding[];
+    };
     publishedBudget?: { violations: PublishedBudgetViolation[] };
   }
 > {
@@ -75,9 +79,9 @@ export async function reviewCommand(options: {
   ).flows.some(({ flow }) => isPublishedFlow(flow));
   let material: Finding[] | undefined;
   const readMaterial = async () => {
-    material ??= JSON.parse(
-      await readFile(result.findingsPath, "utf8"),
-    ) as Finding[];
+    material ??= findingSchema
+      .array()
+      .parse(JSON.parse(await readFile(result.findingsPath, "utf8")));
     return material;
   };
   const publishedBudget = published
@@ -94,6 +98,13 @@ export async function reviewCommand(options: {
   const findings = await readMaterial();
   const comparison = {
     ...(await summarizeBaselineComparison(options, result, findings)),
+    currentJudged: [...findings, ...result.deferredFindings]
+      .filter(
+        (f) =>
+          f.basis === "judged" &&
+          (f.status === "open" || f.status === "approved"),
+      )
+      .map((f) => summarizeFinding(f, result, options.cwd ?? process.cwd())),
     unclassified: [...findings, ...result.deferredFindings].filter(
       (finding) => finding.layer !== "deterministic",
     ).length,

@@ -12,10 +12,12 @@ import type { CaptureDependencies } from "../capture/run.js";
 import { runCapture } from "../capture/run.js";
 import { projectChecksConfig } from "../checks/project-config.js";
 import { IdiomError } from "../errors.js";
+import { annotateDeclaredExpectations } from "../findings/settings.js";
 import { buildVerificationCoverage } from "../report/coverage.js";
 import { pngDataUri, writeHtmlReport } from "../report/html.js";
 import { loadCaptureRun } from "../review/artifacts.js";
 import { validateProject } from "../validation.js";
+import { unavailableAcceptance } from "./acceptance.js";
 import {
   createAttachmentManifest,
   validateAttachmentManifest,
@@ -258,6 +260,8 @@ export async function runVerify(options: {
         legacyColorScheme: validated.project.capture.colorScheme,
       }),
     ]);
+    annotateDeclaredExpectations(loadedA.tuples, flow);
+    annotateDeclaredExpectations(loadedB.tuples, flow);
     if (runA.counts.failed > 0 || runB.counts.failed > 0) {
       const coordinate = (tuple: (typeof loadedA.tuples)[number]) =>
         `${tuple.state}/${tuple.viewport}${tuple.colorSchemeAxis ? `/${tuple.colorScheme ?? validated.project.capture.colorScheme}` : ""}`;
@@ -420,6 +424,20 @@ export async function runVerify(options: {
     } catch (error) {
       checkCancelled();
       diagnostic = error instanceof Error ? error.message : String(error);
+      evaluation = {
+        passed: false,
+        calibrations: [],
+        newBlockers: [],
+        findings: findings.map((finding) => ({
+          finding,
+          status: "unverifiable",
+          reason: diagnostic as string,
+          acceptance: unavailableAcceptance(
+            finding.acceptance,
+            `Safe evaluation prevented: ${diagnostic}`,
+          ),
+        })),
+      };
     }
     const currentCommit =
       loadedA.commit === loadedB.commit

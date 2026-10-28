@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><title>Exclusion</title><style>body{font:16px sans-serif;margin:24px}</style></head><body>
+<main><h1>Home</h1><div class="news-ticker"><span>Headline 1</span></div><button id="share" type="button">Share</button></main>
+<script>
+// Slower than the feedback window, so its first rotation after the action
+// lands after the response: a "change after release" unless it is noise.
+let slide = 1;
+setInterval(() => { slide = (slide % 5) + 1; document.querySelector(".news-ticker span").textContent = "Headline " + slide; }, 2100);
+document.querySelector("#share").addEventListener("click", () => {
+  fetch("/api/track?event=share").catch(() => undefined);
+});
+</script></body></html>

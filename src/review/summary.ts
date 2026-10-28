@@ -12,6 +12,9 @@ import { rootCauseIssues } from "./root-causes.js";
 
 /** One element failing one rule, wherever it repeats (#52). */
 export type CheckGroup = {
+  basis?: Finding["basis"] | undefined;
+  basisDetails?: Finding["basisDetails"] | undefined;
+  acceptance?: Finding["acceptance"] | undefined;
   id: string;
   severity: Finding["severity"];
   category: Finding["category"];
@@ -25,6 +28,9 @@ export type CheckGroup = {
   /** Every member is past the review's attention cap. */
   deferred?: true | undefined;
   members: Array<{
+    basis?: Finding["basis"] | undefined;
+    basisDetails?: Finding["basisDetails"] | undefined;
+    acceptance?: Finding["acceptance"] | undefined;
     id: string;
     severity: Finding["severity"];
     where: string;
@@ -63,6 +69,9 @@ export function projectIssueSummary(options: {
     ) as SummaryFinding;
     return {
       id: group.id,
+      basis: representative.basis,
+      basisDetails: representative.basisDetails,
+      acceptance: representative.acceptance,
       severity: group.severity,
       category: representative.category,
       ...(group.rule === undefined ? {} : { rule: group.rule }),
@@ -83,6 +92,9 @@ export function projectIssueSummary(options: {
         : {}),
       members: group.members.map((member) => ({
         id: member.id,
+        basis: summaries.get(member.id)?.basis,
+        basisDetails: summaries.get(member.id)?.basisDetails,
+        acceptance: summaries.get(member.id)?.acceptance,
         severity: member.severity,
         where: summaries.get(member.id)?.where ?? member.state,
         ...(member.deferred === true ? { deferred: true } : {}),

@@ -369,7 +369,15 @@ describe("schema behavior", () => {
       const finding = (await json(
         "examples/booking/records/finding.json",
       )) as Record<string, unknown>;
-      expect(findingSchema.safeParse({ ...finding, layer }).success).toBe(true);
+      expect(
+        findingSchema.safeParse({
+          ...finding,
+          layer,
+          basis: undefined,
+          basisDetails: undefined,
+          acceptance: ["Historical criterion"],
+        }).success,
+      ).toBe(true);
     },
   );
 
@@ -389,7 +397,7 @@ describe("schema behavior", () => {
     "accepts verification kind %s",
     async (kind) => {
       const finding = (await json(
-        "examples/booking/records/finding.json",
+        "test/fixtures/finding-contract/legacy.json",
       )) as Record<string, unknown>;
       const verification = { kind };
       expect(

@@ -12,6 +12,10 @@ export const coordinateSchema = z
 export const runRecordSchema = z
   .object({
     version: z.literal(1),
+    captureSettingsIdentity: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     flow: id,
     source: z
       .object({ commit: z.string().min(1), dirty: z.boolean() })
@@ -50,6 +54,8 @@ export const runRecordSchema = z
         checks: phaseTimingSchema,
       })
       .strict(),
+    /** The prefers-reduced-motion mode every tuple was captured under. */
+    capture: z.object({ reducedMotion: z.boolean() }).strict().optional(),
   })
   .strict()
   .superRefine((record, ctx) => {

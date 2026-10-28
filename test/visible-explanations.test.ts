@@ -23,6 +23,45 @@ const relevant = (findings: Awaited<ReturnType<typeof reviewFixture>>) =>
       ["unexplained-control", "dead-affordance"].includes(c.category),
     );
 
+test("default mode delegates nameless SVG controls to axe and judges a glyph-only name", async () => {
+  const svg =
+    '<svg aria-hidden="true" width="20" height="20"><circle cx="10" cy="10" r="8"/></svg>';
+  const findings = (
+    await reviewFixture(
+      browser,
+      `<!doctype html><html lang="en"><title>Controls</title>
+    <style>button,a{display:inline-block;width:48px;height:48px;margin:20px}</style><main><h1>Controls</h1>
+    <button id="nameless-button">${svg}</button><a id="nameless-link" href="/help">${svg}</a>
+    <button id="glyph" aria-label="i">${svg}</button></main>`,
+      { axe: true },
+    )
+  ).map(({ candidate }) => candidate);
+  for (const [selector, rule] of [
+    ["#nameless-button", "axe:button-name"],
+    ["#nameless-link", "axe:link-name"],
+  ]) {
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule, selectorHint: selector }),
+      ]),
+    );
+    expect(
+      findings.some(
+        (c) =>
+          c.selectorHint === selector && c.rule === "idiom:unexplained-control",
+      ),
+    ).toBe(false);
+  }
+  expect(findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        rule: "idiom:unexplained-control",
+        selectorHint: "#glyph",
+      }),
+    ]),
+  );
+});
+
 test("default mode reports disabled navigation, and the named glyph only with probe evidence (dogfooding request #55)", async () => {
   const html = await fixture("before.html");
   const shapes = (found: ReturnType<typeof relevant>) =>

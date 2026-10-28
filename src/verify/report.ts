@@ -1,6 +1,11 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  acceptanceDescription,
+  acceptanceText,
+  basisDescription,
+} from "../findings/presentation.js";
+import {
   type ReportCoverage,
   renderCoverageMarkdown,
 } from "../report/coverage.js";
@@ -113,16 +118,19 @@ export function renderVerificationReport(options: {
     "",
     "## Finding verdicts",
     "",
-    "| Finding | Tuple | Verdict | Basis | Target | Reason |",
-    "| --- | --- | --- | --- | --- | --- |",
+    "| Finding | Tuple | Verdict | Finding basis | Evidence | Target | Reason | Acceptance | Acceptance reason |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ...evaluation.findings.map((verdict) =>
       [
         verdict.finding.id,
         `${verdict.finding.state}/${verdict.finding.viewport}${verdict.finding.colorScheme === undefined ? "" : `/${verdict.finding.colorScheme}`}`,
         verdict.status,
+        basisDescription(verdict.finding),
         verdict.locus?.source ?? verdict.finding.verification.kind,
         verdict.locus?.target ?? "n/a",
         verdict.reason,
+        verdict.acceptance.status,
+        verdict.acceptance.reason,
       ]
         .map(cell)
         .join(" | ")
@@ -130,6 +138,16 @@ export function renderVerificationReport(options: {
         .replace(/$/, " |"),
     ),
     "",
+    ...evaluation.findings.flatMap((verdict) => [
+      `### ${cell(verdict.finding.id)} acceptance`,
+      "",
+      cell(acceptanceDescription(verdict.acceptance.contract)),
+      "",
+      ...acceptanceText(verdict.finding).map(
+        (criterion) => `- Done when: ${cell(criterion)}`,
+      ),
+      "",
+    ]),
     "## New deterministic blockers",
     "",
     ...(evaluation.newBlockers.length === 0

@@ -38,6 +38,7 @@ export const touchReachabilityArtifactSchema = z
           identity: identity,
           name: z.string(),
           rect,
+          elapsedMs: dimension.optional(),
           owner: identity,
           baseline: z
             .object({

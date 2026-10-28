@@ -5,13 +5,13 @@ import { PNG } from "pngjs";
 import { expect, test } from "vitest";
 import type { CheckTuple } from "../src/checks/types.js";
 import { attachCrops, paramsRect } from "../src/review/crops.js";
-import type { Finding } from "../src/schemas/finding.js";
+import { type Finding, findingSchema } from "../src/schemas/finding.js";
 
 const elementRect = { x: 600, y: 400, width: 100, height: 50 };
 const textRect = { x: 40, y: 60, width: 200, height: 80 };
 
 function finding(params: Record<string, unknown>): Finding {
-  return {
+  return findingSchema.parse({
     id: "f1",
     fingerprint: "0123456789abcdef0123",
     createdAt: "2026-10-26T00:00:00.000Z",
@@ -28,7 +28,7 @@ function finding(params: Record<string, unknown>): Finding {
     acceptance: [],
     verification: { kind: "deterministic-check", check: "orphan-word", params },
     status: "open",
-  } as Finding;
+  });
 }
 
 async function crop(params: Record<string, unknown>, documentWidth = 800) {

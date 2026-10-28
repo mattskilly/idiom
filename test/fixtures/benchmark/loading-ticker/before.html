@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><title>Items</title><style>body{font:16px sans-serif;margin:24px}.news{padding:12px;background:#eef}</style></head><body>
+<main id="items-panel"><h1>Items</h1>
+<div class="news"><span>Headline 1 of 4</span></div>
+<button id="load" type="button">Load items</button><ul id="list"></ul></main>
+<script>
+let slide = 1;
+setInterval(() => { slide = (slide % 4) + 1; document.querySelector(".news span").textContent = "Headline " + slide + " of 4"; }, 700);
+const button = document.querySelector("#load");
+button.addEventListener("click", async () => {
+  const response = await fetch("/api/items");
+  const items = await response.json();
+  document.querySelector("#list").innerHTML = items.map((item) => `<li>${item}</li>`).join("");
+});
+</script></body></html>

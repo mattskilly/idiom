@@ -1,5 +1,6 @@
 import { rename, writeFile } from "node:fs/promises";
 import { relative, sep } from "node:path";
+import { basisDescription } from "../findings/presentation.js";
 import {
   renderCoverageHtml,
   renderCoverageMarkdown,
@@ -27,7 +28,7 @@ export function renderProductSweep(s: ProductSweepSummary): string {
     `Tickets: ${s.selectedCount} selected, ${s.omittedCount} additional new proposal(s) omitted by budget.`,
     ...s.proposals.map(
       (p, i) =>
-        `${i + 1}. [${p.severity}] score ${p.score.toFixed(2)} — ${p.cluster.cause?.cause ?? p.cluster.component} (${p.findingIds.join(", ")})`,
+        `${i + 1}. [${p.severity}] score ${p.score.toFixed(2)} — ${p.cluster.cause?.cause ?? p.cluster.component} (${p.findingIds.join(", ")}) — ${p.cluster.members.map((m) => basisDescription(m.record.finding)).join("; ")}`,
     ),
     ...(s.tickets === undefined ? [] : [renderClusterTicketsResult(s.tickets)]),
     `Polish report: ${s.reportPath}`,
@@ -55,7 +56,7 @@ export function polishMarkdown(s: ProductSweepSummary): string {
       "",
       ...p.cluster.members.map(
         (m) =>
-          `- ${text(m.id)}: ${text(m.record.finding.explanation)} ([source report](${href(s, `${m.record.runDirectory}/report.md`)}))`,
+          `- ${text(m.id)}: ${text(basisDescription(m.record.finding))} — ${text(m.record.finding.explanation)} ([source report](${href(s, `${m.record.runDirectory}/report.md`)}))`,
       ),
       "",
     ]),

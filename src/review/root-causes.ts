@@ -31,6 +31,9 @@ export type RootCauseSymptom = {
   measurement: string;
   findings: Array<{
     id: string;
+    basis?: Finding["basis"] | undefined;
+    basisDetails?: Finding["basisDetails"] | undefined;
+    acceptance?: Finding["acceptance"] | undefined;
     fingerprint: string;
     status: Finding["status"];
     deferred?: true | undefined;
@@ -703,6 +706,9 @@ function rootCauseIssue(
         const finding = findings.find(({ id }) => id === member.id);
         return {
           id: member.id,
+          basis: finding?.basis,
+          basisDetails: finding?.basisDetails,
+          acceptance: finding?.acceptance,
           fingerprint: finding?.fingerprint ?? "",
           status: finding?.status ?? "open",
           ...(member.deferred === true ? { deferred: true as const } : {}),

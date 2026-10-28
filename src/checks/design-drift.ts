@@ -22,6 +22,7 @@ export function regionCandidates(regions: DesignRegions): FindingCandidate[] {
       Math.round((region.changedCells / region.cells) * 1000) / 1000;
     const offset = `${regions.offset >= 0 ? "+" : ""}${regions.offset}`;
     return {
+      documentScope: true,
       category: "design-drift",
       severity: "minor",
       rule: "idiom:design-drift",

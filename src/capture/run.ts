@@ -6,6 +6,7 @@ import { linkRecording, recordingKey } from "../checks/temporal-evidence.js";
 import { captureDesigns, figmaFrameLoader } from "../design/capture.js";
 import { classifyDocument } from "../document.js";
 import { IdiomError } from "../errors.js";
+import { capturePredicateIdentity } from "../findings/settings.js";
 import {
   buildReviewCoverage,
   renderCoverageMarkdown,
@@ -34,6 +35,7 @@ import { createElectronLauncher } from "./electron.js";
 import { mergeExplanations } from "./explanations.js";
 import { failureKey } from "./failure.js";
 import { captureConcurrency, runCaptureLanes } from "./lanes.js";
+import { heldStepIndexes, replayKey } from "./loading.js";
 import { mergeMotion } from "./motion.js";
 import {
   type CaptureLifetime,
@@ -52,7 +54,11 @@ import {
   type ProbeBudgetLease,
 } from "./probe-budget.js";
 import { createProbeLedger } from "./probe-ledger.js";
-import { accumulateProbeRound, mergePlannedProbe } from "./probe-merge.js";
+import {
+  accumulateProbeRound,
+  fillReplays,
+  mergePlannedProbe,
+} from "./probe-merge.js";
 import {
   type OwnedServer,
   type ProcessDependencies,
@@ -62,6 +68,11 @@ import {
   runSetupSteps,
   startServer,
 } from "./process.js";
+import {
+  createReplayLedger,
+  type ReplayCopy,
+  type ReplayLedger,
+} from "./replay-ledger.js";
 import {
   captureTupleKey,
   resolveStates,
@@ -109,6 +120,11 @@ export type CaptureDependencies = CaptureLifetime & {
   monotonicNow?: () => number;
   /** Overrides PROBE_WALL_TARGET_MS. */
   probeWallTargetMs?: number | undefined;
+  /**
+   * The flow's web-step replay ledger; null replays every web step at every
+   * state that shows it (the behaviour before the ledger).
+   */
+  replayLedger?: ReplayLedger | null | undefined;
   snapshotSource?: typeof snapshotSource;
   createArtifactWorkspace?: typeof createArtifactWorkspace | undefined;
   /** Recorded Figma API responses in tests. */
@@ -632,6 +648,14 @@ async function captureOwned(
       }
       const capturedByKey = new Map<string, ArtifactTuple>();
       const probeLedger = createProbeLedger();
+      const injected = options.dependencies?.replayLedger;
+      const replayLedger =
+        injected === null ? undefined : (injected ?? createReplayLedger());
+      /** Each probed tuple's held web steps: replay keys and step indexes. */
+      const replayKeysOf = new Map<
+        number,
+        Array<{ key: string; stepIndex: number }>
+      >();
       let probeBudgets = new Map<string, ProbeBudgetLease>();
       /** Tuples whose probe already ran once; later rounds accumulate. */
       const probedOnce = new Set<number>();
@@ -723,6 +747,8 @@ async function captureOwned(
                           ?.failureReplay?.completed
                       : undefined,
                   enumerateProbe: session.planProbes && !probePass,
+                  // Held replays run only in the probe pass.
+                  ...(probePass && replayLedger ? { replayLedger } : {}),
                   probeBudget: probePass
                     ? probeBudgets.get(tupleId(selected))
                     : undefined,
@@ -973,6 +999,89 @@ async function captureOwned(
           states.add(selected.state.id);
           runnable.set(partition, states);
         }
+        // Web-step held replays: the steps each state's enumerate pass showed
+        // sending requests, keyed by the steps through them, each owned by
+        // one state. The others receive its result after the round.
+        const replayPartitions = new Map<
+          string,
+          Array<{ state: string; keys: string[] }>
+        >();
+        for (const [index, selected] of selectedTuples.entries()) {
+          const partition = `${selected.viewport.name}\0${selected.colorScheme}`;
+          if (!runnable.get(partition)?.has(selected.state.id)) continue;
+          const resolution = resolutionByState.get(selected.state.id);
+          if (!resolution?.ok) continue;
+          const state = resolution.value.state;
+          const steps = "health" in state ? state.steps : [];
+          const held = heldStepIndexes(
+            laneResults[index]?.artifact.result?.timelines?.actions ?? [],
+            steps,
+          ).map((stepIndex) => ({
+            stepIndex,
+            key: replayKey(resolution.value.navigationUrl, steps, stepIndex),
+          }));
+          replayKeysOf.set(index, held);
+          const states = replayPartitions.get(partition) ?? [];
+          states.push({
+            state: selected.state.id,
+            keys: held.map(({ key }) => key),
+          });
+          replayPartitions.set(partition, states);
+        }
+        for (const [partition, states] of replayPartitions)
+          replayLedger?.plan(partition, states);
+        /** Copy finished web-step replays into every other holder. */
+        const fillAll = () => {
+          if (!replayLedger) return;
+          for (const [index, held] of replayKeysOf) {
+            const selected = selectedTuples[index];
+            const result = laneResults[index]?.artifact.result;
+            if (!selected || !result || held.length === 0) continue;
+            const resolution = resolutionByState.get(selected.state.id);
+            if (!resolution?.ok) continue;
+            const probe =
+              result.observations?.version === 2
+                ? result.observations.probe
+                : undefined;
+            result.timelines = fillReplays({
+              ledger: replayLedger,
+              partition: `${selected.viewport.name}\0${selected.colorScheme}`,
+              state: selected.state.id,
+              // A state that kept its own replay of a step (one that did not
+              // record) is not given a second.
+              keys: held
+                .filter(
+                  ({ stepIndex }) =>
+                    !result.timelines?.actions.some(
+                      (action) =>
+                        action.held?.of === "web-step" &&
+                        action.stepIndex === stepIndex,
+                    ),
+                )
+                .map(({ key }) => key),
+              timelines: result.timelines,
+              probe,
+              delayMs: project.checks.loading.delayMs,
+              // The ledger holds in-session evidence, while this tuple has
+              // already been sanitized. Normalize copies (including failure
+              // keys) for the receiving state's setup URL and configured
+              // origin, without rewriting its saved evidence a second time.
+              normalizeCopy: (copy) =>
+                mapStrings(copy, (value) =>
+                  replaceOrigin(
+                    replaceDerivedValue(
+                      value,
+                      resolution.value.navigationUrl,
+                      resolution.value.metadataUrl,
+                      resolution.value.sanitizationAliases,
+                    ),
+                    boundOrigin,
+                    configuredOrigin,
+                  ),
+                ) as ReplayCopy,
+            });
+          }
+        };
         // The flow's probe time is sized from the wall clock: rounds continue
         // while unfinished work and time before the run's target remain. A
         // round gives each state at most one state budget, and the first
@@ -992,20 +1101,19 @@ async function captureOwned(
             )
               return [];
             const partition = `${selected.viewport.name}\0${selected.colorScheme}`;
-            const count = probeLedger.assignedCount(
-              partition,
-              selected.state.id,
-            );
+            const replays =
+              replayLedger?.assignedCount(partition, selected.state.id) ?? 0;
+            const count =
+              probeLedger.assignedCount(partition, selected.state.id) + replays;
             // The first round runs every state: unassigned glyphs and local
             // rows still come from its own replay. Shares follow check work.
             return round === 1 || count > 0
               ? [
                   {
                     id: tupleId(selected),
-                    count: probeLedger.assignedWeight(
-                      partition,
-                      selected.state.id,
-                    ),
+                    count:
+                      probeLedger.assignedWeight(partition, selected.state.id) +
+                      replays,
                   },
                 ]
               : [];
@@ -1038,15 +1146,69 @@ async function captureOwned(
                 await captureTuple(selected, index, true);
             },
           });
+          // After the round's barrier: other states' web-step replays.
+          fillAll();
           // Work stealing: whatever an assigned state left unprobed goes back
           // to the flow queue for another state that shows it.
           let requeued = 0;
-          for (const [partition, states] of runnable)
-            requeued += probeLedger.steal(partition, states);
+          for (const [partition, states] of runnable) {
+            const ran = new Set(
+              selectedTuples
+                .filter(
+                  (selected) =>
+                    ids.has(tupleId(selected)) &&
+                    `${selected.viewport.name}\0${selected.colorScheme}` ===
+                      partition,
+                )
+                .map((selected) => selected.state.id),
+            );
+            requeued +=
+              probeLedger.steal(partition, states) +
+              (replayLedger?.steal(partition, ran, states) ?? 0);
+          }
           if (requeued === 0) break;
         }
-        for (const partition of runnable.keys())
+        for (const partition of runnable.keys()) {
           probeLedger.exhaust(partition, "flow probe time exhausted");
+          replayLedger?.exhaust(partition, "flow probe time exhausted");
+        }
+        fillAll();
+        // A holder that got neither its own replay nor a copy says why.
+        for (const [index, held] of replayKeysOf) {
+          const selected = selectedTuples[index];
+          const result = laneResults[index]?.artifact.result;
+          if (
+            !replayLedger ||
+            !selected ||
+            !result ||
+            result.observations?.version !== 2
+          )
+            continue;
+          const partition = `${selected.viewport.name}\0${selected.colorScheme}`;
+          for (const { key, stepIndex } of held) {
+            if (
+              replayLedger.lookup(partition, key) ||
+              result.timelines?.actions.some(
+                (action) =>
+                  action.held?.of === "web-step" &&
+                  action.stepIndex === stepIndex,
+              )
+            )
+              continue;
+            const reason = replayLedger.finalReason(partition, key);
+            const probe = result.observations.probe;
+            if (!reason || !probe) continue;
+            probe.heldReplay ??= {
+              delayMs: project.checks.loading.delayMs,
+              queued: 0,
+              ran: 0,
+              notes: [],
+            };
+            const note = `not reached: ${reason} (step ${stepIndex})`;
+            if (!probe.heldReplay.notes.includes(note))
+              probe.heldReplay.notes.push(note);
+          }
+        }
         // Merge only after every assigned state finishes, regardless of order.
         for (const [index, selected] of selectedTuples.entries()) {
           if (!probeKeys.has(tupleId(selected))) continue;
@@ -1243,6 +1405,10 @@ async function captureOwned(
     };
     const scope = runRecordSchema.parse({
       version: 1,
+      captureSettingsIdentity: capturePredicateIdentity(
+        options.project,
+        options.flow,
+      ),
       flow: options.flow.id,
       source,
       declared: selection.declared.map(coordinate),
@@ -1250,6 +1416,7 @@ async function captureOwned(
       viewports: selectViewports(options.project, options.flow),
       probe: probePolicy,
       timings,
+      capture: { reducedMotion: options.project.capture.reducedMotion },
     });
     await writeFile(
       resolve(workspace.stagingDirectory, "run.json"),

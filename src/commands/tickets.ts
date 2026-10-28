@@ -219,7 +219,26 @@ function ticketBytesAreKnown(
   canonical: string,
   legacy: readonly string[],
 ): boolean {
-  return source === canonical || legacy.includes(source);
+  const normalized = (body: string) =>
+    body.replace(
+      /(`{3,})idiom:finding\r?\n([\s\S]*?)\r?\n\1/g,
+      (_block, fence, json) => {
+        const sort = (value: unknown): unknown =>
+          Array.isArray(value)
+            ? value.map(sort)
+            : value && typeof value === "object"
+              ? Object.fromEntries(
+                  Object.entries(value)
+                    .sort(([a], [b]) => a.localeCompare(b))
+                    .map(([k, v]) => [k, sort(v)]),
+                )
+              : value;
+        return `${fence}idiom:finding\n${JSON.stringify(sort(parseFindingBlocks(`${fence}idiom:finding\n${json}\n${fence}`)[0]))}\n${fence}`;
+      },
+    );
+  return [canonical, ...legacy].some(
+    (body) => normalized(source) === normalized(body),
+  );
 }
 
 export async function ticketsCommand(options: {

@@ -61,6 +61,7 @@ export const overflowClipCheck: DeterministicCheck = {
         category: this.id,
         severity: "major" as const,
         rule: "idiom:document-horizontal-overflow",
+        documentScope: true,
         selectorHint: "document",
         explanation: `The document is ${observation.document.scrollWidth}px wide inside a ${observation.document.clientWidth}px viewport.`,
         acceptance: [

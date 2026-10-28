@@ -25,6 +25,7 @@ import { filmstripManifestSchema } from "../checks/filmstrip-schema.js";
 import type { CheckTuple } from "../checks/types.js";
 import { loadDesignArtifacts } from "../design/artifacts.js";
 import { IdiomError } from "../errors.js";
+import { annotateDeclaredExpectations } from "../findings/settings.js";
 import { type Flow, isPublishedFlow, type WebFlow } from "../schemas/flow.js";
 import type { ColorScheme } from "../schemas/project.js";
 import type { ValidationResult } from "../validation.js";
@@ -334,19 +335,7 @@ export async function findLatestCapture(options: {
   production?: boolean | undefined;
 }): Promise<string> {
   const reports = resolve(options.projectDirectory, ".idiom", "reports");
-  let entries: Dirent[];
-  try {
-    entries = await readdir(reports, { withFileTypes: true });
-  } catch {
-    entries = [];
-  }
-  const runs = entries
-    .filter(
-      (entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}T/.test(entry.name),
-    )
-    .map((entry) => entry.name)
-    .sort()
-    .reverse();
+  const runs = await storedRunsNewestFirst(reports);
   for (const run of runs) {
     let baseline: string;
     try {
@@ -369,6 +358,62 @@ export async function findLatestCapture(options: {
   throw new IdiomError(
     `no fully passing capture of ${JSON.stringify(options.flow)} at ${options.commit.slice(0, 12)} with a clean tree; run \`idiom capture ${options.flow}\` first`,
   );
+}
+
+/** Stored capture run names under `reports`, newest first. */
+async function storedRunsNewestFirst(reports: string): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(reports, { withFileTypes: true });
+  } catch {
+    entries = [];
+  }
+  return entries
+    .filter(
+      (entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}T/.test(entry.name),
+    )
+    .map((entry) => entry.name)
+    .sort()
+    .reverse();
+}
+
+/**
+ * The newest stored capture of `flow`, passing or not, from any commit. State
+ * coverage describes what the latest capture saw, so nothing is filtered out.
+ */
+export async function findNewestCapture(options: {
+  projectDirectory: string;
+  flow: string;
+}): Promise<string | undefined> {
+  const reports = resolve(options.projectDirectory, ".idiom", "reports");
+  for (const run of await storedRunsNewestFirst(reports)) {
+    const directory = join(reports, run);
+    let recorded: unknown;
+    try {
+      recorded = JSON.parse(
+        await readFile(join(directory, "run.json"), "utf8"),
+      );
+    } catch {
+      recorded = undefined;
+    }
+    if (
+      typeof recorded === "object" &&
+      recorded !== null &&
+      "flow" in recorded
+    ) {
+      if (recorded.flow === options.flow) return directory;
+      continue;
+    }
+    let baseline: string;
+    try {
+      baseline = await readFile(join(directory, "baseline.md"), "utf8");
+    } catch {
+      continue;
+    }
+    if (baseline.match(/Flow `([^`]+)`/)?.[1] === options.flow)
+      return directory;
+  }
+  return undefined;
 }
 
 async function findFirstMetadata(
@@ -655,6 +700,9 @@ export async function loadCaptureRun(options: {
     const expectedStatus = options.expectedStatusByState?.get(record.state.id);
     const url = documentUrl(record.url);
     tuples.push({
+      ...(runRecord?.captureSettingsIdentity
+        ? { captureSettingsIdentity: runRecord.captureSettingsIdentity }
+        : {}),
       ...(record.layoutRepresentative === undefined
         ? {}
         : { layoutRepresentative: record.layoutRepresentative }),
@@ -914,6 +962,7 @@ export async function loadRunTuples(
     legacyColorScheme: validated.project.capture.colorScheme,
   });
   const record = loaded.record;
+  annotateDeclaredExpectations(loaded.tuples, flow);
   if (isPublishedFlow(flow))
     await attachPublished(validated, flow, runDirectory, loaded.tuples);
   return {

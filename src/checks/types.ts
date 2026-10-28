@@ -524,6 +524,7 @@ export type MotionChange = {
   effects: MotionEffect[];
 };
 export type MotionAction = {
+  elapsedMs?: number | undefined;
   timelineId?: string | undefined;
   source: "probe-hover" | "probe-click" | "web-step";
   selector: string;
@@ -551,6 +552,7 @@ export type {
 };
 
 export type ExplanationRecord = {
+  elapsedMs?: number | undefined;
   controlId?: string | undefined;
   selector: string;
   trigger: "hover" | "focus";
@@ -568,6 +570,7 @@ export type ExplanationArtifact = {
 
 /** Menus a read-only probe pass opened on a declared collection's first item. */
 export type ProbeCollection = {
+  elapsedMs?: number | undefined;
   selector: string;
   /** Selector of the probed item. */
   item?: string | undefined;
@@ -629,13 +632,22 @@ export type ProbeArtifact = {
         feedbackWithinMs: number;
         queued: number;
         ran: number;
+        /** Web-step failure replays copied from the state that ran them. */
+        reused?: number | undefined;
         completed: string[];
         notes: string[];
       }
     | undefined;
   /** The held (slow-network) replay of actions that sent requests. */
   heldReplay?:
-    | { delayMs: number; queued: number; ran: number; notes: string[] }
+    | {
+        delayMs: number;
+        queued: number;
+        ran: number;
+        /** Web-step held replays copied from the state that ran them. */
+        reused?: number | undefined;
+        notes: string[];
+      }
     | undefined;
 };
 
@@ -985,6 +997,7 @@ export type LinkObservation = {
 };
 
 export type FocusVisibleObservation = {
+  elapsedMs?: number | undefined;
   selector: string;
   name: string;
   rect: Rect;
@@ -1043,6 +1056,7 @@ export type ImageRenderObservation = {
 };
 
 export type LayoutShiftObservation = {
+  elapsedMs?: number | undefined;
   status: "ran" | "unavailable";
   reason?: string | undefined;
   /** Largest session window (Core Web Vitals CLS). */
@@ -1209,6 +1223,19 @@ export type CheckCoverage = {
 };
 
 export type FindingCandidate = {
+  observation?:
+    | {
+        action: import("../schemas/acceptance.js").AcceptanceAction;
+        timing?: { elapsedMs?: number; windowMs?: number; reason?: string };
+        result: Record<
+          string,
+          import("zod").z.infer<ReturnType<typeof import("zod").z.json>>
+        >;
+      }
+    | undefined;
+  targetSelectors?: string[] | undefined;
+  documentScope?: boolean | undefined;
+  allowRemoval?: boolean | undefined;
   fix?: string | undefined;
   designDrift?: DesignDriftEvidence | undefined;
   category: DeterministicCheckId;
@@ -1232,6 +1259,15 @@ export type FindingCandidate = {
 };
 
 export type CheckTuple = {
+  captureSettingsIdentity?: string | undefined;
+  declaredExpectations?:
+    | {
+        status?: number | undefined;
+        textPresent: string[];
+        selectorPresent: string[];
+        selectorAbsent: string[];
+      }
+    | undefined;
   /** The first design reference; `designs` holds every one when several apply. */
   design?: LoadedDesign | undefined;
   designs?: LoadedDesign[] | undefined;

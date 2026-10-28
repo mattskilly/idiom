@@ -21,7 +21,7 @@ import { replayRequests } from "./failure-identity.js";
 import { FilmstripBudget, FilmstripCapture } from "./filmstrips.js";
 import { sweepFocusVisible } from "./focus.js";
 import { createLinkChecker, type LinkChecker } from "./links.js";
-import { heldCandidate } from "./loading.js";
+import { heldStepIndexes, replayKey } from "./loading.js";
 import { MotionCollector } from "./motion.js";
 import { collectPageEvidence } from "./page.js";
 import {
@@ -302,14 +302,16 @@ async function captureInContext(
       }
     };
     /** Web steps whose recorded action sent fetch/XHR/document requests. */
-    const heldSteps = (): HeldStep[] =>
-      (timelines?.evidence().actions ?? []).flatMap((action) => {
-        if (action.source !== "web-step" || action.stepIndex === undefined)
-          return [];
-        if (!heldCandidate(action.requests)) return [];
-        const stepIndex = action.stepIndex;
+    const heldSteps = (): HeldStep[] => {
+      const actions = timelines?.evidence().actions ?? [];
+      return heldStepIndexes(actions, steps).flatMap((stepIndex) => {
+        const action = actions.find(
+          (entry) =>
+            entry.source === "web-step" && entry.stepIndex === stepIndex,
+        );
         const step = steps[stepIndex - 1];
         if (
+          action === undefined ||
           step === undefined ||
           !(
             step.action === "click" ||
@@ -323,6 +325,7 @@ async function captureInContext(
         return [
           {
             stepIndex,
+            replayKey: replayKey(tuple.navigationUrl, steps, stepIndex),
             action: step.action,
             selector,
             sourceAction: action,
@@ -347,6 +350,7 @@ async function captureInContext(
           },
         ];
       });
+    };
     return await collectPageEvidence({
       page,
       signal: tuple.signal,
@@ -548,6 +552,7 @@ async function captureInContext(
                 ({ selector }) => selector,
               ),
               ledger: tuple.probeLedger,
+              replayLedger: tuple.replayLedger,
               ...(safety === undefined
                 ? {}
                 : {

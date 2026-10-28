@@ -29,7 +29,11 @@ import {
   type ContextDependencies,
   contextCommand,
 } from "./commands/context.js";
-import { coverageCommand, renderCoverage } from "./commands/coverage.js";
+import {
+  coverageCommand,
+  renderCoverage,
+  stateCoverageCommand,
+} from "./commands/coverage.js";
 import { type DecideDependencies, decideCommand } from "./commands/decide.js";
 import { addDesignCommand } from "./commands/design.js";
 import {
@@ -59,7 +63,9 @@ import { systemCommand } from "./commands/system.js";
 import { clusterTicketsCommand, ticketsCommand } from "./commands/tickets.js";
 import { validateCommand } from "./commands/validate.js";
 import { verifyCommand } from "./commands/verify.js";
+import { renderStateCoverage } from "./coverage/states.js";
 import { IdiomError } from "./errors.js";
+import { severityGateEligible } from "./findings/gate.js";
 import { renderFixSummary } from "./fix/report.js";
 import type { FixDependencies } from "./fix/run.js";
 import type { GenerateFlow } from "./flows/generate.js";
@@ -522,6 +528,11 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       "compare with the newest recorded baseline reachable from HEAD; gate new deterministic findings only",
     )
     .option("--json", "print machine-readable review results")
+    .option(
+      "--fail-on-judged",
+      "include judged suggestions in severity gates",
+      false,
+    )
     .addOption(
       new Option(
         "--fail-on <severity>",
@@ -580,6 +591,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           deterministicOnly?: boolean;
           sinceBaseline?: boolean;
           json?: boolean;
+          failOnJudged: boolean;
           failOn: "blocker" | "major" | "minor" | "never";
           page?: string;
           design?: string;
@@ -612,7 +624,10 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
               throw new IdiomError(
                 `${flag} reviews a stored flow capture and cannot be combined with --page`,
               );
-          if (command.getOptionValueSource("failOn") === "cli")
+          if (
+            command.getOptionValueSource("failOn") === "cli" ||
+            options.failOnJudged
+          )
             throw new IdiomError(
               "--fail-on gates new findings against a flow baseline and cannot be combined with --page",
             );
@@ -694,14 +709,20 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
             const warning = baselineStaleWarning(result.comparison.baseline);
             if (warning !== undefined) writeErr(warning);
           }
-          const rank = { blocker: 0, major: 1, minor: 2 } as const;
           const failing =
             options.failOn === "never"
               ? []
-              : result.comparison.findings.filter(
-                  (finding) =>
-                    rank[finding.severity] <=
-                    rank[options.failOn as keyof typeof rank],
+              : [
+                  ...result.comparison.findings,
+                  ...(options.failOnJudged
+                    ? (result.comparison.currentJudged ?? [])
+                    : []),
+                ].filter((finding) =>
+                  severityGateEligible(
+                    finding,
+                    options.failOn,
+                    options.failOnJudged,
+                  ),
                 );
           if (failing.length > 0)
             throw new IdiomError(
@@ -844,6 +865,11 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       "--ungrouped",
       "list every finding separately instead of one entry per element and rule",
     )
+    .option(
+      "--fail-on-judged",
+      "include judged suggestions in severity gates",
+      false,
+    )
     .addOption(
       new Option(
         "--fail-on <severity>",
@@ -878,6 +904,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           states?: string;
           viewports?: string;
           schemes?: string;
+          failOnJudged: boolean;
           failOn: "blocker" | "major" | "minor" | "never";
         },
         command: Command,
@@ -933,12 +960,15 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           );
           for (const entry of checked)
             writeErr(renderTimings(entry.summary.timings));
-          const rank = { blocker: 0, major: 1, minor: 2 } as const;
-          const threshold =
-            options.failOn === "never" ? -1 : rank[options.failOn];
           const failing = checked
             .flatMap((entry) => entry.summary.findings)
-            .filter((finding) => rank[finding.severity] <= threshold);
+            .filter((finding) =>
+              severityGateEligible(
+                finding,
+                options.failOn,
+                options.failOnJudged,
+              ),
+            );
           if (failing.length)
             throw new IdiomError(
               `check failed: ${failing.length} new/open finding(s) at or above ${options.failOn}`,
@@ -985,14 +1015,15 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           const warning = baselineStaleWarning(summary.baseline);
           if (warning !== undefined) writeErr(warning);
         }
-        const rank = { blocker: 0, major: 1, minor: 2 } as const;
         const failing =
           options.failOn === "never"
             ? []
-            : summary.findings.filter(
-                (finding) =>
-                  rank[finding.severity] <=
-                  rank[options.failOn as keyof typeof rank],
+            : summary.findings.filter((finding) =>
+                severityGateEligible(
+                  finding,
+                  options.failOn,
+                  options.failOnJudged,
+                ),
               );
         if (failing.length > 0)
           throw new IdiomError(
@@ -1034,6 +1065,11 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       "emit clustered proposals into a file tracker triage directory",
     )
     .option("--json", "print machine-readable findings")
+    .option(
+      "--fail-on-judged",
+      "include judged suggestions in severity gates",
+      false,
+    )
     .addOption(
       new Option(
         "--fail-on <severity>",
@@ -1055,6 +1091,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           port?: number;
           emitTickets?: string;
           json?: boolean;
+          failOnJudged: boolean;
           failOn: "blocker" | "major" | "minor" | "never";
         },
         command: Command,
@@ -1083,14 +1120,15 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           writeErr(
             `Warning: ${"scope" in summary ? "Sweep incomplete" : "Model critique degraded"}: ${summary.outcome.reason}`,
           );
-        const rank = { blocker: 0, major: 1, minor: 2 } as const;
         const failing =
           options.failOn === "never"
             ? []
-            : summary.findings.filter(
-                (finding) =>
-                  rank[finding.severity] <=
-                  rank[options.failOn as keyof typeof rank],
+            : summary.findings.filter((finding) =>
+                severityGateEligible(
+                  finding,
+                  options.failOn,
+                  options.failOnJudged,
+                ),
               );
         if (failing.length > 0)
           throw new IdiomError(
@@ -1101,12 +1139,32 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
 
   program
     .command("coverage")
-    .description("list the app's routes that no flow captures")
+    .description(
+      "list the app's routes that no flow captures, or (--states) which states each flow's latest capture observed",
+    )
     .option("--crawl <url>", "discover routes from the links on a running page")
+    .option("--states", "show which states each flow's latest capture observed")
     .option("--json", "print machine-readable coverage")
     .action(
-      async (options: { crawl?: string; json?: boolean }, command: Command) => {
+      async (
+        options: { crawl?: string; states?: boolean; json?: boolean },
+        command: Command,
+      ) => {
         const shared = command.optsWithGlobals<SharedOptions>();
+        if (options.states === true) {
+          if (options.crawl !== undefined)
+            throw new IdiomError("--states cannot be combined with --crawl");
+          const states = await stateCoverageCommand({
+            project: shared.project,
+            cwd: dependencies.cwd,
+          });
+          writeOut(
+            options.json === true
+              ? JSON.stringify(states, null, 2)
+              : renderStateCoverage(states).trimEnd(),
+          );
+          return;
+        }
         const summary = await coverageCommand({
           project: shared.project,
           cwd: dependencies.cwd,
@@ -1273,6 +1331,10 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         writeOut(
           `Verified ${flow}: ${result.outcome} (${result.findingCount} finding(s)) — ${result.reportPath}`,
         );
+        for (const verdict of result.verdicts ?? [])
+          writeOut(
+            `${verdict.finding.id}: ${verdict.status}; acceptance ${verdict.acceptance.status} — ${verdict.acceptance.reason}`,
+          );
         if (!result.passed)
           throw new IdiomError(
             `verification failed: ${result.causes.join("; ")}; see ${result.reportPath}`,

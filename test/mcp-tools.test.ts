@@ -351,6 +351,21 @@ test("idiom_coverage lists routes no flow captures", async () => {
   expect(JSON.stringify(response.content)).toContain("1 uncaptured");
 });
 
+test("idiom_coverage states returns per-flow state coverage", async () => {
+  const project = await siteProject();
+  const client = await connect(project);
+  const response = await call(client, "idiom_coverage", { states: true });
+  const data = toolData<{
+    states: { flows: Array<{ flow: string; captured: boolean }> };
+  }>(response);
+  expect(data.states.flows).toContainEqual(
+    expect.objectContaining({ flow: "site", captured: false }),
+  );
+  expect(JSON.stringify(response.content)).toContain(
+    "not a measure of quality",
+  );
+});
+
 test("idiom_baseline show reports recorded commits and the record applied at HEAD", async () => {
   const project = await siteProject();
   await git(project, "init", "-q", "-b", "main");

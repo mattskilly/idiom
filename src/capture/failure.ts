@@ -184,8 +184,16 @@ function recoveryWatcher(config: {
 }): void {
   const scope = window as unknown as RecoveryWindow;
   scope.__idiomRecovery?.dispose();
-  const { rendered, selectorFor, normalize, textOf, progressText, skeletal } =
-    scope.__idiomFeedback;
+  const {
+    rendered,
+    selectorFor,
+    normalize,
+    textOf,
+    progressText,
+    skeletal,
+    mainOf,
+    noiseSet,
+  } = scope.__idiomFeedback;
   let trigger: Element | null = null;
   try {
     trigger = document.querySelector(config.selector);
@@ -194,17 +202,15 @@ function recoveryWatcher(config: {
   }
   let started: number | null = null;
   let boundary: number | null = null;
-  let region: Element =
-    document.querySelector("main, [role=main]") ?? document.body;
+  let region: Element = mainOf();
   let initialEmpty: boolean | null = null;
   let initiallyEnabled: boolean | null = null;
   let truncated = false;
   let regionSelector = "body";
   let pendingBaseline = new WeakSet<Element>();
   const elapsed = () => (started === null ? null : performance.now() - started);
-  const noisy = new Set<Element>();
-  const noise = (e: Element) =>
-    [...noisy].some((n) => n === e || n.contains(e));
+  const noisy = noiseSet();
+  const noise = noisy.has;
   const errorWords =
     /\b(error|failed|failure|unable|couldn.t|cannot|can.t|sorry|wrong|try again|went wrong|unsuccessful)\b/i;
   const signals =
@@ -338,11 +344,7 @@ function recoveryWatcher(config: {
   };
   const observer = new MutationObserver((records) => {
     if (started === null) {
-      for (const r of records) {
-        const e =
-          r.target instanceof Element ? r.target : r.target.parentElement;
-        if (e && e !== document.body && e !== region) noisy.add(e);
-      }
+      noisy.markRecords(records, [document.body, region]);
       return;
     }
     scan();

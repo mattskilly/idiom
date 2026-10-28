@@ -1,5 +1,6 @@
 import type { Page, Route } from "playwright";
 import type {
+  ActionTimeline,
   HeldReplay,
   PendingIndicatorKind,
   ProbeSafetyPolicy,
@@ -10,6 +11,10 @@ import { type FeedbackWindow, installFeedback } from "./feedback.js";
 import { ignoredRequest, probeRequestAllowed } from "./request-policy.js";
 import type { TimelineCollector } from "./timeline.js";
 
+/** The one coverage note for an action that submits by document navigation. */
+export const NAVIGATION_NOTE = "main-frame document navigation";
+const contextGone =
+  /Execution context was destroyed|Cannot find context with specified id/;
 /** Held replays per probed state; each costs a restore plus the hold. */
 export const MAX_HELD_REPLAYS = 6;
 /** Mutations while idle before the action mark a subtree as noisy. */
@@ -44,6 +49,151 @@ type PendingWindow = Window & {
   };
 };
 
+type NoiseWindow = Window & {
+  __idiomNoiseLog?: { periodic(anchors?: number[]): Element[] };
+};
+
+/**
+ * Init script for held-replay pages: from document start, records batches of
+ * mutations and trusted input times, and reports the subtrees that change on
+ * a regular period on their own, such as tickers and autoplaying carousels
+ * slower than the pending watcher's noise sample. Serializable; it only
+ * observes.
+ */
+export function installNoiseRecorder(): void {
+  const scope = window as NoiseWindow;
+  if (scope.__idiomNoiseLog) return;
+  const BATCH_GAP_MS = 100;
+  const MIN_PERIOD_MS = 250;
+  const MAX_BATCHES = 200;
+  const MAX_ROOTS = 50;
+  const MAX_TARGETS = 20;
+  type Batch = { time: number; root: Element; targets: Element[] };
+  const batches: Batch[] = [];
+  const roots = new Set<Element>();
+  const inputs: number[] = [];
+  let current: { start: number; last: number; targets: Set<Element> } | null =
+    null;
+  for (const type of ["pointerdown", "keydown", "input"])
+    window.addEventListener(
+      type,
+      (event) => {
+        if (!event.isTrusted) return;
+        inputs.push(performance.now());
+        if (inputs.length > 20) inputs.shift();
+      },
+      true,
+    );
+  const ancestors = (element: Element) => {
+    const chain: Element[] = [];
+    for (let node: Element | null = element; node; node = node.parentElement)
+      chain.push(node);
+    return chain;
+  };
+  const commonAncestor = (targets: Element[]): Element | null => {
+    const [first, ...rest] = targets;
+    if (!first) return null;
+    let chain = ancestors(first);
+    for (const target of rest) {
+      const own = new Set(ancestors(target));
+      chain = chain.filter((element) => own.has(element));
+    }
+    return chain[0] ?? null;
+  };
+  const flush = () => {
+    const batch = current;
+    current = null;
+    if (batch === null) return;
+    const targets = [...batch.targets].filter((target) => target.isConnected);
+    const root = commonAncestor(targets);
+    if (root === null) return;
+    if (!roots.has(root)) {
+      if (roots.size >= MAX_ROOTS) return;
+      roots.add(root);
+    }
+    batches.push({ time: batch.start, root, targets });
+    if (batches.length > MAX_BATCHES) batches.shift();
+  };
+  const observer = new MutationObserver((records) => {
+    const now = performance.now();
+    if (current !== null && now - current.last > BATCH_GAP_MS) flush();
+    current ??= { start: now, last: now, targets: new Set() };
+    current.last = now;
+    for (const record of records) {
+      if (current.targets.size >= MAX_TARGETS) break;
+      const element =
+        record.target instanceof Element
+          ? record.target
+          : record.target.parentElement;
+      if (element) current.targets.add(element);
+    }
+  });
+  observer.observe(document, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    characterData: true,
+  });
+  /** The period of the first run of three batches with regular gaps. */
+  const period = (times: number[]): { from: number; ms: number } | null => {
+    for (let index = 2; index < times.length; index++) {
+      const start = times[index - 2] ?? 0;
+      const a = (times[index - 1] ?? 0) - start;
+      const b = (times[index] ?? 0) - (times[index - 1] ?? 0);
+      if (
+        a >= MIN_PERIOD_MS &&
+        b >= MIN_PERIOD_MS &&
+        Math.max(a, b) <= 1.33 * Math.min(a, b)
+      )
+        return { from: start, ms: (a + b) / 2 };
+    }
+    return null;
+  };
+  // A timer the page started in response to input (or to a response) ticks
+  // in phase with it. A subtree that first changed after such an anchor, in
+  // phase with it, is the action's own doing, not noise.
+  const caused = (times: number[], ms: number, anchors: number[]) => {
+    const tolerance = Math.max(60, 0.12 * ms);
+    return anchors.some((anchor) => {
+      const first = times.find((time) => time >= anchor);
+      if (first === undefined || times.some((time) => time < anchor))
+        return false;
+      const phase = (first - anchor) % ms;
+      return phase <= tolerance || ms - phase <= tolerance;
+    });
+  };
+  const broad = (element: Element) =>
+    element === document.documentElement ||
+    element === document.body ||
+    element.matches("main, [role=main]");
+  scope.__idiomNoiseLog = {
+    periodic: (extra = []) => {
+      if (current !== null && performance.now() - current.last > BATCH_GAP_MS)
+        flush();
+      const anchors = [...inputs, ...extra];
+      // Each batch belongs to the lowest element containing all its changes;
+      // a root's own batches decide, so a ticker inside an app shell never
+      // makes the shell periodic, and the action's own updates nested in an
+      // older subtree are not mixed with it.
+      const periodic = [...roots].filter((root) => {
+        const times = batches
+          .filter((batch) => batch.root === root)
+          .map((batch) => batch.time);
+        const found = period(times);
+        return found !== null && !caused(times, found.ms, anchors);
+      });
+      return periodic.flatMap((root) =>
+        broad(root)
+          ? batches
+              .filter((batch) => batch.root === root)
+              .flatMap((batch) => batch.targets)
+              .filter((target) => !broad(target))
+          : [root],
+      );
+    },
+  };
+}
+
 /**
  * The in-page pending watcher. Serializable: it closes over nothing in this
  * module. Shared feedback predicates are installed in the document first.
@@ -67,10 +217,17 @@ function pendingWatcher(config: WatcherConfig): void {
     selectorFor,
     normalize,
     textOf,
-    progressSelector,
-    statusSelector,
     progressText,
     skeletal,
+    mainOf,
+    actionEvents: eventsFor,
+    dispatchTarget,
+    animationTarget,
+    indicatorBaseline,
+    scanIndicators,
+    addedProgressText,
+    noiseSet,
+    structuralNoise,
   } = (window as unknown as FeedbackWindow).__idiomFeedback;
   const transient =
     /^(?:data-(?:focus|hover|press|active|focus-visible)[\w-]*|tabindex)$/;
@@ -82,19 +239,15 @@ function pendingWatcher(config: WatcherConfig): void {
 
   // Noise: subtrees that mutate or animate while nobody acts (tickers,
   // carousels, clocks). Their later changes are not feedback.
-  const noisy = new Set<Element>();
-  const isNoisy = (element: Element) => {
-    for (
-      let current: Element | null = element;
-      current;
-      current = current.parentElement
-    )
-      if (noisy.has(current)) return true;
-    return false;
-  };
+  const noisy = noiseSet();
+  const isNoisy = noisy.has;
+  // Carousels and tickers: marked by general patterns, or seen changing on a
+  // regular period since the page loaded (slower than the sample below).
+  for (const element of structuralNoise()) noisy.add(element);
+  for (const element of (window as NoiseWindow).__idiomNoiseLog?.periodic() ??
+    [])
+    noisy.add(element);
 
-  const mainOf = () =>
-    document.querySelector("main, [role=main]") ?? document.body;
   let mainElement: Element | null = mainOf();
   const mainSelectorOf = (element: Element | null) =>
     element === null || element === document.body
@@ -139,14 +292,10 @@ function pendingWatcher(config: WatcherConfig): void {
   });
   let triggerAtArm = triggerFlags();
   let triggerText = trigger ? textOf(trigger) : "";
-  let progressBaseline = new WeakSet<Element>();
-  let animationBaseline = new WeakSet<Animation>();
-  let statusBaseline = new WeakMap<Element, string>();
-  const infinite = (animation: Animation) =>
-    animation.effect?.getTiming().iterations === Number.POSITIVE_INFINITY;
-  const animationTarget = (animation: Animation) => {
-    const target = (animation.effect as KeyframeEffect | null)?.target;
-    return target instanceof Element ? target : null;
+  let baseline: ReturnType<typeof indicatorBaseline> = {
+    progress: new WeakSet(),
+    animations: new WeakSet(),
+    status: new WeakMap(),
   };
 
   const route = () =>
@@ -175,65 +324,105 @@ function pendingWatcher(config: WatcherConfig): void {
   window.addEventListener("popstate", onRoute);
   window.addEventListener("hashchange", onRoute);
 
-  const indicators: Indicator[] = [];
-  const seen = new Set<Kind>();
+  // Indicators and changes are chosen when read: a slow ticker is only
+  // recognisable as periodic once it has rotated a few times, by which time
+  // its first rotation may already have looked like feedback. Kinds the noise
+  // filter applies to keep a few elements each, in the order seen.
+  const filterable = new Set<Kind>(["spinner", "status-text", "progress-text"]);
+  const candidates: Array<{ element: Element; indicator: Indicator }> = [];
   const record = (kind: Kind, element: Element, text?: string) => {
-    if (startedAt === null || seen.has(kind) || indicators.length >= 12) return;
-    seen.add(kind);
+    if (startedAt === null) return false;
+    const same = candidates.filter(
+      (candidate) => candidate.indicator.kind === kind,
+    );
+    if (
+      same.length >= (filterable.has(kind) ? 5 : 1) ||
+      same.some((candidate) => candidate.element === element)
+    )
+      return false;
     const label = (text ?? textOf(element)).slice(0, 80);
-    indicators.push({
-      kind,
-      selector: selectorFor(element),
-      time: since(),
-      ...(label ? { text: label } : {}),
-      inMain: inMain(element),
-      progressText: progressText(label),
+    candidates.push({
+      element,
+      indicator: {
+        kind,
+        selector: selectorFor(element),
+        time: since(),
+        ...(label ? { text: label } : {}),
+        inMain: inMain(element),
+        progressText: progressText(label),
+      },
     });
+    return false;
   };
-  let firstChange: Change | null = null;
-  let firstMainChange: Change | null = null;
-  let changeAfterReleaseAt: number | null = null;
-  let mainChangeAfterReleaseAt: number | null = null;
+  type Seen = Change & { element: Element; main: boolean };
+  const early: Seen[] = [];
+  const late: Seen[] = [];
+  const MAX_CHANGES = 50;
+  const keep = (list: Seen[], entry: Seen) => {
+    if (
+      list.length < MAX_CHANGES ||
+      (entry.main && list.filter((seen) => seen.main).length < MAX_CHANGES)
+    )
+      list.push(entry);
+  };
+  /** Subtrees seen changing on a regular period of their own by now. */
+  const periodicNoise = () => {
+    const anchors =
+      startedAt !== null && releasedAt !== null ? [startedAt + releasedAt] : [];
+    const noise = new Set(
+      (window as NoiseWindow).__idiomNoiseLog?.periodic(anchors) ?? [],
+    );
+    return (element: Element) => {
+      if (noise.size === 0) return false;
+      for (
+        let current: Element | null = element;
+        current;
+        current = current.parentElement
+      )
+        if (noise.has(current)) return true;
+      return false;
+    };
+  };
   let mainEmpty: PendingFacts["mainEmpty"] = null;
+
+  // Prior visibility belongs to this action, not to a currently visible
+  // parent. Sample before application handlers and refresh only affected
+  // subtrees after each batch. Bound work and retained state on large pages.
+  const visibilityLimit = 10_000;
+  const priorRendered = new Map<Element, boolean>();
+  const rememberVisibility = (root: Element) => {
+    const remember = (element: Element) => {
+      if (priorRendered.has(element) || priorRendered.size < visibilityLimit)
+        priorRendered.set(element, rendered(element));
+    };
+    remember(root);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let count = 0;
+    while (count++ < visibilityLimit) {
+      const element = walker.nextNode();
+      if (!(element instanceof Element)) break;
+      remember(element);
+    }
+  };
 
   const scan = () => {
     if (startedAt === null) return;
-    for (const element of document.querySelectorAll(progressSelector)) {
-      if (progressBaseline.has(element) || !rendered(element)) continue;
-      if (element === trigger) continue;
-      record(
-        element.getAttribute("aria-busy") === "true" &&
-          !element.matches("[role=progressbar], progress")
-          ? "busy"
-          : "progressbar",
-        element,
-      );
-    }
-    for (const animation of document.getAnimations()) {
-      if (!infinite(animation) || animationBaseline.has(animation)) continue;
-      const target = animationTarget(animation);
-      if (target && rendered(target) && !isNoisy(target))
-        record("spinner", target);
-    }
-    for (const region of document.querySelectorAll(statusSelector)) {
-      if (!rendered(region)) continue;
-      const text = textOf(region);
-      if (text !== "" && text !== (statusBaseline.get(region) ?? ""))
-        record("status-text", region, text);
-    }
-    if (trigger?.isConnected) {
-      const flags = triggerFlags();
-      if (flags.disabled && !triggerAtArm.disabled)
-        record("trigger-disabled", trigger);
-      if (flags.busy && !triggerAtArm.busy) record("trigger-busy", trigger);
-      if (flags.pressed && !triggerAtArm.pressed)
-        record("trigger-pressed", trigger);
-      if (rendered(trigger)) {
-        const text = textOf(trigger);
-        if (text !== "" && text !== triggerText)
-          record("control-text", trigger, text);
-      }
-    }
+    scanIndicators(baseline, {
+      trigger,
+      triggerText,
+      skipTrigger: true,
+      rebusyBaseline: false,
+      isNoisy,
+      onTrigger: (trigger) => {
+        const flags = triggerFlags();
+        if (flags.disabled && !triggerAtArm.disabled)
+          record("trigger-disabled", trigger);
+        if (flags.busy && !triggerAtArm.busy) record("trigger-busy", trigger);
+        if (flags.pressed && !triggerAtArm.pressed)
+          record("trigger-pressed", trigger);
+      },
+      visit: record,
+    });
   };
 
   const changed = (record: MutationRecord): Element | null => {
@@ -243,7 +432,7 @@ function pendingWatcher(config: WatcherConfig): void {
       const name = record.attributeName ?? "";
       if (transient.test(name)) return null;
       if (record.oldValue === element.getAttribute(name)) return null;
-      return rendered(element) || rendered(element.parentElement)
+      return rendered(element) || priorRendered.get(element) === true
         ? element
         : null;
     }
@@ -259,17 +448,22 @@ function pendingWatcher(config: WatcherConfig): void {
       } else if (normalize(node.textContent) !== "") return element;
     }
     for (const node of record.removedNodes)
-      if (node instanceof Element || normalize(node.textContent) !== "")
+      if (
+        node instanceof Element
+          ? priorRendered.get(node) === true
+          : normalize(node.textContent) !== ""
+      )
         return element;
     return null;
   };
   const onMutations = (records: MutationRecord[]) => {
     if (startedAt === null) {
       if (frozen) return;
-      for (const record of records) {
-        const element = elementOf(record.target);
-        if (element && element !== document.body) noisy.add(element);
-      }
+      noisy.markRecords(records, [document.body]);
+      for (const record of records)
+        for (const node of record.addedNodes)
+          if (node instanceof Element)
+            for (const element of structuralNoise(node)) noisy.add(element);
       return;
     }
     const time = since();
@@ -282,38 +476,22 @@ function pendingWatcher(config: WatcherConfig): void {
       mainEmpty.to = time;
     for (const mutation of records) {
       // Indicators carried by the mutation itself.
-      const nodes =
-        mutation.type === "characterData"
-          ? [mutation.target]
-          : mutation.type === "attributes"
-            ? []
-            : [...mutation.addedNodes];
-      for (const node of nodes) {
-        const element = elementOf(node);
-        if (element === null || !rendered(element)) continue;
-        const text = normalize(
-          node instanceof HTMLElement ? node.innerText : node.textContent,
-        );
-        if (progressText(text)) record("progress-text", element, text);
-        if (node instanceof Element)
-          for (const candidate of [
-            node,
-            ...[...node.querySelectorAll("*")].slice(0, 50),
-          ])
-            if (skeletal(candidate) && rendered(candidate)) {
-              record("skeleton", candidate);
-              break;
-            }
-      }
-      if (
-        mutation.type === "attributes" &&
-        mutation.target instanceof Element &&
-        (mutation.attributeName === "class" ||
-          mutation.attributeName?.startsWith("data-")) &&
-        skeletal(mutation.target) &&
-        rendered(mutation.target)
-      )
-        record("skeleton", mutation.target);
+      addedProgressText(
+        [mutation],
+        (kind, element, text) =>
+          !isNoisy(element) && record(kind, element, text),
+        (node) => {
+          if (node instanceof Element)
+            for (const candidate of [
+              node,
+              ...[...node.querySelectorAll("*")].slice(0, 50),
+            ])
+              if (skeletal(candidate) && rendered(candidate)) {
+                record("skeleton", candidate);
+                break;
+              }
+        },
+      );
       // Visible content change.
       const element = changed(mutation);
       if (element === null || isNoisy(element)) continue;
@@ -331,13 +509,21 @@ function pendingWatcher(config: WatcherConfig): void {
           trigger !== null &&
           (trigger === element || trigger.contains(element))
         );
-      firstChange ??= { time, selector };
-      if (main) firstMainChange ??= { time, selector };
-      if (releasedAt !== null && time >= releasedAt) {
-        changeAfterReleaseAt ??= time;
-        if (main) mainChangeAfterReleaseAt ??= time;
-      }
+      keep(releasedAt !== null && time >= releasedAt ? late : early, {
+        time,
+        selector,
+        element,
+        main,
+      });
     }
+    // Keep the previous batch intact while classifying every record. An
+    // ancestor's class/style change can also hide or reveal descendants.
+    for (const mutation of records) {
+      const element = elementOf(mutation.target);
+      if (element) rememberVisibility(element);
+    }
+    for (const element of priorRendered.keys())
+      if (!element.isConnected) priorRendered.delete(element);
     scan();
   };
   const observer = new MutationObserver(onMutations);
@@ -359,51 +545,21 @@ function pendingWatcher(config: WatcherConfig): void {
   }, 50);
   const interval = setInterval(scan, 50);
 
-  const actionEvents =
-    action === "click"
-      ? ["pointerdown", "click"]
-      : action === "press"
-        ? ["keydown"]
-        : action === "select"
-          ? ["input", "change"]
-          : ["keydown", "beforeinput", "input"];
+  const actionEvents = eventsFor(action);
   const onAction = (event: Event) => {
     if (
       startedAt !== null ||
       ((action === "click" || action === "press") && !event.isTrusted)
     )
       return;
-    let dispatchTarget = trigger;
-    if (
-      trigger !== null &&
-      (action === "fill" || action === "select") &&
-      !trigger.matches("input, textarea, select") &&
-      !(trigger instanceof HTMLElement && trigger.isContentEditable)
-    )
-      dispatchTarget = trigger.closest("label")?.control ?? trigger;
-    const target = event.composedPath().find((node): node is Element => {
-      if (!(node instanceof Element)) return false;
-      if (node === dispatchTarget) return true;
-      try {
-        return node.matches(selector);
-      } catch {
-        return false;
-      }
-    });
+    const target = dispatchTarget(event, trigger, selector, action);
     if (!target) return;
     onMutations(observer.takeRecords());
     startedAt = performance.now();
     trigger = target;
     // Rebaseline at dispatch, before the application's own handlers run.
-    progressBaseline = new WeakSet(
-      [...document.querySelectorAll(progressSelector)].filter(rendered),
-    );
-    animationBaseline = new WeakSet(
-      document.getAnimations().filter((animation) => infinite(animation)),
-    );
-    statusBaseline = new WeakMap();
-    for (const region of document.querySelectorAll(statusSelector))
-      statusBaseline.set(region, rendered(region) ? textOf(region) : "");
+    rememberVisibility(document.documentElement);
+    baseline = indicatorBaseline({ visibleAnimationsOnly: false });
     triggerText = textOf(target);
     triggerAtArm = triggerFlags();
     mainElement = mainOf();
@@ -415,6 +571,27 @@ function pendingWatcher(config: WatcherConfig): void {
   for (const type of actionEvents)
     window.addEventListener(type, onAction, true);
 
+  const settled = (noise: (element: Element) => boolean) => {
+    const indicators: Indicator[] = [];
+    const kinds = new Set<Kind>();
+    for (const { element, indicator } of candidates) {
+      if (kinds.has(indicator.kind) || indicators.length >= 12) continue;
+      if (filterable.has(indicator.kind) && noise(element)) continue;
+      kinds.add(indicator.kind);
+      indicators.push(indicator);
+    }
+    const change = (seen: Seen | undefined): Change | null =>
+      seen ? { time: seen.time, selector: seen.selector } : null;
+    const quiet = [...early, ...late].filter(({ element }) => !noise(element));
+    const after = late.filter(({ element }) => !noise(element));
+    return {
+      indicators,
+      firstChange: change(quiet[0]),
+      firstMainChange: change(quiet.find(({ main }) => main)),
+      changeAfterReleaseAt: after[0]?.time ?? null,
+      mainChangeAfterReleaseAt: after.find(({ main }) => main)?.time ?? null,
+    };
+  };
   scope.__idiomPending = {
     token: config.token,
     bind: (element) => {
@@ -442,11 +619,7 @@ function pendingWatcher(config: WatcherConfig): void {
       return {
         dispatched: startedAt !== null,
         elapsed: startedAt === null ? null : since(),
-        indicators: [...indicators],
-        firstChange,
-        firstMainChange,
-        changeAfterReleaseAt,
-        mainChangeAfterReleaseAt,
+        ...settled(periodicNoise()),
         mainSelector: mainSelectorOf(mainElement),
         mainEmpty: mainEmpty === null ? null : { ...mainEmpty },
         routeChange,
@@ -698,11 +871,20 @@ export async function replayHeld(options: {
     secondActivation: { attempted: false, duplicates: [] },
     notes: [],
   };
+  let hold: Awaited<ReturnType<typeof createHoldRoute>> | undefined;
+  /** The action submitted by main-frame document navigation. */
+  const navigated = () =>
+    hold?.requests.some((request) => request.navigation) === true;
   const read = () =>
-    page.evaluate((token) => {
-      const active = (window as PendingWindow).__idiomPending;
-      return active?.token === token ? active.read() : null;
-    }, token);
+    page
+      .evaluate((token) => {
+        const active = (window as PendingWindow).__idiomPending;
+        return active?.token === token ? active.read() : null;
+      }, token)
+      .catch((error: unknown) => {
+        if (contextGone.test(String(error)) && navigated()) return null;
+        throw error;
+      });
   /** Feedback seen up to the second activation; later feedback is its own. */
   let before: PendingFacts | null = null;
   const apply = (latest: PendingFacts | null) => {
@@ -753,7 +935,6 @@ export async function replayHeld(options: {
     },
     snapshot,
   );
-  let hold: Awaited<ReturnType<typeof createHoldRoute>> | undefined;
   try {
     await page.evaluate(installFeedback);
     await page.evaluate(pendingWatcher, {
@@ -798,6 +979,13 @@ export async function replayHeld(options: {
     else if (facts?.elapsed == null)
       await page.waitForTimeout(Math.max(0, withinMs - hold.since()));
     facts = await read();
+    // The document that watched the action is gone: there is nothing in-page
+    // to judge, and the browser shows its own progress. Say so once.
+    if (facts === null && navigated()) {
+      held.notes.push(NAVIGATION_NOTE);
+      await handle.finish(undefined, false);
+      return;
+    }
     apply(facts);
     if (facts?.dispatched !== true)
       held.notes.push("action dispatch was not observed at the trigger");
@@ -874,6 +1062,34 @@ export async function replayHeld(options: {
     await handle.finishVisual();
     await handle.dispose();
   }
+}
+
+/**
+ * The web steps a held replay replays: the step's recorded action sent
+ * requests a hold can hold, and the step is a click, fill, press or select.
+ */
+export function heldStepIndexes(
+  actions: readonly ActionTimeline[],
+  steps: readonly { action: string }[],
+): number[] {
+  return actions.flatMap((action) => {
+    if (action.source !== "web-step" || action.stepIndex === undefined)
+      return [];
+    if (!heldCandidate(action.requests)) return [];
+    const step = steps[action.stepIndex - 1];
+    return step && ["click", "fill", "press", "select"].includes(step.action)
+      ? [action.stepIndex]
+      : [];
+  });
+}
+
+/** One web step's held replay: the steps through it, from the same URL. */
+export function replayKey(
+  navigationUrl: string,
+  steps: readonly unknown[],
+  stepIndex: number,
+): string {
+  return `${navigationUrl}\0${JSON.stringify(steps.slice(0, stepIndex))}`;
 }
 
 /** Whether a recorded action sent requests a held replay can hold. */

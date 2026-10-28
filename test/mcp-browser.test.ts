@@ -503,7 +503,10 @@ test("baseline bootstrap, exact fix prompt and calibrated full-flow handoff pres
   const undecidable = toolData<{
     regressionFree: null;
     success: boolean;
-    verdicts?: unknown[];
+    verdicts?: Array<{
+      status: string;
+      acceptance: { status: string; reason: string };
+    }>;
     causes: string[];
   }>(
     await client.callTool({
@@ -513,7 +516,15 @@ test("baseline bootstrap, exact fix prompt and calibrated full-flow handoff pres
   );
   expect(undecidable.success).toBe(false);
   expect(undecidable.regressionFree).toBeNull();
-  expect(undecidable.verdicts).toBeUndefined();
+  expect(undecidable.verdicts).toEqual([
+    expect.objectContaining({
+      status: "unverifiable",
+      acceptance: expect.objectContaining({
+        status: "not-recheckable",
+        reason: expect.stringContaining("nondeterministic"),
+      }),
+    }),
+  ]);
   expect(undecidable.causes.join(" ")).toContain("nondeterministic");
   const screenshot = original.evidence.screenshots[0];
   if (!screenshot) throw new Error("Expected evidence");

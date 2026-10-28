@@ -217,6 +217,32 @@ test("exclusions: navigation, fire-and-forget, non-adjacent change, undispatched
   expect(undispatched.coverage.status).toBe("unavailable");
 });
 
+test("a web step that submits by document navigation gets one short coverage note", () => {
+  const step = slow(
+    held({
+      of: "web-step",
+      requests: [
+        request({ resourceType: "document", navigation: true, path: "/next" }),
+      ],
+      notes: ["main-frame document navigation"],
+    }),
+    {
+      selector: "#submit",
+      stepIndex: 1,
+      status: "partial",
+      reason:
+        "document navigated during the action; in-page timeline unavailable",
+    },
+  );
+  for (const check of [loadingStateMissingCheck, doubleSubmitCheck]) {
+    const result = run(check, tuple([step]));
+    expect(result.candidates).toEqual([]);
+    expect(result.coverage.reason).toBe(
+      "step 1 #submit: main-frame document navigation",
+    );
+  }
+});
+
 test("delayMs not above progressWithinMs is unjudgeable", () => {
   const result = loading([slow(held({ delayMs: 800 }))]);
   expect(result.candidates).toEqual([]);
@@ -432,4 +458,54 @@ test("double-submit exclusions: disabled trigger, safe methods, no duplicate, be
   );
   none(posted({ changeAfterReleaseAt: null, changedAfterRelease: false }));
   none(posted(), { kind: "fill" });
+});
+
+test("acceptance requires feedback on the matching held replay and request", async () => {
+  const { buildRuleContract } = await import("../src/findings/contract.js");
+  const { evaluateRuleAcceptance } = await import(
+    "../src/verify/acceptance.js"
+  );
+  const before = tuple([slow(held())]);
+  const candidate = run(loadingStateMissingCheck, before).candidates[0];
+  if (!candidate) throw new Error("missing fixture candidate");
+  const contract = buildRuleContract(before, candidate).acceptance;
+  expect(contract.target).toMatchObject({
+    kind: "action",
+    action: { source: "slow-replay", selector: "#load" },
+  });
+  expect(contract.condition.parameters).toMatchObject({
+    withinMs: 1000,
+    delayMs: 1500,
+    requests: [{ method: "GET", path: "/api/items", resourceType: "fetch" }],
+  });
+  const evaluate = (current: CheckTuple) =>
+    evaluateRuleAcceptance({
+      contract,
+      currentA: [current],
+      currentB: [current],
+    });
+  expect(evaluate(before).status).toBe("failed");
+  const after = slow(held({ indicators: [indicator({ time: 50 })] }));
+  expect(evaluate(tuple([after])).status).toBe("passed");
+  expect(
+    evaluate(
+      tuple([
+        slow(held(), { selector: "#other" }),
+        { ...after, selector: "#unrelated" },
+      ]),
+    ).status,
+  ).toBe("not-recheckable");
+  expect(
+    evaluate(
+      tuple([
+        slow(
+          held({
+            indicators: [indicator({ time: 50 })],
+            requests: [request({ path: "/api/elsewhere" })],
+          }),
+        ),
+      ]),
+    ).reason,
+  ).toContain("request identity");
+  expect(evaluate(tuple([])).status).toBe("not-recheckable");
 });

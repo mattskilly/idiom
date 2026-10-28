@@ -9,6 +9,10 @@ import type { Coordinate } from "../capture/scope.js";
 import type { CaptureTupleSelection } from "../capture/types.js";
 import type { CheckTuple } from "../checks/types.js";
 import {
+  type FlowStateCoverage,
+  stateCoverageLine,
+} from "../coverage/states.js";
+import {
   type QuickInteraction,
   renderInteractionSentences,
 } from "../quick/interaction.js";
@@ -38,6 +42,8 @@ export type ReportCoverage = {
   surfaceCoverage?: SurfaceCoverage | undefined;
   /** Quick review only: what the interaction probe did on each page. */
   interaction?: QuickInteraction | undefined;
+  /** Flow review only: which dimensions each state was observed in. */
+  stateCoverage?: FlowStateCoverage | undefined;
 };
 
 export type SurfaceCoverageEntry = {
@@ -188,6 +194,7 @@ export function buildReviewCoverage(options: {
   tuples: CoverageTuple[];
   commit: string;
   interaction?: QuickInteraction | undefined;
+  stateCoverage?: FlowStateCoverage | undefined;
 }): ReportCoverage {
   const record = options.record;
   const states = record
@@ -334,6 +341,9 @@ export function buildReviewCoverage(options: {
     ...(options.interaction === undefined
       ? {}
       : { interaction: options.interaction }),
+    ...(options.stateCoverage === undefined
+      ? {}
+      : { stateCoverage: options.stateCoverage }),
   };
 }
 
@@ -471,6 +481,9 @@ export function renderCoverageMarkdown(coverage: ReportCoverage): string {
     `- Viewports: ${viewports}`,
     `- Colour schemes: ${schemes}`,
     `- Successful tuples: ${coverage.successfulTuples} of ${coverage.selectedTuples} selected`,
+    ...(coverage.stateCoverage === undefined
+      ? []
+      : [`- ${markdownText(stateCoverageLine(coverage.stateCoverage))}`]),
     ...coverage.commits.map(
       ({ label, value }) =>
         `- ${markdownText(label)}: \`${markdownText(value)}\``,
@@ -539,7 +552,7 @@ export function renderCoverageHtml(coverage: ReportCoverage): string {
     surfaces === undefined
       ? ""
       : `<h3>Project surfaces</h3><dl>${renderSurfaceGroupHtml("Judged in this review", surfaces.judged)}${renderSurfaceGroupHtml("Governed by another flow, not judged here", surfaces.governedNotJudged)}${renderSurfaceGroupHtml("Ungoverned (no flow captures this surface)", surfaces.ungoverned)}</dl>`;
-  return `<section class="panel coverage" aria-labelledby="coverage-heading"><h2 id="coverage-heading">Coverage and limits</h2><p>${escapeHtml(coverage.purpose)}</p><dl><dt>Flow</dt><dd>${escapeHtml(coverage.flow)}</dd><dt>States</dt><dd>${coverage.states.length} of ${coverage.declaredStateCount} declared (${states})</dd><dt>Viewports</dt><dd>${viewports}</dd><dt>Colour schemes</dt><dd>${schemes}</dd><dt>Successful tuples</dt><dd>${coverage.successfulTuples} of ${coverage.selectedTuples} selected</dd>${coverage.commits.map(({ label, value }) => `<dt>${escapeHtml(label)}</dt><dd><code>${escapeHtml(value)}</code></dd>`).join("")}</dl>${surfaceHtml}${interactionHtml(coverage.interaction)}<h3>Limitations</h3><ul>${coverage.limitations.map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("")}</ul></section>`;
+  return `<section class="panel coverage" aria-labelledby="coverage-heading"><h2 id="coverage-heading">Coverage and limits</h2><p>${escapeHtml(coverage.purpose)}</p><dl><dt>Flow</dt><dd>${escapeHtml(coverage.flow)}</dd><dt>States</dt><dd>${coverage.states.length} of ${coverage.declaredStateCount} declared (${states})</dd><dt>Viewports</dt><dd>${viewports}</dd><dt>Colour schemes</dt><dd>${schemes}</dd><dt>Successful tuples</dt><dd>${coverage.successfulTuples} of ${coverage.selectedTuples} selected</dd>${coverage.stateCoverage === undefined ? "" : `<dt>State coverage</dt><dd>${escapeHtml(stateCoverageLine(coverage.stateCoverage))}</dd>`}${coverage.commits.map(({ label, value }) => `<dt>${escapeHtml(label)}</dt><dd><code>${escapeHtml(value)}</code></dd>`).join("")}</dl>${surfaceHtml}${interactionHtml(coverage.interaction)}<h3>Limitations</h3><ul>${coverage.limitations.map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("")}</ul></section>`;
 }
 
 function interactionHtml(interaction: QuickInteraction | undefined): string {

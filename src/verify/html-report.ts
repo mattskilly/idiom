@@ -1,3 +1,8 @@
+import {
+  acceptanceDescription,
+  acceptanceText,
+  basisDescription,
+} from "../findings/presentation.js";
 import { type ReportCoverage, renderCoverageHtml } from "../report/coverage.js";
 import {
   badge,
@@ -76,7 +81,11 @@ export function renderVerificationHtmlReport(
       : `<section><h2>Finding verdicts</h2>${evaluation.findings
           .map(
             (verdict) =>
-              `<article class="finding"><h3>${escapeHtml(verdict.finding.id)}</h3><div class="summary">${badge(verdict.status, verdict.status === "fixed" ? "good" : verdict.status)}</div><p class="meta">${escapeHtml(verdict.finding.state)} / ${escapeHtml(verdict.finding.viewport)}${verdict.finding.colorScheme === undefined ? "" : ` / ${escapeHtml(verdict.finding.colorScheme)}`} · ${escapeHtml(verdict.locus?.source ?? verdict.finding.verification.kind)}${verdict.locus?.target === undefined ? "" : ` · ${escapeHtml(verdict.locus.target)}`}</p><p>${escapeHtml(verdict.reason)}</p></article>`,
+              `<article class="finding"><h3>${escapeHtml(verdict.finding.id)}</h3><div class="summary">${badge(verdict.status, verdict.status === "fixed" ? "good" : verdict.status)}</div><p class="meta">${escapeHtml(verdict.finding.state)} / ${escapeHtml(verdict.finding.viewport)}${verdict.finding.colorScheme === undefined ? "" : ` / ${escapeHtml(verdict.finding.colorScheme)}`} · ${escapeHtml(verdict.locus?.source ?? verdict.finding.verification.kind)}${verdict.locus?.target === undefined ? "" : ` · ${escapeHtml(verdict.locus.target)}`}</p><p>${escapeHtml(verdict.reason)}</p><p><strong>Basis:</strong> ${escapeHtml(basisDescription(verdict.finding))}</p><p><strong>Acceptance: ${escapeHtml(verdict.acceptance.status)}</strong> — ${escapeHtml(verdict.acceptance.reason)}</p><p>${escapeHtml(acceptanceDescription(verdict.acceptance.contract))}</p><ul>${acceptanceText(
+                verdict.finding,
+              )
+                .map((text) => `<li>Done when: ${escapeHtml(text)}</li>`)
+                .join("")}</ul></article>`,
           )
           .join(
             "",

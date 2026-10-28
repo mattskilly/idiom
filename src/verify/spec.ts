@@ -133,6 +133,24 @@ export function selectFindingTuples(options: {
       finding.verification.params?.fullFlow === true,
   );
   for (const finding of options.findings) {
+    if (finding.acceptance.kind === "rule") {
+      for (const coordinate of finding.acceptance.requiredCoordinates) {
+        if (
+          coordinate.flow !== options.flow.id ||
+          !stateIds.has(coordinate.state) ||
+          !selectedViewportNames.has(coordinate.viewport) ||
+          !selectedColorSchemeNames.has(
+            coordinate.colorScheme ?? options.project.capture.colorScheme,
+          )
+        )
+          throw new IdiomError(
+            `acceptance for ${finding.id} requires an unknown or unselected tuple`,
+          );
+        wanted.add(
+          `${coordinate.state}\0${coordinate.viewport}\0${coordinate.colorScheme ?? options.project.capture.colorScheme}`,
+        );
+      }
+    }
     if (finding.flow !== options.flow.id)
       throw new IdiomError(
         `embedded finding ${finding.id} references flow ${JSON.stringify(finding.flow)}, expected ${JSON.stringify(options.flow.id)}`,

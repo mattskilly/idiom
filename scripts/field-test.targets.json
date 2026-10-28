@@ -84,5 +84,80 @@
         "npx astro preview --host 127.0.0.1 --port 4321"
       ]
     }
+  },
+  {
+    "id": "nuxt-docs",
+    "kind": "interactive-spa",
+    "aiBuilt": false,
+    "stack": "Nuxt (Vue)",
+    "urls": ["https://nuxt.com/docs/getting-started/introduction"],
+    "notes": "The version switcher fetches same-origin GET _payload.json for the chosen docs version (screen: held replay queued 2)."
+  },
+  {
+    "id": "nuxt-dashboard",
+    "kind": "interactive-spa",
+    "aiBuilt": false,
+    "stack": "Nuxt (Vue)",
+    "urls": ["https://dashboard-template.nuxt.dev/"],
+    "notes": "Team menu and search palette fetch same-origin GET /api/_nuxt_icon JSON before they render (screen: held replay queued 4)."
+  },
+  {
+    "id": "vercel-templates",
+    "kind": "interactive-spa",
+    "aiBuilt": false,
+    "stack": "Next.js",
+    "urls": ["https://vercel.com/templates"],
+    "notes": "The Products menu fetches same-origin GET route data for its entries on open (screen: held replay queued 1)."
+  },
+  {
+    "id": "svelte-packages",
+    "kind": "interactive-spa",
+    "aiBuilt": false,
+    "stack": "SvelteKit",
+    "urls": ["https://svelte.dev/packages"],
+    "notes": "\"show all\" package groups fetch same-origin GET __data.json (screen: held replay queued 2)."
+  },
+  {
+    "id": "hf-models",
+    "kind": "interactive-spa",
+    "aiBuilt": false,
+    "stack": "SvelteKit",
+    "urls": ["https://huggingface.co/models"],
+    "notes": "Model filters (Inference Available, Languages) fetch same-origin GET /models-json and /api/models-tags-by-type before the list updates (screen: held replay queued 5)."
+  },
+  {
+    "id": "mastodon-explore",
+    "kind": "interactive-spa",
+    "aiBuilt": false,
+    "stack": "React SPA",
+    "urls": ["https://mastodon.social/explore"],
+    "notes": "Post actions (Reply) fetch same-origin GET /remote_interaction_helper before the sign-in modal shows (screen: held replay queued 1)."
+  },
+  {
+    "id": "devto-home",
+    "kind": "interactive-spa",
+    "aiBuilt": false,
+    "stack": "Rails + Preact",
+    "urls": ["https://dev.to/"],
+    "notes": "Author profile buttons fetch same-origin GET /profile_preview_cards before the card shows; the sponsor menu fetches GET /billboards (screen: held replay queued 8)."
+  },
+  {
+    "id": "field-app",
+    "kind": "field-app",
+    "aiBuilt": false,
+    "stack": "vanilla SPA (local)",
+    "urls": ["http://127.0.0.1:4410/"],
+    "notes": "Local Field Supply admin app (test/fixtures/field-app): POST forms, double-submit, failure recovery and skeleton cases the read-only public probe cannot reach, with good twins beside bad ones (ground truth in cases.json). Served on 127.0.0.1, checked one state per run.",
+    "local": {
+      "path": "test/fixtures/field-app",
+      "dev": ["node server.mjs --port 4410"],
+      "server": {
+        "build": "node --version",
+        "start": "node server.mjs --port $PORT",
+        "readyUrl": "http://127.0.0.1:4410/",
+        "port": 4410,
+        "startupTimeoutMs": 30000
+      }
+    }
   }
 ]

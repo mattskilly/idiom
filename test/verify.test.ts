@@ -1722,7 +1722,10 @@ test("finding verification owns two independent capture lifecycles and publishes
   });
   expect(launches).toBe(2);
   expect(fetch).not.toHaveBeenCalled();
-  expect(result).toMatchObject({ outcome: "fixed", passed: true });
+  expect(result).toMatchObject({ outcome: "fixed", passed: true, causes: [] });
+  expect(
+    result.verdicts?.every((v) => v.acceptance.status === "not-recheckable"),
+  ).toBe(true);
   expect(result.verdicts).toEqual([
     expect.objectContaining({ finding: embedded, status: "fixed" }),
   ]);
@@ -1845,7 +1848,10 @@ test("Electron finding verification uses two independent ordinary capture lifecy
     },
   });
   expect(sessions).toBe(2);
-  expect(result).toMatchObject({ outcome: "fixed", passed: true });
+  expect(result).toMatchObject({ outcome: "fixed", passed: true, causes: [] });
+  expect(
+    result.verdicts?.every((v) => v.acceptance.status === "not-recheckable"),
+  ).toBe(true);
 });
 
 test("the verify source graph has no critique adapter or provider SDK dependency", async () => {
@@ -2026,4 +2032,219 @@ test("full-flow evaluation adds all-severity regressions without changing the st
       evaluation: full,
     }),
   ).toContain("New deterministic findings (all severities)");
+});
+
+test("manual judged acceptance retains visual-locus verdicts and overall pass", () => {
+  const baseline = tuple(artifactV2("Before"));
+  for (const legacy of [false, true]) {
+    const item = legacy
+      ? finding()
+      : finding({
+          basis: "judged",
+          basisDetails: {
+            kind: "judged",
+            summary: "Model critique",
+            confidence: 0.8,
+          },
+          acceptance: {
+            version: 1,
+            kind: "manual",
+            doneWhen: ["The primary content is clear."],
+          },
+        });
+    for (const changed of [false, true]) {
+      const current = tuple(artifactV2(changed ? "After" : "Before"));
+      const result = evaluateVerification({
+        findings: [item],
+        baseline: [baseline],
+        currentA: [current],
+        currentB: [current],
+      });
+      expect(result.findings[0]?.acceptance.status).toBe("not-recheckable");
+      expect(result.findings[0]?.status).toBe(changed ? "fixed" : "reproduced");
+      expect(result.passed).toBe(changed);
+    }
+  }
+});
+
+test("new executable acceptance reuses real rules and refuses missing targets or changed settings", async () => {
+  const { buildRuleContract } = await import("../src/findings/contract.js");
+  const { checksConfigFrom } = await import("../src/checks/registry.js");
+  const { evaluateRuleAcceptance } = await import(
+    "../src/verify/acceptance.js"
+  );
+  const bad = tuple(artifactV2("Before"));
+  if (!bad.observations) throw new Error("missing fixture observations");
+  bad.observations.document.scrollWidth = 900;
+  const candidate = runDeterministicChecks([bad]).candidates.find(
+    (c) => c.candidate.category === "overflow-clip",
+  );
+  if (!candidate) throw new Error("missing fixture candidate");
+  expect(candidate).toBeDefined();
+  const contract = buildRuleContract(bad, candidate.candidate).acceptance;
+  const good = tuple(artifactV2("After"));
+  const evaluate = (a: CheckTuple, b = a, config = checksConfigFrom()) =>
+    evaluateRuleAcceptance({ contract, currentA: [a], currentB: [b], config });
+  expect(evaluate(bad).status).toBe("failed");
+  expect(evaluate(good).status).toBe("passed");
+  expect(evaluate(good, bad).status).toBe("not-recheckable");
+  expect(
+    evaluate(good, good, { ...checksConfigFrom(), minGap: 999 }).reason,
+  ).toContain("settings changed");
+  const unknown = evaluateRuleAcceptance({
+    contract: { ...contract, check: "unknown" },
+    currentA: [good],
+    currentB: [good],
+  });
+  expect(unknown.status).toBe("not-recheckable");
+  const item = buildDeterministicDrafts({
+    runId: "new",
+    entries: [candidate],
+  })[0]?.finding;
+  if (!item) throw new Error("missing fixture finding");
+  const unverifiable = {
+    ...item,
+    verification: { ...item.verification, check: "unknown" },
+    acceptance: { ...contract, check: "unknown" },
+  };
+  const result = evaluateVerification({
+    findings: [unverifiable],
+    baseline: [bad],
+    currentA: [good],
+    currentB: [good],
+  });
+  expect(result.findings[0]?.status).toBe("unverifiable");
+  expect(result.passed).toBe(false);
+});
+
+test("legacy deterministic acceptance keeps coordinate fingerprint verification", () => {
+  const baseline = tuple(artifactV2("Before"));
+  if (!baseline.observations) throw new Error("missing fixture observations");
+  baseline.observations.document.scrollWidth = 900;
+  const item = buildDeterministicDrafts({
+    runId: "legacy",
+    entries: runDeterministicChecks([baseline]).candidates,
+  })[0]?.finding;
+  if (!item) throw new Error("missing fixture finding");
+  const legacy = findingSchema.parse({
+    ...item,
+    basis: undefined,
+    basisDetails: undefined,
+    acceptance: item.acceptance.doneWhen,
+  });
+  const sidecar = parseFindingBlocks(
+    `\`\`\`idiom:finding\n${JSON.stringify({ ...legacy, acceptance: legacy.acceptance.doneWhen, basis: undefined, basisDetails: undefined })}\n\`\`\``,
+  )[0];
+  if (!sidecar) throw new Error("missing fixture sidecar");
+  for (const fixed of [false, true]) {
+    const current = fixed ? tuple(artifactV2("After")) : baseline;
+    const result = evaluateVerification({
+      findings: [sidecar],
+      baseline: [baseline],
+      currentA: [current],
+      currentB: [current],
+    });
+    expect(result.findings[0]?.acceptance.status).toBe("not-recheckable");
+    expect(result.findings[0]?.status).toBe(fixed ? "fixed" : "reproduced");
+    expect(result.findings[0]?.reason).toContain(
+      "legacy fingerprint evaluation",
+    );
+    expect(result.passed).toBe(fixed);
+  }
+});
+
+test("fixed mixed contracts pass without imposing executable proof on legacy or judged findings", () => {
+  const baseline = tuple(artifactV2("Before"));
+  if (!baseline.observations) throw new Error("missing fixture observations");
+  baseline.observations.document.scrollWidth = 900;
+  const executable = buildDeterministicDrafts({
+    runId: "mixed",
+    entries: runDeterministicChecks([baseline]).candidates,
+  })[0]?.finding;
+  if (!executable) throw new Error("missing fixture finding");
+  const legacy = findingSchema.parse({
+    ...executable,
+    id: "legacy-mixed",
+    basis: undefined,
+    basisDetails: undefined,
+    acceptance: executable.acceptance.doneWhen,
+  });
+  const judged = finding({
+    basis: "judged",
+    basisDetails: { kind: "judged", summary: "Model critique" },
+    acceptance: { version: 1, kind: "manual", doneWhen: ["Clear hierarchy."] },
+  });
+  const current = tuple(artifactV2("After"));
+  const result = evaluateVerification({
+    findings: [executable, legacy, judged],
+    baseline: [baseline],
+    currentA: [current],
+    currentB: [current],
+  });
+  expect(result.findings.map((v) => v.status)).toEqual([
+    "fixed",
+    "fixed",
+    "fixed",
+  ]);
+  expect(result.findings.map((v) => v.acceptance.status)).toEqual([
+    "passed",
+    "not-recheckable",
+    "not-recheckable",
+  ]);
+  expect(result.passed).toBe(true);
+});
+
+test("static acceptance cannot pass because an unmeasured selector disappeared", async () => {
+  const { buildRuleContract } = await import("../src/findings/contract.js");
+  const { evaluateRuleAcceptance } = await import(
+    "../src/verify/acceptance.js"
+  );
+  const target = v2Element({
+    selector: "#small",
+    tag: "button",
+    path: "html[0]/body[0]/button[0]",
+  });
+  target.interactive = true;
+  target.rect = { x: 0, y: 0, width: 10, height: 10 };
+  const { checksConfigFrom } = await import("../src/checks/registry.js");
+  const config = {
+    ...checksConfigFrom(),
+    targetSize: { fine: 30, coarse: 44, narrowBelow: 768 },
+  };
+  const before = tuple(artifactV2("Before", [target]));
+  const candidate = runDeterministicChecks(
+    [before],
+    undefined,
+    config,
+  ).candidates.find((e) => e.candidate.category === "target-size");
+  if (!candidate) throw new Error("missing fixture candidate");
+  expect(candidate).toBeDefined();
+  const contract = buildRuleContract(
+    before,
+    candidate.candidate,
+    config,
+  ).acceptance;
+  expect(contract.target).toEqual({ kind: "selectors", selectors: ["#small"] });
+  const absent = tuple(artifactV2("After"));
+  const missing = evaluateRuleAcceptance({
+    contract,
+    currentA: [absent],
+    currentB: [absent],
+    config,
+  });
+  expect(missing.status).toBe("not-recheckable");
+  expect(missing.reason).toContain("missing");
+  const fixed = tuple(
+    artifactV2("After", [
+      { ...target, rect: { x: 0, y: 0, width: 50, height: 50 } },
+    ]),
+  );
+  expect(
+    evaluateRuleAcceptance({
+      contract,
+      currentA: [fixed],
+      currentB: [fixed],
+      config,
+    }).status,
+  ).toBe("passed");
 });

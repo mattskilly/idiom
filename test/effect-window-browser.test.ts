@@ -200,3 +200,84 @@ test("a request that never resolves ends the window at the late-content bound, u
     await page.close();
   }
 });
+
+/**
+ * Analytics in the probe window (file-198): beacons, keepalive fetches
+ * nothing awaits and requests to well-known analytics endpoints are not
+ * content, so they never extend a click's late-content window.
+ */
+async function beaconPage(handler: string) {
+  const page = await browser.newPage();
+  await page.route("https://beacon.test/", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<!doctype html><button id="go">Go</button><div id="slot"></div>
+        <script>document.getElementById("go").addEventListener("click", ${handler});</script>`,
+    }),
+  );
+  const slow = async (route: import("playwright").Route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.fulfill({ body: "ok" }).catch(() => undefined);
+  };
+  await page.route("https://beacon.test/collect", slow);
+  await page.route("https://beacon.test/data", slow);
+  await page.route("https://www.google-analytics.com/**", slow);
+  await page.goto("https://beacon.test/");
+  return page;
+}
+async function clickWindow(handler: string) {
+  const page = await beaconPage(handler);
+  try {
+    const effect = await beginEffectWindow(page, 150, {
+      pendingMs: LATE_CONTENT_WINDOW_MS,
+    });
+    const started = performance.now();
+    try {
+      await page.locator("#go").click({ noWaitAfter: true });
+      await effect.wait();
+    } finally {
+      await effect.dispose();
+    }
+    const restored = await page.evaluate(
+      () => !window.fetch.toString().includes("keepalive"),
+    );
+    return { elapsed: performance.now() - started, restored };
+  } finally {
+    await page.close();
+  }
+}
+
+test.each([
+  ["sendBeacon", `() => navigator.sendBeacon("/collect", "event")`],
+  [
+    "an unawaited keepalive fetch",
+    `() => { fetch("/collect", { method: "POST", body: "e", keepalive: true }).catch(() => {}); }`,
+  ],
+  [
+    "a known analytics endpoint",
+    `() => { fetch("https://www.google-analytics.com/g/collect?v=2", { mode: "no-cors" }).catch(() => {}); }`,
+  ],
+])("%s does not extend the window", async (_name, handler) => {
+  const { elapsed, restored } = await clickWindow(handler);
+  expect(elapsed).toBeLessThan(900);
+  expect(restored).toBe(true);
+});
+
+test.each([
+  [
+    "an awaited keepalive fetch",
+    `async () => { const text = await (await fetch("/data", { keepalive: true })).text(); document.getElementById("slot").textContent = text; }`,
+  ],
+  [
+    "a then()-read keepalive fetch",
+    `() => { fetch("/data", { keepalive: true }).then((r) => r.text()).then((t) => { document.getElementById("slot").textContent = t; }); }`,
+  ],
+  [
+    "a plain fetch",
+    `async () => { const text = await (await fetch("/data")).text(); document.getElementById("slot").textContent = text; }`,
+  ],
+])("%s still extends the window", async (_name, handler) => {
+  const { elapsed } = await clickWindow(handler);
+  expect(elapsed).toBeGreaterThan(1400);
+  expect(elapsed).toBeLessThan(LATE_CONTENT_WINDOW_MS + 600);
+});

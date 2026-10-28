@@ -5,9 +5,10 @@ import { type SummaryFinding, summarizeFinding } from "../baseline/summary.js";
 import { createArtifactWorkspace } from "../capture/artifacts.js";
 import type { ProductionBuild } from "../capture/types.js";
 import { IdiomError } from "../errors.js";
+import { basisDescription } from "../findings/presentation.js";
 import type { ReviewOutcome } from "../review/report.js";
 import { type ReviewDependencies, runReview } from "../review/run.js";
-import type { Finding } from "../schemas/finding.js";
+import { type Finding, findingSchema } from "../schemas/finding.js";
 import { groupSweep } from "../sweep/group.js";
 import { renderProductSweep } from "../sweep/report.js";
 import { runProductSweep } from "../sweep/run.js";
@@ -174,9 +175,9 @@ export async function sweepWithReview(
       },
     },
   });
-  const findings = JSON.parse(
-    await readFile(result.findingsPath, "utf8"),
-  ) as Finding[];
+  const findings = findingSchema
+    .array()
+    .parse(JSON.parse(await readFile(result.findingsPath, "utf8")));
   const ranked = rankSweepFindings(
     findings.filter(
       (finding) => finding.status === "open" || finding.status === "approved",
@@ -203,7 +204,9 @@ export async function sweepWithReview(
       ...summarizeFinding(finding, result, base),
       layer: finding.layer,
     })),
-    blocking: ranked.filter((finding) => finding.severity !== "minor").length,
+    blocking: ranked.filter(
+      (finding) => finding.severity !== "minor" && finding.basis !== "judged",
+    ).length,
   };
   const records = ranked.map((finding) => ({
     finding,
@@ -248,7 +251,8 @@ export function renderSweepSummary(
   ];
   for (const [index, finding] of summary.findings.entries()) {
     lines.push(
-      `${index + 1}. [${finding.severity}] [${finding.layer === "model" ? "model" : "measured"}] ${finding.category} — ${finding.where}${finding.selector === undefined ? "" : ` — ${finding.selector}`}`,
+      `${index + 1}. [${finding.severity}] [${finding.basis ?? (finding.layer === "model" ? "judged" : "measured")}] ${finding.category} — ${finding.where}${finding.selector === undefined ? "" : ` — ${finding.selector}`}`,
+      `   Basis: ${basisDescription(finding)}`,
       `   Problem: ${finding.problem}`,
       ...finding.fix.map((line) => `   Done when: ${line}`),
       ...(finding.screenshot === undefined

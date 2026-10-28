@@ -32,6 +32,7 @@ import { baselineRecordCommand } from "../src/commands/baseline.js";
 import { checkCommand, renderCheckSummary } from "../src/commands/check.js";
 import { decideCommand } from "../src/commands/decide.js";
 import { reviewCommand } from "../src/commands/review.js";
+import type { ModelFindingCandidate } from "../src/critique/types.js";
 import { loadRunTuples } from "../src/review/artifacts.js";
 import { loadReviewCatalog } from "../src/review/catalog.js";
 import {
@@ -185,6 +186,7 @@ test("fixture delta reports exactly one new, one fixed and one pre-existing thro
     expect(renderCheckSummary(summary)).toContain(heading);
   const reviewed = await review(project);
   expect(reviewed.comparison).toEqual({
+    currentJudged: [],
     findings: summary.findings,
     fixed: summary.fixed,
     baseline: summary.baseline,
@@ -616,6 +618,46 @@ test("an occurrence beyond the ordinary attention cap still gates, and model fin
     },
   });
   expect(reviewed.comparison).toMatchObject({ findings: [], unclassified: 1 });
+  expect(reviewed.comparison?.currentJudged).toHaveLength(1);
+  const model: ModelFindingCandidate = {
+    category: "hierarchy",
+    severity: "major",
+    confidence: 0.9,
+    rule: "DESIGN.md: hierarchy",
+    selectorHint: "main",
+    state: "editor",
+    viewport: "desktop",
+    screenshots: ["editor/desktop"],
+    references: [],
+    explanation: "The hierarchy needs emphasis.",
+    suggestedArea: "main",
+    acceptance: ["Use one dominant heading."],
+  };
+  for (const optIn of [false, true]) {
+    const code = await run(
+      [
+        "node",
+        "idiom",
+        "review",
+        "studio",
+        "--project",
+        project,
+        "--from",
+        "initial",
+        "--since-baseline",
+        "--fail-on",
+        "major",
+        ...(optIn ? ["--fail-on-judged"] : []),
+      ],
+      {
+        stdout: () => {},
+        stderr: () => {},
+        review: { critique: { critique: async () => [model] } },
+      },
+    );
+    expect(code).toBe(optIn ? 1 : 0);
+  }
+
   // Recording reads all raw candidates even when policy hides every live row.
   await writeFile(
     join(project, ".idiom/rules.json"),

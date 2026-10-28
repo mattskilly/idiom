@@ -40,6 +40,7 @@ export class MotionCollector {
     finish(reason?: string): Promise<void>;
     dispose(): Promise<void>;
   }> {
+    const actionStarted = Date.now();
     const token = `${Date.now()}:${Math.random()}`;
     let failure: string | undefined;
     try {
@@ -648,6 +649,7 @@ export class MotionCollector {
                   change.reason = reason;
                 }
             }
+            action.elapsedMs = Date.now() - actionStarted;
             this.actions.push(linkRecording(action, recording));
           } catch (error) {
             this.actions.push({

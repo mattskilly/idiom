@@ -57,30 +57,15 @@ export class ProgressCollector {
           let firstMs: number | null = null;
           let hit: Hit | null = null;
           const {
-            rendered,
             selectorFor,
-            normalize,
             textOf,
-            progressSelector,
-            statusSelector,
-            progressWords,
+            actionEvents: eventsFor,
+            dispatchTarget,
+            indicatorBaseline,
+            scanIndicators,
+            addedProgressText,
           } = (window as unknown as FeedbackWindow).__idiomFeedback;
-          let progressBaseline = new WeakSet<Element>(
-            [...document.querySelectorAll(progressSelector)].filter(rendered),
-          );
-          const infinite = (animation: Animation) =>
-            animation.effect?.getTiming().iterations === Infinity;
-          const visibleInfinite = (animation: Animation): boolean => {
-            if (!infinite(animation)) return false;
-            const target = (animation.effect as KeyframeEffect | null)?.target;
-            return target instanceof Element && rendered(target);
-          };
-          let animationBaseline = new WeakSet<Animation>(
-            document.getAnimations().filter(visibleInfinite),
-          );
-          let statusBaseline = new WeakMap<Element, string>();
-          for (const region of document.querySelectorAll(statusSelector))
-            statusBaseline.set(region, rendered(region) ? textOf(region) : "");
+          let baseline = indicatorBaseline({ visibleAnimationsOnly: true });
           let trigger: Element | null = null;
           try {
             trigger ??= document.querySelector(selector);
@@ -88,61 +73,21 @@ export class ProgressCollector {
             // Playwright-only targets are bound with the live locator below.
           }
           let triggerText = trigger === null ? "" : textOf(trigger);
-          const actionEvents =
-            action === "click"
-              ? ["pointerdown", "click"]
-              : action === "press"
-                ? ["keydown"]
-                : action === "select"
-                  ? ["input", "change"]
-                  : ["keydown", "beforeinput", "input"];
+          const actionEvents = eventsFor(action);
           const onAction = (event: Event) => {
             if (
               startedAt !== null ||
               ((action === "click" || action === "press") && !event.isTrusted)
             )
               return;
-            // Fill and select can dispatch on a label's associated control.
-            // Resolve the association now, so replacements during the wait
-            // remain aligned with Playwright's live retargeting.
-            let dispatchTarget = trigger;
-            if (
-              trigger !== null &&
-              (action === "fill" || action === "select") &&
-              !trigger.matches("input, textarea, select") &&
-              !(trigger instanceof HTMLElement && trigger.isContentEditable)
-            ) {
-              dispatchTarget = trigger.closest("label")?.control ?? trigger;
-            }
-            const target = event
-              .composedPath()
-              .find((node): node is Element => {
-                if (!(node instanceof Element)) return false;
-                if (node === dispatchTarget) return true;
-                try {
-                  return node.matches(selector);
-                } catch {
-                  return false;
-                }
-              });
+            const target = dispatchTarget(event, trigger, selector, action);
             if (!target) return;
             startedAt = performance.now();
             // Rebaseline at dispatch: changes while Playwright was waiting are
             // not feedback for this action. This capture-phase baseline precedes
             // the target and bubble-phase application handlers.
             trigger = target;
-            progressBaseline = new WeakSet(
-              [...document.querySelectorAll(progressSelector)].filter(rendered),
-            );
-            animationBaseline = new WeakSet(
-              document.getAnimations().filter(visibleInfinite),
-            );
-            statusBaseline = new WeakMap();
-            for (const region of document.querySelectorAll(statusSelector))
-              statusBaseline.set(
-                region,
-                rendered(region) ? textOf(region) : "",
-              );
+            baseline = indicatorBaseline({ visibleAnimationsOnly: true });
             triggerText = textOf(trigger);
             observer.takeRecords();
             for (const type of actionEvents)
@@ -150,7 +95,7 @@ export class ProgressCollector {
           };
 
           const record = (kind: ProgressAffordanceKind, element: Element) => {
-            if (hit !== null || startedAt === null) return;
+            if (hit !== null || startedAt === null) return true;
             firstMs = performance.now() - startedAt;
             const text = textOf(element).slice(0, 80);
             hit = {
@@ -159,71 +104,22 @@ export class ProgressCollector {
               ...(text ? { text } : {}),
             };
             stop();
+            return true;
           };
           const scan = (records: MutationRecord[] = []) => {
             if (hit !== null || startedAt === null) return;
-            for (const element of document.querySelectorAll(progressSelector)) {
-              const becameBusy =
-                element.getAttribute("aria-busy") === "true" &&
-                records.some(
-                  (mutation) =>
-                    mutation.target === element &&
-                    mutation.attributeName === "aria-busy" &&
-                    mutation.oldValue !== "true",
-                );
-              if (
-                (progressBaseline.has(element) && !becameBusy) ||
-                !rendered(element)
-              )
-                continue;
-              return record(
-                element.getAttribute("aria-busy") === "true" &&
-                  !element.matches("[role=progressbar], progress")
-                  ? "busy"
-                  : "progressbar",
-                element,
-              );
-            }
-            for (const animation of document.getAnimations()) {
-              if (!infinite(animation) || animationBaseline.has(animation))
-                continue;
-              const target = (animation.effect as KeyframeEffect | null)
-                ?.target;
-              if (target instanceof Element && rendered(target))
-                return record("spinner", target);
-            }
-            for (const region of document.querySelectorAll(statusSelector)) {
-              if (!rendered(region)) continue;
-              const text = textOf(region);
-              if (text !== "" && text !== (statusBaseline.get(region) ?? ""))
-                return record("status-text", region);
-            }
-            if (trigger?.isConnected && rendered(trigger)) {
-              const text = textOf(trigger);
-              if (text !== "" && text !== triggerText)
-                return record("control-text", trigger);
-            }
-            for (const mutation of records) {
-              const nodes =
-                mutation.type === "characterData"
-                  ? [mutation.target]
-                  : [...mutation.addedNodes];
-              for (const node of nodes) {
-                const element =
-                  node instanceof Element ? node : node.parentElement;
-                if (element === null || !rendered(element)) continue;
-                const text = normalize(
-                  node instanceof HTMLElement
-                    ? node.innerText
-                    : node.textContent,
-                );
-                if (
-                  text !== "" &&
-                  (progressWords.test(text) || /(?:…|\.\.\.)$/.test(text))
-                )
-                  return record("progress-text", element);
-              }
-            }
+            if (
+              scanIndicators(baseline, {
+                trigger,
+                triggerText,
+                records,
+                skipTrigger: false,
+                rebusyBaseline: true,
+                visit: record,
+              })
+            )
+              return;
+            addedProgressText(records, record);
           };
           const observer = new MutationObserver((records) => scan(records));
           observer.observe(document, {

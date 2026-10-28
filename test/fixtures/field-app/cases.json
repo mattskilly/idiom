@@ -1,0 +1,492 @@
+{
+  "description": "Ground truth for the Field Supply field app. intended: the feel rules a human would expect to fire on the case. twinOf: the rules for which the case is a correct (good) implementation, so a finding of that rule on it is a false positive. Ratings in docs/field-test/labels.json come from evidence, not from this file.",
+  "cases": [
+    {
+      "id": "catalog-load-more",
+      "route": "/catalog",
+      "trigger": "Load more products",
+      "request": "GET /api/products?page=2",
+      "implementation": "No pending state; four rows append instantly after the response. On failure the button returns to rest and nothing else changes.",
+      "intended": [
+        "idiom:loading-state-missing",
+        "idiom:motion-snap",
+        "idiom:error-state-missing"
+      ],
+      "twinOf": []
+    },
+    {
+      "id": "catalog-next-page",
+      "route": "/catalog",
+      "trigger": "Next page",
+      "request": "GET /api/products?page=3",
+      "implementation": "aria-busy and a spinner overlay on the table; rows fade in; failure shows an alert with Try again.",
+      "intended": [],
+      "twinOf": [
+        "idiom:loading-state-missing",
+        "idiom:motion-snap",
+        "idiom:error-state-missing",
+        "idiom:retry-blocked"
+      ]
+    },
+    {
+      "id": "catalog-in-stock",
+      "route": "/catalog",
+      "trigger": "In stock",
+      "request": "GET /api/products/in-stock",
+      "implementation": "Chip disabled with a skeleton the size of the result inside a fixed-height table; rows fade in.",
+      "intended": [],
+      "twinOf": [
+        "idiom:loading-state-missing",
+        "idiom:interaction-shift",
+        "idiom:motion-snap"
+      ]
+    },
+    {
+      "id": "catalog-archived",
+      "route": "/catalog",
+      "trigger": "Archived",
+      "request": "GET /api/products/archived",
+      "implementation": "Tab selection is the only change until the response; rows swap in with no transition.",
+      "intended": ["idiom:loading-state-missing", "idiom:motion-snap"],
+      "twinOf": []
+    },
+    {
+      "id": "catalog-featured",
+      "route": "/catalog",
+      "trigger": "Featured",
+      "request": "GET /api/products/featured",
+      "implementation": "aria-busy and a spinner overlay; rows fade in.",
+      "intended": [],
+      "twinOf": ["idiom:loading-state-missing", "idiom:motion-snap"]
+    },
+    {
+      "id": "orders-refunds",
+      "route": "/orders",
+      "trigger": "Refunds",
+      "request": "GET /api/orders/refunds",
+      "implementation": "Two-row skeleton; nine rows arrive after 800ms and push every card below down.",
+      "intended": ["idiom:interaction-shift", "idiom:motion-snap"],
+      "twinOf": ["idiom:loading-state-missing"]
+    },
+    {
+      "id": "orders-pending",
+      "route": "/orders",
+      "trigger": "Pending",
+      "request": "GET /api/orders/pending",
+      "implementation": "Skeleton exactly the size of the result; rows fade in.",
+      "intended": [],
+      "twinOf": [
+        "idiom:loading-state-missing",
+        "idiom:interaction-shift",
+        "idiom:motion-snap"
+      ]
+    },
+    {
+      "id": "orders-details",
+      "route": "/orders",
+      "trigger": "Show details",
+      "request": "GET /api/orders/detail",
+      "implementation": "Button disabled and relabelled “Loading details…”; the detail block is inserted with no reserved space after 800ms.",
+      "intended": ["idiom:interaction-shift", "idiom:motion-snap"],
+      "twinOf": ["idiom:loading-state-missing"]
+    },
+    {
+      "id": "orders-carriers",
+      "route": "/orders",
+      "trigger": "Check carrier updates",
+      "request": "GET /api/orders/carriers",
+      "implementation": "One-line spinner; a six-step timeline replaces it after 800ms and pushes the cards below.",
+      "intended": ["idiom:interaction-shift", "idiom:motion-snap"],
+      "twinOf": ["idiom:loading-state-missing"]
+    },
+    {
+      "id": "orders-older",
+      "route": "/orders",
+      "trigger": "Older orders",
+      "request": "GET /api/orders/older",
+      "implementation": "aria-busy and spinner overlay inside a body that reserves the final height; rows fade in.",
+      "intended": [],
+      "twinOf": [
+        "idiom:loading-state-missing",
+        "idiom:interaction-shift",
+        "idiom:motion-snap",
+        "idiom:error-state-missing",
+        "idiom:retry-blocked"
+      ]
+    },
+    {
+      "id": "customers-page-2",
+      "route": "/customers",
+      "trigger": "Page 2",
+      "request": "GET /api/customers?page=2",
+      "implementation": "No pending state; the table swaps instantly after the response. On failure the button returns to rest and nothing else changes.",
+      "intended": [
+        "idiom:loading-state-missing",
+        "idiom:motion-snap",
+        "idiom:error-state-missing"
+      ],
+      "twinOf": []
+    },
+    {
+      "id": "customers-page-3",
+      "route": "/customers",
+      "trigger": "Page 3",
+      "request": "GET /api/customers?page=3",
+      "implementation": "aria-busy and spinner overlay, but the table swaps with no transition.",
+      "intended": ["idiom:motion-snap"],
+      "twinOf": [
+        "idiom:loading-state-missing",
+        "idiom:error-state-missing",
+        "idiom:retry-blocked"
+      ]
+    },
+    {
+      "id": "customers-segments",
+      "route": "/customers",
+      "trigger": "Show segments",
+      "request": "GET /api/customers/segments",
+      "implementation": "Two-row skeleton; six rows arrive after 800ms and push the cards below.",
+      "intended": ["idiom:interaction-shift", "idiom:motion-snap"],
+      "twinOf": ["idiom:loading-state-missing"]
+    },
+    {
+      "id": "customers-tickets",
+      "route": "/customers",
+      "trigger": "Load tickets",
+      "request": "GET /api/customers/tickets",
+      "implementation": "The body reserves the final height and shows a matching skeleton; rows fade in.",
+      "intended": [],
+      "twinOf": [
+        "idiom:loading-state-missing",
+        "idiom:interaction-shift",
+        "idiom:motion-snap"
+      ]
+    },
+    {
+      "id": "customers-lifetime",
+      "route": "/customers",
+      "trigger": "Calculate lifetime value",
+      "request": "GET /api/customers/lifetime",
+      "implementation": "One-line spinner; a figure and chart replace it after 800ms and push the card below.",
+      "intended": ["idiom:interaction-shift", "idiom:motion-snap"],
+      "twinOf": ["idiom:loading-state-missing"]
+    },
+    {
+      "id": "settings-profile",
+      "route": "/settings",
+      "trigger": "Save profile",
+      "request": "POST /api/profile",
+      "implementation": "Button disabled and relabelled “Saving…”; the outcome is shown beside it.",
+      "intended": [],
+      "twinOf": ["idiom:loading-state-missing", "idiom:double-submit"]
+    },
+    {
+      "id": "settings-address",
+      "route": "/settings",
+      "trigger": "Save address",
+      "request": "POST /api/address",
+      "implementation": "No pending state and the button stays enabled.",
+      "intended": ["idiom:loading-state-missing", "idiom:double-submit"],
+      "twinOf": []
+    },
+    {
+      "id": "settings-password",
+      "route": "/settings",
+      "trigger": "Update password",
+      "request": "POST /api/password",
+      "implementation": "Relabelled “Saving…” but stays enabled; a second click submits again.",
+      "intended": ["idiom:double-submit"],
+      "twinOf": ["idiom:loading-state-missing"]
+    },
+    {
+      "id": "settings-notifications",
+      "route": "/settings",
+      "trigger": "Save notifications",
+      "request": "POST /api/notifications",
+      "implementation": "Button disabled while saving, with no other indicator.",
+      "intended": [],
+      "twinOf": ["idiom:loading-state-missing", "idiom:double-submit"]
+    },
+    {
+      "id": "settings-preferences",
+      "route": "/settings",
+      "trigger": "Save preferences",
+      "request": "POST /api/preferences",
+      "implementation": "Button disabled, aria-busy and an inline spinner.",
+      "intended": [],
+      "twinOf": ["idiom:loading-state-missing", "idiom:double-submit"]
+    },
+    {
+      "id": "billing-coupon",
+      "route": "/billing",
+      "trigger": "Apply coupon",
+      "request": "POST /api/coupon",
+      "implementation": "No pending state and the button stays enabled.",
+      "intended": ["idiom:loading-state-missing", "idiom:double-submit"],
+      "twinOf": []
+    },
+    {
+      "id": "billing-card",
+      "route": "/billing",
+      "trigger": "Update card",
+      "request": "POST /api/card",
+      "implementation": "Relabelled “Saving…” but stays enabled.",
+      "intended": ["idiom:double-submit"],
+      "twinOf": ["idiom:loading-state-missing"]
+    },
+    {
+      "id": "billing-seat",
+      "route": "/billing",
+      "trigger": "Add seat",
+      "request": "POST /api/seats",
+      "implementation": "Button disabled, aria-busy and an inline spinner.",
+      "intended": [],
+      "twinOf": ["idiom:loading-state-missing", "idiom:double-submit"]
+    },
+    {
+      "id": "team-invite",
+      "route": "/team",
+      "trigger": "Invite teammate",
+      "request": "POST /api/invites",
+      "implementation": "No pending state and the button stays enabled.",
+      "intended": ["idiom:loading-state-missing", "idiom:double-submit"],
+      "twinOf": []
+    },
+    {
+      "id": "team-reinvite",
+      "route": "/team",
+      "trigger": "Invite again",
+      "request": "POST /api/invites/again",
+      "implementation": "Relabelled “Inviting…” and the handler ignores clicks while a request is in flight.",
+      "intended": [],
+      "twinOf": ["idiom:loading-state-missing", "idiom:double-submit"]
+    },
+    {
+      "id": "team-role",
+      "route": "/team",
+      "trigger": "Save role",
+      "request": "POST /api/roles",
+      "implementation": "Relabelled “Saving…” but stays enabled.",
+      "intended": ["idiom:double-submit"],
+      "twinOf": ["idiom:loading-state-missing"]
+    },
+    {
+      "id": "team-invitations",
+      "route": "/team",
+      "trigger": "Invitations",
+      "request": "GET /api/page/team/invitations",
+      "implementation": "Client-side route change: the view button is highlighted outside main, main is unchanged until the response, then swaps with no transition.",
+      "intended": ["idiom:loading-state-missing", "idiom:motion-snap"],
+      "twinOf": []
+    },
+    {
+      "id": "team-audit",
+      "route": "/team",
+      "trigger": "Audit log",
+      "request": "GET /api/page/team/audit",
+      "implementation": "Client-side route change with no pending state in main, then an instant swap.",
+      "intended": ["idiom:loading-state-missing", "idiom:motion-snap"],
+      "twinOf": []
+    },
+    {
+      "id": "reports-quarterly",
+      "route": "/reports",
+      "trigger": "Quarterly",
+      "request": "GET /api/page/reports/quarterly",
+      "implementation": "Client-side route change: main shows a page skeleton at once; the view fades in.",
+      "intended": [],
+      "twinOf": ["idiom:loading-state-missing", "idiom:motion-snap"]
+    },
+    {
+      "id": "reports-revenue",
+      "route": "/reports",
+      "trigger": "Run revenue report",
+      "request": "GET /api/reports/revenue",
+      "implementation": "A spinner while loading; on failure an alert with a working Try again button.",
+      "intended": [],
+      "twinOf": [
+        "idiom:loading-state-missing",
+        "idiom:error-state-missing",
+        "idiom:retry-blocked",
+        "idiom:motion-snap"
+      ]
+    },
+    {
+      "id": "reports-churn",
+      "route": "/reports",
+      "trigger": "Run churn report",
+      "request": "GET /api/reports/churn",
+      "implementation": "No pending state; on failure nothing changes.",
+      "intended": ["idiom:loading-state-missing", "idiom:error-state-missing"],
+      "twinOf": ["idiom:retry-blocked", "idiom:motion-snap"]
+    },
+    {
+      "id": "reports-cohorts",
+      "route": "/reports",
+      "trigger": "Run cohort report",
+      "request": "GET /api/reports/cohorts",
+      "implementation": "A spinner while loading (trigger disabled or busy); on failure the spinner stays and the trigger never recovers.",
+      "intended": ["idiom:error-state-missing", "idiom:retry-blocked"],
+      "twinOf": ["idiom:loading-state-missing", "idiom:motion-snap"]
+    },
+    {
+      "id": "reports-export",
+      "route": "/reports",
+      "trigger": "Preview export",
+      "request": "GET /api/reports/export",
+      "implementation": "A spinner while loading; on failure the whole main region is emptied.",
+      "intended": ["idiom:error-state-missing", "idiom:retry-blocked"],
+      "twinOf": ["idiom:loading-state-missing", "idiom:motion-snap"]
+    },
+    {
+      "id": "reports-usage",
+      "route": "/reports",
+      "trigger": "Run usage summary",
+      "request": "GET /api/reports/usage",
+      "implementation": "No pending state; on failure only a console error.",
+      "intended": ["idiom:loading-state-missing", "idiom:error-state-missing"],
+      "twinOf": ["idiom:retry-blocked", "idiom:motion-snap"]
+    },
+    {
+      "id": "activity-audit",
+      "route": "/activity",
+      "trigger": "Load audit events",
+      "request": "GET /api/activity/audit",
+      "implementation": "A spinner while loading; on failure an alert with a working Try again button.",
+      "intended": [],
+      "twinOf": [
+        "idiom:loading-state-missing",
+        "idiom:error-state-missing",
+        "idiom:retry-blocked",
+        "idiom:motion-snap"
+      ]
+    },
+    {
+      "id": "activity-sync",
+      "route": "/activity",
+      "trigger": "Check sync status",
+      "request": "GET /api/activity/sync",
+      "implementation": "No pending state; on failure nothing changes.",
+      "intended": ["idiom:loading-state-missing", "idiom:error-state-missing"],
+      "twinOf": ["idiom:retry-blocked", "idiom:motion-snap"]
+    },
+    {
+      "id": "activity-webhooks",
+      "route": "/activity",
+      "trigger": "Load webhook deliveries",
+      "request": "GET /api/activity/webhooks",
+      "implementation": "A spinner while loading (trigger disabled or busy); on failure the spinner stays and the trigger never recovers.",
+      "intended": ["idiom:error-state-missing", "idiom:retry-blocked"],
+      "twinOf": ["idiom:loading-state-missing", "idiom:motion-snap"]
+    },
+    {
+      "id": "activity-deploys",
+      "route": "/activity",
+      "trigger": "Load deploy log",
+      "request": "GET /api/activity/deploys",
+      "implementation": "A spinner while loading; on failure the whole main region is emptied.",
+      "intended": ["idiom:error-state-missing", "idiom:retry-blocked"],
+      "twinOf": ["idiom:loading-state-missing", "idiom:motion-snap"]
+    },
+    {
+      "id": "activity-keys",
+      "route": "/activity",
+      "trigger": "Load API key usage",
+      "request": "GET /api/activity/keys",
+      "implementation": "No pending state; on failure only a console error.",
+      "intended": ["idiom:loading-state-missing", "idiom:error-state-missing"],
+      "twinOf": ["idiom:retry-blocked", "idiom:motion-snap"]
+    },
+    {
+      "id": "inventory-stock",
+      "route": "/inventory",
+      "trigger": "Refresh stock levels",
+      "request": "GET /api/inventory/stock",
+      "implementation": "A spinner while loading; on failure an alert with a working Try again button.",
+      "intended": [],
+      "twinOf": [
+        "idiom:loading-state-missing",
+        "idiom:error-state-missing",
+        "idiom:retry-blocked",
+        "idiom:motion-snap"
+      ]
+    },
+    {
+      "id": "inventory-reorder",
+      "route": "/inventory",
+      "trigger": "Get reorder suggestions",
+      "request": "GET /api/inventory/reorder",
+      "implementation": "No pending state; on failure nothing changes.",
+      "intended": ["idiom:loading-state-missing", "idiom:error-state-missing"],
+      "twinOf": ["idiom:retry-blocked", "idiom:motion-snap"]
+    },
+    {
+      "id": "inventory-suppliers",
+      "route": "/inventory",
+      "trigger": "Refresh supplier feed",
+      "request": "GET /api/inventory/suppliers",
+      "implementation": "A spinner while loading (trigger disabled or busy); on failure the spinner stays and the trigger never recovers.",
+      "intended": ["idiom:error-state-missing", "idiom:retry-blocked"],
+      "twinOf": ["idiom:loading-state-missing", "idiom:motion-snap"]
+    },
+    {
+      "id": "inventory-warehouses",
+      "route": "/inventory",
+      "trigger": "Open warehouse map",
+      "request": "GET /api/inventory/warehouses",
+      "implementation": "A spinner while loading; on failure the trigger is hidden and the spinner stays.",
+      "intended": ["idiom:error-state-missing", "idiom:retry-blocked"],
+      "twinOf": ["idiom:loading-state-missing", "idiom:motion-snap"]
+    },
+    {
+      "id": "inventory-prices",
+      "route": "/inventory",
+      "trigger": "Load price history",
+      "request": "GET /api/inventory/prices",
+      "implementation": "Trigger disabled with a spinner while loading; on failure an alert with Try again and the trigger re-enabled.",
+      "intended": [],
+      "twinOf": [
+        "idiom:loading-state-missing",
+        "idiom:error-state-missing",
+        "idiom:retry-blocked",
+        "idiom:motion-snap"
+      ]
+    },
+    {
+      "id": "orders-note",
+      "route": "/orders",
+      "trigger": "Add note",
+      "request": "POST /api/orders/note",
+      "implementation": "No pending state and the button stays enabled.",
+      "intended": ["idiom:loading-state-missing", "idiom:double-submit"],
+      "twinOf": []
+    },
+    {
+      "id": "customers-tag",
+      "route": "/customers",
+      "trigger": "Save tag",
+      "request": "POST /api/customers/tag",
+      "implementation": "Relabelled “Saving…” but stays enabled.",
+      "intended": ["idiom:double-submit"],
+      "twinOf": ["idiom:loading-state-missing"]
+    },
+    {
+      "id": "billing-invoices",
+      "route": "/billing",
+      "trigger": "Load invoices",
+      "request": "GET /api/billing/invoices",
+      "implementation": "A spinner while loading (trigger disabled or busy); on failure the spinner stays and the trigger never recovers.",
+      "intended": ["idiom:error-state-missing", "idiom:retry-blocked"],
+      "twinOf": ["idiom:loading-state-missing", "idiom:motion-snap"]
+    },
+    {
+      "id": "settings-sessions",
+      "route": "/settings",
+      "trigger": "Load active sessions",
+      "request": "GET /api/settings/sessions",
+      "implementation": "A spinner while loading; on failure the trigger is hidden and the spinner stays.",
+      "intended": ["idiom:error-state-missing", "idiom:retry-blocked"],
+      "twinOf": ["idiom:loading-state-missing", "idiom:motion-snap"]
+    }
+  ]
+}

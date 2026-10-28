@@ -194,6 +194,7 @@ export const motionArtifactSchema = z
     actions: z.array(
       z
         .object({
+          elapsedMs: z.number().finite().nonnegative().optional(),
           source: z.enum(["probe-hover", "probe-click", "web-step"]),
           timelineId: z.string().min(1).optional(),
           selector: z.string().min(1),
@@ -618,6 +619,26 @@ export const actionTimelineSchema = z
         commonAncestor: z.string().min(1).optional(),
       })
       .strict(),
+    /**
+     * Whether the page scrolls: the baseline, then each change (at most 8).
+     * `gutter` is the measured innerWidth - clientWidth (0 without layout
+     * scrollbars, as in headless capture).
+     */
+    rootScroll: z
+      .array(
+        z
+          .object({
+            time: finite,
+            gutter: finite.nonnegative(),
+            scrollable: z.boolean(),
+            stableGutter: z.boolean(),
+            /** What made the page stop scrolling, e.g. `body overflow: hidden`. */
+            lockedBy: z.string().min(1).optional(),
+            compensation: z.boolean(),
+          })
+          .strict(),
+      )
+      .optional(),
     /** Present exactly on `slow-replay` actions. */
     held: heldReplaySchema.optional(),
     failure: failureReplaySchema.optional(),
@@ -809,6 +830,7 @@ export const explanationArtifactSchema = z
       z
         .object({
           selector: z.string().min(1),
+          elapsedMs: z.number().finite().nonnegative().optional(),
           controlId: z.string().min(1).optional(),
           trigger: z.enum(["hover", "focus"]),
           source: z.enum(["probe", "capture"]),
@@ -938,6 +960,7 @@ const signalsSchema = z
 
 const probeCollectionSchema = z
   .object({
+    elapsedMs: z.number().finite().nonnegative().optional(),
     selector: z.string().min(1),
     item: z.string().min(1).optional(),
     menus: z.array(
@@ -989,6 +1012,8 @@ const probeSchema = z
         feedbackWithinMs: z.number().int().positive(),
         queued: countSchema,
         ran: countSchema,
+        /** Web-step failure replays copied from the state that ran them. */
+        reused: countSchema.optional(),
         completed: z.array(z.string()),
         notes: z.array(z.string()),
       })
@@ -999,6 +1024,8 @@ const probeSchema = z
         delayMs: z.number().int().positive(),
         queued: countSchema,
         ran: countSchema,
+        /** Web-step held replays copied from the state that ran them. */
+        reused: countSchema.optional(),
         notes: z.array(z.string()),
       })
       .strict()
@@ -1547,6 +1574,7 @@ const linkSchema = z
   .strict();
 const focusVisibleSchema = z
   .object({
+    elapsedMs: z.number().finite().nonnegative().optional(),
     selector: identifier,
     name: z.string(),
     rect: rectSchema,
@@ -1601,6 +1629,7 @@ const imageRenderSchema = z
   .strict();
 const layoutShiftSchema = z
   .object({
+    elapsedMs: z.number().finite().nonnegative().optional(),
     status: z.enum(["ran", "unavailable"]),
     reason: z.string().optional(),
     score: z.number().nonnegative(),

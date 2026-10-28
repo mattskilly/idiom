@@ -11,6 +11,23 @@ export const REQUIRED_KINDS = [
   "mobile-first",
   "ai-built",
 ];
+/** Kinds a target may also carry; REQUIRED_KINDS must each appear at least once. */
+export const ALLOWED_KINDS = [
+  ...REQUIRED_KINDS,
+  "interactive-spa",
+  "field-app",
+];
+/** The rules judged on replayed interactions; every finding of these is rated. */
+export const FEEL_RULES = [
+  "idiom:loading-state-missing",
+  "idiom:double-submit",
+  "idiom:interaction-shift",
+  "idiom:motion-snap",
+  "idiom:error-state-missing",
+  "idiom:retry-blocked",
+];
+export const FEEL_PRECISION_THRESHOLD = 0.8;
+export const FEEL_MIN_N = 5;
 export const PRECISION_THRESHOLD = 0.7;
 export const TOP_N = 10;
 export const GENERATED_START = "<!-- field-test:generated:start -->";
@@ -19,8 +36,10 @@ const RATINGS = ["agree", "disagree", "unsure"];
 
 /**
  * @typedef {{ id: string, kind: string, aiBuilt: boolean, urls: string[],
- *   notes?: string, repo?: { url: string, commit: string, install: string[],
- *   server: Record<string, unknown>, dev: string[] } }} Target
+ *   notes?: string, stack?: string, repo?: { url: string, commit: string,
+ *   install: string[], server: Record<string, unknown>, dev: string[] },
+ *   local?: { path: string, server: Record<string, unknown>, dev: string[] }
+ *   }} Target
  * @typedef {{ key: string, rank: number, rules: string[], family?: string,
  *   severity: string, category: string, score: number, title: string,
  *   selector?: string, state?: string, viewport?: string,
@@ -34,8 +53,8 @@ const RATINGS = ["agree", "disagree", "unsure"];
 /** @param {unknown} json @returns {Target[]} */
 export function validateTargets(json) {
   if (!Array.isArray(json)) throw new Error("targets must be an array");
-  if (json.length < 8 || json.length > 10)
-    throw new Error(`expected 8–10 targets, found ${json.length}`);
+  if (json.length < 8 || json.length > 20)
+    throw new Error(`expected 8–20 targets, found ${json.length}`);
   const ids = new Set();
   for (const target of json) {
     const where = `target ${target?.id ?? "(no id)"}`;
@@ -43,8 +62,10 @@ export function validateTargets(json) {
       throw new Error(`${where}: id must be kebab-case`);
     if (ids.has(target.id)) throw new Error(`${where}: duplicate id`);
     ids.add(target.id);
-    if (!REQUIRED_KINDS.includes(target.kind))
+    if (!ALLOWED_KINDS.includes(target.kind))
       throw new Error(`${where}: unknown kind ${target.kind}`);
+    if (target.stack !== undefined && typeof target.stack !== "string")
+      throw new Error(`${where}: stack must be a string`);
     if (typeof target.aiBuilt !== "boolean")
       throw new Error(`${where}: aiBuilt must be boolean`);
     if (
@@ -77,6 +98,23 @@ export function validateTargets(json) {
           `${where}: repo needs url, a pinned 40-char commit, install[], dev[] and server`,
         );
     }
+    if (target.local !== undefined) {
+      if (target.repo !== undefined)
+        throw new Error(`${where}: set exactly one of repo and local`);
+      const local = target.local;
+      if (
+        typeof local.path !== "string" ||
+        local.path.startsWith("/") ||
+        local.path.split(/[\\/]/).includes("..") ||
+        !Array.isArray(local.dev) ||
+        local.dev.length < 1 ||
+        typeof local.server !== "object" ||
+        local.server === null
+      )
+        throw new Error(
+          `${where}: local needs a repo-relative path inside the repo, dev[] and server`,
+        );
+    }
   }
   const kinds = new Set(json.map((target) => target.kind));
   const missing = REQUIRED_KINDS.filter((kind) => !kinds.has(kind));
@@ -85,8 +123,12 @@ export function validateTargets(json) {
   const aiBuilt = json.filter((target) => target.aiBuilt).length;
   if (aiBuilt < 3)
     throw new Error(`expected at least 3 AI-built targets, found ${aiBuilt}`);
-  if (!json.some((target) => target.repo !== undefined))
-    throw new Error("expected at least 1 repo target");
+  if (
+    !json.some(
+      (target) => target.repo !== undefined || target.local !== undefined,
+    )
+  )
+    throw new Error("expected at least 1 repo or local target");
   return json;
 }
 
@@ -144,6 +186,7 @@ export function summarizeQuickResult(content, { elapsedMs, target }) {
     issues: content.counts?.issues ?? issues.length,
     groups: content.counts?.groups ?? 0,
     topIssues,
+    feelIssues: feelIssues(issues, { target, root, mode: "quick" }),
   };
 }
 
@@ -153,6 +196,7 @@ export function summarizeQuickResult(content, { elapsedMs, target }) {
  * @param {{ elapsedMs: number, target: string }} options
  */
 export function summarizeCheckResult(json, runRecord, { elapsedMs, target }) {
+  const root = json.runDirectory;
   const groups = new Map((json.groups ?? []).map((group) => [group.id, group]));
   const issues = json.issues ?? [];
   const topIssues = issues.slice(0, TOP_N).map((issue, index) => {
@@ -189,6 +233,13 @@ export function summarizeCheckResult(json, runRecord, { elapsedMs, target }) {
     issues: issues.length,
     groups: json.groups?.length ?? 0,
     topIssues,
+    feelIssues: feelIssues(issues, {
+      target,
+      root,
+      mode: "check",
+      groups: json.groups,
+      findings: json.findings,
+    }),
     timings: timings ? timingDigest(timings) : null,
     probeCoverage: runRecord?.probe
       ? {
@@ -198,6 +249,132 @@ export function summarizeCheckResult(json, runRecord, { elapsedMs, target }) {
         }
       : null,
   };
+}
+
+/**
+ * Every issue attributed to a feel rule, at any rank. Keys match the Top-10
+ * scheme so an issue in both lists shares one label.
+ * @param {any[]} issues ranked issues of one run
+ * @param {{ target: string, root?: string, mode: "quick" | "check",
+ *   groups?: any[], findings?: any[] }} options
+ */
+export function feelIssues(issues, { target, root, mode, groups, findings }) {
+  const groupById = new Map((groups ?? []).map((group) => [group.id, group]));
+  const findingById = new Map(
+    (findings ?? []).map((finding) => [finding.id, finding]),
+  );
+  return issues.flatMap((issue, index) => {
+    const rules = issueRules(issue);
+    if (!rules.some((rule) => FEEL_RULES.includes(rule))) return [];
+    if (mode === "quick") {
+      const detail = issue.representative;
+      const finding = detail?.finding ?? {};
+      const filmstrip = finding.evidence?.filmstrip?.sheet;
+      return [
+        {
+          key: `${target}:${strip(issue.id)}`,
+          rank: index + 1,
+          rules,
+          severity: issue.severity,
+          title: clip(finding.explanation ?? finding.title ?? issue.category),
+          ...optional("selector", detail?.selector),
+          ...optional("state", finding.state),
+          ...optional("viewport", finding.viewport),
+          ...optional(
+            "timeline",
+            detail?.timeline?.id ?? finding.evidence?.timeline?.id,
+          ),
+          ...optional(
+            "evidence",
+            filmstrip ?? relativeTo(detail?.cropPath, root),
+          ),
+        },
+      ];
+    }
+    const group = groupById.get(issue.groups?.[0]) ?? {};
+    const finding = findingById.get(group.members?.[0]?.id) ?? {};
+    const [state, viewport] = (
+      issue.explanation?.coordinate ??
+      group.where ??
+      ""
+    ).split("/");
+    return [
+      {
+        key: `${target}:${issue.id}`,
+        rank: index + 1,
+        rules,
+        severity: issue.severity,
+        title: clip(group.problem ?? issue.category),
+        ...optional("selector", issue.explanation?.selector ?? group.selector),
+        ...optional("state", state || undefined),
+        ...optional("viewport", viewport || undefined),
+        ...optional("timeline", finding.timeline?.id),
+        ...optional(
+          "evidence",
+          (group.filmstrip ?? group.screenshot)?.replace(
+            /^.*\.idiom\/reports\/[^/]+\//,
+            "",
+          ),
+        ),
+      },
+    ];
+  });
+}
+
+/**
+ * Per-state check runs number their groups independently, so the same rule
+ * and selector on two routes can share a group id. The first keeps the plain
+ * key (shared with the Top 10); later ones get `@<state>` so each finding has
+ * its own label.
+ */
+export function uniqueFeelKeys(issues) {
+  const seen = new Set();
+  return issues.map((issue) => {
+    let key = issue.key;
+    if (seen.has(key)) key = `${issue.key}@${issue.state ?? issue.rank}`;
+    for (let n = 2; seen.has(key); n += 1) key = `${issue.key}@${n}`;
+    seen.add(key);
+    return key === issue.key ? issue : { ...issue, key };
+  });
+}
+
+/**
+ * Held and failure replay counts over a run's observations.json documents:
+ * proof that the probe reached a request it could hold.
+ * @param {any[]} documents
+ */
+export function summarizeHeldReplays(documents, timelines = []) {
+  const summary = {
+    heldQueued: 0,
+    heldRan: 0,
+    failureQueued: 0,
+    failureRan: 0,
+    tuplesWithSlowReplay: 0,
+  };
+  for (const document of documents) {
+    const probe = document?.probe;
+    if (!probe) continue;
+    summary.heldQueued += probe.heldReplay?.queued ?? 0;
+    summary.heldRan += probe.heldReplay?.ran ?? 0;
+    summary.failureQueued += probe.failureReplay?.queued ?? 0;
+    summary.failureRan += probe.failureReplay?.ran ?? 0;
+  }
+  for (const artifact of timelines)
+    if (
+      (artifact?.actions ?? []).some(
+        (action) => action.source === "slow-replay",
+      )
+    )
+      summary.tuplesWithSlowReplay += 1;
+  return summary;
+}
+
+/** Sums summarizeHeldReplays results. */
+export function sumHeldReplays(items) {
+  const total = summarizeHeldReplays([]);
+  for (const item of items)
+    for (const key of Object.keys(total)) total[key] += item?.[key] ?? 0;
+  return total;
 }
 
 /** run.json timings → phase totals, slowest tuples and slowest controls. */
@@ -371,7 +548,10 @@ function describeExit({ exitCode, signal }) {
   return signal ? `killed by ${signal}` : `exited with code ${exitCode}`;
 }
 
-/** Adds an unrated entry per Top-10 issue; never touches an existing one. */
+/**
+ * Adds an unrated entry per Top-10 issue and per feel issue; never touches an
+ * existing one.
+ */
 export function mergeLabelTemplate(results, labels) {
   const merged = {
     version: 1,
@@ -379,7 +559,10 @@ export function mergeLabelTemplate(results, labels) {
   };
   let added = 0;
   for (const target of results.targets ?? [])
-    for (const issue of target.topIssues ?? []) {
+    for (const issue of [
+      ...(target.topIssues ?? []),
+      ...(target.feelIssues ?? []),
+    ]) {
       if (merged.labels[issue.key] !== undefined) continue;
       merged.labels[issue.key] = {
         target: target.id,
@@ -472,10 +655,63 @@ export function precisionByTarget(results, labels) {
   };
 }
 
+/**
+ * Per feel rule: agree/disagree/unsure over every feel issue of the current
+ * results, split by public targets and the local field app. n = agree +
+ * disagree; precision is null at n = 0, never 100%.
+ */
+export function feelPrecision(results, labels) {
+  const blank = () => ({ agree: 0, disagree: 0, unsure: 0 });
+  const rows = new Map(
+    FEEL_RULES.map((rule) => [
+      rule,
+      { public: blank(), fieldApp: blank(), combined: blank() },
+    ]),
+  );
+  for (const target of results.targets ?? []) {
+    const side = target.kind === "field-app" ? "fieldApp" : "public";
+    const seen = new Set();
+    for (const issue of target.feelIssues ?? []) {
+      if (seen.has(issue.key)) continue;
+      seen.add(issue.key);
+      const rated = effectiveRating(labels?.labels?.[issue.key]);
+      if (!rated) continue;
+      for (const rule of issue.rules) {
+        const row = rows.get(rule);
+        if (!row) continue;
+        row[side][rated.rating] += 1;
+        row.combined[rated.rating] += 1;
+      }
+    }
+  }
+  const finish = (counts) => {
+    const n = counts.agree + counts.disagree;
+    return { ...counts, n, precision: n === 0 ? null : counts.agree / n };
+  };
+  return FEEL_RULES.map((rule) => {
+    const row = rows.get(rule);
+    const combined = finish(row.combined);
+    return {
+      rule,
+      public: finish(row.public),
+      fieldApp: finish(row.fieldApp),
+      combined,
+      met:
+        combined.n >= FEEL_MIN_N &&
+        combined.precision !== null &&
+        combined.precision >= FEEL_PRECISION_THRESHOLD,
+    };
+  });
+}
+
 const percent = (value) =>
   value === null || value === undefined ? "—" : `${(value * 100).toFixed(0)}%`;
 const seconds = (ms) =>
   ms === null || ms === undefined ? "—" : `${(ms / 1000).toFixed(1)} s`;
+const feelCell = (counts) =>
+  counts.n === 0
+    ? "n=0 (unmeasured)"
+    : `n=${counts.n} / ${percent(counts.precision)}`;
 const cell = (text) =>
   String(text ?? "")
     .replaceAll("|", "\\|")
@@ -523,6 +759,17 @@ export function renderGenerated(results, labels) {
     ...precisionByRule(results, labels).map(
       (row) =>
         `| \`${row.rule}\` | ${row.agree} | ${row.disagree} | ${row.unsure} | ${row.n} | ${percent(row.precision)} | ${row.source} | ${row.belowThreshold ? "⚠" : ""} |`,
+    ),
+    "",
+    "### Feel rules (all findings, not just Top 10)",
+    "",
+    `Every finding of a feel rule is rated, at any rank. n = agree + disagree (unsure excluded). The gate is precision ≥ ${FEEL_PRECISION_THRESHOLD * 100}% with combined n ≥ ${FEEL_MIN_N}. Field-app findings come from planted cases; the public columns are the field evidence.`,
+    "",
+    "| Rule | Public n / precision | Field app n / precision | Combined n / precision | ≥80% with n≥5 |",
+    "| --- | --- | --- | --- | --- |",
+    ...feelPrecision(results, labels).map(
+      (row) =>
+        `| \`${row.rule}\` | ${feelCell(row.public)} | ${feelCell(row.fieldApp)} | ${feelCell(row.combined)} | ${row.met ? "yes" : "no"} |`,
     ),
     "",
     "### Crashes and timeouts",

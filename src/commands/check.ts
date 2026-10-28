@@ -18,7 +18,12 @@ import type { CaptureScope } from "../capture/scope.js";
 import type { ProductionBuild } from "../capture/types.js";
 import type { PaintedCoverageReport } from "../checks/painted.js";
 import { projectChecksConfig } from "../checks/project-config.js";
+import {
+  type FlowStateCoverage,
+  stateCoverageLine,
+} from "../coverage/states.js";
 import { IdiomError } from "../errors.js";
+import { acceptanceText, basisDescription } from "../findings/presentation.js";
 import { loadRunTuples, resolveStoredRun } from "../review/artifacts.js";
 import { describeSpread, isRepeated } from "../review/groups.js";
 import {
@@ -36,7 +41,7 @@ import {
   type ReviewRunResult,
   runReview,
 } from "../review/run.js";
-import type { Finding } from "../schemas/finding.js";
+import { type Finding, findingSchema } from "../schemas/finding.js";
 import type { ClusterCause } from "../tickets/cluster.js";
 import {
   type ClusterTicketsResult,
@@ -94,6 +99,9 @@ export type CheckAdvisory = {
       severity: Finding["severity"];
       where: string;
       section: string;
+      basis?: Finding["basis"];
+      basisDetails?: Finding["basisDetails"];
+      acceptance?: Finding["acceptance"];
       problem: string;
       fix: string[];
       evidence?: string | undefined;
@@ -261,9 +269,9 @@ export async function checkWithReview(
       );
     }
   }
-  const findings = JSON.parse(
-    await readFile(result.findingsPath, "utf8"),
-  ) as Finding[];
+  const findings = findingSchema
+    .array()
+    .parse(JSON.parse(await readFile(result.findingsPath, "utf8")));
   let summary: CheckSummary;
   if (recordedMode) {
     summary = {
@@ -319,7 +327,9 @@ export async function checkWithReview(
       ),
       groups,
       issues,
-      blocking: live.filter((finding) => finding.severity !== "minor").length,
+      blocking: live.filter(
+        (finding) => finding.severity !== "minor" && finding.basis !== "judged",
+      ).length,
       ...(known === undefined
         ? {}
         : { preExisting: open.length - live.length }),
@@ -357,7 +367,10 @@ export async function checkWithReview(
             where: `${finding.state}/${finding.viewport}${finding.colorScheme === undefined ? "" : `/${finding.colorScheme}`}`,
             section,
             problem: finding.explanation,
-            fix: finding.acceptance,
+            basis: finding.basis,
+            basisDetails: finding.basisDetails,
+            acceptance: finding.acceptance,
+            fix: acceptanceText(finding),
             ...(evidence === undefined
               ? {}
               : {
@@ -449,12 +462,30 @@ export function renderCheckSummary(
     summary.baselineRecorded === undefined
       ? ""
       : `Automatically recorded baseline at ${summary.baselineRecorded.commit.slice(0, 12)} → ${summary.baselineRecorded.path}. Commit this file${summary.baselineRecorded.pixelCount > 0 ? ` and ${summary.baselineRecorded.pixelDirectory}` : ""}. Use idiom baseline accept ${summary.flow} after intentional changes.\n`;
+  const covered = withStateCoverage(output, summary.coverage?.stateCoverage);
   return (
     notice +
     (summary.tickets === undefined
-      ? output
-      : `${output}${renderClusterTicketsResult(summary.tickets)}\n`)
+      ? covered
+      : `${covered}${renderClusterTicketsResult(summary.tickets)}\n`)
   );
+}
+
+/**
+ * The state coverage line goes just before the trailing `Full report:` line,
+ * or last, so the parsed output forms keep their places.
+ */
+function withStateCoverage(
+  output: string,
+  coverage: FlowStateCoverage | undefined,
+): string {
+  if (coverage === undefined) return output;
+  const line = stateCoverageLine(coverage);
+  const lines = output.replace(/\n$/, "").split("\n");
+  const last = lines.at(-1) ?? "";
+  if (last.startsWith("Full report: "))
+    return `${[...lines.slice(0, -1), line, last].join("\n")}\n`;
+  return `${[...lines, line].join("\n")}\n`;
 }
 
 /**
@@ -512,6 +543,7 @@ function withAdvisory(
     for (const finding of pattern.findings) {
       block.push(
         `A${index}. [advisory · ${finding.aspect}] ${pattern.id} — ${finding.section} (${finding.severity}, ${finding.where})`,
+        `   Basis: ${basisDescription(finding)}`,
         `   Problem: ${finding.problem}`,
         ...finding.fix.map((line) => `   Done when: ${line}`),
         ...(finding.evidence === undefined
@@ -561,6 +593,7 @@ function renderCheckFindings(summary: CheckSummary): string {
   for (const [index, finding] of summary.findings.entries()) {
     lines.push(
       `${index + 1}. [${finding.severity}] ${finding.category} — ${finding.where}${finding.selector === undefined ? "" : ` — ${finding.selector}`}`,
+      `   Basis: ${basisDescription(finding)}`,
       `   Problem: ${finding.problem}`,
       ...finding.fix.map((line) => `   Done when: ${line}`),
       ...(finding.screenshot === undefined
@@ -613,6 +646,7 @@ function renderGroupItem(
   return [
     `${index + 1}. [${group.severity}] ${group.category} — ${group.where}${group.selector === undefined ? "" : ` — ${group.selector}`}`,
     ...extra,
+    `   Basis: ${basisDescription(group)}`,
     `   Problem: ${group.problem}`,
     ...group.fix.map((line) => `   Done when: ${line}`),
     ...(repeated
@@ -669,7 +703,7 @@ function renderCheckIssues(
       `   Symptoms (${cause.counts.symptoms}; ${cause.counts.findings} findings):`,
       ...cause.symptoms.map(
         (symptom) =>
-          `   - ${symptom.category} ${symptom.rule ?? "unspecified"} — ${symptom.selector ?? "document"} — ${symptom.measurement} (${symptom.group})`,
+          `   - ${symptom.category} ${symptom.rule ?? "unspecified"} — ${symptom.selector ?? "document"} — ${basisDescription(byId.get(symptom.group) ?? {})} — ${symptom.measurement} (${symptom.group})`,
       ),
       "   Done when: every symptom above clears on recheck.",
       `   Decide symptoms individually: idiom decide --group|--finding … (idiom check ${summary.flow} --all lists each)`,

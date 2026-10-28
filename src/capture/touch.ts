@@ -110,6 +110,7 @@ export async function diagnoseTouchReachability(
     };
 
     for (const candidate of scan.candidates) {
+      const trialStarted = Date.now();
       let hover: Entry["hover"];
       let focus: Entry["focus"] = { status: "hidden" };
       try {
@@ -153,6 +154,7 @@ export async function diagnoseTouchReachability(
         name: candidate.name,
         rect: candidate.rect,
         owner: candidate.owner,
+        elapsedMs: Date.now() - trialStarted,
         baseline: candidate.baseline,
         cause: candidate.cause,
         hover,

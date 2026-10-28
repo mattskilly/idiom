@@ -1,6 +1,7 @@
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tupleCoordinateKey } from "../baseline/coordinate.js";
+import { acceptanceText } from "../findings/presentation.js";
 import { renderInstruction } from "../instructions/render.js";
 import { repairPresentation } from "../repair/presentation.js";
 import type { CatalogFinding } from "../review/catalog.js";
@@ -44,7 +45,10 @@ export async function repairPrompt(
           verification: finding.verification,
           rule: finding.rule,
           category: finding.category,
+          basis: finding.basis,
+          basisDetails: finding.basisDetails,
           acceptance: finding.acceptance,
+          doneWhen: acceptanceText(finding),
           coordinate: tupleCoordinateKey(finding),
           cropPaths: (crops.length ? crops : screenshots).map((path) =>
             resolve(record.runDirectory, path),

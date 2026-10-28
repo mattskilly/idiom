@@ -1,6 +1,8 @@
 {
   "id": "finding-3",
-  "idAliases": ["IDM-20260814a-3"],
+  "idAliases": [
+    "IDM-20260814a-3"
+  ],
   "fingerprint": "9f2c41d0e6b8a75c3d1f0e9b2a4c6d8e0f1a2b3c4d5e6f708192a3b4c5d6e7f8",
   "createdAt": "2026-08-14T18:22:04Z",
   "commit": "b1946ac92492d2347c6235b4d2611184e0f7a8c3",
@@ -13,19 +15,76 @@
   "confidence": 1,
   "rule": "axe:color-contrast",
   "evidence": {
-    "screenshots": ["expired/mobile/screenshot.png"],
+    "screenshots": [
+      "expired/mobile/screenshot.png"
+    ],
     "axeNodes": [
-      { "target": [".terminal-note"], "contrastRatio": 3.1, "required": 4.5 }
+      {
+        "target": [
+          ".terminal-note"
+        ],
+        "contrastRatio": 3.1,
+        "required": 4.5
+      }
     ]
   },
   "explanation": "The explanatory note on the expired state has insufficient contrast against its background.",
   "suggestedArea": "expired-state terminal copy block",
-  "acceptance": [
-    "The expired-state note measures at least 4.5:1 contrast on both viewports."
-  ],
+  "acceptance": {
+    "version": 1,
+    "kind": "rule",
+    "doneWhen": [
+      "The expired-state note measures at least 4.5:1 contrast on both viewports."
+    ],
+    "rule": "axe:color-contrast",
+    "check": "contrast",
+    "coordinate": {
+      "flow": "booking",
+      "state": "expired",
+      "viewport": "mobile"
+    },
+    "requiredCoordinates": [
+      {
+        "flow": "booking",
+        "state": "expired",
+        "viewport": "mobile"
+      },
+      {
+        "flow": "booking",
+        "state": "expired",
+        "viewport": "desktop"
+      }
+    ],
+    "target": {
+      "kind": "selectors",
+      "selectors": [
+        ".terminal-note"
+      ]
+    },
+    "condition": {
+      "kind": "rule-clear",
+      "parameters": {
+        "required": 4.5,
+        "unit": "ratio"
+      },
+      "settingsIdentity": "f9fea892daa53d62ed7906ad290b98cc6021dcb38fac12a7e547a9edee99d3d4",
+      "allowRemoval": false
+    }
+  },
   "verification": {
     "kind": "deterministic-check",
     "check": "contrast"
   },
-  "status": "open"
+  "status": "open",
+  "basis": "measured",
+  "basisDetails": {
+    "kind": "measured",
+    "rule": "axe:color-contrast",
+    "summary": "The note measures 3.1:1 contrast; the required minimum is 4.5:1.",
+    "measurement": {
+      "contrastRatio": 3.1,
+      "required": 4.5,
+      "unit": "ratio"
+    }
+  }
 }

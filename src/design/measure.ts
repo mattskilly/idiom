@@ -356,6 +356,7 @@ export function measureComparisons(
       ? `Figma ${JSON.stringify(layerPath)}${variable ? ` (${variable})` : ""}`
       : "design";
     const candidate: FindingCandidate = {
+      allowRemoval: extra,
       category: "design-drift",
       severity: major ? "major" : "minor",
       rule: "idiom:design-drift",

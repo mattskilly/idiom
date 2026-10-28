@@ -10,6 +10,7 @@ export {
   rulingNameEntrySchema,
   rulingNameRegistrySchema,
 } from "../rulings/names.js";
+export * from "./acceptance.js";
 export { type Decision, decisionSchema } from "./decision.js";
 export * from "./design.js";
 export {
@@ -31,7 +32,12 @@ export {
   persistedExplorationCandidateSchema,
   persistedExplorationSteeringSchema,
 } from "./exploration.js";
-export { type Finding, findingCategories, findingSchema } from "./finding.js";
+export {
+  type Finding,
+  type FindingInput,
+  findingCategories,
+  findingSchema,
+} from "./finding.js";
 export { type Flow, flowSchema } from "./flow.js";
 export {
   type ColorScheme,

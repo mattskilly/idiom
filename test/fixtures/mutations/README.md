@@ -11,8 +11,7 @@ order. Text targets are plain leaves with more than 18 characters; buttons must
 be enabled, single-line, non-disclosure controls with an existing hit box at
 least 44×44. Icon targets contain SVG and an accessible name; the operator
 replaces that name with the glyph `i` and strips title, tooltip and description
-(a nameless control is axe button-name's finding, which unexplained-control
-defers). Gap targets are
+(fully nameless buttons and links belong to `axe:button-name` / `axe:link-name` in default mode, which unexplained-control defers; browser regressions test both owners). Gap targets are
 identified flex parents with exactly two identified input/button children and
 an existing gap of at least 8px. These deliberate preconditions bound this
 corpus; every inapplicable operator/page pair is reported with a reason.
@@ -70,9 +69,8 @@ Add a clean fixture when no existing after page meets those preconditions. Run
 the full script, inspect clean controls and replay evidence, and record every
 miss as follow-up work. Never change a detection rule to improve this report.
 
-`baseline.json` is the independently measured, fixed twelve-case CI selection.
-It includes static rules, dead-control, load shift and content snap; interaction
-shift and missing-loading-state are full-script-only. Selection, denominators,
+`baseline.json` is the independently measured, fixed fourteen-case CI selection.
+It retains the original twelve static/dead-control/load-shift/content-snap cases and adds `clipped-copy::test/fixtures/benchmark/after.html` and `missing-pending::test/fixtures/mutations/clean/loading.html`. Interaction shift remains full-script-only. Selection, denominators,
 rule membership, per-rule recall, overall recall and previously caught case IDs
 are guarded. Tests never regenerate it. See [the field-test procedure](../../../docs/field-test.md#seeded-defect-recall)
 for commands and the explicit review process for baseline updates.

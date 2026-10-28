@@ -1,7 +1,17 @@
-import type { ProbeArtifact, ProbeResult } from "../checks/types.js";
+import type {
+  ActionTimelineArtifact,
+  ProbeArtifact,
+  ProbeResult,
+} from "../checks/types.js";
 import { mergeExplanations } from "./explanations.js";
 import type { ProbeCandidate } from "./probe.js";
 import { identityKeys, type ProbeLedger } from "./probe-ledger.js";
+import type { ReplayCopy, ReplayLedger } from "./replay-ledger.js";
+import {
+  mergeTimelines,
+  TIMELINE_LIMITS,
+  withTimelineIds,
+} from "./timeline.js";
 
 const keysFor = (candidates: ProbeCandidate[]) =>
   identityKeys(
@@ -159,6 +169,13 @@ export function accumulateProbeRound(
           delayMs: next.heldReplay.delayMs,
           queued: previous.heldReplay.queued + next.heldReplay.queued,
           ran: previous.heldReplay.ran + next.heldReplay.ran,
+          ...(previous.heldReplay.reused || next.heldReplay.reused
+            ? {
+                reused:
+                  (previous.heldReplay.reused ?? 0) +
+                  (next.heldReplay.reused ?? 0),
+              }
+            : {}),
           notes: [
             ...new Set([
               ...previous.heldReplay.notes,
@@ -184,6 +201,13 @@ export function accumulateProbeRound(
             ran:
               (previous.failureReplay?.ran ?? 0) +
               (next.failureReplay?.ran ?? 0),
+            ...(previous.failureReplay?.reused || next.failureReplay?.reused
+              ? {
+                  reused:
+                    (previous.failureReplay?.reused ?? 0) +
+                    (next.failureReplay?.reused ?? 0),
+                }
+              : {}),
             completed: [
               ...new Set([
                 ...(previous.failureReplay?.completed ?? []),
@@ -200,4 +224,54 @@ export function accumulateProbeRound(
         }
       : {}),
   };
+}
+
+/**
+ * After a probe round: copy the web-step held replays other states ran for
+ * the flow into this state's timelines and probe summary, as if it had run
+ * them. Timeline ids derive from the step index, so the checks see the same
+ * evidence (and the same findings) as from its own replay.
+ */
+export function fillReplays(options: {
+  ledger: ReplayLedger;
+  partition: string;
+  state: string;
+  keys: readonly string[];
+  timelines: ActionTimelineArtifact | undefined;
+  probe: ProbeArtifact | undefined;
+  delayMs: number;
+  /** Normalize only the raw copies, before merging into the saved tuple. */
+  normalizeCopy?: (copy: ReplayCopy) => ReplayCopy;
+}): ActionTimelineArtifact | undefined {
+  const { ledger, partition, state, keys, probe } = options;
+  const raw = ledger.fill(partition, state, keys);
+  if (raw.reused === 0) return options.timelines;
+  const copy = options.normalizeCopy?.(raw) ?? raw;
+  if (probe) {
+    const held = probe.heldReplay ?? {
+      delayMs: options.delayMs,
+      queued: 0,
+      ran: 0,
+      notes: [],
+    };
+    held.reused = (held.reused ?? 0) + copy.reused;
+    probe.heldReplay = held;
+    if (probe.failureReplay) {
+      probe.failureReplay.completed = [
+        ...new Set([...probe.failureReplay.completed, ...copy.failureKeys]),
+      ];
+      if (copy.failureReused)
+        probe.failureReplay.reused =
+          (probe.failureReplay.reused ?? 0) + copy.failureReused;
+    }
+  }
+  return withTimelineIds(
+    mergeTimelines(options.timelines, {
+      version: 1,
+      status: "ran",
+      limits: { ...TIMELINE_LIMITS },
+      truncated: { actions: 0 },
+      actions: copy.actions,
+    }),
+  );
 }

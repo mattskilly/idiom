@@ -169,7 +169,7 @@ footer a:hover { color:var(--redline-ink); }
 
 <div class="wrap">
 
-  <header class="top"><a class="wordmark" href="https://idiom.build/">idiom</a><span class="meta">Field guide · v0.13.0</span><nav aria-label="Site"><a href="https://idiom.build/">Overview</a><a href="https://github.com/mattskilly/idiom">GitHub</a></nav><button class="theme-toggle" type="button" aria-label="Switch to dark theme" title="Switch to dark theme"><svg class="moon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13.5 9.6A5.6 5.6 0 0 1 6.4 2.5a5.6 5.6 0 1 0 7.1 7.1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><svg class="sun" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button></header>
+  <header class="top"><a class="wordmark" href="https://idiom.build/">idiom</a><span class="meta">Field guide · v0.14.0</span><nav aria-label="Site"><a href="https://idiom.build/">Overview</a><a href="https://github.com/mattskilly/idiom">GitHub</a></nav><button class="theme-toggle" type="button" aria-label="Switch to dark theme" title="Switch to dark theme"><svg class="moon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13.5 9.6A5.6 5.6 0 0 1 6.4 2.5a5.6 5.6 0 1 0 7.1 7.1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><svg class="sun" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button></header>
 
   <section>
     <h2 class="rail">In one breath</h2>
@@ -222,7 +222,7 @@ footer a:hover { color:var(--redline-ink); }
         <tr><td>idiom init</td><td>Scaffold PRODUCT.md, DESIGN.md, and .idiom/. Interactive form interviews you; can also wire itself into an autobuild pipeline. <code>--yes</code> for scripts.</td></tr>
         <tr><td>idiom validate [flow]</td><td>Check the config and flow files are well-formed before anything runs.</td></tr>
         <tr><td>idiom design add &lt;state&gt; &lt;source&gt;</td><td>Declare the intended design for a state: a Figma frame, an HTML or Claude Design export, or an image. A live reference site is declared in the flow file. Findings name where the build drifts.</td></tr>
-        <tr><td>idiom coverage</td><td>List the app's routes that no flow captures yet.</td></tr>
+        <tr><td>idiom coverage</td><td>List the app's routes that no flow captures yet. <code>--states</code> shows, for each state, which viewports, colour schemes, reduced-motion modes, slow and failure replays, probe and focus sweeps, and data conditions were actually reviewed, and what to add to cover the rest.</td></tr>
         <tr><td>idiom reference add</td><td>Pin images or URLs of designs you're aiming for, or with <code>--anti</code>, ones to avoid. The review holds your app against them.</td></tr>
       </tbody>
       <tbody class="group-head"><tr><td colspan="2">The loop</td></tr></tbody>
@@ -230,13 +230,13 @@ footer a:hover { color:var(--redline-ink); }
         <tr><td>idiom check &lt;flow&gt;</td><td>Capture and run every measured check in one step, top issues first. With <code>--baseline</code> it fails only on new problems, for CI and agent loops. <code>--changed</code> checks only the states your Git changes affect and says which it skipped.</td></tr>
         <tr><td>idiom capture &lt;flow&gt;</td><td>Drive the real app, a web page or an Electron desktop window, through every declared state and store screenshots, DOM, console, and accessibility data, tied to the commit.</td></tr>
         <tr><td>idiom review &lt;flow&gt;</td><td>Judge a capture: deterministic checks + model critique against your design law, references, and past decisions.</td></tr>
-        <tr><td>idiom report [run]</td><td>Open the self-contained HTML report. It is printable, sendable, and states its own coverage and limits.</td></tr>
+        <tr><td>idiom report [run]</td><td>Open the self-contained HTML report. It is printable, sendable, and states its own coverage and limits. Every finding says whether it was measured, observed or judged, and how its fix will be checked.</td></tr>
         <tr><td>idiom decide</td><td>Accept or reject findings, with reasons. Recorded permanently; rule-scope rejections suppress the pattern forever.</td></tr>
         <tr><td>idiom ruling</td><td>Answer the design questions a review raised ("you style inputs three ways; which is law?", or "17px padding appears 34 times here; add a step or keep reporting it?"). Your answer is appended to DESIGN.md.</td></tr>
         <tr><td>idiom instruction</td><td>Render one accepted finding as plain paste-ready text for any coding tool or chat.</td></tr>
         <tr><td>idiom tickets</td><td>Emit accepted findings as bounded repair tickets into your tracker's triage.</td></tr>
         <tr><td>idiom fix &lt;flow&gt;</td><td>Hand the top findings to your local coding agent (Claude Code or Codex), then verify each repair.</td></tr>
-        <tr><td>idiom verify &lt;flow&gt;</td><td>After the fix merges: re-render, compare before/after, exit 0 only if the finding is provably gone. Model-free, CI-safe.</td></tr>
+        <tr><td>idiom verify &lt;flow&gt;</td><td>After the fix merges: re-render, compare before/after, exit 0 only if the finding is provably gone. Each finding's acceptance check is reported as passed, failed or not re-checkable, with the reason. Model-free, CI-safe.</td></tr>
         <tr><td>idiom sweep --all</td><td>After an autonomous build: capture every flow, group findings that share a cause into one cleanup set ranked by how noticeable and prominent each is, and emit at most 10 repair tickets for you to triage. <code>--deterministic-only</code> needs no model key.</td></tr>
         <tr><td>idiom compare &lt;flow&gt;</td><td>Write before/after composites for the states that changed between two captures.</td></tr>
       </tbody>

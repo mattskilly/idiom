@@ -1,3 +1,4 @@
+import { observed } from "../findings/observation.js";
 import { defaultChecksSettings } from "../schemas/project.js";
 import {
   scanResult,
@@ -25,6 +26,18 @@ export const focusVisibleCheck: DeterministicCheck = {
       seen.add(selector);
       const name = record.name === "" ? selector : `“${record.name}”`;
       candidates.push({
+        observation: observed(
+          {
+            source: "focus-trial",
+            kind: "focus",
+            selector: record.selector,
+            name: record.name,
+          },
+          record,
+          record.elapsedMs === undefined
+            ? undefined
+            : { elapsedMs: record.elapsedMs },
+        ),
         category: this.id,
         severity: "major",
         rule: "idiom:focus-not-visible",

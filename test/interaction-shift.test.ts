@@ -5,6 +5,7 @@ import {
   interactionShifts,
   isLate,
   type ShiftCause,
+  scrollbarShift,
   shiftFix,
 } from "../src/checks/interaction-shift.js";
 import { layoutShiftCheck } from "../src/checks/layout-shift.js";
@@ -139,6 +140,32 @@ describe("attributeShift", () => {
       ]),
     ).toBe(remove);
   });
+  test.each(["insert", "remove"] as const)(
+    "a 24px %s includes the 16px gap or margin beside its slot",
+    (kind) => {
+      const source = cause(kind, [0, 100, 600, 24]);
+      const distance = kind === "insert" ? 40 : -40;
+      expect(
+        attributeShift(
+          candidate([0, 200, 600, 40], [0, 200 + distance, 600, 40]),
+          [source],
+        ),
+      ).toBe(source);
+    },
+  );
+  test.each(["insert", "remove"] as const)(
+    "a 24px %s includes horizontal spacing too",
+    (kind) => {
+      const source = cause(kind, [100, 0, 24, 40]);
+      const distance = kind === "insert" ? 40 : -40;
+      expect(
+        attributeShift(
+          candidate([200, 0, 100, 40], [200 + distance, 0, 100, 40]),
+          [source],
+        ),
+      ).toBe(source);
+    },
+  );
   test("an insert below the candidate is not its cause", () => {
     expect(
       attributeShift(candidate([0, 100, 1440, 40], [0, 148, 1440, 40]), [
@@ -187,9 +214,54 @@ describe("attributeShift", () => {
       ]),
     ).toBeUndefined();
   });
+  test("a shrinking disclosure label cannot explain content moving down", () => {
+    expect(
+      attributeShift(candidate([0, 100, 600, 40], [0, 280, 600, 40]), [
+        cause("resize", [0, 40, 67, 20], [0, 40, 0, 0], {
+          delta: { dw: -67, dh: -20 },
+        }),
+      ]),
+    ).toBeUndefined();
+  });
+  test("a removed box cannot explain forward displacement", () => {
+    expect(
+      attributeShift(candidate([100, 0, 100, 40], [148, 0, 100, 40]), [
+        cause("remove", [0, 0, 48, 40]),
+      ]),
+    ).toBeUndefined();
+  });
+  test("a one-pixel resize cannot explain a fifteen-pixel jump", () => {
+    expect(
+      attributeShift(candidate([0, 100, 600, 40], [0, 115, 600, 40]), [
+        cause("resize", [0, 0, 600, 72], [0, 0, 600, 73], {
+          delta: { dw: 0, dh: 1 },
+        }),
+      ]),
+    ).toBeUndefined();
+  });
 });
 
 describe("interactionShifts", () => {
+  test("a late 24px notice plus 16px column gap reports the 40px push", () => {
+    const timeline = action(
+      [
+        [0, { "section.content": [0, 200, 600, 40] }],
+        [
+          705,
+          {
+            "div.notice": [0, 160, 600, 24],
+            "section.content": [0, 240, 600, 40],
+          },
+        ],
+      ],
+      { mutations: [insert("div.notice", 700, [0, 160, 600, 24])] },
+    );
+    const shifts = interactionShifts(timeline, viewport, settings);
+    expect(shifts).toHaveLength(1);
+    expect(shifts[0]?.late).toBe(true);
+    expect(shifts[0]?.cause.selector).toBe("div.notice");
+    expect(shifts[0]?.moved[0]?.peakDy).toBe(40);
+  });
   test("a banner inserted at the top displaces the content below it", () => {
     const [shift, ...rest] = interactionShifts(banner(), viewport, settings);
     expect(rest).toEqual([]);
@@ -363,6 +435,42 @@ describe("interactionShifts", () => {
       offset: { x: 0, y: 0 },
     });
     expect(interactionShifts(timeline, viewport, settings)).toEqual([]);
+  });
+
+  test("an overflowing disclosure control still belongs to its DOM ancestor", () => {
+    const disclosure = (time: number) =>
+      action(
+        [
+          [
+            0,
+            {
+              section: [0, 0, 600, 100],
+              "section > details > summary": [0, 120, 600, 35],
+              footer: [0, 180, 600, 40],
+            },
+          ],
+          [
+            time,
+            {
+              section: [0, 0, 600, 280],
+              "section > details > summary": [0, 300, 600, 35],
+              footer: [0, 360, 600, 40],
+            },
+          ],
+        ],
+        {
+          effectRegion: {
+            control: "section > details > summary",
+            controls: [],
+          },
+        },
+      );
+    expect(interactionShifts(disclosure(250), viewport, settings)).toEqual([]);
+    // Keep reporting proven late arrivals, even in the disclosure's region.
+    const late = disclosure(750);
+    const baseline = late.frames[0];
+    if (baseline) late.frames.splice(1, 0, { ...baseline, time: 600 });
+    expect(interactionShifts(late, viewport, settings)).toHaveLength(1);
   });
 
   const rows = (order: string[], y0 = 100) =>
@@ -584,6 +692,241 @@ describe("interactionShifts", () => {
     ).toHaveLength(1);
   });
 
+  test("hiding what the user clicked in (display: none) lets the page close up", () => {
+    // A dismissed promo collapses to nothing without leaving the DOM.
+    const dismiss = (control: Box) =>
+      action([
+        [
+          0,
+          {
+            "button#show": control,
+            "div.promo": [300, 100, 700, 400],
+            "div.promo > img": [300, 160, 700, 340],
+            "article.next": [300, 520, 700, 300],
+          },
+        ],
+        [
+          60,
+          {
+            "button#show": [0, 0, 0, 0],
+            "div.promo": [0, 0, 0, 0],
+            "div.promo > img": [0, 0, 0, 0],
+            "article.next": [300, 100, 700, 300],
+          },
+        ],
+      ]);
+    expect(
+      interactionShifts(dismiss([960, 110, 32, 32]), viewport, settings),
+    ).toEqual([]);
+    // The same collapse triggered from outside the promo pulls the post up.
+    const elsewhere = dismiss([24, 16, 120, 32]);
+    const last = elsewhere.frames[1];
+    if (last)
+      last.elements = last.elements.filter(
+        (element) => element.selector !== "button#show",
+      );
+    expect(interactionShifts(elsewhere, viewport, settings)).toHaveLength(1);
+  });
+
+  test("collapsing the sidebar beside the clicked panel is the action's effect", () => {
+    // The toggle sits in the main panel's header; the sidebar narrows from
+    // 240 to 64 and the panel, with everything in it, closes up the 176px.
+    const collapse = (control: Box, controlEnd: Box, panelEnd = 64) =>
+      action(
+        [
+          [
+            0,
+            {
+              "aside.sidebar": [0, 0, 240, 900],
+              "aside.sidebar > span.label": [52, 22, 120, 20],
+              "div.panel": [240, 0, 1200, 900],
+              "button#show": control,
+              "div.panel > table": [264, 810, 1152, 334],
+            },
+          ],
+          [
+            40,
+            {
+              "aside.sidebar": [0, 0, 64, 900],
+              "div.panel": [panelEnd, 0, 1376, 900],
+              "button#show": controlEnd,
+              "div.panel > table": [panelEnd + 24, 869, 1328, 334],
+            },
+          ],
+        ],
+        {
+          mutations: [
+            {
+              time: 30,
+              type: "remove",
+              selector: "aside.sidebar > span.label",
+              rect: rect([52, 22, 120, 20]),
+            },
+          ],
+        },
+      );
+    // The table overflows the panel's scrolling box but starts inside it.
+    expect(
+      interactionShifts(
+        collapse([264, 16, 32, 32], [88, 16, 32, 32]),
+        viewport,
+        settings,
+      ),
+    ).toEqual([]);
+    // A control outside the panel that stays put: the panel was pushed.
+    expect(
+      interactionShifts(
+        collapse([1300, 1200, 32, 32], [1300, 1200, 32, 32]),
+        viewport,
+        settings,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  test("content inside a replaced subtree is new content, even with reused selectors", () => {
+    // The old post's node is removed under its structural selector and a new
+    // one inserted under another; the handle beside the longer name is new.
+    const timeline = action(
+      [
+        [
+          0,
+          {
+            "div.feed > article > header > strong": [0, 100, 60, 20],
+            "div.feed > article > header > a": [60, 100, 100, 20],
+          },
+        ],
+        [
+          60,
+          {
+            "div.feed > article > header > strong": [0, 100, 90, 20],
+            "div.feed > article > header > a": [90, 100, 100, 20],
+          },
+        ],
+      ],
+      {
+        mutations: [
+          {
+            time: 30,
+            type: "remove",
+            selector: "div.feed > article",
+            rect: null,
+          },
+          insert('article[aria-label="New post"]', 30, [0, 100, 600, 100]),
+        ],
+      },
+    );
+    expect(interactionShifts(timeline, viewport, settings)).toEqual([]);
+    // Without the removal the same node's name grew: a real shift.
+    timeline.mutations = timeline.mutations.filter(
+      (mutation) => mutation.type === "insert",
+    );
+    expect(interactionShifts(timeline, viewport, settings)).toHaveLength(1);
+  });
+
+  test("a list repopulated in one batch holds new results, not pushed content", () => {
+    // A filter takes the old results out and renders new ones; the members
+    // that reuse their slots' selectors move under an inserted chip row.
+    const filter = (removed: boolean) =>
+      action(
+        [
+          [
+            0,
+            {
+              "div.list > article:nth-of-type(1)": [500, 200, 800, 60],
+              "div.list > article:nth-of-type(2)": [500, 280, 800, 60],
+            },
+          ],
+          [
+            60,
+            {
+              "div.chips": [500, 100, 800, 60],
+              "div.list > article:nth-of-type(1)": [500, 260, 800, 60],
+              "div.list > article:nth-of-type(2)": [500, 340, 800, 60],
+            },
+          ],
+        ],
+        {
+          mutations: [
+            insert("div.chips", 30, [500, 100, 800, 60]),
+            insert(
+              "div.list > article:nth-of-type(3)",
+              30,
+              [500, 400, 800, 60],
+            ),
+            ...(removed
+              ? [
+                  {
+                    time: 30,
+                    type: "remove" as const,
+                    selector: "div.grid > article",
+                    rect: null,
+                  },
+                ]
+              : []),
+          ],
+        },
+      );
+    expect(interactionShifts(filter(true), viewport, settings)).toEqual([]);
+    // Items appended with nothing taken out: the existing results persist.
+    expect(interactionShifts(filter(false), viewport, settings)).toHaveLength(
+      1,
+    );
+  });
+
+  test("a placeholder swapped for results still pushes what is below", () => {
+    // Loading ? <div spinner/> : <div results/>: the results take the
+    // spinner's slot late and push the content under it.
+    const swap = (below: Record<string, Box>) =>
+      action(
+        [
+          [0, { "main > div.spinner": [0, 100, 600, 40], ...below }],
+          [
+            720,
+            {
+              "main > div.results": [0, 100, 600, 300],
+              ...Object.fromEntries(
+                Object.entries(below).map(([selector, [x, y, w, h]]) => [
+                  selector,
+                  [x, y + 260, w, h] as Box,
+                ]),
+              ),
+            },
+          ],
+        ],
+        {
+          durationMs: 900,
+          mutations: [
+            {
+              time: 700,
+              type: "remove",
+              selector: "main > div.spinner",
+              rect: rect([0, 100, 600, 40]),
+            },
+            insert("main > div.results", 700, [0, 100, 600, 300]),
+          ],
+        },
+      );
+    const one = interactionShifts(
+      swap({ "main > div.below": [0, 160, 600, 200] }),
+      viewport,
+      settings,
+    );
+    expect(one).toHaveLength(1);
+    expect(one[0]?.late).toBe(true);
+    // Two pushed siblings look like a list, but the spinner was swapped
+    // for the results in its own slot, not filtered out of a list.
+    expect(
+      interactionShifts(
+        swap({
+          "main > div.below": [0, 160, 600, 200],
+          "main > div.footer": [0, 380, 600, 80],
+        }),
+        viewport,
+        settings,
+      ),
+    ).toHaveLength(1);
+  });
+
   test("a cause that was itself pushed joins the shift that pushed it", () => {
     // Table columns: the first widens and pushes the second, which then
     // widens too and pushes the third.
@@ -626,6 +969,33 @@ describe("interactionShifts", () => {
     const timeline = banner();
     timeline.mutations = [];
     expect(interactionShifts(timeline, viewport, settings)).toEqual([]);
+  });
+
+  test("replaced content's descendants are new content, even with reused selectors", () => {
+    const timeline = action(
+      [
+        [
+          0,
+          {
+            article: [0, 100, 600, 100],
+            "article > strong": [0, 100, 60, 20],
+            "article > a": [60, 100, 100, 20],
+          },
+        ],
+        [
+          60,
+          {
+            article: [0, 100, 600, 100],
+            "article > strong": [0, 100, 90, 20],
+            "article > a": [90, 100, 100, 20],
+          },
+        ],
+      ],
+      { mutations: [insert("article", 30, [0, 100, 600, 100])] },
+    );
+    expect(interactionShifts(timeline, viewport, settings)).toEqual([]);
+    timeline.mutations = [];
+    expect(interactionShifts(timeline, viewport, settings)).toHaveLength(1);
   });
 
   test("an html or body resize is not a cause", () => {
@@ -1025,6 +1395,18 @@ describe("layout-shift names the late content", () => {
     expect(finding?.timeline).toBeUndefined();
   });
 
+  test("load-sample provenance retains the recorded observation window without a timeline", () => {
+    const measured = structuredClone(observations);
+    if (measured?.version !== 2 || !measured.layoutShift)
+      throw new Error("missing load-shift fixture");
+    measured.layoutShift.elapsedMs = 1750;
+    const [finding] = runLayout(tuple({ observations: measured })).candidates;
+    expect(finding?.observation).toMatchObject({
+      action: { source: "load-sample", kind: "load" },
+      timing: { elapsedMs: 1750 },
+    });
+  });
+
   test("a source leaving the viewport does not falsely name nearby content as its cause", () => {
     const leaving = structuredClone(load);
     leaving.mutations = [insert("#toc", 1230, [20, 20, 260, 625])];
@@ -1041,5 +1423,244 @@ describe("layout-shift names the late content", () => {
     );
     expect(finding?.fix).toBeUndefined();
     expect(finding?.timeline).toBeUndefined();
+  });
+});
+
+test("acceptance tracks the action across timeline IDs and changing shift causes", async () => {
+  const { buildRuleContract } = await import("../src/findings/contract.js");
+  const { evaluateRuleAcceptance } = await import(
+    "../src/verify/acceptance.js"
+  );
+  const { emptyObservation } = await import("./motion-support.js");
+  const original = tuple({
+    observations: emptyObservation,
+    timelines: artifact([banner()]),
+  });
+  const candidate = run(original).candidates[0];
+  if (!candidate) throw new Error("missing fixture candidate");
+  const contract = buildRuleContract(original, candidate).acceptance;
+  expect(contract.target).toMatchObject({
+    kind: "action",
+    action: { selector: "button#show" },
+  });
+  expect(contract.condition.parameters.thresholds).toHaveProperty(
+    "interactionShift.minDistance",
+    4,
+  );
+  const evaluate = (timeline: ActionTimeline) => {
+    const current = tuple({
+      observations: emptyObservation,
+      timelines: artifact([timeline]),
+    });
+    return evaluateRuleAcceptance({
+      contract,
+      currentA: [current],
+      currentB: [current],
+    });
+  };
+  const replaced = JSON.parse(
+    JSON.stringify(banner()).replaceAll("div.banner", "div.new-cause"),
+  );
+  replaced.id = "different-ordinal";
+  expect(evaluate(replaced).status).toBe("failed");
+  const clear = action([[0, { "button#show": [24, 16, 120, 32] }]], {
+    id: "new-id",
+  });
+  expect(evaluate(clear).status).toBe("passed");
+  expect(evaluate({ ...clear, selector: "button#other" }).status).toBe(
+    "not-recheckable",
+  );
+  expect(
+    evaluate({ ...clear, status: "partial", reason: "budget" }).status,
+  ).toBe("not-recheckable");
+  expect(evaluate({ ...clear, truncated: ["frames"] }).status).toBe(
+    "not-recheckable",
+  );
+  // A matching violation proves failure even when its timeline is partial.
+  expect(
+    evaluate({ ...banner(), status: "partial", reason: "budget" }).status,
+  ).toBe("failed");
+});
+
+describe("scrollbar shift", () => {
+  type Root = NonNullable<ActionTimeline["rootScroll"]>[number];
+  const open: Root = {
+    time: 0,
+    gutter: 15,
+    scrollable: true,
+    stableGutter: false,
+    compensation: false,
+  };
+  const locked = (changes: Partial<Root> = {}): Root => ({
+    time: 24,
+    gutter: 0,
+    scrollable: false,
+    stableGutter: false,
+    lockedBy: "body overflow: hidden",
+    compensation: false,
+    ...changes,
+  });
+  const dialog = (rootScroll: Root[], frames?: Parameters<typeof action>[0]) =>
+    action(frames ?? [[0, { "button#show": [24, 16, 120, 32] }]], {
+      rootScroll,
+      mutations: [insert("div.dialog", 20, [420, 200, 600, 400])],
+    });
+  const scrollbar = (subject: ActionTimeline) =>
+    run(tuple({ timelines: artifact([subject]) })).candidates.filter(
+      (candidate) => candidate.selectorHint === "html",
+    );
+
+  test("a measured removal is one finding that recommends a stable gutter", async () => {
+    expect(scrollbarShift(dialog([open, locked()]))).toEqual({
+      time: 24,
+      direction: "removed",
+      gutter: 15,
+      lockedBy: "body overflow: hidden",
+    });
+    const result = run(
+      tuple({ timelines: artifact([dialog([open, locked()])]) }),
+    );
+    expect(result.candidates).toHaveLength(1);
+    const [finding] = result.candidates;
+    expect(finding).toMatchObject({
+      severity: "major",
+      selectorHint: "html",
+      fingerprintHint: "interaction-shift:scrollbar",
+      timeline: "probe-1",
+    });
+    expect(finding?.explanation).toBe(
+      'After clicking "Show notice" (button#show), the page scrollbar was removed (body overflow: hidden), so all content shifts 15px horizontally 24ms after input on systems with classic scrollbars.',
+    );
+    const { buildRuleContract } = await import("../src/findings/contract.js");
+    const { evaluateRuleAcceptance } = await import(
+      "../src/verify/acceptance.js"
+    );
+    const { emptyObservation } = await import("./motion-support.js");
+    if (!finding) throw new Error("missing scrollbar finding");
+    expect(finding.observation?.result).toMatchObject({
+      rootScroll: [open, locked()],
+    });
+    const current = tuple({
+      observations: emptyObservation,
+      timelines: artifact([dialog([open, locked()])]),
+    });
+    const contract = buildRuleContract(current, finding).acceptance;
+    expect(contract.target).toMatchObject({
+      kind: "action",
+      action: { selector: "button#show" },
+    });
+    expect(
+      evaluateRuleAcceptance({
+        contract,
+        currentA: [current],
+        currentB: [current],
+      }).status,
+    ).toBe("failed");
+    const fixed = tuple({
+      observations: emptyObservation,
+      timelines: artifact([dialog([open, locked({ compensation: true })])]),
+    });
+    expect(
+      evaluateRuleAcceptance({ contract, currentA: [fixed], currentB: [fixed] })
+        .status,
+    ).toBe("passed");
+    expect(finding.fix).toContain("scrollbar-gutter: stable");
+    expect(finding?.acceptance).toEqual([
+      'After clicking "Show notice" (button#show), locking or unlocking page scroll does not change the width available to content.',
+    ]);
+  });
+
+  test("headless scroll locks and unlocks without a measured gutter are non-defects", () => {
+    const headless = { ...open, gutter: 0 };
+    for (const samples of [
+      [headless, locked()],
+      [locked({ time: 0 }), { ...headless, time: 30 }],
+      [headless, locked(), { ...headless, time: 300 }],
+    ]) {
+      const subject = dialog(samples);
+      expect(scrollbarShift(subject)).toBeUndefined();
+      expect(run(tuple({ timelines: artifact([subject]) })).candidates).toEqual(
+        [],
+      );
+    }
+  });
+
+  test("a stable gutter, compensation, or a page that never scrolled is clean", () => {
+    expect(
+      scrollbar(
+        dialog([
+          { ...open, stableGutter: true },
+          locked({ stableGutter: true }),
+        ]),
+      ),
+    ).toEqual([]);
+    expect(scrollbar(dialog([open, locked({ compensation: true })]))).toEqual(
+      [],
+    );
+    expect(
+      scrollbar(dialog([{ ...open, scrollable: false }, locked()])),
+    ).toEqual([]);
+    // Overflow that changes because content grew is not a scroll lock.
+    expect(
+      scrollbar(
+        dialog([
+          { ...open, scrollable: false },
+          { ...open, time: 40 },
+        ]),
+      ),
+    ).toEqual([]);
+  });
+
+  test("lock and unlock in one action is one finding; unlock alone is an addition", () => {
+    const both = dialog([open, locked(), { ...open, time: 300 }]);
+    expect(scrollbar(both)).toHaveLength(1);
+    expect(scrollbarShift(both)?.direction).toBe("removed");
+    const unlock = scrollbarShift(
+      dialog([locked({ time: 0 }), { ...open, time: 30 }]),
+    );
+    expect(unlock).toMatchObject({ direction: "added", gutter: 15 });
+    // The lock's compensation decides the unlock too.
+    expect(
+      scrollbarShift(
+        dialog([
+          locked({ time: 0, compensation: true }),
+          { ...open, time: 30 },
+        ]),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("a measured gutter attributes sideways movement to the scrollbar, not an insert at left", () => {
+    const subject = dialog(
+      [{ ...open, gutter: 15 }, locked({ gutter: 0 })],
+      [
+        [
+          0,
+          {
+            "button#show": [24, 16, 120, 32],
+            "main > p": [480, 300, 465, 40],
+            "aside.note": [480, 400, 465, 40],
+          },
+        ],
+        [
+          30,
+          {
+            "main > p": [487.5, 300, 465, 40],
+            "aside.note": [487.5, 400, 465, 40],
+          },
+        ],
+      ],
+    );
+    subject.mutations = [insert("div.toast", 20, [0, 300, 300, 140])];
+    const shifts = interactionShifts(subject, viewport, settings);
+    expect(shifts.map(({ cause }) => cause.kind)).toEqual(["scrollbar"]);
+    expect(shifts[0]?.moved.map((entry) => entry.selector).sort()).toEqual([
+      "aside.note",
+      "main > p",
+    ]);
+    const findings = run(tuple({ timelines: artifact([subject]) })).candidates;
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.selectorHint).toBe("html");
+    expect(findings[0]?.explanation).toContain("aside.note (8px)");
   });
 });

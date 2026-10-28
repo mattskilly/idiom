@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { relative, resolve, sep } from "node:path";
+import { acceptanceText } from "../findings/presentation.js";
 import {
   repairScopeBoundary,
   repairSiblingLines,
@@ -81,7 +82,7 @@ export function renderTicket(options: {
     "",
     "## Acceptance criteria",
     "",
-    ...finding.acceptance.map((criterion) => `- [ ] ${criterion}`),
+    ...acceptanceText(finding).map((criterion) => `- [ ] ${criterion}`),
     "",
     "## Out of scope",
     "",
@@ -138,7 +139,9 @@ export function renderClusterTicket(options: {
         : causeTitle;
   const criteria = [
     ...new Set(
-      cluster.members.flatMap((member) => member.record.finding.acceptance),
+      cluster.members.flatMap((member) =>
+        acceptanceText(member.record.finding),
+      ),
     ),
   ];
   const causeLead =
@@ -212,7 +215,7 @@ export function renderClusterTicket(options: {
       `Selector: ${JSON.stringify(selector ?? "unavailable")}; component: ${JSON.stringify(member.component)}.`,
       "",
       "Acceptance criteria for this member:",
-      ...finding.acceptance.map((text) => `- ${text}`),
+      ...acceptanceText(finding).map((text) => `- ${text}`),
       "",
     );
     const images = options.availableImages.get(member.id) ?? [];

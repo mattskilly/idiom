@@ -9,6 +9,34 @@ var __export = (target2, all) => {
     __defProp(target2, name, { get: all[name], enumerable: true });
 };
 
+// src/findings/presentation.ts
+function acceptanceText(finding) {
+  return Array.isArray(finding.acceptance) ? finding.acceptance : finding.acceptance.doneWhen;
+}
+function basisDescription(finding) {
+  const basis = finding.basis ?? (finding.layer === "model" ? "judged" : "measured");
+  const details = finding.basisDetails;
+  if (!details)
+    return `${basis}: ${basis === "judged" ? "model critique" : "measurement details not recorded"}`;
+  if (details.kind === "judged")
+    return `judged: ${details.summary}${details.confidence === void 0 ? "" : ` (stated confidence ${details.confidence})`}`;
+  if (details.kind === "measured")
+    return `measured: ${details.rule} \u2014 ${details.summary}`;
+  const timing = details.timing;
+  return `observed: ${details.action.kind} ${details.action.selector ?? details.action.name} \u2014 ${details.summary} (${timing.elapsedMs !== void 0 ? `${timing.elapsedMs}ms elapsed` : timing.windowMs !== void 0 ? `${timing.windowMs}ms window` : timing.reason ?? "timing not recorded"})`;
+}
+function acceptanceDescription(acceptance) {
+  if (acceptance.kind !== "rule")
+    return `${acceptance.kind}: no executable acceptance condition recorded`;
+  const target2 = acceptance.target;
+  return `${acceptance.rule}: rule-clear for ${target2.kind === "action" ? `${target2.action.source} ${target2.action.kind} ${target2.action.selector ?? target2.action.name}` : target2.kind === "selectors" ? target2.selectors.join(", ") : "document"}; settings ${acceptance.condition.settingsIdentity}`;
+}
+var init_presentation = __esm({
+  "src/findings/presentation.ts"() {
+    "use strict";
+  }
+});
+
 // src/baseline/render.ts
 function baselineStaleWarning(baseline) {
   return baseline.stale === void 0 ? void 0 : `Warning: baseline ${baseline.commit.slice(0, 12)} was recorded with a different checks configuration \u2014 possibly stale; re-record on main. ${baseline.stale.reason}`;
@@ -16,6 +44,7 @@ function baselineStaleWarning(baseline) {
 function renderFindingDetails(findings) {
   return findings.flatMap((finding, index) => [
     `${index + 1}. [${finding.severity}] ${finding.category} \u2014 ${finding.where}${finding.selector === void 0 ? "" : ` \u2014 ${finding.selector}`}`,
+    `   Basis: ${basisDescription(finding)}`,
     `   Problem: ${finding.problem}`,
     ...finding.fix.map((line) => `   Done when: ${line}`),
     ...finding.screenshot === void 0 ? [] : [`   Evidence: ${finding.screenshot}`],
@@ -50,6 +79,7 @@ function renderBaselineComparison(summary) {
 var init_render = __esm({
   "src/baseline/render.ts"() {
     "use strict";
+    init_presentation();
   }
 });
 
@@ -909,12 +939,12 @@ async function publishCheck(context2, start, end, metadata2, budget, signal) {
         completedAt: Date.now(),
         id: randomUUID()
       };
-      const observed = new Map(
+      const observed3 = new Map(
         state.pending.map((entry) => [entry.path, entry.at])
       );
       state.pending = end.ignored.filter((path) => path.length <= 512).slice(-MAX_PENDING).map((path) => ({
         path,
-        at: observed.get(path) ?? metadata2.startedAt
+        at: observed3.get(path) ?? metadata2.startedAt
       }));
       state.overflow = end.ignored.length > MAX_PENDING || end.ignored.some((path) => path.length > 512);
       state.sessions = {};
@@ -990,47 +1020,153 @@ var init_lib = __esm({
   }
 });
 
-// src/schemas/finding.ts
+// src/schemas/acceptance.ts
 import { z as z4 } from "zod";
+var coordinateSchema, actionTargetSchema, acceptanceTargetSchema, text, acceptanceSchema, basisDetailsSchema;
+var init_acceptance = __esm({
+  "src/schemas/acceptance.ts"() {
+    "use strict";
+    coordinateSchema = z4.object({
+      flow: z4.string().min(1),
+      state: z4.string().min(1),
+      viewport: z4.string().min(1),
+      colorScheme: z4.enum(["light", "dark"]).optional(),
+      combination: z4.string().optional()
+    }).strict();
+    actionTargetSchema = z4.object({
+      source: z4.enum([
+        "load",
+        "web-step",
+        "probe-click",
+        "probe-hover",
+        "slow-replay",
+        "failure-replay",
+        "focus-trial",
+        "touch-trial",
+        "liveness",
+        "progress",
+        "explanation-trial",
+        "collection-probe",
+        "load-sample"
+      ]),
+      kind: z4.string().min(1),
+      name: z4.string(),
+      selector: z4.string().min(1).optional(),
+      stepIndex: z4.number().int().nonnegative().optional(),
+      heldOf: z4.enum(["web-step", "probe-click"]).optional(),
+      failureOf: z4.enum(["web-step", "probe-click"]).optional()
+    }).strict();
+    acceptanceTargetSchema = z4.discriminatedUnion("kind", [
+      z4.object({
+        kind: z4.literal("selectors"),
+        selectors: z4.array(z4.string().min(1)).min(1)
+      }).strict(),
+      z4.object({
+        kind: z4.literal("document"),
+        scope: z4.string().optional(),
+        reference: z4.string().optional(),
+        region: z4.object({
+          x: z4.number().finite(),
+          y: z4.number().finite(),
+          width: z4.number().positive(),
+          height: z4.number().positive()
+        }).strict().optional()
+      }).strict(),
+      z4.object({
+        kind: z4.literal("action"),
+        action: actionTargetSchema,
+        relatedActions: z4.array(actionTargetSchema).optional()
+      }).strict()
+    ]);
+    text = { version: z4.literal(1), doneWhen: z4.array(z4.string()) };
+    acceptanceSchema = z4.discriminatedUnion("kind", [
+      z4.object({
+        ...text,
+        kind: z4.literal("rule"),
+        rule: z4.string().min(1),
+        check: z4.string().min(1),
+        coordinate: coordinateSchema,
+        requiredCoordinates: z4.array(coordinateSchema).min(1),
+        target: acceptanceTargetSchema,
+        condition: z4.object({
+          kind: z4.literal("rule-clear"),
+          parameters: z4.record(z4.string(), z4.json()),
+          settingsIdentity: z4.string().min(1),
+          allowRemoval: z4.boolean()
+        }).strict()
+      }).strict(),
+      z4.object({ ...text, kind: z4.literal("manual") }).strict(),
+      z4.object({ ...text, kind: z4.literal("legacy") }).strict()
+    ]);
+    basisDetailsSchema = z4.discriminatedUnion("kind", [
+      z4.object({
+        kind: z4.literal("measured"),
+        rule: z4.string(),
+        summary: z4.string(),
+        measurement: z4.record(z4.string(), z4.json()).optional()
+      }).strict(),
+      z4.object({
+        kind: z4.literal("observed"),
+        summary: z4.string(),
+        action: actionTargetSchema,
+        timing: z4.object({
+          elapsedMs: z4.number().finite().nonnegative().optional(),
+          windowMs: z4.number().finite().nonnegative().optional(),
+          reason: z4.string().optional()
+        }).strict(),
+        result: z4.record(z4.string(), z4.json())
+      }).strict(),
+      z4.object({
+        kind: z4.literal("judged"),
+        summary: z4.string(),
+        confidence: z4.number().min(0).max(1).optional()
+      }).strict()
+    ]);
+  }
+});
+
+// src/schemas/finding.ts
+import { z as z5 } from "zod";
 var artifactPathSchema, regionRectSchema, cropLabel, designDecisionEvidenceSchema, designDriftEvidenceSchema, locusNodeSchema, verificationLocusSchema, findingCategories, pageFocusAreas, advisoryAspects, briefCitationSchema, findingSchema;
 var init_finding = __esm({
   "src/schemas/finding.ts"() {
     "use strict";
-    artifactPathSchema = z4.string().min(1).refine(
+    init_acceptance();
+    artifactPathSchema = z5.string().min(1).refine(
       (path) => !path.startsWith("/") && !/^[A-Za-z]:/.test(path) && !path.includes("\\") && !path.split("/").includes(".."),
       "must be a report-relative artifact path"
     );
-    regionRectSchema = z4.object({
-      x: z4.number().finite(),
-      y: z4.number().finite(),
-      width: z4.number().finite().nonnegative(),
-      height: z4.number().finite().nonnegative()
+    regionRectSchema = z5.object({
+      x: z5.number().finite(),
+      y: z5.number().finite(),
+      width: z5.number().finite().nonnegative(),
+      height: z5.number().finite().nonnegative()
     }).strict();
     cropLabel = /^(?:Design(?:: [^()]+)?|App capture)(?: \(absent\))?$/;
-    designDecisionEvidenceSchema = z4.object({
-      version: z4.literal(1),
-      decisionKey: z4.string().min(1),
-      property: z4.string().min(1),
-      appSelector: z4.string().min(1),
-      appValue: z4.union([z4.string(), z4.number(), z4.null()]),
-      references: z4.array(
-        z4.object({
-          name: z4.string().min(1),
-          source: z4.string().min(1),
-          value: z4.union([z4.string(), z4.number(), z4.null()]),
-          allowance: z4.number().finite().nonnegative().optional(),
-          matchesBuild: z4.boolean(),
-          layerPath: z4.string().min(1).optional(),
-          link: z4.string().min(1).optional(),
-          pairId: z4.string().min(1),
-          designSelector: z4.string().min(1)
+    designDecisionEvidenceSchema = z5.object({
+      version: z5.literal(1),
+      decisionKey: z5.string().min(1),
+      property: z5.string().min(1),
+      appSelector: z5.string().min(1),
+      appValue: z5.union([z5.string(), z5.number(), z5.null()]),
+      references: z5.array(
+        z5.object({
+          name: z5.string().min(1),
+          source: z5.string().min(1),
+          value: z5.union([z5.string(), z5.number(), z5.null()]),
+          allowance: z5.number().finite().nonnegative().optional(),
+          matchesBuild: z5.boolean(),
+          layerPath: z5.string().min(1).optional(),
+          link: z5.string().min(1).optional(),
+          pairId: z5.string().min(1),
+          designSelector: z5.string().min(1)
         }).strict()
       ).min(2)
     }).strict();
-    designDriftEvidenceSchema = z4.object({
-      version: z4.literal(1),
-      pairId: z4.string().min(1),
-      method: z4.enum([
+    designDriftEvidenceSchema = z5.object({
+      version: z5.literal(1),
+      pairId: z5.string().min(1),
+      method: z5.enum([
         "root",
         "data-node-id",
         "data-idiom-name",
@@ -1041,56 +1177,56 @@ var init_finding = __esm({
         "unmatched",
         "region"
       ]),
-      property: z4.string().min(1),
-      designValue: z4.union([z4.string(), z4.number(), z4.null()]),
-      appValue: z4.union([z4.string(), z4.number(), z4.null()]),
-      designNormalized: z4.union([z4.string(), z4.number(), z4.null()]).optional(),
-      appNormalized: z4.union([z4.string(), z4.number(), z4.null()]).optional(),
-      allowance: z4.number().finite().nonnegative().optional(),
-      designSelector: z4.string().nullable(),
-      appSelector: z4.string().nullable(),
-      designContext: z4.string().optional(),
-      appContext: z4.string().optional(),
-      region: z4.object({
-        id: z4.string().min(1),
+      property: z5.string().min(1),
+      designValue: z5.union([z5.string(), z5.number(), z5.null()]),
+      appValue: z5.union([z5.string(), z5.number(), z5.null()]),
+      designNormalized: z5.union([z5.string(), z5.number(), z5.null()]).optional(),
+      appNormalized: z5.union([z5.string(), z5.number(), z5.null()]).optional(),
+      allowance: z5.number().finite().nonnegative().optional(),
+      designSelector: z5.string().nullable(),
+      appSelector: z5.string().nullable(),
+      designContext: z5.string().optional(),
+      appContext: z5.string().optional(),
+      region: z5.object({
+        id: z5.string().min(1),
         rect: regionRectSchema,
         designRect: regionRectSchema,
-        offset: z4.number().int(),
-        owner: z4.string().nullable(),
-        elements: z4.array(z4.string()),
+        offset: z5.number().int(),
+        owner: z5.string().nullable(),
+        elements: z5.array(z5.string()),
         /** Share of the region's cells that changed, 0–1. */
-        changedArea: z4.number().min(0).max(1)
+        changedArea: z5.number().min(0).max(1)
       }).strict().optional(),
-      neighbour: z4.object({
-        pairId: z4.string(),
-        designSelector: z4.string(),
-        appSelector: z4.string()
+      neighbour: z5.object({
+        pairId: z5.string(),
+        designSelector: z5.string(),
+        appSelector: z5.string()
       }).strict().optional(),
       /** Figma provenance: layer names from the frame down, node link, bound variable. */
-      designLayerPath: z4.string().min(1).optional(),
-      designLink: z4.string().min(1).optional(),
-      designVariable: z4.string().min(1).optional(),
+      designLayerPath: z5.string().min(1).optional(),
+      designLink: z5.string().min(1).optional(),
+      designVariable: z5.string().min(1).optional(),
       /** Other design references that agree with this one on the property. */
-      alsoReferences: z4.array(z4.string().min(1)).optional(),
+      alsoReferences: z5.array(z5.string().min(1)).optional(),
       /** The design reference this finding is against, when not the first. */
-      reference: z4.string().min(1).optional(),
+      reference: z5.string().min(1).optional(),
       /** The reference a person chose where references disagreed. */
-      chosenReference: z4.string().min(1).optional(),
+      chosenReference: z5.string().min(1).optional(),
       /** Set when several design references disagree on this property. */
       designDecision: designDecisionEvidenceSchema.optional(),
-      crops: z4.array(
-        z4.object({
-          label: z4.string().regex(cropLabel),
+      crops: z5.array(
+        z5.object({
+          label: z5.string().regex(cropLabel),
           path: artifactPathSchema
         }).strict()
       ).optional()
     }).strict();
-    locusNodeSchema = z4.object({ selector: z4.string().min(1), signature: z4.string().min(1) }).strict();
-    verificationLocusSchema = z4.object({
-      version: z4.literal(1),
+    locusNodeSchema = z5.object({ selector: z5.string().min(1), signature: z5.string().min(1) }).strict();
+    verificationLocusSchema = z5.object({
+      version: z5.literal(1),
       target: locusNodeSchema,
       region: locusNodeSchema,
-      relativePath: z4.string().min(1)
+      relativePath: z5.string().min(1)
     }).strict();
     findingCategories = [
       "overflow-clip",
@@ -1177,70 +1313,72 @@ var init_finding = __esm({
       "jargon"
     ];
     advisoryAspects = ["spacing", "hierarchy", "coherence"];
-    briefCitationSchema = z4.object({
-      source: z4.enum(["brief", "direction"]),
-      line: z4.number().int().min(1),
-      excerpt: z4.string()
+    briefCitationSchema = z5.object({
+      source: z5.enum(["brief", "direction"]),
+      line: z5.number().int().min(1),
+      excerpt: z5.string()
     }).strict();
-    findingSchema = z4.object({
-      id: z4.string().min(1),
-      idAliases: z4.array(z4.string().min(1)).optional(),
-      fingerprint: z4.string(),
+    findingSchema = z5.object({
+      id: z5.string().min(1),
+      idAliases: z5.array(z5.string().min(1)).optional(),
+      fingerprint: z5.string(),
       /** Same element and rule across states and schemes (deterministic only). */
-      groupKey: z4.string().min(1).optional(),
-      createdAt: z4.iso.datetime(),
-      commit: z4.string(),
-      flow: z4.string(),
-      state: z4.string(),
-      viewport: z4.string(),
-      colorScheme: z4.enum(["light", "dark"]).optional(),
-      combination: z4.string().optional(),
-      layer: z4.enum(["deterministic", "model"]),
-      category: z4.enum(findingCategories),
-      severity: z4.enum(["blocker", "major", "minor"]),
-      confidence: z4.number().min(0).max(1),
-      rule: z4.string().optional(),
-      evidence: z4.object({
-        screenshots: z4.array(z4.string()),
+      groupKey: z5.string().min(1).optional(),
+      createdAt: z5.iso.datetime(),
+      commit: z5.string(),
+      flow: z5.string(),
+      state: z5.string(),
+      viewport: z5.string(),
+      colorScheme: z5.enum(["light", "dark"]).optional(),
+      combination: z5.string().optional(),
+      layer: z5.enum(["deterministic", "model"]),
+      basis: z5.enum(["measured", "observed", "judged"]).optional(),
+      basisDetails: basisDetailsSchema.optional(),
+      category: z5.enum(findingCategories),
+      severity: z5.enum(["blocker", "major", "minor"]),
+      confidence: z5.number().min(0).max(1),
+      rule: z5.string().optional(),
+      evidence: z5.object({
+        screenshots: z5.array(z5.string()),
         designDrift: designDriftEvidenceSchema.optional(),
-        references: z4.array(z4.string().trim().min(1)).optional(),
-        artifacts: z4.array(artifactPathSchema).optional(),
+        references: z5.array(z5.string().trim().min(1)).optional(),
+        artifacts: z5.array(artifactPathSchema).optional(),
         /** The action timeline this finding was measured from. */
-        timeline: z4.object({ artifact: artifactPathSchema, id: z4.string().min(1) }).strict().optional(),
-        filmstrip: z4.object({
+        timeline: z5.object({ artifact: artifactPathSchema, id: z5.string().min(1) }).strict().optional(),
+        filmstrip: z5.object({
           sheet: artifactPathSchema.optional(),
           manifest: artifactPathSchema,
-          action: z4.string().min(1),
-          status: z4.enum(["complete", "partial", "unavailable"]),
-          reason: z4.string().optional(),
-          width: z4.number().int().positive().optional(),
-          height: z4.number().int().positive().optional(),
-          bytes: z4.number().int().positive().optional(),
-          generationMs: z4.number().finite().nonnegative().optional(),
-          limits: z4.object({
-            width: z4.number().int().positive(),
-            height: z4.number().int().positive(),
-            bytes: z4.number().int().positive()
+          action: z5.string().min(1),
+          status: z5.enum(["complete", "partial", "unavailable"]),
+          reason: z5.string().optional(),
+          width: z5.number().int().positive().optional(),
+          height: z5.number().int().positive().optional(),
+          bytes: z5.number().int().positive().optional(),
+          generationMs: z5.number().finite().nonnegative().optional(),
+          limits: z5.object({
+            width: z5.number().int().positive(),
+            height: z5.number().int().positive(),
+            bytes: z5.number().int().positive()
           }).strict()
         }).strict().optional(),
-        domSnippet: z4.string().optional(),
-        consoleExcerpt: z4.string().optional(),
-        axeNodes: z4.array(z4.unknown()).optional(),
-        section: z4.string().min(1).optional(),
-        citations: z4.array(briefCitationSchema).optional()
+        domSnippet: z5.string().optional(),
+        consoleExcerpt: z5.string().optional(),
+        axeNodes: z5.array(z5.unknown()).optional(),
+        section: z5.string().min(1).optional(),
+        citations: z5.array(briefCitationSchema).optional()
       }).strict(),
-      explanation: z4.string(),
-      suggestedArea: z4.string().optional(),
-      fix: z4.string().min(1).optional(),
-      focus: z4.enum(pageFocusAreas).optional(),
-      acceptance: z4.array(z4.string()),
-      verification: z4.object({
-        kind: z4.enum(["deterministic-check", "recapture-visual", "manual"]),
-        check: z4.string().optional(),
-        params: z4.record(z4.string(), z4.unknown()).optional(),
+      explanation: z5.string(),
+      suggestedArea: z5.string().optional(),
+      fix: z5.string().min(1).optional(),
+      focus: z5.enum(pageFocusAreas).optional(),
+      acceptance: z5.union([acceptanceSchema, z5.array(z5.string())]),
+      verification: z5.object({
+        kind: z5.enum(["deterministic-check", "recapture-visual", "manual"]),
+        check: z5.string().optional(),
+        params: z5.record(z5.string(), z5.unknown()).optional(),
         locus: verificationLocusSchema.optional()
       }).strict(),
-      status: z4.enum([
+      status: z5.enum([
         "open",
         "approved",
         "rejected",
@@ -1249,6 +1387,65 @@ var init_finding = __esm({
         "verify-failed"
       ])
     }).strict().superRefine((finding, context2) => {
+      const basis = finding.basis ?? (finding.layer === "model" ? "judged" : "measured");
+      if (finding.layer === "model" !== (basis === "judged"))
+        context2.addIssue({
+          code: "custom",
+          path: ["basis"],
+          message: "basis is inconsistent with layer"
+        });
+      if (finding.basisDetails && finding.basisDetails.kind !== basis)
+        context2.addIssue({
+          code: "custom",
+          path: ["basisDetails"],
+          message: "details must match basis"
+        });
+      if (!Array.isArray(finding.acceptance) && finding.acceptance.kind !== "legacy") {
+        if (!finding.basis || !finding.basisDetails)
+          context2.addIssue({
+            code: "custom",
+            path: ["basis"],
+            message: "new contracts require explicit basis and details"
+          });
+        if (finding.acceptance.kind === "manual" !== (basis === "judged"))
+          context2.addIssue({
+            code: "custom",
+            path: ["acceptance"],
+            message: "contract kind is inconsistent with basis"
+          });
+      }
+      if (!Array.isArray(finding.acceptance) && finding.acceptance.kind === "rule") {
+        const contract = finding.acceptance;
+        const original = contract.coordinate;
+        const key4 = (c) => JSON.stringify([
+          c.flow,
+          c.state,
+          c.viewport,
+          c.colorScheme ?? "light",
+          c.combination
+        ]);
+        if (!contract.requiredCoordinates.some((c) => key4(c) === key4(original)))
+          context2.addIssue({
+            code: "custom",
+            path: ["acceptance", "requiredCoordinates"],
+            message: "must include the original coordinate"
+          });
+        if (key4(original) !== key4({
+          ...finding,
+          colorScheme: finding.colorScheme ?? original.colorScheme
+        }) || contract.rule !== finding.rule || contract.check !== finding.verification.check)
+          context2.addIssue({
+            code: "custom",
+            path: ["acceptance"],
+            message: "rule, evaluator and coordinate must match the finding"
+          });
+      }
+      if (basis === "observed" && !finding.basisDetails)
+        context2.addIssue({
+          code: "custom",
+          path: ["basisDetails"],
+          message: "observed basis requires action and timing details"
+        });
       const aliases = finding.idAliases ?? [];
       const seen = /* @__PURE__ */ new Set();
       for (const [index, alias] of aliases.entries()) {
@@ -1275,12 +1472,33 @@ var init_finding = __esm({
         }
         seen.add(alias);
       }
+    }).transform((finding) => {
+      const basis = finding.basis ?? (finding.layer === "model" ? "judged" : "measured");
+      const basisDetails = finding.basisDetails ?? (basis === "judged" ? {
+        kind: "judged",
+        summary: "Model critique",
+        confidence: finding.confidence
+      } : {
+        kind: "measured",
+        rule: finding.rule ?? finding.category,
+        summary: "Measurement details were not recorded in this historical finding."
+      });
+      return {
+        ...finding,
+        basis,
+        basisDetails,
+        acceptance: Array.isArray(finding.acceptance) ? {
+          version: 1,
+          kind: "legacy",
+          doneWhen: finding.acceptance
+        } : finding.acceptance
+      };
     });
   }
 });
 
 // src/checks/filmstrip-schema.ts
-import { z as z5 } from "zod";
+import { z as z6 } from "zod";
 var FILMSTRIP_LIMITS, filmstripOffsetsSchema, filmstripConfigSchema, rect, filmstripIdentitySchema, filmstripFrameSchema, filmstripManifestSchema;
 var init_filmstrip_schema = __esm({
   "src/checks/filmstrip-schema.ts"() {
@@ -1295,23 +1513,23 @@ var init_filmstrip_schema = __esm({
       decodedPixels: 16 * 1024 * 1024,
       toleranceMs: 35
     };
-    filmstripOffsetsSchema = z5.array(z5.number().int().min(0).max(5e3)).min(1).max(16).refine(
+    filmstripOffsetsSchema = z6.array(z6.number().int().min(0).max(5e3)).min(1).max(16).refine(
       (values) => values[0] === 0 && values.every((v, i) => i === 0 || v > (values[i - 1] ?? v)),
       "offsets must begin at zero and strictly increase"
     );
-    filmstripConfigSchema = z5.object({
-      enabled: z5.boolean().default(true),
+    filmstripConfigSchema = z6.object({
+      enabled: z6.boolean().default(true),
       offsetsMs: filmstripOffsetsSchema.default([0, 50, 100, 200, 400, 800]),
-      actions: z5.array(z5.string().trim().min(1)).default([])
+      actions: z6.array(z6.string().trim().min(1)).default([])
     }).strict();
-    rect = z5.object({
-      x: z5.number().finite(),
-      y: z5.number().finite(),
-      width: z5.number().finite().nonnegative(),
-      height: z5.number().finite().nonnegative()
+    rect = z6.object({
+      x: z6.number().finite(),
+      y: z6.number().finite(),
+      width: z6.number().finite().nonnegative(),
+      height: z6.number().finite().nonnegative()
     }).strict();
-    filmstripIdentitySchema = z5.object({
-      source: z5.enum([
+    filmstripIdentitySchema = z6.object({
+      source: z6.enum([
         "load",
         "web-step",
         "probe-click",
@@ -1319,65 +1537,65 @@ var init_filmstrip_schema = __esm({
         "slow-replay",
         "failure-replay"
       ]),
-      kind: z5.string().min(1),
-      selector: z5.string().min(1).optional(),
-      name: z5.string(),
-      stepIndex: z5.number().int().positive().optional(),
-      failureOf: z5.enum(["web-step", "probe-click"]).optional(),
-      heldOf: z5.enum(["web-step", "probe-click"]).optional()
+      kind: z6.string().min(1),
+      selector: z6.string().min(1).optional(),
+      name: z6.string(),
+      stepIndex: z6.number().int().positive().optional(),
+      failureOf: z6.enum(["web-step", "probe-click"]).optional(),
+      heldOf: z6.enum(["web-step", "probe-click"]).optional()
     }).strict();
-    filmstripFrameSchema = z5.object({
-      slot: z5.union([z5.number().int().nonnegative(), z5.literal("settle")]),
-      requestedMs: z5.number().finite().nonnegative(),
-      actualMs: z5.number().finite().optional(),
-      timestamp: z5.number().finite().optional(),
+    filmstripFrameSchema = z6.object({
+      slot: z6.union([z6.number().int().nonnegative(), z6.literal("settle")]),
+      requestedMs: z6.number().finite().nonnegative(),
+      actualMs: z6.number().finite().optional(),
+      timestamp: z6.number().finite().optional(),
       path: artifactPathSchema.optional(),
-      reason: z5.string().min(1).optional(),
-      geometry: z5.object({
-        width: z5.number().positive(),
-        height: z5.number().positive(),
-        scrollX: z5.number().finite(),
-        scrollY: z5.number().finite(),
-        scale: z5.number().positive(),
-        pageScale: z5.number().positive()
+      reason: z6.string().min(1).optional(),
+      geometry: z6.object({
+        width: z6.number().positive(),
+        height: z6.number().positive(),
+        scrollX: z6.number().finite(),
+        scrollY: z6.number().finite(),
+        scale: z6.number().positive(),
+        pageScale: z6.number().positive()
       }).strict().optional()
     }).strict().refine(
       (f) => f.path !== void 0 ? f.actualMs !== void 0 && f.timestamp !== void 0 && f.geometry !== void 0 : !!f.reason,
       "frame requires sampled pixels and timing, or an unavailable reason"
     );
-    filmstripManifestSchema = z5.object({
-      version: z5.literal(1),
+    filmstripManifestSchema = z6.object({
+      version: z6.literal(1),
       offsetsMs: filmstripOffsetsSchema,
-      limits: z5.object(
+      limits: z6.object(
         Object.fromEntries(
           Object.entries(FILMSTRIP_LIMITS).map(([k]) => [
             k,
-            z5.number().positive()
+            z6.number().positive()
           ])
         )
       ).strict(),
-      actions: z5.array(
-        z5.object({
-          id: z5.string().min(1),
+      actions: z6.array(
+        z6.object({
+          id: z6.string().min(1),
           identity: filmstripIdentitySchema,
-          status: z5.enum(["complete", "partial", "unavailable"]),
-          reason: z5.string().optional(),
-          anchor: z5.number().finite().optional(),
-          timelineOrigin: z5.number().finite(),
-          settleMs: z5.number().finite().nonnegative(),
-          settled: z5.boolean(),
-          visualFrames: z5.array(
-            z5.object({
-              time: z5.number().finite(),
-              elements: z5.array(z5.object({ selector: z5.string(), rect }).strict()).max(250)
+          status: z6.enum(["complete", "partial", "unavailable"]),
+          reason: z6.string().optional(),
+          anchor: z6.number().finite().optional(),
+          timelineOrigin: z6.number().finite(),
+          settleMs: z6.number().finite().nonnegative(),
+          settled: z6.boolean(),
+          visualFrames: z6.array(
+            z6.object({
+              time: z6.number().finite(),
+              elements: z6.array(z6.object({ selector: z6.string(), rect }).strict()).max(250)
             }).strict()
           ).max(120).optional(),
           region: rect.refine(
             (r) => r.width > 0 && r.height > 0,
             "filmstrip region must have positive area"
           ),
-          regionReason: z5.string().optional(),
-          frames: z5.array(filmstripFrameSchema).max(17)
+          regionReason: z6.string().optional(),
+          frames: z6.array(filmstripFrameSchema).max(17)
         }).strict()
       ).max(240)
     }).strict().superRefine((manifest, context2) => {
@@ -1715,7 +1933,7 @@ var init_shared = __esm({
 });
 
 // src/system/learn/schema.ts
-import { z as z6 } from "zod";
+import { z as z7 } from "zod";
 function tokenIdentity(token) {
   return JSON.stringify([
     token.source.path,
@@ -1727,27 +1945,27 @@ var tokenKindSchema, designTokenSchema, designTokensSchema;
 var init_schema = __esm({
   "src/system/learn/schema.ts"() {
     "use strict";
-    tokenKindSchema = z6.enum([
+    tokenKindSchema = z7.enum([
       "color",
       "spacing",
       "radius",
       "control-height",
       "other"
     ]);
-    designTokenSchema = z6.object({
-      name: z6.string().trim().min(1),
-      value: z6.string().trim().min(1),
+    designTokenSchema = z7.object({
+      name: z7.string().trim().min(1),
+      value: z7.string().trim().min(1),
       kind: tokenKindSchema,
-      source: z6.object({
-        path: z6.string().min(1).refine(
+      source: z7.object({
+        path: z7.string().min(1).refine(
           (path) => !/^(?:[/\\]|[A-Za-z]:)/.test(path) && !path.split(/[/\\]/).includes(".."),
           "must be project-relative"
         ),
-        key: z6.string().min(1)
+        key: z7.string().min(1)
       }).strict(),
-      theme: z6.string().optional()
+      theme: z7.string().optional()
     }).strict();
-    designTokensSchema = z6.array(designTokenSchema).superRefine((tokens2, ctx) => {
+    designTokensSchema = z7.array(designTokenSchema).superRefine((tokens2, ctx) => {
       const seen = /* @__PURE__ */ new Set();
       for (const [index, token] of tokens2.entries()) {
         const id2 = tokenIdentity(token);
@@ -1764,7 +1982,7 @@ var init_schema = __esm({
 });
 
 // src/schemas/project.ts
-import { z as z7 } from "zod";
+import { z as z8 } from "zod";
 function checkMarks(checks) {
   return [
     ...checks.luminanceParity.primarySelectors.map((selector) => ({
@@ -1834,10 +2052,10 @@ var init_project = __esm({
     init_shared();
     init_schema();
     init_design();
-    colorSchemeSchema = z7.enum(["light", "dark"]);
-    colorSchemesSchema = z7.array(colorSchemeSchema).min(1, "must contain at least one color scheme").superRefine((schemes, context2) => {
+    colorSchemeSchema = z8.enum(["light", "dark"]);
+    colorSchemesSchema = z8.array(colorSchemeSchema).min(1, "must contain at least one color scheme").superRefine((schemes2, context2) => {
       const seen = /* @__PURE__ */ new Set();
-      for (const [index, scheme] of schemes.entries()) {
+      for (const [index, scheme] of schemes2.entries()) {
         if (seen.has(scheme)) {
           context2.addIssue({
             code: "custom",
@@ -1848,18 +2066,18 @@ var init_project = __esm({
         seen.add(scheme);
       }
     });
-    htmlAttributeNameSchema = z7.string().regex(/^[A-Za-z_:][A-Za-z0-9_.:-]*$/, "must be a valid HTML attribute name");
-    viewportSchema = z7.object({
-      name: z7.string(),
-      width: z7.number(),
-      height: z7.number(),
-      touch: z7.boolean().optional()
+    htmlAttributeNameSchema = z8.string().regex(/^[A-Za-z_:][A-Za-z0-9_.:-]*$/, "must be a valid HTML attribute name");
+    viewportSchema = z8.object({
+      name: z8.string(),
+      width: z8.number(),
+      height: z8.number(),
+      touch: z8.boolean().optional()
     }).strict();
-    surfaceSchema = z7.object({
-      id: z7.string().trim().min(1),
-      name: z7.string().trim().min(1)
+    surfaceSchema = z8.object({
+      id: z8.string().trim().min(1),
+      name: z8.string().trim().min(1)
     }).strict();
-    surfacesSchema = z7.array(surfaceSchema).default([]).superRefine((surfaces, context2) => {
+    surfacesSchema = z8.array(surfaceSchema).default([]).superRefine((surfaces, context2) => {
       const seen = /* @__PURE__ */ new Map();
       for (const [index, surface] of surfaces.entries()) {
         const prior = seen.get(surface.id);
@@ -1873,15 +2091,15 @@ var init_project = __esm({
         seen.set(surface.id, index);
       }
     });
-    componentSizeSchema = z7.object({
-      name: z7.string().trim().min(1),
-      selector: z7.string().trim().min(1),
-      width: z7.number().positive(),
-      height: z7.number().positive(),
-      tolerance: z7.object({
-        ratio: z7.number().min(0).default(0.25),
-        px: z7.number().min(0).default(4),
-        mode: z7.enum(["tighter", "looser"]).default("looser")
+    componentSizeSchema = z8.object({
+      name: z8.string().trim().min(1),
+      selector: z8.string().trim().min(1),
+      width: z8.number().positive(),
+      height: z8.number().positive(),
+      tolerance: z8.object({
+        ratio: z8.number().min(0).default(0.25),
+        px: z8.number().min(0).default(4),
+        mode: z8.enum(["tighter", "looser"]).default("looser")
       }).strict().default(componentToleranceDefault)
     }).strict();
     isValidRegex = (pattern) => {
@@ -1892,76 +2110,76 @@ var init_project = __esm({
         return false;
       }
     };
-    regexList = z7.array(
-      z7.string().min(1).refine(isValidRegex, "must be a valid regular expression")
+    regexList = z8.array(
+      z8.string().min(1).refine(isValidRegex, "must be a valid regular expression")
     ).default([]);
-    selectorList = z7.array(z7.string().trim().min(1)).default([]);
-    mirroredPairSchema = z7.object({
-      name: z7.string().trim().min(1),
-      a: z7.string().trim().min(1),
-      b: z7.string().trim().min(1),
-      axis: z7.enum(["vertical", "horizontal"]).default("vertical")
+    selectorList = z8.array(z8.string().trim().min(1)).default([]);
+    mirroredPairSchema = z8.object({
+      name: z8.string().trim().min(1),
+      a: z8.string().trim().min(1),
+      b: z8.string().trim().min(1),
+      axis: z8.enum(["vertical", "horizontal"]).default("vertical")
     }).strict().refine((pair) => pair.a !== pair.b, {
       message: "a and b must be different selectors",
       path: ["b"]
     });
-    radiusList = z7.array(z7.union([z7.number().min(0), z7.literal("full")])).default([]);
-    colorList = z7.array(
-      z7.string().trim().refine(
+    radiusList = z8.array(z8.union([z8.number().min(0), z8.literal("full")])).default([]);
+    colorList = z8.array(
+      z8.string().trim().refine(
         (value) => parseCssColor(value) !== void 0,
         "must be #rgb, #rrggbb, #rrggbbaa, rgb() or rgba()"
       )
     ).default([]);
     scaleRoles = ["control", "card", "panel", "chip", "divider"];
-    shareSchema = z7.number().gt(0).max(1);
-    primaryRegionSchema = z7.object({
-      selector: z7.string().trim().min(1),
-      minShare: z7.union([
+    shareSchema = z8.number().gt(0).max(1);
+    primaryRegionSchema = z8.object({
+      selector: z8.string().trim().min(1),
+      minShare: z8.union([
         shareSchema,
-        z7.record(z7.string().trim().min(1), shareSchema).refine(
+        z8.record(z8.string().trim().min(1), shareSchema).refine(
           (record2) => Object.keys(record2).length > 0,
           "must name at least one viewport"
         )
       ])
     }).strict();
-    alarmSchema = z7.object({ colors: colorList, brand: colorList, ignore: selectorList }).strict().default({ colors: [], brand: [], ignore: [] });
-    namingSchema = z7.object({
-      surfaces: z7.record(z7.string().trim().min(1), z7.string().trim().min(1)).default({}).refine(
+    alarmSchema = z8.object({ colors: colorList, brand: colorList, ignore: selectorList }).strict().default({ colors: [], brand: [], ignore: [] });
+    namingSchema = z8.object({
+      surfaces: z8.record(z8.string().trim().min(1), z8.string().trim().min(1)).default({}).refine(
         (surfaces) => Object.keys(surfaces).length !== 1,
         "declare at least two surfaces to compare"
       )
     }).strict().default({ surfaces: {} });
-    emptyStateSchema = z7.object({
-      regions: z7.array(
-        z7.object({
-          selector: z7.string().trim().min(1),
-          items: z7.string().trim().min(1)
+    emptyStateSchema = z8.object({
+      regions: z8.array(
+        z8.object({
+          selector: z8.string().trim().min(1),
+          items: z8.string().trim().min(1)
         }).strict()
       ).default([]),
-      auto: z7.boolean().default(true),
+      auto: z8.boolean().default(true),
       ignore: selectorList
     }).strict().default({ regions: [], auto: true, ignore: [] });
-    pageSchema = z7.object({
+    pageSchema = z8.object({
       ctaSelectors: selectorList,
       placeholderPatterns: regexList,
-      claimsAllow: z7.array(z7.string().trim().min(1)).default([])
+      claimsAllow: z8.array(z8.string().trim().min(1)).default([])
     }).strict();
-    scalesSchema = z7.object({
-      spacing: z7.array(
-        z7.union([
-          z7.number().finite().nonnegative(),
-          z7.object({ multipleOf: z7.number().finite().positive() }).strict()
+    scalesSchema = z8.object({
+      spacing: z8.array(
+        z8.union([
+          z8.number().finite().nonnegative(),
+          z8.object({ multipleOf: z8.number().finite().positive() }).strict()
         ])
       ).default([]),
-      controlHeights: z7.array(z7.number().positive()).default([]),
-      radius: z7.object({
+      controlHeights: z8.array(z8.number().positive()).default([]),
+      radius: z8.object({
         control: radiusList,
         card: radiusList,
         panel: radiusList,
         chip: radiusList
       }).strict().default({ control: [], card: [], panel: [], chip: [] }),
-      border: z7.object({ divider: colorList, control: colorList }).strict().default({ divider: [], control: [] }),
-      roles: z7.object({
+      border: z8.object({ divider: colorList, control: colorList }).strict().default({ divider: [], control: [] }),
+      roles: z8.object({
         control: selectorList,
         card: selectorList,
         panel: selectorList,
@@ -1969,7 +2187,7 @@ var init_project = __esm({
         divider: selectorList
       }).strict().default({ control: [], card: [], panel: [], chip: [], divider: [] }),
       /** Off-scale repeats in one context that become a design-system question. */
-      suggestAfter: z7.number().int().min(2).default(5)
+      suggestAfter: z8.number().int().min(2).default(5)
     }).strict().default({
       spacing: [],
       controlHeights: [],
@@ -1978,28 +2196,28 @@ var init_project = __esm({
       roles: { control: [], card: [], panel: [], chip: [], divider: [] },
       suggestAfter: 5
     });
-    diagnosticSelectors = z7.array(z7.string().trim().min(1)).refine(
+    diagnosticSelectors = z8.array(z8.string().trim().min(1)).refine(
       (values) => new Set(values).size === values.length,
       "selectors must be unique"
     ).default([]);
-    touchReachabilityConfigSchema = z7.object({ ignore: diagnosticSelectors }).strict();
-    livenessConfigSchema = z7.object({
+    touchReachabilityConfigSchema = z8.object({ ignore: diagnosticSelectors }).strict();
+    livenessConfigSchema = z8.object({
       selectors: diagnosticSelectors,
-      auto: z7.boolean().default(true),
+      auto: z8.boolean().default(true),
       ignore: diagnosticSelectors
     }).strict();
-    mediaFillConfigSchema = z7.object({
-      auto: z7.boolean().default(true),
-      bandThreshold: z7.number().finite().gt(0).lt(1).default(0.2),
-      tolerance: z7.number().int().min(0).max(64).default(8),
+    mediaFillConfigSchema = z8.object({
+      auto: z8.boolean().default(true),
+      bandThreshold: z8.number().finite().gt(0).lt(1).default(0.2),
+      tolerance: z8.number().int().min(0).max(64).default(8),
       ignore: selectorList
     }).strict().prefault({});
     collectionActions = ["open", "rename", "delete"];
-    collectionsConfigSchema = z7.array(
-      z7.object({
-        selector: z7.string().trim().min(1),
-        name: z7.string().trim().min(1).optional(),
-        actions: z7.array(z7.enum(collectionActions)).min(1).refine(
+    collectionsConfigSchema = z8.array(
+      z8.object({
+        selector: z8.string().trim().min(1),
+        name: z8.string().trim().min(1).optional(),
+        actions: z8.array(z8.enum(collectionActions)).min(1).refine(
           (values) => new Set(values).size === values.length,
           "actions must be unique"
         ).default([...collectionActions])
@@ -2008,24 +2226,24 @@ var init_project = __esm({
       (values) => new Set(values.map(({ selector }) => selector)).size === values.length,
       "collection selectors must be unique"
     ).default([]);
-    copyEntrySchema = z7.object({
-      term: z7.string().trim().min(1),
-      preferred: z7.string().trim().min(1)
+    copyEntrySchema = z8.object({
+      term: z8.string().trim().min(1),
+      preferred: z8.string().trim().min(1)
     }).strict();
     copyPolicyFields = {
-      locale: z7.enum(["en-US", "en-GB", "en-CA", "en-AU"]),
-      glossary: z7.array(
+      locale: z8.enum(["en-US", "en-GB", "en-CA", "en-AU"]),
+      glossary: z8.array(
         copyEntrySchema.extend({
-          preferred: z7.string().trim().min(1).optional()
+          preferred: z8.string().trim().min(1).optional()
         })
       ),
-      retired: z7.array(copyEntrySchema),
-      jargon: z7.array(copyEntrySchema),
-      schemaWords: z7.array(z7.string().trim().min(1)),
-      properNouns: z7.array(z7.string().trim().min(1))
+      retired: z8.array(copyEntrySchema),
+      jargon: z8.array(copyEntrySchema),
+      schemaWords: z8.array(z8.string().trim().min(1)),
+      properNouns: z8.array(z8.string().trim().min(1))
     };
-    copyPolicySchema = z7.object(copyPolicyFields).strict().partial();
-    copyConfigSchema = z7.object({
+    copyPolicySchema = z8.object(copyPolicyFields).strict().partial();
+    copyConfigSchema = z8.object({
       ...copyPolicyFields,
       locale: copyPolicyFields.locale.optional(),
       glossary: copyPolicyFields.glossary.default([]),
@@ -2034,41 +2252,41 @@ var init_project = __esm({
       schemaWords: copyPolicyFields.schemaWords.default([]),
       properNouns: copyPolicyFields.properNouns.default([])
     }).strict();
-    checksConfigSchema = z7.object({
-      shellVisibility: z7.object({
-        floatingOverlays: z7.array(z7.string().trim().min(1)).refine(
+    checksConfigSchema = z8.object({
+      shellVisibility: z8.object({
+        floatingOverlays: z8.array(z8.string().trim().min(1)).refine(
           (values) => new Set(values).size === values.length,
           "floatingOverlays must be unique"
         ).default([])
       }).strict().optional(),
-      compoundControls: z7.object({
-        tokenMax: z7.number().int().min(1).max(8).default(4),
-        minInset: z7.number().finite().min(0).default(2)
+      compoundControls: z8.object({
+        tokenMax: z8.number().int().min(1).max(8).default(4),
+        minInset: z8.number().finite().min(0).default(2)
       }).strict().optional(),
-      siblingChrome: z7.object({ regions: selectorList }).strict().prefault({}),
-      explanation: z7.enum(["default", "visible"]).default("default"),
-      minGap: z7.number().min(0).default(3),
-      adjacentGap: z7.object({
+      siblingChrome: z8.object({ regions: selectorList }).strict().prefault({}),
+      explanation: z8.enum(["default", "visible"]).default("default"),
+      minGap: z8.number().min(0).default(3),
+      adjacentGap: z8.object({
         regions: selectorList,
-        indicatorMax: z7.number().min(0).default(16)
+        indicatorMax: z8.number().min(0).default(16)
       }).strict().prefault({}),
-      centeringTolerance: z7.number().positive().default(1.5),
-      components: z7.array(componentSizeSchema).default([]),
+      centeringTolerance: z8.number().positive().default(1.5),
+      components: z8.array(componentSizeSchema).default([]),
       copy: copyConfigSchema.prefault({}),
-      glyphAllow: z7.array(z7.string().min(1)).default([]),
-      errorPatterns: z7.array(z7.string().min(1)).default([]),
-      selectedState: z7.object({
-        minColorDelta: z7.number().min(1).max(255).default(24)
+      glyphAllow: z8.array(z8.string().min(1)).default([]),
+      errorPatterns: z8.array(z8.string().min(1)).default([]),
+      selectedState: z8.object({
+        minColorDelta: z8.number().min(1).max(255).default(24)
       }).strict().default({ minColorDelta: 24 }),
-      probe: z7.object({
-        enabled: z7.boolean().default(true),
-        everywhere: z7.boolean().default(false),
-        respectControlIntent: z7.boolean().default(false),
-        skip: z7.array(z7.string().trim().min(1)).default([]),
-        maxControls: z7.number().int().positive().default(80),
-        waitMs: z7.number().int().min(0).default(350),
-        controlTimeoutMs: z7.number().int().positive().default(5e3),
-        stateTimeoutMs: z7.number().int().positive().default(6e4)
+      probe: z8.object({
+        enabled: z8.boolean().default(true),
+        everywhere: z8.boolean().default(false),
+        respectControlIntent: z8.boolean().default(false),
+        skip: z8.array(z8.string().trim().min(1)).default([]),
+        maxControls: z8.number().int().positive().default(80),
+        waitMs: z8.number().int().min(0).default(350),
+        controlTimeoutMs: z8.number().int().positive().default(5e3),
+        stateTimeoutMs: z8.number().int().positive().default(6e4)
       }).strict().default({
         enabled: true,
         everywhere: false,
@@ -2079,8 +2297,8 @@ var init_project = __esm({
         controlTimeoutMs: 5e3,
         stateTimeoutMs: 6e4
       }),
-      disguisedControl: z7.object({ placeholderPatterns: regexList, ignore: selectorList }).strict().default({ placeholderPatterns: [], ignore: [] }),
-      freshState: z7.object({
+      disguisedControl: z8.object({ placeholderPatterns: regexList, ignore: selectorList }).strict().default({ placeholderPatterns: [], ignore: [] }),
+      freshState: z8.object({
         historyNames: regexList,
         historySelectors: selectorList,
         unsavedPatterns: regexList,
@@ -2091,35 +2309,35 @@ var init_project = __esm({
         unsavedPatterns: [],
         unsavedSelectors: []
       }),
-      mirrored: z7.array(mirroredPairSchema).default([]),
-      motion: z7.object({
-        maxMs: z7.number().finite().positive().default(150),
-        durations: z7.array(z7.number().finite().positive()).refine(
+      mirrored: z8.array(mirroredPairSchema).default([]),
+      motion: z8.object({
+        maxMs: z8.number().finite().positive().default(150),
+        durations: z8.array(z8.number().finite().positive()).refine(
           (values) => new Set(values).size === values.length,
           "durations must be unique"
         ).default([]),
-        selectors: z7.array(z7.string().trim().min(1)).default([]),
+        selectors: z8.array(z8.string().trim().min(1)).default([]),
         /** Smallest visible change (px) a content snap must reach. */
-        minExtentPx: z7.number().finite().positive().default(24)
+        minExtentPx: z8.number().finite().positive().default(24)
       }).strict().default({ maxMs: 150, durations: [], selectors: [], minExtentPx: 24 }),
-      fieldGroups: z7.object({
-        inner: z7.number().min(0).default(4),
-        between: z7.number().min(0).default(12)
+      fieldGroups: z8.object({
+        inner: z8.number().min(0).default(4),
+        between: z8.number().min(0).default(12)
       }).strict().refine((value) => value.between >= value.inner, {
         message: "between must be at least inner",
         path: ["between"]
       }).default({ inner: 4, between: 12 }),
       scales: scalesSchema,
       designDrift: designDriftConfigSchema.optional(),
-      luminanceParity: z7.object({ primarySelectors: selectorList, ignore: selectorList }).strict().prefault({}),
-      frame: z7.object({
-        selector: z7.string().trim().min(1).optional(),
-        minLuminanceDelta: z7.number().finite().min(0).max(1).default(0.05)
+      luminanceParity: z8.object({ primarySelectors: selectorList, ignore: selectorList }).strict().prefault({}),
+      frame: z8.object({
+        selector: z8.string().trim().min(1).optional(),
+        minLuminanceDelta: z8.number().finite().min(0).max(1).default(0.05)
       }).strict().prefault({}),
-      targetSize: z7.object({
-        fine: z7.number().finite().positive().default(24),
-        coarse: z7.number().finite().positive().default(44),
-        narrowBelow: z7.number().finite().positive().default(768)
+      targetSize: z8.object({
+        fine: z8.number().finite().positive().default(24),
+        coarse: z8.number().finite().positive().default(44),
+        narrowBelow: z8.number().finite().positive().default(768)
       }).strict().refine((value) => value.coarse >= value.fine, {
         message: "coarse must be at least fine",
         path: ["coarse"]
@@ -2127,55 +2345,55 @@ var init_project = __esm({
       primaryRegion: primaryRegionSchema.optional(),
       alarm: alarmSchema,
       naming: namingSchema,
-      progressWithinMs: z7.number().int().positive().default(1e3),
+      progressWithinMs: z8.number().int().positive().default(1e3),
       /** The probe's held replay: how long the action's responses are held. */
-      loading: z7.object({ delayMs: z7.number().int().positive().default(1500) }).strict().prefault({}),
-      failure: z7.object({
-        mode: z7.enum(["status", "network"]).default("status"),
-        status: z7.number().int().min(400).max(599).default(500),
-        feedbackWithinMs: z7.number().int().positive().default(2e3)
+      loading: z8.object({ delayMs: z8.number().int().positive().default(1500) }).strict().prefault({}),
+      failure: z8.object({
+        mode: z8.enum(["status", "network"]).default("status"),
+        status: z8.number().int().min(400).max(599).default(500),
+        feedbackWithinMs: z8.number().int().positive().default(2e3)
       }).strict().prefault({}),
       emptyState: emptyStateSchema,
       page: pageSchema.optional(),
-      bandEdges: z7.object({
-        enabled: z7.boolean().default(true),
-        tolerance: z7.number().finite().nonnegative().default(8)
+      bandEdges: z8.object({
+        enabled: z8.boolean().default(true),
+        tolerance: z8.number().finite().nonnegative().default(8)
       }).strict().optional(),
-      wordBreak: z7.object({ enabled: z7.boolean().default(true) }).strict().optional(),
+      wordBreak: z8.object({ enabled: z8.boolean().default(true) }).strict().optional(),
       touchReachability: touchReachabilityConfigSchema.optional(),
       liveness: livenessConfigSchema.optional(),
       mediaFill: mediaFillConfigSchema,
       collections: collectionsConfigSchema,
-      fonts: z7.object({ enabled: z7.boolean().default(true) }).strict().prefault({}),
-      links: z7.object({
-        enabled: z7.boolean().default(true),
-        external: z7.boolean().default(false),
-        timeoutMs: z7.number().int().positive().default(5e3),
-        budgetMs: z7.number().int().positive().default(3e4),
-        concurrency: z7.number().int().min(1).max(32).default(4),
+      fonts: z8.object({ enabled: z8.boolean().default(true) }).strict().prefault({}),
+      links: z8.object({
+        enabled: z8.boolean().default(true),
+        external: z8.boolean().default(false),
+        timeoutMs: z8.number().int().positive().default(5e3),
+        budgetMs: z8.number().int().positive().default(3e4),
+        concurrency: z8.number().int().min(1).max(32).default(4),
         /** Absolute-URL or path prefixes that are never requested. */
-        ignore: z7.array(z7.string().trim().min(1)).default([])
+        ignore: z8.array(z8.string().trim().min(1)).default([])
       }).strict().prefault({}),
-      focusVisible: z7.object({ enabled: z7.boolean().default(true), ignore: selectorList }).strict().prefault({}),
-      lineLength: z7.object({
-        enabled: z7.boolean().default(true),
-        max: z7.number().int().min(20).default(90)
+      focusVisible: z8.object({ enabled: z8.boolean().default(true), ignore: selectorList }).strict().prefault({}),
+      lineLength: z8.object({
+        enabled: z8.boolean().default(true),
+        max: z8.number().int().min(20).default(90)
       }).strict().prefault({}),
-      orphanWord: z7.object({
-        enabled: z7.boolean().default(true),
-        maxChars: z7.number().int().min(1).default(7)
+      orphanWord: z8.object({
+        enabled: z8.boolean().default(true),
+        maxChars: z8.number().int().min(1).default(7)
       }).strict().prefault({}),
-      images: z7.object({
-        enabled: z7.boolean().default(true),
-        distortionTolerance: z7.number().finite().gt(0).lt(1).default(0.03)
+      images: z8.object({
+        enabled: z8.boolean().default(true),
+        distortionTolerance: z8.number().finite().gt(0).lt(1).default(0.03)
       }).strict().prefault({}),
-      layoutShift: z7.object({
-        enabled: z7.boolean().default(true),
-        max: z7.number().finite().min(0).default(0.1)
+      layoutShift: z8.object({
+        enabled: z8.boolean().default(true),
+        max: z8.number().finite().min(0).default(0.1)
       }).strict().prefault({}),
-      interactionShift: z7.object({
-        enabled: z7.boolean().default(true),
-        minDistance: z7.number().finite().min(0).default(4)
+      interactionShift: z8.object({
+        enabled: z8.boolean().default(true),
+        minDistance: z8.number().finite().min(0).default(4)
       }).strict().prefault({})
     }).strict();
     defaultChecksSettings = checksConfigSchema.parse(
@@ -2183,71 +2401,71 @@ var init_project = __esm({
     );
     productionConfigExample = `add server.production to .idiom/project.json, for example:
 {"server":{"production":{"build":"npm run build","start":"npm run start -- --port 3000","distDir":".next","env":{"PORT":"3000","DATA_DIR":"\${dataDir}"}}}}`;
-    productionSchema = z7.object({
-      reuseBuild: z7.boolean().default(false),
-      build: z7.string().trim().min(1),
-      start: z7.string().trim().min(1),
-      distDir: z7.string().trim().min(1).refine(
+    productionSchema = z8.object({
+      reuseBuild: z8.boolean().default(false),
+      build: z8.string().trim().min(1),
+      start: z8.string().trim().min(1),
+      distDir: z8.string().trim().min(1).refine(
         (path) => !path.startsWith("/") && !path.includes("\\") && !/^[A-Za-z]:/.test(path) && path.split("/").every((part) => part !== ".." && part !== "." && part !== "") && ![".git", ".idiom", ".ab"].includes(path.split("/")[0] ?? ""),
         "must be a contained project-relative output directory (without . or .. segments)"
       ).optional(),
-      env: z7.record(z7.string(), z7.string()).default({})
+      env: z8.record(z8.string(), z8.string()).default({})
     }).strict();
-    coverageSchema = z7.object({ exclude: z7.array(z7.string().trim().min(1)).default([]) }).strict();
-    projectInputSchema = z7.object({
-      version: z7.literal(1),
-      app: z7.object({
-        name: z7.string(),
-        framework: z7.enum(["nextjs", "other"])
+    coverageSchema = z8.object({ exclude: z8.array(z8.string().trim().min(1)).default([]) }).strict();
+    projectInputSchema = z8.object({
+      version: z8.literal(1),
+      app: z8.object({
+        name: z8.string(),
+        framework: z8.enum(["nextjs", "other"])
       }).strict(),
-      server: z7.object({
-        build: z7.string(),
-        start: z7.string(),
-        readyUrl: z7.string(),
-        port: z7.number(),
-        fixedPort: z7.boolean().optional(),
-        env: z7.record(z7.string(), z7.string()),
+      server: z8.object({
+        build: z8.string(),
+        start: z8.string(),
+        readyUrl: z8.string(),
+        port: z8.number(),
+        fixedPort: z8.boolean().optional(),
+        env: z8.record(z8.string(), z8.string()),
         production: productionSchema.optional(),
-        startupTimeoutMs: z7.number().default(6e4)
+        startupTimeoutMs: z8.number().default(6e4)
       }).strict(),
-      viewports: z7.array(viewportSchema).default([
+      viewports: z8.array(viewportSchema).default([
         { name: "desktop", width: 1440, height: 900 },
         { name: "mobile", width: 390, height: 844 }
       ]),
       surfaces: surfacesSchema,
       colorSchemes: colorSchemesSchema.optional(),
-      capture: z7.object({
+      capture: z8.object({
         filmstrips: filmstripConfigSchema.default(
           () => filmstripConfigSchema.parse({})
         ),
-        timezoneId: z7.string().default("America/New_York"),
-        locale: z7.string().default("en-US"),
+        timezoneId: z8.string().default("America/New_York"),
+        locale: z8.string().default("en-US"),
         colorScheme: colorSchemeSchema.default("light"),
         colorSchemeAttribute: htmlAttributeNameSchema.optional(),
-        reducedMotion: z7.boolean().default(true),
-        fullPage: z7.boolean().default(true),
-        settleMs: z7.number().default(250),
-        animationSettleMs: z7.number().finite().nonnegative().default(1500),
-        maxMinutes: z7.number().finite().positive().default(30),
+        reducedMotion: z8.boolean().default(true),
+        fullPage: z8.boolean().default(true),
+        settleMs: z8.number().default(250),
+        animationSettleMs: z8.number().finite().nonnegative().default(1500),
+        maxMinutes: z8.number().finite().positive().default(30),
         /**
          * Capture lanes (one per viewport and colour scheme) run at once.
          * Each tuple keeps its own fresh context; only tuples overlap.
          */
-        concurrency: z7.number().int().min(1).max(8).default(4)
+        concurrency: z8.number().int().min(1).max(8).default(4)
       }).strict(),
-      design: z7.object({
-        tokensFile: z7.string().optional(),
+      design: z8.object({
+        tokensFile: z8.string().optional(),
         tokens: designTokensSchema.optional(),
-        productFile: z7.string().default("PRODUCT.md"),
-        designFile: z7.string().default("DESIGN.md"),
+        productFile: z8.string().default("PRODUCT.md"),
+        designFile: z8.string().default("DESIGN.md"),
         /** A written spec `idiom sweep` compares each surface against. */
-        specFile: z7.string().optional()
+        specFile: z8.string().optional()
       }).strict(),
-      baselines: z7.object({ directory: z7.string().min(1) }).strict().optional(),
-      agent: z7.object({
-        hooks: z7.boolean().optional(),
-        uiGlobs: z7.array(
-          z7.string().refine(
+      baselines: z8.object({ directory: z8.string().min(1) }).strict().optional(),
+      agent: z8.object({
+        hooks: z8.boolean().optional(),
+        uiGlobs: z8.array(
+          z8.string().refine(
             validGlob,
             "must be a project-relative glob using *, ? or **; braces, negation and extglobs are unsupported"
           )
@@ -2255,10 +2473,10 @@ var init_project = __esm({
       }).strict().optional(),
       checks: checksConfigSchema.default(defaultChecksSettings),
       coverage: coverageSchema.optional(),
-      model: z7.object({
-        provider: z7.enum(["claude-code", "anthropic"]),
-        model: z7.string(),
-        maxFindings: z7.number().int().min(1).max(5).default(5)
+      model: z8.object({
+        provider: z8.enum(["claude-code", "anthropic"]),
+        model: z8.string(),
+        maxFindings: z8.number().int().min(1).max(5).default(5)
       }).strict()
     }).strict();
     projectSchema = projectInputSchema.superRefine((project, context2) => {
@@ -2277,12 +2495,12 @@ var init_project = __esm({
 });
 
 // src/schemas/reference.ts
-import { z as z8 } from "zod";
+import { z as z9 } from "zod";
 var referenceNameSchema, referenceImageMediaTypes, referenceImageMediaTypeSchema, referenceImagePathSchema, common2, referenceMetadataSchema;
 var init_reference = __esm({
   "src/schemas/reference.ts"() {
     "use strict";
-    referenceNameSchema = z8.string().regex(
+    referenceNameSchema = z9.string().regex(
       /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
       "must be a lowercase slug containing only letters, numbers, and single hyphens"
     );
@@ -2292,34 +2510,34 @@ var init_reference = __esm({
       "image/webp",
       "image/gif"
     ];
-    referenceImageMediaTypeSchema = z8.enum(referenceImageMediaTypes);
-    referenceImagePathSchema = z8.string().regex(
+    referenceImageMediaTypeSchema = z9.enum(referenceImageMediaTypes);
+    referenceImagePathSchema = z9.string().regex(
       /^image\.(?:png|jpe?g|webp|gif)$/i,
       "must be a safe entry-relative supported image path"
     );
     common2 = {
-      version: z8.literal(1),
+      version: z9.literal(1),
       name: referenceNameSchema,
-      note: z8.string().trim().min(1, "must not be blank"),
+      note: z9.string().trim().min(1, "must not be blank"),
       image: referenceImagePathSchema,
       mediaType: referenceImageMediaTypeSchema
     };
-    referenceMetadataSchema = z8.discriminatedUnion("sourceKind", [
-      z8.object({
+    referenceMetadataSchema = z9.discriminatedUnion("sourceKind", [
+      z9.object({
         ...common2,
-        sourceKind: z8.literal("url"),
-        source: z8.url(),
-        capturedAt: z8.iso.datetime(),
-        viewport: z8.object({
-          name: z8.string().trim().min(1),
-          width: z8.number().int().positive(),
-          height: z8.number().int().positive()
+        sourceKind: z9.literal("url"),
+        source: z9.url(),
+        capturedAt: z9.iso.datetime(),
+        viewport: z9.object({
+          name: z9.string().trim().min(1),
+          width: z9.number().int().positive(),
+          height: z9.number().int().positive()
         }).strict()
       }).strict(),
-      z8.object({
+      z9.object({
         ...common2,
-        sourceKind: z8.literal("file"),
-        source: z8.string().trim().min(1)
+        sourceKind: z9.literal("file"),
+        source: z9.string().trim().min(1)
       }).strict()
     ]);
   }
@@ -2327,7 +2545,7 @@ var init_reference = __esm({
 
 // src/schemas/flow.ts
 import { posix, win32 } from "path";
-import { z as z9 } from "zod";
+import { z as z10 } from "zod";
 function countCapturingGroups(pattern) {
   let count = 0;
   let escaped = false;
@@ -2545,7 +2763,10 @@ function isWebFlow(flow) {
 function isPublishedFlow(flow) {
   return isWebFlow(flow) && flow.kind === "published";
 }
-var patternSchema, setupSchema, urlFromSchema, sharedExpectationSchema, nonblank, regexpSchema, projectLogPathSchema, allowSchema, stateHealthSchema, flowHealthSchema, actionWebStepSchema, webStepSchema, webStateSchema, electronStepSchema, electronStateSchema, webTargetSchema, electronTargetSchema, flowFields, routeSchema, publishedDefaultViewports, toggleNameSchema, togglesSchema, combinationsSchema, toggleCombinationCap, contentPatternSchema, webFlowSchema, electronFlowSchema, flowSchema;
+function isElectronFlow(flow) {
+  return flow.target.kind === "electron";
+}
+var patternSchema, setupSchema, urlFromSchema, sharedExpectationSchema, nonblank, regexpSchema, projectLogPathSchema, allowSchema, stateHealthSchema, flowHealthSchema, actionWebStepSchema, webStepSchema, dataStateSchema, webStateSchema, electronStepSchema, electronStateSchema, webTargetSchema, electronTargetSchema, flowFields, routeSchema, publishedDefaultViewports, toggleNameSchema, togglesSchema, combinationsSchema, toggleCombinationCap, contentPatternSchema, webFlowSchema, electronFlowSchema, flowSchema;
 var init_flow = __esm({
   "src/schemas/flow.ts"() {
     "use strict";
@@ -2553,7 +2774,7 @@ var init_flow = __esm({
     init_invariant();
     init_project();
     init_reference();
-    patternSchema = z9.string().superRefine((pattern, context2) => {
+    patternSchema = z10.string().superRefine((pattern, context2) => {
       try {
         new RegExp(pattern);
       } catch (error) {
@@ -2571,23 +2792,23 @@ var init_flow = __esm({
         });
       }
     });
-    setupSchema = z9.object({
-      run: z9.string(),
-      cwd: z9.string().optional(),
-      env: z9.record(z9.string(), z9.string()).optional(),
-      captureStdout: z9.boolean().default(false)
+    setupSchema = z10.object({
+      run: z10.string(),
+      cwd: z10.string().optional(),
+      env: z10.record(z10.string(), z10.string()).optional(),
+      captureStdout: z10.boolean().default(false)
     }).strict();
-    urlFromSchema = z9.object({
-      source: z9.literal("setup-stdout"),
+    urlFromSchema = z10.object({
+      source: z10.literal("setup-stdout"),
       pattern: patternSchema,
-      append: z9.string().optional()
+      append: z10.string().optional()
     }).strict();
-    sharedExpectationSchema = z9.object({
-      textPresent: z9.array(z9.string()).default([]),
-      selectorPresent: z9.array(z9.string()).default([]),
-      selectorAbsent: z9.array(z9.string()).default([])
+    sharedExpectationSchema = z10.object({
+      textPresent: z10.array(z10.string()).default([]),
+      selectorPresent: z10.array(z10.string()).default([]),
+      selectorAbsent: z10.array(z10.string()).default([])
     }).strict();
-    nonblank = z9.string().trim().min(1);
+    nonblank = z10.string().trim().min(1);
     regexpSchema = nonblank.superRefine((source, context2) => {
       try {
         new RegExp(source);
@@ -2603,94 +2824,96 @@ var init_flow = __esm({
       const normalized = posix.normalize(portable);
       return !posix.isAbsolute(portable) && !win32.isAbsolute(path) && normalized !== ".." && !normalized.startsWith("../");
     }, "must be a project-relative path that does not escape the project");
-    allowSchema = z9.object({
-      urls: z9.array(regexpSchema).default([]),
-      console: z9.array(regexpSchema).default([])
+    allowSchema = z10.object({
+      urls: z10.array(regexpSchema).default([]),
+      console: z10.array(regexpSchema).default([])
     }).strict();
-    stateHealthSchema = z9.object({ allow: allowSchema.prefault({}) }).strict();
+    stateHealthSchema = z10.object({ allow: allowSchema.prefault({}) }).strict();
     flowHealthSchema = stateHealthSchema.extend({
       serverLog: projectLogPathSchema.optional(),
-      serverErrorPatterns: z9.array(regexpSchema).optional()
+      serverErrorPatterns: z10.array(regexpSchema).optional()
     });
-    actionWebStepSchema = z9.discriminatedUnion("action", [
-      z9.object({
-        action: z9.literal("click"),
+    actionWebStepSchema = z10.discriminatedUnion("action", [
+      z10.object({
+        action: z10.literal("click"),
         selector: nonblank,
-        longRunning: z9.boolean().optional()
+        longRunning: z10.boolean().optional()
       }).strict(),
-      z9.object({
-        action: z9.literal("fill"),
+      z10.object({
+        action: z10.literal("fill"),
         selector: nonblank,
-        value: z9.string(),
-        longRunning: z9.boolean().optional()
+        value: z10.string(),
+        longRunning: z10.boolean().optional()
       }).strict(),
-      z9.object({
-        action: z9.literal("press"),
+      z10.object({
+        action: z10.literal("press"),
         selector: nonblank,
         key: nonblank,
-        longRunning: z9.boolean().optional()
+        longRunning: z10.boolean().optional()
       }).strict(),
-      z9.object({
-        action: z9.literal("select"),
+      z10.object({
+        action: z10.literal("select"),
         selector: nonblank,
-        value: z9.string().optional(),
+        value: z10.string().optional(),
         label: nonblank.optional(),
-        longRunning: z9.boolean().optional()
+        longRunning: z10.boolean().optional()
       }).strict().refine(
         (step) => step.value === void 0 !== (step.label === void 0),
         "must provide exactly one of value and label"
       ),
-      z9.object({
-        action: z9.literal("waitFor"),
+      z10.object({
+        action: z10.literal("waitFor"),
         selector: nonblank,
-        state: z9.enum(["visible", "hidden"]).default("visible")
+        state: z10.enum(["visible", "hidden"]).default("visible")
       }).strict(),
-      z9.object({
-        action: z9.literal("expectUrl"),
+      z10.object({
+        action: z10.literal("expectUrl"),
         path: nonblank.regex(/^\/[^\s?#]*$/, "must be a concrete pathname starting with /").optional(),
         pattern: regexpSchema.optional()
       }).strict().refine(
         (step) => step.path === void 0 !== (step.pattern === void 0),
         "must provide exactly one of path and pattern"
       ),
-      z9.object({ action: z9.literal("expectText"), text: nonblank }).strict(),
-      z9.object({ action: z9.literal("focus"), selector: nonblank }).strict(),
-      z9.object({
-        action: z9.literal("expectVisible"),
+      z10.object({ action: z10.literal("expectText"), text: nonblank }).strict(),
+      z10.object({ action: z10.literal("focus"), selector: nonblank }).strict(),
+      z10.object({
+        action: z10.literal("expectVisible"),
         selector: nonblank,
         within: nonblank.optional()
       }).strict()
     ]);
-    webStepSchema = z9.union([
+    webStepSchema = z10.union([
       actionWebStepSchema,
-      z9.object({
-        expectVisible: z9.object({ selector: nonblank, within: nonblank.optional() }).strict()
+      z10.object({
+        expectVisible: z10.object({ selector: nonblank, within: nonblank.optional() }).strict()
       }).strict().transform(({ expectVisible }) => ({
         action: "expectVisible",
         ...expectVisible
       }))
     ]);
-    webStateSchema = z9.object({
+    dataStateSchema = z10.enum(["empty", "one", "many", "error"]);
+    webStateSchema = z10.object({
       design: designDeclarationSchema.optional(),
-      id: z9.string(),
-      description: z9.string(),
-      url: z9.string().optional(),
+      id: z10.string(),
+      description: z10.string(),
+      url: z10.string().optional(),
       // Another state in this flow to load (its URL and steps) before `steps`.
       from: nonblank.optional(),
-      steps: z9.array(webStepSchema).default([]),
+      steps: z10.array(webStepSchema).default([]),
       health: stateHealthSchema.prefault({}),
       urlFrom: urlFromSchema.optional(),
       expect: sharedExpectationSchema.extend({
-        status: z9.number().default(200),
-        path: z9.string().regex(/^\/[^\s?#]*$/, "must be a concrete pathname starting with /").optional()
+        status: z10.number().default(200),
+        path: z10.string().regex(/^\/[^\s?#]*$/, "must be a concrete pathname starting with /").optional()
       }),
-      mask: z9.array(z9.string()).default([]),
-      settleMs: z9.number().optional(),
-      viewports: z9.array(z9.string()).min(1).optional(),
-      focus: z9.string().trim().min(1).optional(),
-      probe: z9.boolean().optional(),
-      fresh: z9.boolean().optional(),
-      invariants: z9.array(invariantSchema).optional(),
+      mask: z10.array(z10.string()).default([]),
+      settleMs: z10.number().optional(),
+      viewports: z10.array(z10.string()).min(1).optional(),
+      focus: z10.string().trim().min(1).optional(),
+      probe: z10.boolean().optional(),
+      fresh: z10.boolean().optional(),
+      data: dataStateSchema.optional(),
+      invariants: z10.array(invariantSchema).optional(),
       // Declared siblings for sibling-chrome: run-wide, or within this flow.
       siblingGroup: nonblank.optional(),
       group: nonblank.optional()
@@ -2707,62 +2930,63 @@ var init_flow = __esm({
         });
       }
     });
-    electronStepSchema = z9.discriminatedUnion("action", [
-      z9.object({ action: z9.literal("click"), selector: z9.string().trim().min(1) }).strict(),
-      z9.object({
-        action: z9.literal("fill"),
-        selector: z9.string().trim().min(1),
-        value: z9.string()
+    electronStepSchema = z10.discriminatedUnion("action", [
+      z10.object({ action: z10.literal("click"), selector: z10.string().trim().min(1) }).strict(),
+      z10.object({
+        action: z10.literal("fill"),
+        selector: z10.string().trim().min(1),
+        value: z10.string()
       }).strict(),
-      z9.object({
-        action: z9.literal("press"),
-        selector: z9.string().trim().min(1),
-        key: z9.string().trim().min(1)
+      z10.object({
+        action: z10.literal("press"),
+        selector: z10.string().trim().min(1),
+        key: z10.string().trim().min(1)
       }).strict()
     ]);
-    electronStateSchema = z9.object({
+    electronStateSchema = z10.object({
       design: designDeclarationSchema.optional(),
-      id: z9.string(),
-      description: z9.string(),
-      steps: z9.array(electronStepSchema).default([]),
+      id: z10.string(),
+      description: z10.string(),
+      steps: z10.array(electronStepSchema).default([]),
       expect: sharedExpectationSchema,
-      mask: z9.array(z9.string()).default([]),
-      settleMs: z9.number().optional(),
-      viewports: z9.array(z9.string()).min(1).optional(),
-      focus: z9.string().trim().min(1).optional(),
-      probe: z9.boolean().optional(),
-      fresh: z9.boolean().optional(),
-      invariants: z9.array(invariantSchema).optional(),
+      mask: z10.array(z10.string()).default([]),
+      settleMs: z10.number().optional(),
+      viewports: z10.array(z10.string()).min(1).optional(),
+      focus: z10.string().trim().min(1).optional(),
+      probe: z10.boolean().optional(),
+      fresh: z10.boolean().optional(),
+      data: dataStateSchema.optional(),
+      invariants: z10.array(invariantSchema).optional(),
       siblingGroup: nonblank.optional(),
       group: nonblank.optional()
     }).strict().superRefine(siblingIssue);
-    webTargetSchema = z9.object({ kind: z9.literal("web") }).strict();
-    electronTargetSchema = z9.object({
-      kind: z9.literal("electron"),
-      launch: z9.object({
-        executablePath: z9.string().trim().min(1),
-        args: z9.array(z9.string()).default([]),
-        cwd: z9.string().optional(),
-        env: z9.record(z9.string(), z9.string()).default({}),
-        timeoutMs: z9.number().positive().default(3e4)
+    webTargetSchema = z10.object({ kind: z10.literal("web") }).strict();
+    electronTargetSchema = z10.object({
+      kind: z10.literal("electron"),
+      launch: z10.object({
+        executablePath: z10.string().trim().min(1),
+        args: z10.array(z10.string()).default([]),
+        cwd: z10.string().optional(),
+        env: z10.record(z10.string(), z10.string()).default({}),
+        timeoutMs: z10.number().positive().default(3e4)
       }).strict(),
-      window: z9.object({
-        title: z9.string().trim().min(1),
-        timeoutMs: z9.number().positive().default(1e4)
+      window: z10.object({
+        title: z10.string().trim().min(1),
+        timeoutMs: z10.number().positive().default(1e4)
       }).strict()
     }).strict();
     flowFields = {
       shell: nonblank.optional(),
-      invariants: z9.array(invariantSchema).optional(),
-      id: z9.string(),
-      surface: z9.string().trim().min(1).optional(),
-      title: z9.string(),
-      intent: z9.array(z9.string()),
-      setup: z9.array(setupSchema),
-      viewports: z9.array(z9.string()).optional(),
-      colorSchemes: z9.array(colorSchemeSchema).min(1, "must contain at least one color scheme").superRefine((schemes, context2) => {
+      invariants: z10.array(invariantSchema).optional(),
+      id: z10.string(),
+      surface: z10.string().trim().min(1).optional(),
+      title: z10.string(),
+      intent: z10.array(z10.string()),
+      setup: z10.array(setupSchema),
+      viewports: z10.array(z10.string()).optional(),
+      colorSchemes: z10.array(colorSchemeSchema).min(1, "must contain at least one color scheme").superRefine((schemes2, context2) => {
         const seen = /* @__PURE__ */ new Set();
-        for (const [index, scheme] of schemes.entries()) {
+        for (const [index, scheme] of schemes2.entries()) {
           if (seen.has(scheme)) {
             context2.addIssue({
               code: "custom",
@@ -2774,15 +2998,15 @@ var init_flow = __esm({
         }
       }).optional()
     };
-    routeSchema = z9.string().trim().regex(/^\/[^\s?#]*$/, "must be a concrete path starting with /");
+    routeSchema = z10.string().trim().regex(/^\/[^\s?#]*$/, "must be a concrete path starting with /");
     publishedDefaultViewports = [1280, 768, 375];
-    toggleNameSchema = z9.string().regex(
+    toggleNameSchema = z10.string().regex(
       /^[A-Za-z0-9][A-Za-z0-9_-]*$/,
       "must start with a letter or number and contain only letters, numbers, underscore, or dash"
     );
-    togglesSchema = z9.record(
+    togglesSchema = z10.record(
       toggleNameSchema,
-      z9.record(toggleNameSchema, z9.array(webStepSchema)).refine(
+      z10.record(toggleNameSchema, z10.array(webStepSchema)).refine(
         (options) => Object.keys(options).length > 0,
         "must declare at least one option"
       )
@@ -2790,39 +3014,39 @@ var init_flow = __esm({
       (toggles) => Object.keys(toggles).length > 0,
       "must declare at least one toggle"
     );
-    combinationsSchema = z9.union([
-      z9.literal("all"),
-      z9.array(z9.record(toggleNameSchema, toggleNameSchema)).min(1)
+    combinationsSchema = z10.union([
+      z10.literal("all"),
+      z10.array(z10.record(toggleNameSchema, toggleNameSchema)).min(1)
     ]);
     toggleCombinationCap = 3;
-    contentPatternSchema = z9.object({
+    contentPatternSchema = z10.object({
       id: referenceNameSchema,
       path: routeSchema.optional(),
       state: nonblank.optional(),
       intent: nonblank,
       reference: nonblank.optional()
     }).strict();
-    webFlowSchema = z9.object({
+    webFlowSchema = z10.object({
       ...flowFields,
       // Published flows may also name a viewport by its width in pixels.
-      viewports: z9.array(z9.union([z9.string(), z9.number().int().positive()])).optional(),
+      viewports: z10.array(z10.union([z10.string(), z10.number().int().positive()])).optional(),
       // "published" marks rendered pages held to a hard budget.
-      kind: z9.enum(["app", "published"]).optional(),
-      pages: z9.array(routeSchema).min(1).optional(),
-      budget: z9.object({ maxDiffRatio: z9.number().min(0).max(1) }).strict().optional(),
-      server: z9.literal("production").optional(),
+      kind: z10.enum(["app", "published"]).optional(),
+      pages: z10.array(routeSchema).min(1).optional(),
+      budget: z10.object({ maxDiffRatio: z10.number().min(0).max(1) }).strict().optional(),
+      server: z10.literal("production").optional(),
       target: webTargetSchema.default({ kind: "web" }),
       health: flowHealthSchema.prefault({}),
-      states: z9.array(webStateSchema).default([]),
+      states: z10.array(webStateSchema).default([]),
       // Plain routes captured as states without hand-writing each one.
-      routes: z9.array(routeSchema).optional(),
+      routes: z10.array(routeSchema).optional(),
       // Named UI switches whose combinations are captured as generated states.
       toggles: togglesSchema.optional(),
       combinations: combinationsSchema.optional(),
-      toggleStates: z9.array(nonblank).min(1).optional(),
-      toggleRegions: z9.array(nonblank).optional(),
+      toggleStates: z10.array(nonblank).min(1).optional(),
+      toggleRegions: z10.array(nonblank).optional(),
       // Patterns and templates the advisory design-intent review judges.
-      content: z9.object({ patterns: z9.array(contentPatternSchema).min(1) }).strict().optional()
+      content: z10.object({ patterns: z10.array(contentPatternSchema).min(1) }).strict().optional()
     }).strict().superRefine((flow, context2) => {
       contentIssues(flow, context2);
       const published = flow.kind === "published";
@@ -2998,12 +3222,12 @@ var init_flow = __esm({
         ...expanded?.cap === void 0 ? {} : { toggleCap: expanded.cap }
       };
     });
-    electronFlowSchema = z9.object({
+    electronFlowSchema = z10.object({
       ...flowFields,
       target: electronTargetSchema,
-      states: z9.array(electronStateSchema)
+      states: z10.array(electronStateSchema)
     }).strict();
-    flowSchema = z9.union([
+    flowSchema = z10.union([
       electronFlowSchema,
       webFlowSchema
     ]);
@@ -3156,26 +3380,26 @@ function stateViewports(viewports, state) {
 }
 function selectColorSchemes(project, flow) {
   const declared2 = new Set(project.colorSchemes);
-  const schemes = flow.colorSchemes ?? project.colorSchemes;
-  for (const scheme of schemes) {
+  const schemes2 = flow.colorSchemes ?? project.colorSchemes;
+  for (const scheme of schemes2) {
     if (!declared2.has(scheme)) {
       throw new IdiomError(
         `unknown project color scheme ${JSON.stringify(scheme)}`
       );
     }
   }
-  return [...schemes];
+  return [...schemes2];
 }
 function captureTupleKey(tuple) {
   return `${tuple.state}\0${tuple.viewport}\0${tuple.colorScheme}`;
 }
 function expectedCaptureTupleKeys(options) {
   const viewports = selectViewports(options.project, options.flow);
-  const schemes = selectColorSchemes(options.project, options.flow);
+  const schemes2 = selectColorSchemes(options.project, options.flow);
   const collapsed = new Set(options.collapsed);
   return options.flow.states.flatMap(
     (state) => stateViewports(viewports, state).flatMap(
-      (viewport) => schemes.map(
+      (viewport) => schemes2.map(
         (colorScheme) => captureTupleKey({
           state: state.id,
           viewport: viewport.name,
@@ -3371,27 +3595,27 @@ var init_resolve = __esm({
 });
 
 // src/schemas/decision.ts
-import { z as z10 } from "zod";
+import { z as z11 } from "zod";
 var decisionSchema;
 var init_decision = __esm({
   "src/schemas/decision.ts"() {
     "use strict";
-    decisionSchema = z10.object({
-      at: z10.iso.datetime(),
-      commit: z10.string(),
-      findingId: z10.string(),
-      fingerprint: z10.string(),
-      decision: z10.enum(["accept", "reject"]),
-      scope: z10.enum(["instance", "rule"]).default("instance"),
-      reason: z10.string().optional(),
-      actor: z10.string().default("human"),
+    decisionSchema = z11.object({
+      at: z11.iso.datetime(),
+      commit: z11.string(),
+      findingId: z11.string(),
+      fingerprint: z11.string(),
+      decision: z11.enum(["accept", "reject"]),
+      scope: z11.enum(["instance", "rule"]).default("instance"),
+      reason: z11.string().optional(),
+      actor: z11.string().default("human"),
       /** `decide --choose`: the reference a person chose where several disagreed. */
-      designChoice: z10.object({
-        flow: z10.string().min(1),
-        state: z10.string().min(1),
-        colorScheme: z10.enum(["light", "dark"]).optional(),
-        decisionKey: z10.string().min(1),
-        reference: z10.string().min(1)
+      designChoice: z11.object({
+        flow: z11.string().min(1),
+        state: z11.string().min(1),
+        colorScheme: z11.enum(["light", "dark"]).optional(),
+        decisionKey: z11.string().min(1),
+        reference: z11.string().min(1)
       }).strict().optional()
     }).strict();
   }
@@ -3902,7 +4126,7 @@ var init_match = __esm({
   "src/design/match.ts"() {
     "use strict";
     init_shared();
-    normalizeText = (text3) => text3.replace(/\s+/g, " ").trim();
+    normalizeText = (text4) => text4.replace(/\s+/g, " ").trim();
     hash2 = (value) => createHash2("sha256").update(value).digest("hex").slice(0, 24);
     isFigma = (e) => e.attributes["data-idiom-source"] === "figma";
     FIGMA_ID = /^I?\d+:\d+(?:;\d+:\d+)*$/;
@@ -4069,7 +4293,7 @@ function measureComparisons(design, app, config, saved) {
   const ds = contentElements(design).filter((e) => !isVisuallyHidden(e)), as = contentElements(app).filter((e) => !isVisuallyHidden(e));
   const dmap = new Map(ds.map((e) => [e.selector, e])), amap = new Map(as.map((e) => [e.selector, e]));
   const emit = (pair, property, dv, av, allowance, dn, an, neighbour, major = false) => {
-    const missing = property === "missing", extra = property === "extra";
+    const missing2 = property === "missing", extra = property === "extra";
     const figma = extra ? void 0 : dmap.get(pair.design);
     const layerPath = figma?.attributes["data-figma-path"], link2 = figma?.attributes["data-figma-link"];
     let variable;
@@ -4081,16 +4305,16 @@ function measureComparisons(design, app, config, saved) {
       variable = names[variableKey(property)];
     } catch {
     }
-    const fix = missing ? `Restore the design content/control at ${layerPath ? `Figma layer ${JSON.stringify(layerPath)}` : pair.design}.` : extra ? `Remove or reconsider the extra element ${pair.app}.` : property.startsWith("gap.") ? `Adjust the ${property.endsWith("x") ? "horizontal" : "vertical"} edge gap between ${pair.app} and ${neighbour?.appSelector ?? "its matched sibling"} to ${dv}px using parent spacing or child margins.` : property.startsWith("position.") ? `Adjust ${pair.app}'s ${property.endsWith("x") ? "horizontal" : "vertical"} offset from its matched parent to ${dv}px.` : property === "text" ? `Replace the owned text of ${pair.app} with ${JSON.stringify(dv)}.` : `Set ${property} on ${pair.app} to the design value ${JSON.stringify(dv)}.`;
+    const fix = missing2 ? `Restore the design content/control at ${layerPath ? `Figma layer ${JSON.stringify(layerPath)}` : pair.design}.` : extra ? `Remove or reconsider the extra element ${pair.app}.` : property.startsWith("gap.") ? `Adjust the ${property.endsWith("x") ? "horizontal" : "vertical"} edge gap between ${pair.app} and ${neighbour?.appSelector ?? "its matched sibling"} to ${dv}px using parent spacing or child margins.` : property.startsWith("position.") ? `Adjust ${pair.app}'s ${property.endsWith("x") ? "horizontal" : "vertical"} offset from its matched parent to ${dv}px.` : property === "text" ? `Replace the owned text of ${pair.app} with ${JSON.stringify(dv)}.` : `Set ${property} on ${pair.app} to the design value ${JSON.stringify(dv)}.`;
     const evidence = {
       version: 1,
       pairId: pair.id,
-      method: missing || extra ? "unmatched" : pair.method,
+      method: missing2 || extra ? "unmatched" : pair.method,
       property,
       designValue: dv,
       appValue: av,
       designSelector: extra ? null : pair.design,
-      appSelector: missing ? null : pair.app,
+      appSelector: missing2 ? null : pair.app,
       ...dn === void 0 ? {} : { designNormalized: dn },
       ...an === void 0 ? {} : { appNormalized: an },
       ...allowance === void 0 ? {} : { allowance },
@@ -4106,10 +4330,11 @@ function measureComparisons(design, app, config, saved) {
     }
     const designLabel = layerPath ? `Figma ${JSON.stringify(layerPath)}${variable ? ` (${variable})` : ""}` : "design";
     const candidate2 = {
+      allowRemoval: extra,
       category: "design-drift",
       severity: major ? "major" : "minor",
       rule: "idiom:design-drift",
-      selectorHint: missing ? parent?.app ?? "body" : pair.app,
+      selectorHint: missing2 ? parent?.app ?? "body" : pair.app,
       fingerprintHint: `${pair.id}:${property}${neighbour ? `:${neighbour.pairId}` : ""}`,
       explanation: `${property}: ${designLabel} ${JSON.stringify(dv)}; app ${JSON.stringify(av)}${allowance === void 0 ? "" : ` (allowance ${allowance})`}. Match: ${evidence.method}.${link2 ? ` Figma node: ${link2}` : ""}`,
       fix: `${fix} Or accept this departure through a normal decision.`,
@@ -4120,7 +4345,7 @@ function measureComparisons(design, app, config, saved) {
       verification: {
         check: "design-drift",
         params: {
-          selector: missing ? parent?.app ?? "body" : pair.app,
+          selector: missing2 ? parent?.app ?? "body" : pair.app,
           pairId: pair.id,
           property
         }
@@ -4321,7 +4546,7 @@ function measureComparisons(design, app, config, saved) {
       if (!record2.within)
         record2.candidate = emit(pair, property, dv, av, settings.color, dn, an);
     }
-    const text3 = comparison2(
+    const text4 = comparison2(
       "text",
       d.directText,
       a.directText,
@@ -4331,8 +4556,8 @@ function measureComparisons(design, app, config, saved) {
         within: normalizeText(d.directText) === normalizeText(a.directText)
       }
     );
-    if (!text3.within)
-      text3.candidate = emit(
+    if (!text4.within)
+      text4.candidate = emit(
         pair,
         "text",
         d.directText,
@@ -4658,46 +4883,46 @@ var init_decide = __esm({
 });
 
 // src/schemas/ruling.ts
-import { z as z11 } from "zod";
+import { z as z12 } from "zod";
 var rulingCoordinateSchema, rulingPrecedentSchema, rulingCandidateSchema, decisionObservationSchema, scaleClusterPropertySchema, scaleClusterContextSchema, scaleTokenSchema, scaleClusterSchema, unruledDecisionSchema, rulingResolutionSchema;
 var init_ruling = __esm({
   "src/schemas/ruling.ts"() {
     "use strict";
     init_project();
-    rulingCoordinateSchema = z11.object({
-      state: z11.string().trim().min(1),
-      viewport: z11.string().trim().min(1),
+    rulingCoordinateSchema = z12.object({
+      state: z12.string().trim().min(1),
+      viewport: z12.string().trim().min(1),
       colorScheme: colorSchemeSchema.optional(),
-      screenshot: z11.string().trim().min(1)
+      screenshot: z12.string().trim().min(1)
     }).strict();
-    rulingPrecedentSchema = z11.discriminatedUnion("kind", [
-      z11.object({
-        kind: z11.literal("law"),
-        excerpt: z11.string().trim().min(1)
+    rulingPrecedentSchema = z12.discriminatedUnion("kind", [
+      z12.object({
+        kind: z12.literal("law"),
+        excerpt: z12.string().trim().min(1)
       }).strict(),
-      z11.object({
-        kind: z11.literal("governed-surface"),
-        screenshot: z11.string().trim().min(1),
-        state: z11.string().trim().min(1),
-        viewport: z11.string().trim().min(1),
+      z12.object({
+        kind: z12.literal("governed-surface"),
+        screenshot: z12.string().trim().min(1),
+        state: z12.string().trim().min(1),
+        viewport: z12.string().trim().min(1),
         colorScheme: colorSchemeSchema.optional()
       }).strict()
     ]);
-    rulingCandidateSchema = z11.object({
-      wording: z11.string().trim().min(1),
+    rulingCandidateSchema = z12.object({
+      wording: z12.string().trim().min(1),
       precedent: rulingPrecedentSchema
     }).strict();
-    decisionObservationSchema = z11.object({
-      choiceKey: z11.string().trim().min(1),
-      question: z11.string().trim().min(1),
-      state: z11.string().trim().min(1),
-      viewport: z11.string().trim().min(1),
+    decisionObservationSchema = z12.object({
+      choiceKey: z12.string().trim().min(1),
+      question: z12.string().trim().min(1),
+      state: z12.string().trim().min(1),
+      viewport: z12.string().trim().min(1),
       colorScheme: colorSchemeSchema.optional(),
-      screenshot: z11.string().trim().min(1),
-      nearestLawExcerpt: z11.string().trim().min(1),
-      candidates: z11.array(rulingCandidateSchema)
+      screenshot: z12.string().trim().min(1),
+      nearestLawExcerpt: z12.string().trim().min(1),
+      candidates: z12.array(rulingCandidateSchema)
     }).strict();
-    scaleClusterPropertySchema = z11.enum([
+    scaleClusterPropertySchema = z12.enum([
       "spacing:padding",
       "spacing:margin",
       "spacing:gap",
@@ -4705,48 +4930,48 @@ var init_ruling = __esm({
       "radius",
       "border"
     ]);
-    scaleClusterContextSchema = z11.object({
-      landmark: z11.string().trim().min(1),
-      component: z11.string().trim().min(1),
-      viewport: z11.string().trim().min(1)
+    scaleClusterContextSchema = z12.object({
+      landmark: z12.string().trim().min(1),
+      component: z12.string().trim().min(1),
+      viewport: z12.string().trim().min(1)
     }).strict();
-    scaleTokenSchema = z11.string().regex(
+    scaleTokenSchema = z12.string().regex(
       /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
       "must start with a letter or digit and use only letters, digits, '.', '_' or '-' (at most 64 characters)"
     );
-    scaleClusterSchema = z11.object({
+    scaleClusterSchema = z12.object({
       property: scaleClusterPropertySchema,
-      value: z11.string().trim().min(1),
-      count: z11.number().int().positive(),
-      distinctStates: z11.number().int().positive(),
-      distinctElements: z11.number().int().positive(),
+      value: z12.string().trim().min(1),
+      count: z12.number().int().positive(),
+      distinctStates: z12.number().int().positive(),
+      distinctElements: z12.number().int().positive(),
       context: scaleClusterContextSchema,
-      componentLabel: z11.string().trim().min(1),
-      nearestSteps: z11.object({
-        below: z11.string().trim().min(1).optional(),
-        above: z11.string().trim().min(1).optional(),
-        steps: z11.array(z11.string().trim().min(1))
+      componentLabel: z12.string().trim().min(1),
+      nearestSteps: z12.object({
+        below: z12.string().trim().min(1).optional(),
+        above: z12.string().trim().min(1).optional(),
+        steps: z12.array(z12.string().trim().min(1))
       }).strict(),
       suggestedToken: scaleTokenSchema,
-      examples: z11.array(
-        z11.object({
-          state: z11.string().trim().min(1),
-          viewport: z11.string().trim().min(1),
+      examples: z12.array(
+        z12.object({
+          state: z12.string().trim().min(1),
+          viewport: z12.string().trim().min(1),
           colorScheme: colorSchemeSchema.optional(),
-          screenshot: z11.string().trim().min(1),
-          selector: z11.string().trim().min(1),
-          crop: z11.string().trim().min(1).optional()
+          screenshot: z12.string().trim().min(1),
+          selector: z12.string().trim().min(1),
+          crop: z12.string().trim().min(1).optional()
         }).strict()
       ).min(1).max(3)
     }).strict();
-    unruledDecisionSchema = z11.object({
-      id: z11.string().regex(/^ruling-[1-9]\d*$/),
-      fingerprint: z11.string().trim().min(1),
-      choiceKey: z11.string().trim().min(1),
-      question: z11.string().trim().min(1),
-      nearestLawExcerpt: z11.string().trim().min(1),
-      occurrences: z11.array(rulingCoordinateSchema).min(1),
-      candidates: z11.array(rulingCandidateSchema),
+    unruledDecisionSchema = z12.object({
+      id: z12.string().regex(/^ruling-[1-9]\d*$/),
+      fingerprint: z12.string().trim().min(1),
+      choiceKey: z12.string().trim().min(1),
+      question: z12.string().trim().min(1),
+      nearestLawExcerpt: z12.string().trim().min(1),
+      occurrences: z12.array(rulingCoordinateSchema).min(1),
+      candidates: z12.array(rulingCandidateSchema),
       /** Present on a design-system question raised by scale-conformance. */
       scaleCluster: scaleClusterSchema.optional()
     }).strict().superRefine((decision, context2) => {
@@ -4774,19 +4999,19 @@ var init_ruling = __esm({
         seen.add(key4);
       }
     });
-    rulingResolutionSchema = z11.object({
-      id: z11.string().regex(/^ruling-[1-9]\d*$/),
-      fingerprint: z11.string().trim().min(1),
-      choiceKey: z11.string().trim().min(1),
-      outcome: z11.enum(["rule", "no-rule"]),
-      wording: z11.string().trim().min(1).optional(),
-      reason: z11.string().trim().min(1).optional(),
-      recordedAt: z11.string().datetime({ offset: true }),
+    rulingResolutionSchema = z12.object({
+      id: z12.string().regex(/^ruling-[1-9]\d*$/),
+      fingerprint: z12.string().trim().min(1),
+      choiceKey: z12.string().trim().min(1),
+      outcome: z12.enum(["rule", "no-rule"]),
+      wording: z12.string().trim().min(1).optional(),
+      reason: z12.string().trim().min(1).optional(),
+      recordedAt: z12.string().datetime({ offset: true }),
       /** The answer to a design-system question. */
-      scale: z11.object({
-        answer: z11.enum(["add-step", "drift"]),
+      scale: z12.object({
+        answer: z12.enum(["add-step", "drift"]),
         property: scaleClusterPropertySchema,
-        value: z11.string().trim().min(1),
+        value: z12.string().trim().min(1),
         context: scaleClusterContextSchema,
         token: scaleTokenSchema.optional()
       }).strict().optional()
@@ -5174,11 +5399,11 @@ function regionTest(elements, marked) {
 }
 function keycap(element) {
   if (element.interactive) return false;
-  const text3 = element.text.trim();
-  if (text3 === "" || element.rect.height > 32) return false;
+  const text4 = element.text.trim();
+  if (text4 === "" || element.rect.height > 32) return false;
   if (element.tag === "kbd")
-    return text3.length <= 12 && element.rect.width <= 96;
-  const short = [...graphemes.segment(text3)].length <= 2 || keyNames.has(text3.toLowerCase());
+    return text4.length <= 12 && element.rect.width <= 96;
+  const short = [...graphemes.segment(text4)].length <= 2 || keyNames.has(text4.toLowerCase());
   return short && element.rect.width <= 64;
 }
 function illustrationTest(elements) {
@@ -5281,8 +5506,8 @@ var init_adjacent_gap = __esm({
     adjacentGapCheck = {
       id: "adjacent-gap",
       run({ tuple, config }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
         const observation = tuple.observations;
         const viewportArea = (observation?.viewport.width ?? 1) * (observation?.viewport.height ?? 1);
         const gate = paintedGate(tuple, ["idiom:adjacent-elements-touch"]);
@@ -5294,8 +5519,8 @@ var init_adjacent_gap = __esm({
           (element) => element.painted !== void 0
         ) ? ["touch", "focus"] : ["all"];
         for (const mode of modes) {
-          const domain = mode !== "touch" ? observed.elements : observed.elements.filter(isElementPainted);
-          const rawBoxes = observed.elements.filter((element) => {
+          const domain = mode !== "touch" ? observed3.elements : observed3.elements.filter(isElementPainted);
+          const rawBoxes = observed3.elements.filter((element) => {
             if (isVisuallyHidden(element) || excludedTags.has(element.tag))
               return false;
             if (element.styles.display === "inline" || element.styles.display === "contents")
@@ -5432,15 +5657,15 @@ var init_alarm_at_rest = __esm({
     alarmAtRestCheck = {
       id: "alarm-at-rest",
       run({ tuple, config }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
         const observation = tuple.observations;
         if (observation?.version !== 2)
           return unavailable(this.id, "observations.json is unavailable");
         const bySelector = new Map(
           observation.elements.map((element) => [element.selector, element])
         );
-        const icons = observed.elements.filter(
+        const icons = observed3.elements.filter(
           (element) => !isVisuallyHidden(element) && isIconLike(element, bySelector)
         );
         if (icons.length > 0 && !icons.some((element) => element.signals.alarm !== void 0))
@@ -5502,8 +5727,8 @@ var init_alarm_at_rest = __esm({
         for (const element of icons) {
           if (element.signals.alarm === void 0) continue;
           if (element.tag !== "svg" && /\p{L}{2}/u.test(element.text)) continue;
-          const text3 = element.directText.replace(/\s|\uFE0E|\uFE0F/g, "");
-          const glyph2 = [...text3].find((symbol) => alarmGlyph.test(symbol));
+          const text4 = element.directText.replace(/\s|\uFE0E|\uFE0F/g, "");
+          const glyph2 = [...text4].find((symbol) => alarmGlyph.test(symbol));
           const hint = element.signals.alarm.iconHint?.match(alarmHint)?.[1];
           const painted3 = glyph2 === void 0 && hint === void 0 ? inkOf(element, descendantsOf(element.selector)) : [];
           const hues = new Set(
@@ -5752,14 +5977,14 @@ var init_broken_link = __esm({
           if (seen.has(key4)) continue;
           seen.add(key4);
           const status = result2.code === null ? result2.reason : `HTTP ${result2.code}`;
-          const text3 = link2.text === "" ? link2.selector : `\u201C${link2.text}\u201D`;
+          const text4 = link2.text === "" ? link2.selector : `\u201C${link2.text}\u201D`;
           candidates.push({
             category: this.id,
             severity: link2.sameOrigin ? "major" : "minor",
             rule: "idiom:broken-link",
             selectorHint: link2.selector,
             fingerprintHint: link2.sameOrigin ? key4 : link2.href,
-            explanation: `The link ${text3} points at ${href2}, which answers ${status}.`,
+            explanation: `The link ${text4} points at ${href2}, which answers ${status}.`,
             acceptance: [
               `${link2.selector} points at a page that answers below 400, or is removed.`
             ],
@@ -5841,6 +6066,31 @@ var init_clipped_text = __esm({
   }
 });
 
+// src/findings/json.ts
+function jsonRecord(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+var init_json = __esm({
+  "src/findings/json.ts"() {
+    "use strict";
+  }
+});
+
+// src/findings/observation.ts
+function observed(action, result2, timing) {
+  return {
+    action,
+    result: jsonRecord(result2),
+    timing: timing ?? { reason: "Timing was not recorded in this capture." }
+  };
+}
+var init_observation = __esm({
+  "src/findings/observation.ts"() {
+    "use strict";
+    init_json();
+  }
+});
+
 // src/checks/collection-actions.ts
 function list(names) {
   const shown = names.slice(0, 5).join(", ");
@@ -5850,6 +6100,7 @@ var menuTriggerPattern, actionVocabulary, collectionActionsCheck;
 var init_collection_actions = __esm({
   "src/checks/collection-actions.ts"() {
     "use strict";
+    init_observation();
     init_shared();
     menuTriggerPattern = /\b(more|options|actions|menu)\b|^[⋯⋮…•·]+$/i;
     actionVocabulary = {
@@ -5937,6 +6188,19 @@ var init_collection_actions = __esm({
                 );
             const first = evidence.items[0];
             candidates.push({
+              ...probed === void 0 ? {} : {
+                observation: observed(
+                  {
+                    source: "collection-probe",
+                    kind: "menu/contextmenu",
+                    selector,
+                    name: verb3
+                  },
+                  probed,
+                  probed.elapsedMs === void 0 ? void 0 : { elapsedMs: probed.elapsedMs }
+                )
+              },
+              documentScope: true,
               category: this.id,
               severity: "minor",
               rule: "idiom:collection-actions",
@@ -6097,8 +6361,8 @@ var init_compound_control = __esm({
         };
         const adornments = elements.flatMap((element) => {
           if (inInteractive(element) || isVisuallyHidden(element)) return [];
-          const text3 = element.directText.trim();
-          if (text3.length === 0 || text3.length > tokenMax || /\s/.test(text3) || element.text.trim() !== text3)
+          const text4 = element.directText.trim();
+          if (text4.length === 0 || text4.length > tokenMax || /\s/.test(text4) || element.text.trim() !== text4)
             return [];
           const rect3 = element.signals.textRect ?? element.rect;
           const x = rect3.x + rect3.width / 2;
@@ -6110,7 +6374,7 @@ var init_compound_control = __esm({
           )[0];
           if (input === void 0) return [];
           const side = x > input.rect.x + input.rect.width / 2 ? "suffix" : "prefix";
-          return [{ element, input, text: text3, rect: rect3, side }];
+          return [{ element, input, text: text4, rect: rect3, side }];
         });
         const candidates = [];
         for (const adornment of adornments) {
@@ -6434,11 +6698,11 @@ function reference(control, elements, hasLabel) {
       (other) => other === element || other.ancestorSelectors.includes(element.selector) || element.ancestorSelectors.includes(other.selector)
     )
   ) : void 0;
-  const text3 = label4?.text.trim().replace(/\s+/g, " ") ?? "";
+  const text4 = label4?.text.trim().replace(/\s+/g, " ") ?? "";
   if (label4?.signals.lineCount === 1 && label4.signals.inkCenterY !== void 0)
     return {
       centre: label4.signals.inkCenterY,
-      against: text3 === "" || text3.length > 40 ? "label's ink centre" : `"${text3}" label's ink centre`
+      against: text4 === "" || text4.length > 40 ? "label's ink centre" : `"${text4}" label's ink centre`
     };
   return {
     centre: control.rect.y + control.rect.height / 2,
@@ -6473,10 +6737,10 @@ var init_control_anatomy = __esm({
     controlAnatomyCheck = {
       id: "control-anatomy",
       run({ tuple }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
         const observation = tuple.observations;
-        const elements = observed.elements;
+        const elements = observed3.elements;
         const gate = paintedGate(tuple, ["idiom:sibling-select-inconsistent"]);
         const bySelector = new Map(
           elements.map((element) => [element.selector, element])
@@ -6782,15 +7046,15 @@ function matchCase(word, replacement) {
 function escapePattern(term) {
   return term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-function words(text3) {
-  return text3.split(/\s+/).filter(Boolean);
+function words(text4) {
+  return text4.split(/\s+/).filter(Boolean);
 }
-function normalizedTitle(text3) {
-  return text3.replace(/\s+/g, " ").trim().replace(/^["'“”‘’«»]+\s*|\s*["'“”‘’«»]+$/gu, "");
+function normalizedTitle(text4) {
+  return text4.replace(/\s+/g, " ").trim().replace(/^["'“”‘’«»]+\s*|\s*["'“”‘’«»]+$/gu, "");
 }
-function capitalisedName(text3) {
+function capitalisedName(text4) {
   let capitals = 0;
-  for (const word of words(text3)) {
+  for (const word of words(text4)) {
     if (!/^[\p{L}\p{M}]+(?:['’‐‑-][\p{L}\p{M}]+)*$/u.test(word)) return false;
     if (/^[\p{Lu}\p{Lt}]/u.test(word)) capitals += 1;
     else if (!titleConnectors.has(word)) return false;
@@ -6911,8 +7175,8 @@ var init_copy_lint = __esm({
     copyLintCheck = {
       id: "copy-lint",
       run({ tuple, config }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
         const gate = paintedGate(tuple, [
           "idiom:mixed-label-casing",
           "idiom:mixed-locale-spelling"
@@ -6934,7 +7198,7 @@ var init_copy_lint = __esm({
             verification: verify(this.id, { selector, rule, ...params })
           });
         };
-        const copy2 = observed.elements.filter(
+        const copy2 = observed3.elements.filter(
           (element) => !isVisuallyHidden(element) && !codeTags.has(element.tag) && !/(?:^|\/)(?:pre|code|kbd|samp|textarea)\[/.test(
             element.structuralPath
           ) && element.directText.trim() !== "" && element.attributes.translate !== "no"
@@ -6983,21 +7247,21 @@ var init_copy_lint = __esm({
             "gu"
           )
         );
-        const comparedWords = (text3) => {
+        const comparedWords = (text4) => {
           const named = properNouns.flatMap(
-            (pattern) => [...text3.matchAll(pattern)].map(
+            (pattern) => [...text4.matchAll(pattern)].map(
               (match) => [match.index, match.index + match[0].length]
             )
           );
-          return [...text3.matchAll(/\S+/g)].slice(1).filter(
+          return [...text4.matchAll(/\S+/g)].slice(1).filter(
             (match) => !named.some(
               ([start, end]) => match.index < end && match.index + match[0].length > start
             )
           ).map((match) => match[0]);
         };
-        const maskProperNouns = (text3) => properNouns.reduce(
+        const maskProperNouns = (text4) => properNouns.reduce(
           (masked, pattern) => masked.replace(pattern, (match) => " ".repeat(match.length)),
-          text3
+          text4
         );
         const byPath = new Map(
           (tuple.observations?.version === 2 ? tuple.observations.elements : []).map((element) => [element.structuralPath, element])
@@ -7037,51 +7301,51 @@ var init_copy_lint = __esm({
         };
         const usage = /* @__PURE__ */ new Map();
         for (const element of copy2) {
-          const text3 = element.directText.replace(/\s+/g, " ").trim();
-          const labelLike = words(text3).length <= 4;
-          for (const match of labelLike ? text3.matchAll(camelToken) : []) {
+          const text4 = element.directText.replace(/\s+/g, " ").trim();
+          const labelLike = words(text4).length <= 4;
+          for (const match of labelLike ? text4.matchAll(camelToken) : []) {
             if (camelAllow.has(match[0])) continue;
             report(
               "idiom:engineering-token-in-copy",
               element.selector,
-              `"${text3}" (${element.selector}) shows the code identifier "${match[0]}" to people.`,
+              `"${text4}" (${element.selector}) shows the code identifier "${match[0]}" to people.`,
               `${element.selector} uses a human label instead of "${match[0]}".`,
               "major"
             );
           }
-          for (const match of text3.matchAll(dottedToken))
+          for (const match of text4.matchAll(dottedToken))
             report(
               "idiom:engineering-token-in-copy",
               element.selector,
-              `"${text3}" (${element.selector}) shows the raw token path "${match[0]}".`,
+              `"${text4}" (${element.selector}) shows the raw token path "${match[0]}".`,
               `${element.selector} names the value in words, not as "${match[0]}".`,
               "major"
             );
-          for (const match of labelLike ? text3.matchAll(slashToken) : []) {
+          for (const match of labelLike ? text4.matchAll(slashToken) : []) {
             if (slashAllow.has(match[0])) continue;
             report(
               "idiom:engineering-token-in-copy",
               element.selector,
-              `"${text3}" (${element.selector}) shows the token group path "${match[0]}".`,
+              `"${text4}" (${element.selector}) shows the token group path "${match[0]}".`,
               `${element.selector} uses a human label instead of "${match[0]}".`
             );
           }
-          const stutter = text3.match(xOnX) ?? text3.match(doubled);
+          const stutter = text4.match(xOnX) ?? text4.match(doubled);
           if (stutter !== null)
             report(
               "idiom:repeated-words",
               element.selector,
-              `"${text3}" (${element.selector}) repeats itself ("${stutter[0]}").`,
+              `"${text4}" (${element.selector}) repeats itself ("${stutter[0]}").`,
               `${element.selector} reads naturally without the repeated "${stutter[1]}".`,
               "major"
             );
           for (const entry of policies) {
-            if (!entry.pattern.test(text3)) continue;
+            if (!entry.pattern.test(text4)) continue;
             report(
               entry.rule,
               element.selector,
-              `"${text3}" (${element.selector}) uses "${entry.term}"; replace it with "${entry.preferred}".`,
-              `${element.selector} replaces "${entry.term}" with "${entry.preferred}" within "${text3}".`,
+              `"${text4}" (${element.selector}) uses "${entry.term}"; replace it with "${entry.preferred}".`,
+              `${element.selector} replaces "${entry.term}" with "${entry.preferred}" within "${text4}".`,
               "minor",
               { term: entry.term, preferred: entry.preferred },
               JSON.stringify([
@@ -7092,23 +7356,23 @@ var init_copy_lint = __esm({
             );
           }
           for (const entry of glossary)
-            if (entry.pattern.test(text3))
+            if (entry.pattern.test(text4))
               report(
                 "idiom:glossary-term",
                 element.selector,
-                `"${text3}" (${element.selector}) uses "${entry.term}"${entry.preferred === void 0 ? ", which the glossary bans" : `; the glossary prefers "${entry.preferred}"`}.`,
+                `"${text4}" (${element.selector}) uses "${entry.term}"${entry.preferred === void 0 ? ", which the glossary bans" : `; the glossary prefers "${entry.preferred}"`}.`,
                 entry.preferred === void 0 ? `${element.selector} does not use "${entry.term}".` : `${element.selector} says "${entry.preferred}" instead of "${entry.term}".`
               );
           for (const entry of schemaWords)
-            if (entry.pattern.test(text3))
+            if (entry.pattern.test(text4))
               report(
                 "idiom:schema-word-in-copy",
                 element.selector,
-                `"${text3}" (${element.selector}) exposes the internal schema word "${entry.word}".`,
+                `"${text4}" (${element.selector}) exposes the internal schema word "${entry.word}".`,
                 `${element.selector} describes the thing in product language, not as "${entry.word}".`
               );
           const localeEligible = gate.allows("idiom:mixed-locale-spelling", element) && !linkedTitle(element.structuralPath);
-          const localeText = maskProperNouns(text3);
+          const localeText = maskProperNouns(text4);
           for (const [gb, us] of localePairs) {
             if (!localeEligible) continue;
             if (config.copy.locale !== void 0) {
@@ -7121,7 +7385,7 @@ var init_copy_lint = __esm({
                 report(
                   "idiom:mixed-locale-spelling",
                   element.selector,
-                  `"${text3}" (${element.selector}) uses "${match[0]}"; ${config.copy.locale} prefers "${replacement}".`,
+                  `"${text4}" (${element.selector}) uses "${match[0]}"; ${config.copy.locale} prefers "${replacement}".`,
                   `${element.selector} replaces "${match[0]}" with "${replacement}" for ${config.copy.locale}.`,
                   "minor",
                   {
@@ -7137,8 +7401,8 @@ var init_copy_lint = __esm({
             const lower = localeText.toLowerCase();
             const found = (word) => new RegExp(`\\b${word}\\b`).test(lower);
             const record2 = usage.get(pairKey) ?? { gb: [], us: [] };
-            if (found(gb)) record2.gb.push(`${element.selector}|${gb}|${text3}`);
-            if (found(us)) record2.us.push(`${element.selector}|${us}|${text3}`);
+            if (found(gb)) record2.gb.push(`${element.selector}|${gb}|${text4}`);
+            if (found(us)) record2.us.push(`${element.selector}|${us}|${text4}`);
             usage.set(pairKey, record2);
           }
         }
@@ -7147,11 +7411,11 @@ var init_copy_lint = __esm({
         const locale = config.copy.locale ?? (allGb.length > 0 && allUs.length > 0 ? allGb.length > allUs.length ? "en-GB" : "en-US" : void 0);
         const wrong = locale === "en-US" ? allGb : locale === "en-GB" ? allUs : [];
         for (const entry of wrong) {
-          const [selector = "document", word = "", text3 = ""] = entry.split("|");
+          const [selector = "document", word = "", text4 = ""] = entry.split("|");
           report(
             "idiom:mixed-locale-spelling",
             selector,
-            `"${text3}" (${selector}) spells "${word}" in ${locale === "en-US" ? "British" : "American"} English, while the product is ${locale}${config.copy.locale === void 0 ? " (by majority of observed spellings)" : ""}.`,
+            `"${text4}" (${selector}) spells "${word}" in ${locale === "en-US" ? "British" : "American"} English, while the product is ${locale}${config.copy.locale === void 0 ? " (by majority of observed spellings)" : ""}.`,
             `${selector} uses the ${locale} spelling.`
           );
         }
@@ -7176,8 +7440,8 @@ var init_copy_lint = __esm({
         };
         const siblings = /* @__PURE__ */ new Map();
         for (const element of copy2) {
-          const text3 = element.directText.replace(/\s+/g, " ").trim();
-          if (words(text3).length > 6 || text3.length > 60 || /[.!?]$/.test(text3))
+          const text4 = element.directText.replace(/\s+/g, " ").trim();
+          if (words(text4).length > 6 || text4.length > 60 || /[.!?]$/.test(text4))
             continue;
           if (element.styles.textTransform !== "none") continue;
           if (namedInCollection(element.structuralPath)) continue;
@@ -7191,7 +7455,7 @@ var init_copy_lint = __esm({
           ].join("|");
           siblings.set(key4, [
             ...siblings.get(key4) ?? [],
-            { selector: element.selector, text: text3 }
+            { selector: element.selector, text: text4 }
           ]);
         }
         for (const group of siblings.values()) {
@@ -7391,30 +7655,30 @@ var init_dead_affordance = __esm({
     deadAffordanceCheck = {
       id: "dead-affordance",
       run({ tuple }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
-        const insideInteractive = interactiveAncestry(observed.elements);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
+        const insideInteractive = interactiveAncestry(observed3.elements);
         const insideIllustration = illustrationFrames(
           tuple.observations?.version === 2 ? tuple.observations.elements : []
         );
         const byselector = new Map(
-          observed.elements.map((element) => [element.selector, element])
+          observed3.elements.map((element) => [element.selector, element])
         );
         const gate = paintedGate(tuple, ["idiom:dead-link-text"]);
         const candidates = [];
-        for (const element of observed.elements) {
+        for (const element of observed3.elements) {
           if (isVisuallyHidden(element)) continue;
           if (element.signals.explanation !== void 0 && (!element.enabled || element.signals.explanation?.nativeDisabled === true) && element.signals.explanation?.inViewport !== false && (element.tag === "button" || element.signals.role === "button")) {
-            const text4 = element.signals.explanation?.visibleText.trim() ?? "";
-            if (strongPhrase.test(text4) || weakPhrase.test(text4))
+            const text5 = element.signals.explanation?.visibleText.trim() ?? "";
+            if (strongPhrase.test(text5) || weakPhrase.test(text5))
               candidates.push({
                 category: this.id,
                 severity: "minor",
                 rule: "idiom:disabled-link-button",
                 selectorHint: element.selector,
-                explanation: `"${text4}" (${element.selector}) reads like navigation but is a disabled button, so the destination is unreachable.`,
+                explanation: `"${text5}" (${element.selector}) reads like navigation but is a disabled button, so the destination is unreachable.`,
                 acceptance: [
-                  `"${text4}" links to its real destination, or is a visible placeholder anchor (href="#") until that destination exists.`
+                  `"${text5}" links to its real destination, or is a visible placeholder anchor (href="#") until that destination exists.`
                 ],
                 verification: verify(this.id, { selector: element.selector })
               });
@@ -7438,11 +7702,11 @@ var init_dead_affordance = __esm({
           }
           if (insideInteractive(element) || excludedTags2.has(element.tag)) continue;
           if (insideIllustration(element) !== void 0) continue;
-          const text3 = element.directText.trim();
-          if (text3 === "" || text3.split(/\s+/).length > 6) continue;
-          if (element.text.trim() !== text3) continue;
-          const strong = strongPhrase.test(text3);
-          const weak = !strong && weakPhrase.test(text3);
+          const text4 = element.directText.trim();
+          if (text4 === "" || text4.split(/\s+/).length > 6) continue;
+          if (element.text.trim() !== text4) continue;
+          const strong = strongPhrase.test(text4);
+          const weak = !strong && weakPhrase.test(text4);
           if (!strong && !weak) continue;
           const parent = byselector.get(element.ancestorSelectors[0] ?? "");
           if (!gate.allows("idiom:dead-link-text", element, parent)) continue;
@@ -7458,9 +7722,9 @@ var init_dead_affordance = __esm({
             severity: "major",
             rule: "idiom:dead-link-text",
             selectorHint: element.selector,
-            explanation: `"${text3}" (${element.selector}) reads like a link or action${linkStyled ? " and is styled like one" : ""}, but it is plain text: clicking it does nothing.`,
+            explanation: `"${text4}" (${element.selector}) reads like a link or action${linkStyled ? " and is styled like one" : ""}, but it is plain text: clicking it does nothing.`,
             acceptance: [
-              `"${text3}" is a real link or button, or a visible placeholder link (href="#") until its destination exists.`
+              `"${text4}" is a real link or button, or a visible placeholder link (href="#") until its destination exists.`
             ],
             verification: verify(this.id, { selector: element.selector })
           });
@@ -7476,6 +7740,7 @@ var deadControlCheck;
 var init_dead_control = __esm({
   "src/checks/dead-control.ts"() {
     "use strict";
+    init_observation();
     init_shared();
     deadControlCheck = {
       id: "dead-control",
@@ -7497,6 +7762,20 @@ var init_dead_control = __esm({
           const label4 = result2.name === "" ? result2.selector : `"${result2.name}"`;
           const toggle = toggles.has(result2.selector);
           candidates.push({
+            observation: observed(
+              {
+                source: "probe-click",
+                kind: "click",
+                selector: result2.selector,
+                name: result2.name
+              },
+              result2,
+              result2.elapsedMs === void 0 ? void 0 : {
+                elapsedMs: result2.elapsedMs,
+                ...result2.timings ? { windowMs: result2.timings.effectWindowMs } : {}
+              }
+            ),
+            allowRemoval: true,
             category: this.id,
             severity: "major",
             rule: toggle ? "idiom:toggle-without-state" : "idiom:control-does-nothing",
@@ -7582,6 +7861,7 @@ function regionCandidates(regions) {
     const changedArea = Math.round(region.changedCells / region.cells * 1e3) / 1e3;
     const offset2 = `${regions.offset >= 0 ? "+" : ""}${regions.offset}`;
     return {
+      documentScope: true,
       category: "design-drift",
       severity: "minor",
       rule: "idiom:design-drift",
@@ -7923,7 +8203,7 @@ var init_dialog_shell = __esm({
               );
           }
           if (title !== void 0 && reference3 !== void 0 && population.size >= 2 && Math.abs(title.size - reference3) > 0.5) {
-            const others = [...population.values()].filter(({ text: text3 }) => text3 !== title.text).map(({ text: text3, size: size3 }) => `${JSON.stringify(text3)} ${size3}px`);
+            const others = [...population.values()].filter(({ text: text4 }) => text4 !== title.text).map(({ text: text4, size: size3 }) => `${JSON.stringify(text4)} ${size3}px`);
             emit(
               "title-size",
               "minor",
@@ -7940,22 +8220,22 @@ var init_dialog_shell = __esm({
 });
 
 // src/checks/disguised-control.ts
-function textCue(text3, configured) {
-  if (configured.some((pattern) => pattern.test(text3))) return "strong";
-  if (strongPlaceholders.some((pattern) => pattern.test(text3))) return "strong";
-  if (inputVerb.test(text3) && ellipsis.test(text3)) return "strong";
-  if (ellipsis.test(text3) || inputVerb.test(text3)) return "weak";
+function textCue(text4, configured) {
+  if (configured.some((pattern) => pattern.test(text4))) return "strong";
+  if (strongPlaceholders.some((pattern) => pattern.test(text4))) return "strong";
+  if (inputVerb.test(text4) && ellipsis.test(text4)) return "strong";
+  if (ellipsis.test(text4) || inputVerb.test(text4)) return "weak";
   return void 0;
 }
 function fieldShaped(element) {
   const { rect: rect3, styles, signals } = element;
   if (rect3.width < 160 || rect3.width < 3 * rect3.height) return false;
   if (signals.lineCount > 1) return false;
-  const text3 = signals.textRect;
-  if (text3 !== void 0) {
+  const text4 = signals.textRect;
+  if (text4 !== void 0) {
     const contentLeft = rect3.x + px(styles.borderLeftWidth) + px(styles.paddingLeft);
     const contentRight = rect3.x + rect3.width - px(styles.borderRightWidth) - px(styles.paddingRight);
-    return text3.x <= contentLeft + 12 && text3.x + text3.width <= contentRight - 40;
+    return text4.x <= contentLeft + 12 && text4.x + text4.width <= contentRight - 40;
   }
   const flexible = /flex|grid/.test(styles.display);
   return ["start", "left", "-webkit-left"].includes(styles.textAlign) && (!flexible || ["normal", "flex-start", "start", "left"].includes(styles.justifyContent));
@@ -8009,10 +8289,10 @@ var init_disguised_control = __esm({
     disguisedControlCheck = {
       id: "disguised-control",
       run({ tuple, config }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
         const observation = tuple.observations;
-        const all = observation?.version === 2 ? observation.elements : observed.elements;
+        const all = observation?.version === 2 ? observation.elements : observed3.elements;
         const bySelector = new Map(
           all.map((element) => [element.selector, element])
         );
@@ -8024,22 +8304,22 @@ var init_disguised_control = __esm({
         );
         const isIgnored = (element) => ignored.has(element.selector) || element.ancestorSelectors.some((selector) => ignored.has(selector));
         const withShortcut = new Set(
-          observed.elements.filter((element) => element.tag === "kbd").flatMap((element) => element.ancestorSelectors)
+          observed3.elements.filter((element) => element.tag === "kbd").flatMap((element) => element.ancestorSelectors)
         );
         const configured = config.disguisedControl.placeholderPatterns.map(
           (pattern) => new RegExp(pattern, "i")
         );
         const candidates = [];
-        for (const element of observed.elements) {
+        for (const element of observed3.elements) {
           if (element.signals.role !== "button") continue;
           if (!element.enabled || isVisuallyHidden(element) || isIgnored(element))
             continue;
-          const text3 = element.text.replace(/\s+/g, " ").trim();
-          if (text3 === "" || text3.split(" ").length > 8) continue;
+          const text4 = element.text.replace(/\s+/g, " ").trim();
+          if (text4 === "" || text4.split(" ").length > 8) continue;
           const haspopup = element.signals.haspopup;
-          if (element.attributes.role === "combobox" || haspopup !== void 0 && haspopup !== "false" || withShortcut.has(element.selector) || shortcutHint.test(text3) || busy.test(text3))
+          if (element.attributes.role === "combobox" || haspopup !== void 0 && haspopup !== "false" || withShortcut.has(element.selector) || shortcutHint.test(text4) || busy.test(text4))
             continue;
-          const cue = textCue(text3, configured);
+          const cue = textCue(text4, configured);
           const shaped = fieldShaped(element);
           const styled = shaped && element.rect.height >= 28 && element.rect.height <= 64 && isBounded(element) && fieldBorder(element) && neutralBackground(element) && mutedText(element, bySelector, roots);
           if (!(cue === "strong" || cue === "weak" && shaped || styled)) continue;
@@ -8052,17 +8332,17 @@ var init_disguised_control = __esm({
             severity: "major",
             rule: "idiom:disguised-control",
             selectorHint: element.selector,
-            explanation: `${JSON.stringify(text3)} (${element.selector}) is a button that looks like a text field (${cues.join(" and ")}): people will try to type into it.`,
+            explanation: `${JSON.stringify(text4)} (${element.selector}) is a button that looks like a text field (${cues.join(" and ")}): people will try to type into it.`,
             acceptance: [
               `${element.selector} is either the real input or a clearly labelled button (verb + object, button styling) \u2014 not both.`
             ],
             verification: verify(this.id, { selector: element.selector })
           });
         }
-        const editable = observed.elements.filter(
+        const editable = observed3.elements.filter(
           (element) => textEntry(element) && element.enabled && !("readonly" in element.attributes) && !isVisuallyHidden(element)
         );
-        for (const element of observed.elements) {
+        for (const element of observed3.elements) {
           if (!textEntry(element) || isVisuallyHidden(element) || isIgnored(element))
             continue;
           const readonly = "readonly" in element.attributes;
@@ -8073,7 +8353,7 @@ var init_disguised_control = __esm({
           if (signals.haspopup !== void 0 && signals.haspopup !== "false")
             continue;
           const parent = element.ancestorSelectors[0];
-          if (parent !== void 0 && observed.elements.some(
+          if (parent !== void 0 && observed3.elements.some(
             (other) => other !== element && other.ancestorSelectors.includes(parent) && ["button", "link"].includes(other.signals.role) && /\bcopy\b/i.test(other.signals.name || other.text)
           ))
             continue;
@@ -8404,14 +8684,14 @@ var init_empty_state = __esm({
           const hasCta = region.cta.length > 0;
           const hasText = (region.text.match(/\p{L}{2,}/gu) ?? []).length >= 2;
           if (hasCta && hasText) continue;
-          const missing = hasCta ? "has a call to action but no text explaining why it is empty" : hasText ? `has text (${JSON.stringify(region.text)}) but no call to action` : "has no call to action and no explanatory text";
+          const missing2 = hasCta ? "has a call to action but no text explaining why it is empty" : hasText ? `has text (${JSON.stringify(region.text)}) but no call to action` : "has no call to action and no explanatory text";
           candidates.push({
             category: this.id,
             severity: region.source === "configured" ? "major" : "minor",
             rule: "idiom:empty-state",
             selectorHint: region.selector,
             fingerprintHint: `empty-state:${region.selector}`,
-            explanation: `The empty ${region.source === "configured" ? "region" : region.source} ${region.selector} (no items) ${missing}.`,
+            explanation: `The empty ${region.source === "configured" ? "region" : region.source} ${region.selector} (no items) ${missing2}.`,
             acceptance: [
               `When ${region.selector} has no items it explains why in words and offers a button or link to the next step.`
             ],
@@ -8480,28 +8760,28 @@ var init_error_text = __esm({
     errorTextCheck = {
       id: "error-text",
       run({ tuple, config }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
         const custom = config.errorPatterns.map((pattern) => ({
           pattern: new RegExp(pattern, "i"),
           label: "a configured error signature"
         }));
         const groups = /* @__PURE__ */ new Map();
-        for (const element of observed.elements) {
+        for (const element of observed3.elements) {
           if (isVisuallyHidden(element) || ["script", "style", "noscript", "template"].includes(element.tag))
             continue;
-          const text3 = element.directText.replace(/\s+/g, " ").trim();
-          if (text3 === "") continue;
+          const text4 = element.directText.replace(/\s+/g, " ").trim();
+          if (text4 === "") continue;
           const match = [...signatures, ...custom].find(
-            (entry) => entry.pattern.test(text3)
+            (entry) => entry.pattern.test(text4)
           );
           if (match === void 0) continue;
-          const key4 = `${match.label}\0${text3.slice(0, 120)}`;
+          const key4 = `${match.label}\0${text4.slice(0, 120)}`;
           const group = groups.get(key4);
           if (group === void 0)
             groups.set(key4, {
               selectors: [element.selector],
-              text: text3,
+              text: text4,
               label: match.label
             });
           else group.selectors.push(element.selector);
@@ -8703,7 +8983,26 @@ var init_timeline = __esm({
 });
 
 // src/checks/interaction-shift.ts
-function shiftCauses(action, moved = displacements(action)) {
+function scrollbarShift(action) {
+  const samples = action.rootScroll ?? [];
+  for (let index = 1; index < samples.length; index++) {
+    const before = samples[index - 1];
+    const after = samples[index];
+    if (!before || !after || before.scrollable === after.scrollable) continue;
+    const locked = after.scrollable ? before : after;
+    const open3 = after.scrollable ? after : before;
+    if (!locked.lockedBy || open3.gutter <= 0) continue;
+    if (after.stableGutter || locked.compensation) return void 0;
+    return {
+      time: after.time,
+      direction: after.scrollable ? "added" : "removed",
+      gutter: open3.gutter,
+      lockedBy: locked.lockedBy
+    };
+  }
+  return void 0;
+}
+function shiftCauses(action, moved = displacements(action), viewport) {
   const bySelector = new Map(moved.map((entry) => [entry.selector, entry]));
   const causes = [];
   for (const mutation of action.mutations) {
@@ -8751,6 +9050,23 @@ function shiftCauses(action, moved = displacements(action)) {
       delta: { dw: entry.resized.dw, dh: entry.resized.dh }
     });
   }
+  const scrollbar = viewport && scrollbarShift(action);
+  if (viewport && scrollbar) {
+    const scroll = scrollAt(action, scrollbar.time);
+    const strip = {
+      x: viewport.width - scrollbar.gutter + scroll.x,
+      y: scroll.y,
+      width: scrollbar.gutter,
+      height: viewport.height
+    };
+    causes.push({
+      selector: "html",
+      kind: "scrollbar",
+      time: scrollbar.time,
+      rect: strip,
+      final: strip
+    });
+  }
   return causes;
 }
 function attributeShift(candidate2, causes) {
@@ -8759,7 +9075,12 @@ function attributeShift(candidate2, causes) {
   const sameRow = (slot) => slot.y < from.y + from.height && slot.y + slot.height > from.y;
   const eligible = causes.filter((cause) => {
     if (cause.time > candidate2.peakAt + FRAME_SLACK_MS) return false;
+    if (cause.kind === "scrollbar")
+      return !vertical && Math.abs(candidate2.peakDx) <= cause.rect.width + 1 && candidate2.peakAt >= cause.time - FRAME_SLACK_MS;
     const slot = cause.rect;
+    const movement = vertical ? candidate2.peakDy : candidate2.peakDx;
+    const change = cause.kind === "resize" ? vertical ? cause.delta?.dh ?? 0 : cause.delta?.dw ?? 0 : cause.kind === "remove" ? -1 : 1;
+    if (Math.sign(change) !== Math.sign(movement)) return false;
     if (cause.kind === "insert") {
       if (contains2(cause.final, candidate2.end)) return false;
       const left2 = sameRow(slot) && slot.x <= from.x + 1;
@@ -8776,6 +9097,7 @@ function attributeShift(candidate2, causes) {
     return vertical ? slot.y + slot.height <= from.y + 1 || left : left;
   });
   const extent = (cause) => {
+    if (cause.kind === "scrollbar") return cause.rect.width;
     if (cause.kind === "resize")
       return Math.abs(
         vertical ? cause.delta?.dh ?? 0 : cause.delta?.dw ?? 0
@@ -8785,8 +9107,9 @@ function attributeShift(candidate2, causes) {
   };
   const distance = Math.abs(vertical ? candidate2.peakDy : candidate2.peakDx);
   const reach = eligible.reduce((sum2, cause) => sum2 + extent(cause), 0);
-  if (distance > reach * 1.25 + 32) return void 0;
-  const rank = (cause) => cause.kind === "resize" ? 1 : 0;
+  const slack = eligible.some((cause) => cause.kind !== "resize") ? 32 : 4;
+  if (distance > reach * 1.25 + slack) return void 0;
+  const rank = (cause) => cause.kind === "scrollbar" ? -1 : cause.kind === "resize" ? 1 : 0;
   return eligible.sort(
     (a, b) => rank(a) - rank(b) || b.time - a.time || (a.kind === "resize" ? area(a.rect) - area(b.rect) : 0)
   )[0];
@@ -8831,16 +9154,46 @@ function discreteJumps(entry, causes, minDistance) {
 }
 function interactionShifts(action, viewport, settings) {
   const journeys = displacements(action, settings.minDistance);
-  const causes = shiftCauses(action, journeys);
+  const causes = shiftCauses(action, journeys, viewport);
   const inserted = new Set(
     action.mutations.filter((mutation) => mutation.type === "insert").map((mutation) => mutation.selector)
   );
+  const removed = action.mutations.filter(
+    (mutation) => mutation.type === "remove"
+  );
+  const before = (time, entry) => time <= entry.peakAt + FRAME_SLACK_MS;
+  const replaced = (entry) => removed.some(
+    (gone) => before(gone.time, entry) && (entry.selector === gone.selector || entry.selector.startsWith(`${gone.selector} > `))
+  );
+  const slotOf = (selector, rect3) => rect3 ?? journeys.find((entry) => entry.selector === selector)?.start;
+  const overlaps2 = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+  const swapped = (gone, added) => {
+    if (parentOf(gone.selector) !== parentOf(added.selector)) return false;
+    const slot = slotOf(gone.selector, gone.rect);
+    return !slot || !added.rect || overlaps2(slot, added.rect);
+  };
+  const repopulated = (entry) => {
+    const home = parentOf(entry.selector);
+    if (!home) return false;
+    const tag = tagOf(entry.selector);
+    const listed3 = journeys.some(
+      (other) => other.baseline && other.selector !== entry.selector && parentOf(other.selector) === home && tagOf(other.selector) === tag && other.peak >= settings.minDistance
+    );
+    if (!listed3) return false;
+    return action.mutations.some(
+      (added) => added.type === "insert" && added.selector !== entry.selector && before(added.time, entry) && parentOf(added.selector) === home && tagOf(added.selector) === tag && removed.some(
+        (gone) => tagOf(gone.selector) === tag && Math.abs(gone.time - added.time) <= FRAME_SLACK_MS && !swapped(gone, added)
+      )
+    );
+  };
   const baseline = journeys.filter((entry) => entry.baseline);
   const candidates = baseline.filter(
     (entry) => entry.peak >= settings.minDistance && entry.peak > 0.5 && // Pinned or scroll-anchored content did not move where the user looks.
     entry.viewPeak >= Math.min(settings.minDistance, entry.peak) && // A container that collapsed to nothing was emptied, not displaced.
     area(entry.end) > 0 && !root(entry.selector) && // A re-rendered element that reuses its selector is new content.
-    !inserted.has(entry.selector)
+    !inserted.has(entry.selector) && ![...inserted].some(
+      (selector) => entry.selector.startsWith(`${selector} > `)
+    ) && !replaced(entry) && !repopulated(entry)
   );
   const reordered = /* @__PURE__ */ new Set();
   const near2 = (a, b) => Math.abs(a - b) <= 1;
@@ -8875,16 +9228,40 @@ function interactionShifts(action, viewport, settings) {
     (selector) => regionRect(action, selector) ?? []
   );
   const holdsControl = (cause) => {
-    if (!clicked) return false;
+    if (!clicked || cause.kind === "scrollbar") return false;
     if (cause.kind === "insert")
       return clicked.endAt >= cause.time && contains2(cause.final, clicked.end);
-    return contains2(cause.rect, clicked.start);
+    return contains2(cause.rect, clicked.start) || clicked.selector.startsWith(`${cause.selector} > `);
   };
-  const toggled = (cause) => action.effectRegion.controls.includes(cause.selector) || holdsControl(cause) || panels.some(
+  const toggled = (cause) => cause.kind !== "scrollbar" && (action.effectRegion.controls.includes(cause.selector) || holdsControl(cause) || panels.some(
     (panel) => contains2(panel, cause.rect) || contains2(panel, cause.final)
-  );
+  ));
   const dismissed = causes.some(
-    (cause) => cause.kind === "remove" && cause.time <= LATE_MS && holdsControl(cause)
+    (cause) => !isLate(cause) && holdsControl(cause) && (cause.kind === "remove" || cause.kind === "resize" && area(cause.final) === 0)
+  );
+  const collapsed = clicked ? journeys.filter(
+    (entry) => entry.baseline && !root(entry.selector) && entry.resized !== void 0 && entry.resized.since <= LATE_MS && (entry.resized.dw < 0 || entry.resized.dh < 0)
+  ) : [];
+  const closesUp = (moved, entry) => {
+    if (contains2(entry.start, moved.start)) return false;
+    if (contains2(moved.start, entry.start)) return false;
+    const shrink = entry.resized ?? { dw: 0, dh: 0 };
+    const matches = (distance, change) => change < 0 && distance < 0 && Math.abs(distance - change) <= 2;
+    return matches(moved.peakDx, shrink.dw) || matches(moved.peakDy, shrink.dh);
+  };
+  const carriers = clicked ? journeys.filter(
+    (carrier) => carrier.baseline && !root(carrier.selector) && carrier.peak >= settings.minDistance && contains2(carrier.start, clicked.start)
+  ) : [];
+  const selfCollapsed = collapsed.filter(
+    (entry) => carriers.some((carrier) => closesUp(carrier, entry))
+  );
+  const closers = carriers.filter(
+    (carrier) => selfCollapsed.some((entry) => closesUp(carrier, entry))
+  );
+  const sameWay = (a, b) => Math.abs(b) < 1 || Math.sign(a) === Math.sign(b);
+  const startsIn = (outer, inner) => inner.x >= outer.x - 1 && inner.x < outer.x + outer.width && inner.y >= outer.y - 1 && inner.y < outer.y + outer.height;
+  const carried = (candidate2) => selfCollapsed.some((entry) => closesUp(candidate2, entry)) || closers.some(
+    (carrier) => startsIn(carrier.start, candidate2.start) && sameWay(candidate2.peakDx, carrier.peakDx) && sameWay(candidate2.peakDy, carrier.peakDy)
   );
   const byCause = /* @__PURE__ */ new Map();
   for (const { candidate: candidate2, cause } of candidates.flatMap(
@@ -8897,9 +9274,11 @@ function interactionShifts(action, viewport, settings) {
       continue;
     if (!cause) continue;
     const late = isLate(cause);
-    if (!late && (dismissed || toggled(cause))) continue;
+    const scrollbar = cause.kind === "scrollbar";
+    if (!late && !scrollbar && (dismissed || toggled(cause) || carried(candidate2)))
+      continue;
     const inside4 = (rect3) => contains2(rect3, candidate2.start) || contains2(rect3, candidate2.end);
-    if (!late && regions.some(inside4)) continue;
+    if (!late && !scrollbar && regions.some(inside4)) continue;
     if (candidate2.positions >= 2) continue;
     const covering = new Set(
       journeys.filter((entry) => contains2(entry.start, candidate2.start)).map((entry) => entry.selector)
@@ -8947,6 +9326,10 @@ function interactionShifts(action, viewport, settings) {
     )
   }));
 }
+function parentOf(selector) {
+  const index = selector.lastIndexOf(" > ");
+  return index < 0 ? void 0 : selector.slice(0, index);
+}
 function tagOf(selector) {
   const last = selector.trim().split(/[\s>+~]+/).at(-1) ?? "";
   return /^[a-z][a-z0-9-]*/i.exec(last)?.[0]?.toLowerCase() ?? "";
@@ -8954,6 +9337,8 @@ function tagOf(selector) {
 function shiftFix(cause, late, moved) {
   const height = cause.kind === "resize" ? px2(cause.delta?.dh || cause.final.height) : px2(cause.final.height);
   const selector = cause.selector;
+  if (cause.kind === "scrollbar")
+    return "Reserve the scrollbar's space so locking scroll cannot shift the page: set scrollbar-gutter: stable on html, or add padding-right equal to the scrollbar width (innerWidth - clientWidth) to body while scroll is locked.";
   if (mediaTags.test(tagOf(selector))) {
     const w = Math.round(cause.final.width);
     const h = Math.round(cause.final.height);
@@ -8986,8 +9371,10 @@ var LATE_MS, FRAME_SLACK_MS, isLate, root, area, geometryProperty, intersectsVie
 var init_interaction_shift = __esm({
   "src/checks/interaction-shift.ts"() {
     "use strict";
+    init_observation();
     init_project();
     init_shared();
+    init_temporal_evidence();
     init_timeline();
     LATE_MS = 500;
     FRAME_SLACK_MS = 20;
@@ -9005,7 +9392,8 @@ var init_interaction_shift = __esm({
     verb = {
       insert: "was inserted",
       remove: "was removed",
-      resize: "resized"
+      resize: "resized",
+      scrollbar: "gave up its scrollbar"
     };
     interactionShiftCheck = {
       id: "interaction-shift",
@@ -9021,17 +9409,65 @@ var init_interaction_shift = __esm({
           if (action.source !== "probe-click" && action.source !== "web-step" || // Motion-only replays repeat an action already judged in its own window.
           action.confirmation === true || action.status === "unavailable")
             continue;
-          for (const { cause, late, moved } of interactionShifts(
-            action,
-            viewport,
-            settings
-          )) {
+          const shifts = interactionShifts(action, viewport, settings);
+          const scrollbar = scrollbarShift(action);
+          if (scrollbar) {
+            const subject = describeAction(action);
+            const moved = shifts.filter(({ cause }) => cause.kind === "scrollbar").flatMap((shift) => shift.moved);
+            const names = moved.slice(0, 5).map((entry) => `${entry.selector} (${px2(entry.peak)})`);
+            const more = moved.length > 5 ? `, and ${moved.length - 5} more` : "";
+            candidates.push({
+              observation: observed(
+                actionIdentity(action),
+                {
+                  durationMs: action.durationMs,
+                  rootScroll: action.rootScroll,
+                  ...action.held ? { held: action.held } : {},
+                  ...action.failure ? { failure: action.failure } : {}
+                },
+                { elapsedMs: action.durationMs }
+              ),
+              category: this.id,
+              severity: "major",
+              rule: "idiom:interaction-shift",
+              selectorHint: "html",
+              fingerprintHint: "interaction-shift:scrollbar",
+              ...action.id === void 0 ? {} : { timeline: action.id },
+              explanation: `After ${subject}, the page scrollbar was ${scrollbar.direction} (${scrollbar.lockedBy}), so all content shifts ${px2(scrollbar.gutter)} horizontally ${Math.round(scrollbar.time)}ms after input on systems with classic scrollbars${names.length ? `: ${names.join(", ")}${more}` : ""}.`,
+              acceptance: [
+                `After ${subject}, locking or unlocking page scroll does not change the width available to content.`
+              ],
+              fix: shiftFix(
+                {
+                  selector: "html",
+                  kind: "scrollbar",
+                  time: scrollbar.time,
+                  rect: { x: 0, y: 0, width: scrollbar.gutter, height: 0 },
+                  final: { x: 0, y: 0, width: scrollbar.gutter, height: 0 }
+                },
+                false,
+                []
+              ),
+              verification: verify(this.id, { minDistance: settings.minDistance })
+            });
+          }
+          for (const { cause, late, moved } of shifts) {
+            if (cause.kind === "scrollbar") continue;
             const [lead2] = moved;
             if (!lead2) continue;
             const names = moved.slice(0, 5).map((entry) => `${entry.selector} (${px2(entry.peak)})`);
             const more = moved.length > 5 ? `, and ${moved.length - 5} more` : "";
             const subject = describeAction(action);
             candidates.push({
+              observation: observed(
+                actionIdentity(action),
+                {
+                  durationMs: action.durationMs,
+                  ...action.held ? { held: action.held } : {},
+                  ...action.failure ? { failure: action.failure } : {}
+                },
+                { elapsedMs: action.durationMs }
+              ),
               category: this.id,
               severity: "major",
               rule: "idiom:interaction-shift",
@@ -9130,6 +9566,7 @@ var causeVerb, layoutShiftCheck;
 var init_layout_shift = __esm({
   "src/checks/layout-shift.ts"() {
     "use strict";
+    init_observation();
     init_project();
     init_interaction_shift();
     init_shared();
@@ -9137,7 +9574,9 @@ var init_layout_shift = __esm({
     causeVerb = {
       insert: "was inserted",
       remove: "was removed",
-      resize: "resized"
+      resize: "resized",
+      // Load timelines never carry the scrollbar cause; complete for the type.
+      scrollbar: "gave up its scrollbar"
     };
     layoutShiftCheck = {
       id: "layout-shift",
@@ -9170,6 +9609,11 @@ var init_layout_shift = __esm({
         ) : 0;
         return ran(this.id, [
           {
+            observation: observed(
+              { source: "load-sample", kind: "load", name: "page load" },
+              shift,
+              shift.elapsedMs === void 0 ? void 0 : { elapsedMs: shift.elapsedMs }
+            ),
             category: this.id,
             severity: "major",
             rule: "idiom:layout-shift",
@@ -9192,10 +9636,20 @@ var init_layout_shift = __esm({
 
 // src/checks/loading-state.ts
 function slowActions(check, tuple) {
-  const evidence = timelineEvidence(tuple);
+  const evidence = timelineEvidence(
+    tuple.timelines === void 0 ? tuple : {
+      ...tuple,
+      timelines: {
+        ...tuple.timelines,
+        actions: tuple.timelines.actions.filter(
+          (action) => !(action.source === "slow-replay" && action.held !== void 0 && navigationOnly(action))
+        )
+      }
+    }
+  );
   if (evidence.status === "unavailable")
     return unavailable(check, evidence.reason);
-  const all = evidence.timelines.actions.filter(
+  const all = (tuple.timelines?.actions ?? []).filter(
     (action) => action.source === "slow-replay" && action.held !== void 0
   );
   if (all.length === 0) {
@@ -9281,7 +9735,7 @@ function judgeLoading(action, withinMs, progressRan) {
     return {
       fires: false,
       judged: true,
-      note: held.requests.some((request2) => request2.navigation) ? "main-frame document navigation (the browser shows its own progress)" : "no same-site fetch/XHR request was held"
+      note: held.requests.some((request2) => request2.navigation) ? NAVIGATION_NOTE : "no same-site fetch/XHR request was held"
     };
   if (held.of === "web-step" && action.stepIndex !== void 0 && progressRan(action.stepIndex))
     return {
@@ -9359,7 +9813,7 @@ function judgeDoubleSubmit(action, withinMs) {
     return {
       fires: false,
       judged: true,
-      note: "main-frame document navigation"
+      note: NAVIGATION_NOTE
     };
   if (action.kind !== "click" && action.kind !== "press")
     return { fires: false, judged: true, note: `${action.kind} action` };
@@ -9397,11 +9851,14 @@ function judgeDoubleSubmit(action, withinMs) {
     };
   return { fires: true, request: request2, duplicates };
 }
-var RELEASE_ADJACENCY_MS, safeMethods, routeIndicators, describe2, listed, verb2, round2, navigationOnly, label, loadingStateMissingCheck, doubleSubmitCheck;
+var NAVIGATION_NOTE, RELEASE_ADJACENCY_MS, safeMethods, routeIndicators, describe2, listed, verb2, round2, navigationOnly, label, loadingStateMissingCheck, doubleSubmitCheck;
 var init_loading_state = __esm({
   "src/checks/loading-state.ts"() {
     "use strict";
+    init_observation();
     init_shared();
+    init_temporal_evidence();
+    NAVIGATION_NOTE = "main-frame document navigation";
     RELEASE_ADJACENCY_MS = 400;
     safeMethods = /* @__PURE__ */ new Set(["GET", "HEAD", "OPTIONS"]);
     routeIndicators = /* @__PURE__ */ new Set([
@@ -9450,6 +9907,15 @@ var init_loading_state = __esm({
           const late = verdict.late === null ? "" : ` The first feedback appeared only after ${round2(verdict.late)}ms.`;
           const explanation = verdict.route ? `Navigating to ${verdict.route.to} left the main content ${held.mainEmpty ? "empty" : "unchanged"} for ${verdict.silentMs}ms with no pending indicator while ${requests} was pending; it changed only after the response.${late} Idiom held the response for ${held.delayMs}ms to see what users on a slow network see.` : `${verb2(action)} ${trigger} showed nothing for ${verdict.silentMs}ms while ${requests} was pending; the page changed only after the response.${late} Idiom held the response for ${held.delayMs}ms to see what users on a slow network see.`;
           candidates.push({
+            observation: observed(
+              actionIdentity(action),
+              {
+                durationMs: action.durationMs,
+                ...action.held ? { held: action.held } : {},
+                ...action.failure ? { failure: action.failure } : {}
+              },
+              { elapsedMs: action.durationMs }
+            ),
             category: this.id,
             severity: "major",
             rule: "idiom:loading-state-missing",
@@ -9494,6 +9960,15 @@ var init_loading_state = __esm({
           const trigger = action.selector ?? action.name;
           const request2 = describe2(verdict.request);
           candidates.push({
+            observation: observed(
+              actionIdentity(action),
+              {
+                durationMs: action.durationMs,
+                ...action.held ? { held: action.held } : {},
+                ...action.failure ? { failure: action.failure } : {}
+              },
+              { elapsedMs: action.durationMs }
+            ),
             category: this.id,
             severity: "major",
             rule: "idiom:double-submit",
@@ -9686,6 +10161,11 @@ function contentSnaps(tuple, actions, config, motion) {
       category: "motion",
       severity: "major",
       rule: "idiom:motion-snap",
+      observation: observed(
+        actionIdentity(evidence),
+        { changes: evidence.visibleChanges ?? [] },
+        { elapsedMs: evidence.durationMs }
+      ),
       selectorHint: target2?.selector ?? change.container,
       fingerprintHint: `motion-snap|${change.kind}|${change.container}`,
       ...evidence.id ? { timeline: evidence.id } : {},
@@ -9709,6 +10189,7 @@ var acceptances, motionCheck, kindPhrases;
 var init_motion = __esm({
   "src/checks/motion.ts"() {
     "use strict";
+    init_observation();
     init_motion_snap();
     init_shared();
     init_temporal_evidence();
@@ -9755,6 +10236,17 @@ var init_motion = __esm({
               candidates.push(
                 linkRecording(
                   {
+                    observation: observed(
+                      {
+                        source: action.source,
+                        kind: action.source === "probe-hover" ? "hover" : "click",
+                        selector: action.selector,
+                        name: action.name,
+                        ...action.stepIndex === void 0 ? {} : { stepIndex: action.stepIndex }
+                      },
+                      { change },
+                      action.elapsedMs === void 0 ? void 0 : { elapsedMs: action.elapsedMs }
+                    ),
                     category: "motion",
                     ...action.timelineId ? { timeline: action.timelineId } : {},
                     severity: major ? "major" : "minor",
@@ -9909,6 +10401,11 @@ function temporalAction(tuple, candidate2) {
     matches = actions.filter(
       (a) => persisted ? a.id === persisted : recorded ? recordingKey(a) === recorded : a.source === p.source && a.name === p.action && a.selector === p.actionSelector && a.stepIndex === p.stepIndex
     );
+  } else if (candidate2.observation) {
+    const identity7 = candidate2.observation.action;
+    matches = actions.filter(
+      (action) => sameAction(identity7, actionIdentity(action))
+    );
   } else return void 0;
   return matches.length === 1 ? matches[0] : void 0;
 }
@@ -10054,6 +10551,15 @@ function checkFor(id2) {
         candidates.push(
           linkRecording(
             {
+              observation: observed(
+                actionIdentity(action),
+                {
+                  durationMs: action.durationMs,
+                  ...action.held ? { held: action.held } : {},
+                  ...action.failure ? { failure: action.failure } : {}
+                },
+                { elapsedMs: action.durationMs }
+              ),
               category: id2,
               rule: `idiom:${id2}`,
               severity: "major",
@@ -10093,6 +10599,7 @@ var errorStateMissingCheck, retryBlockedCheck;
 var init_failure_state = __esm({
   "src/checks/failure-state.ts"() {
     "use strict";
+    init_observation();
     init_shared();
     init_temporal_evidence();
     errorStateMissingCheck = checkFor("error-state-missing");
@@ -10113,8 +10620,8 @@ var init_field_group = __esm({
   "src/checks/field-group.ts"() {
     "use strict";
     init_shared();
-    clip = (text3, length = 40) => {
-      const trimmed = text3.replace(/\s+/g, " ").trim();
+    clip = (text4, length = 40) => {
+      const trimmed = text4.replace(/\s+/g, " ").trim();
       return trimmed.length > length ? `${trimmed.slice(0, length - 1)}\u2026` : trimmed;
     };
     fieldGroupCheck = {
@@ -10144,8 +10651,8 @@ var init_field_group = __esm({
           if (member.role === "label") return `the label ${member.selector}`;
           if (member.role === "control")
             return `its ${element?.tag ?? "control"} ${member.selector}`;
-          const text3 = clip(element?.text ?? "", 24);
-          return text3 === "" ? `the helper ${member.selector}` : `the "${text3}" helper (${member.selector})`;
+          const text4 = clip(element?.text ?? "", 24);
+          return text4 === "" ? `the helper ${member.selector}` : `the "${text4}" helper (${member.selector})`;
         };
         const candidates = [];
         for (const group of observation.fieldGroups) {
@@ -10222,6 +10729,7 @@ var focusVisibleCheck;
 var init_focus_visible = __esm({
   "src/checks/focus-visible.ts"() {
     "use strict";
+    init_observation();
     init_project();
     init_shared();
     focusVisibleCheck = {
@@ -10241,6 +10749,16 @@ var init_focus_visible = __esm({
           seen.add(selector);
           const name = record2.name === "" ? selector : `\u201C${record2.name}\u201D`;
           candidates.push({
+            observation: observed(
+              {
+                source: "focus-trial",
+                kind: "focus",
+                selector: record2.selector,
+                name: record2.name
+              },
+              record2,
+              record2.elapsedMs === void 0 ? void 0 : { elapsedMs: record2.elapsedMs }
+            ),
             category: this.id,
             severity: "major",
             rule: "idiom:focus-not-visible",
@@ -10515,7 +11033,7 @@ var init_fresh_state = __esm({
     unsavedText = /\bunsaved\b/i;
     negatedUnsaved = /\b(?:no|nothing|zero|0|without)\s+(?:\w+\s+)?unsaved\b/i;
     builtInUnsaved = {
-      test: (text3) => unsavedText.test(text3) && !negatedUnsaved.test(text3)
+      test: (text4) => unsavedText.test(text4) && !negatedUnsaved.test(text4)
     };
     freshStateCheck = {
       id: "fresh-state",
@@ -10537,8 +11055,8 @@ var init_fresh_state = __esm({
             },
             candidates: []
           };
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
         const marked = (purpose) => new Set(
           (observation.selectorMarks ?? []).filter((mark) => mark.purpose === purpose).flatMap((mark) => mark.matches)
         );
@@ -10558,7 +11076,7 @@ var init_fresh_state = __esm({
         ];
         const candidates = [];
         const reported = /* @__PURE__ */ new Set();
-        for (const element of observed.elements) {
+        for (const element of observed3.elements) {
           if (!element.interactive || isVisuallyHidden(element)) continue;
           if (element.ancestorSelectors.some((selector) => reported.has(selector)))
             continue;
@@ -10588,7 +11106,7 @@ var init_fresh_state = __esm({
           });
         }
         const indicators = /* @__PURE__ */ new Set();
-        for (const element of observed.elements) {
+        for (const element of observed3.elements) {
           if (isVisuallyHidden(element)) continue;
           if (element.ancestorSelectors.some((selector) => indicators.has(selector)))
             continue;
@@ -10597,10 +11115,10 @@ var init_fresh_state = __esm({
             element.signals.title,
             element.attributes["aria-label"]
           ].flatMap(
-            (text3) => text3 === void 0 || text3.trim() === "" ? [] : [text3.replace(/\s+/g, " ").trim()]
+            (text4) => text4 === void 0 || text4.trim() === "" ? [] : [text4.replace(/\s+/g, " ").trim()]
           );
           const match = texts.find(
-            (text3) => unsavedPatterns.some((pattern) => pattern.test(text3))
+            (text4) => unsavedPatterns.some((pattern) => pattern.test(text4))
           );
           if (match === void 0 && !unsavedMarks.has(element.selector)) continue;
           indicators.add(element.selector);
@@ -10635,27 +11153,27 @@ var init_glyph_icon = __esm({
     glyphIconCheck = {
       id: "glyph-icon",
       run({ tuple, config }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
-        const inside4 = interactiveAncestry(observed.elements);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
+        const inside4 = interactiveAncestry(observed3.elements);
         const bySelector = new Map(
-          observed.elements.map((element) => [element.selector, element])
+          observed3.elements.map((element) => [element.selector, element])
         );
         const arrow = /^[\u2190-\u21FF]$/u;
         const allowed = new Set(config.glyphAllow);
         const groups = /* @__PURE__ */ new Map();
-        for (const element of observed.elements) {
+        for (const element of observed3.elements) {
           if (isVisuallyHidden(element) || !inside4(element)) continue;
           if (element.attributes["aria-hidden"] === "true" && element.tag === "svg")
             continue;
-          const text3 = element.directText.trim();
-          if (text3 === "") continue;
-          const symbols = onlyGlyphs.test(text3) ? [...text3.replace(/\s+/g, "")] : (() => {
-            const match = text3.match(leadingGlyph);
+          const text4 = element.directText.trim();
+          if (text4 === "") continue;
+          const symbols = onlyGlyphs.test(text4) ? [...text4.replace(/\s+/g, "")] : (() => {
+            const match = text4.match(leadingGlyph);
             return match?.[1] === void 0 ? [] : [match[1]];
           })();
           const control = element.interactive ? element : element.ancestorSelectors.map((selector) => bySelector.get(selector)).find((ancestor) => ancestor?.interactive);
-          const adornment = !element.interactive && control !== void 0 && /\p{L}{2}/u.test(control.text) && !control.text.trim().startsWith(text3);
+          const adornment = !element.interactive && control !== void 0 && /\p{L}{2}/u.test(control.text) && !control.text.trim().startsWith(text4);
           for (const symbol of symbols) {
             if (allowed.has(symbol)) continue;
             if (adornment && arrow.test(symbol)) continue;
@@ -10741,13 +11259,13 @@ var init_group_invariants = __esm({
             });
           };
           const satisfy = `Satisfy ${label4}: ${JSON.stringify(d)}.`;
-          const missing = selectors.filter(({ matches }) => matches.length === 0).sort((a, b) => a.selector.localeCompare(b.selector));
-          if (missing.length > 0) {
+          const missing2 = selectors.filter(({ matches }) => matches.length === 0).sort((a, b) => a.selector.localeCompare(b.selector));
+          if (missing2.length > 0) {
             if (!d.optional)
               emit(
                 "missing-selector",
-                `${label4}: required selector${missing.length > 1 ? "s" : ""} matched no elements: ${missing.map(({ selector }) => selector).join(", ")}`,
-                missing[0]?.selector ?? "document",
+                `${label4}: required selector${missing2.length > 1 ? "s" : ""} matched no elements: ${missing2.map(({ selector }) => selector).join(", ")}`,
+                missing2[0]?.selector ?? "document",
                 satisfy
               );
             continue;
@@ -11044,13 +11562,13 @@ var init_layout_invariants = __esm({
               })
             });
           };
-          const missing = selectors.filter(({ matches }) => matches.length === 0).sort((a, b) => a.selector.localeCompare(b.selector));
-          if (missing.length > 0) {
+          const missing2 = selectors.filter(({ matches }) => matches.length === 0).sort((a, b) => a.selector.localeCompare(b.selector));
+          if (missing2.length > 0) {
             if (!d.optional)
               emit(
                 "missing-selector",
-                `${label4}: required selector${missing.length > 1 ? "s" : ""} matched no elements: ${missing.map(({ selector }) => selector).join(", ")}`,
-                missing[0]?.selector ?? "document"
+                `${label4}: required selector${missing2.length > 1 ? "s" : ""} matched no elements: ${missing2.map(({ selector }) => selector).join(", ")}`,
+                missing2[0]?.selector ?? "document"
               );
             continue;
           }
@@ -11188,6 +11706,7 @@ var livenessCheck;
 var init_liveness = __esm({
   "src/checks/liveness.ts"() {
     "use strict";
+    init_observation();
     init_shared();
     livenessCheck = {
       id: "liveness",
@@ -11230,6 +11749,16 @@ var init_liveness = __esm({
           const zero = numbers.length > 0 && numbers.every((n) => Number(n) === 0);
           const rule = `idiom:liveness-${zero ? "all-zero" : "unchanged"}`;
           candidates.push({
+            observation: observed(
+              {
+                source: "liveness",
+                kind: "sample",
+                selector: entry.selector,
+                name: entry.identity
+              },
+              entry,
+              { elapsedMs: entry.elapsedMs }
+            ),
             category: this.id,
             severity: "major",
             rule,
@@ -11448,14 +11977,14 @@ function primaryCandidates(elements, tuple, notes) {
   for (const element of elements) {
     const { paint } = element.signals;
     if (!paint.primaryAction) continue;
-    const text3 = paint.text;
-    if (text3 === void 0 || text3.status === "none") continue;
-    if (text3.status === "unavailable") {
-      unmeasured.push(`${element.selector} (${text3.reason})`);
+    const text4 = paint.text;
+    if (text4 === void 0 || text4.status === "none") continue;
+    if (text4.status === "unavailable") {
+      unmeasured.push(`${element.selector} (${text4.reason})`);
       continue;
     }
     measured2 += 1;
-    const worst = text3.samples.map((sample) => ({
+    const worst = text4.samples.map((sample) => ({
       sample,
       ratio: contrastRatio(sample.foreground, sample.background)
     })).sort((left, right) => left.ratio - right.ratio)[0];
@@ -11518,10 +12047,10 @@ var init_luminance_parity = __esm({
     luminanceParityCheck = {
       id: "luminance-parity",
       run({ tuple, tuples, config }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
-        const elements = painted(observed.elements);
-        if (elements.length === 0 && observed.elements.length > 0)
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
+        const elements = painted(observed3.elements);
+        if (elements.length === 0 && observed3.elements.length > 0)
           return unavailable(
             this.id,
             "observations predate paint signals (recapture)"
@@ -11787,10 +12316,10 @@ function mirrorAxis(a, b, axis, bySelector, viewport) {
 }
 function kindOf2(element) {
   const graphic = element.signals?.renderedContent?.graphic === true;
-  const text3 = element.signals?.renderedContent?.text === true;
-  if (graphic && text3) return "icon + text";
+  const text4 = element.signals?.renderedContent?.text === true;
+  if (graphic && text4) return "icon + text";
   if (graphic) return "icon";
-  return text3 ? "text glyph" : "empty";
+  return text4 ? "text glyph" : "empty";
 }
 function fontWeightNumber(value) {
   if (value === "normal") return 400;
@@ -11821,8 +12350,8 @@ var init_mirrored_control = __esm({
             this.id,
             "observations predate element signals (recapture)"
           );
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
         const bySelector = new Map(
           observation.elements.map((element) => [element.selector, element])
         );
@@ -12017,9 +12546,9 @@ function stableV2Styles(styles, volatile) {
   const {
     gridTemplateColumns: _gridTemplateColumns,
     transform: _transform,
-    ...stable2
+    ...stable3
   } = styles;
-  return stable2;
+  return stable3;
 }
 function signature2(records) {
   return createHash5("sha256").update(
@@ -12104,13 +12633,13 @@ function buildV2(artifact) {
     const masked = affectedByMask(path, masks);
     const temporal = element.temporal || containsTemporal(element.directText);
     const volatileRecord = masked || temporal;
-    let text3 = normalizedText(element.directText);
+    let text4 = normalizedText(element.directText);
     if (masked) {
       reductions.textSuppressedMask += 1;
-      text3 = void 0;
+      text4 = void 0;
     } else if (temporal) {
       reductions.textSuppressedTemporal += 1;
-      text3 = void 0;
+      text4 = void 0;
     }
     const reflowAffected = volatile.some(
       (source) => !source.outOfFlow && !element.outOfFlow && source.stableIslandPath === element.stableIslandPath && element.rect.y >= source.rect.y
@@ -12122,7 +12651,7 @@ function buildV2(artifact) {
         path,
         selector: element.selector,
         tag: element.tag,
-        ...text3 === void 0 ? {} : { text: text3 },
+        ...text4 === void 0 ? {} : { text: text4 },
         ...volatileRecord ? {} : { attributes: stableAttributes(element.attributes) },
         styles: stableV2Styles(element.styles, volatileRecord),
         ...geometry === void 0 ? {} : { geometry }
@@ -12226,16 +12755,16 @@ function buildV1(artifact, maskMembership) {
     const temporalAffected = temporalPaths.some(
       (temporal) => beneath(temporal, path)
     );
-    let text3 = normalizedText(element.text);
+    let text4 = normalizedText(element.text);
     if (boundary) {
       reductions.textSuppressedBoundary += 1;
-      text3 = void 0;
+      text4 = void 0;
     } else if (maskAffected) {
       reductions.textSuppressedMask += 1;
-      text3 = void 0;
+      text4 = void 0;
     } else if (temporalAffected) {
       reductions.textSuppressedTemporal += 1;
-      text3 = void 0;
+      text4 = void 0;
     }
     const reflowAffected = volatileNodes.some(
       ({ element: source, parent: sourceParent }) => sourceParent === parent && !source.outOfFlow && !element.outOfFlow && element.rect.y >= source.rect.y
@@ -12246,7 +12775,7 @@ function buildV1(artifact, maskMembership) {
       path,
       selector: element.selector,
       tag: element.tag,
-      ...text3 === void 0 ? {} : { text: text3 },
+      ...text4 === void 0 ? {} : { text: text4 },
       styles: v1CompatibleStyles(element.styles),
       ...suppressGeometry ? {} : { geometry: relativeRect(element.rect, parent?.element.rect) }
     };
@@ -12295,14 +12824,14 @@ function tupleKey(tuple) {
 }
 function missingColorSchemeCandidates(tuples, expectedTupleKeys) {
   if (expectedTupleKeys === void 0 || tuples.length === 0) return [];
-  const observed = [...new Set(tuples.map(tupleKey))].sort();
+  const observed3 = [...new Set(tuples.map(tupleKey))].sort();
   const expected = [...new Set(expectedTupleKeys)].sort();
-  if (observed.length !== expected.length || observed.some((key4, index) => key4 !== expected[index]))
+  if (observed3.length !== expected.length || observed3.some((key4, index) => key4 !== expected[index]))
     return [];
-  const schemes = [
+  const schemes2 = [
     ...new Set(expectedTupleKeys.map((key4) => key4.split("\0")[2] ?? "light"))
   ];
-  if (schemes.length < 2) return [];
+  if (schemes2.length < 2) return [];
   const byKey = new Map(tuples.map((tuple) => [tupleKey(tuple), tuple]));
   const coordinates = [
     ...new Set(
@@ -12310,14 +12839,14 @@ function missingColorSchemeCandidates(tuples, expectedTupleKeys) {
     )
   ];
   const results = [];
-  for (let index = 1; index < schemes.length; index += 1) {
-    const previous = schemes[index - 1];
-    const duplicate = schemes[index];
+  for (let index = 1; index < schemes2.length; index += 1) {
+    const previous = schemes2[index - 1];
+    const duplicate = schemes2[index];
     const evidence = [];
     let identical = true;
-    for (const coordinate5 of coordinates) {
-      const left = byKey.get(`${coordinate5}\0${previous}`);
-      const right = byKey.get(`${coordinate5}\0${duplicate}`);
+    for (const coordinate6 of coordinates) {
+      const left = byKey.get(`${coordinate6}\0${previous}`);
+      const right = byKey.get(`${coordinate6}\0${duplicate}`);
       if (left === void 0 || right === void 0 || left.failure !== void 0 || right.failure !== void 0 || left.mismatches.length > 0 || right.mismatches.length > 0 || left.observations?.version !== 2 || right.observations?.version !== 2) {
         identical = false;
         break;
@@ -12444,11 +12973,11 @@ var init_native_control = __esm({
     nativeControlCheck = {
       id: "native-control",
       run({ tuple }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
         const natives = /* @__PURE__ */ new Map();
         const customs = /* @__PURE__ */ new Map();
-        for (const element of observed.elements) {
+        for (const element of observed3.elements) {
           if (isVisuallyHidden(element)) continue;
           const native = nativeFamily(element);
           if (native !== void 0)
@@ -12585,6 +13114,7 @@ var init_overflow_clip = __esm({
             category: this.id,
             severity: "major",
             rule: "idiom:document-horizontal-overflow",
+            documentScope: true,
             selectorHint: "document",
             explanation: `The document is ${observation.document.scrollWidth}px wide inside a ${observation.document.clientWidth}px viewport.`,
             acceptance: [
@@ -12710,19 +13240,19 @@ function pageSections(observation, viewportHeight) {
     const heading = visible2.find(
       (inner) => inner.headingLevel !== void 0 && within2(inner.structuralPath, element.structuralPath)
     );
-    const text3 = heading?.text.replace(/\s+/g, " ").trim() ?? "";
+    const text4 = heading?.text.replace(/\s+/g, " ").trim() ?? "";
     return {
       id: `s${index + 1}`,
       selector: element.selector,
       structuralPath: element.structuralPath,
       rect: element.rect,
-      ...text3 === "" ? {} : { heading: text3.slice(0, 80) },
+      ...text4 === "" ? {} : { heading: text4.slice(0, 80) },
       role: isFooter(element) ? "footer" : element === hero && content.length >= 2 ? "hero" : element === final ? "final" : "body"
     };
   });
 }
-function spellUnits(text3) {
-  return text3.replace(/(\d)\s?percent\b/gi, "$1%").replaceAll("\xD7", "x");
+function spellUnits(text4) {
+  return text4.replace(/(\d)\s?percent\b/gi, "$1%").replaceAll("\xD7", "x");
 }
 function normalizeClaim(token) {
   return spellUnits(token).toLowerCase().replace(/(\d),(?=\d{3}\b)/g, "$1").replace(/\s+/g, "").replace(/million/g, "m").replace(/billion/g, "bn").replace(/[.,]+$/, "");
@@ -12730,8 +13260,8 @@ function normalizeClaim(token) {
 function claimCore(normalized) {
   return normalized.replace(populationNoun, "");
 }
-function claimTokens(text3) {
-  const source = spellUnits(text3);
+function claimTokens(text4) {
+  const source = spellUnits(text4);
   const spans = claimPatterns.flatMap(
     (pattern) => [...source.matchAll(pattern)].map((match) => ({
       start: match.index,
@@ -12757,9 +13287,9 @@ function insideControlIllustration(path) {
 }
 function supportedClaims(texts) {
   const supported = /* @__PURE__ */ new Set();
-  for (const text3 of texts) {
-    supported.add(normalizeClaim(text3));
-    for (const token of claimTokens(text3)) {
+  for (const text4 of texts) {
+    supported.add(normalizeClaim(text4));
+    for (const token of claimTokens(text4)) {
       const normalized = normalizeClaim(token);
       supported.add(normalized);
       supported.add(claimCore(normalized));
@@ -12886,8 +13416,8 @@ var init_page_content = __esm({
           (pattern) => new RegExp(pattern, "i")
         );
         for (const element of copy2) {
-          const text3 = element.directText.replace(/\s+/g, " ").trim();
-          const matched = placeholderTexts.has(text3.toLowerCase()) ? text3 : [...placeholderPatterns, ...configuredPlaceholders].map((pattern) => pattern.exec(text3)?.[0]).find((value) => value !== void 0 && value !== "");
+          const text4 = element.directText.replace(/\s+/g, " ").trim();
+          const matched = placeholderTexts.has(text4.toLowerCase()) ? text4 : [...placeholderPatterns, ...configuredPlaceholders].map((pattern) => pattern.exec(text4)?.[0]).find((value) => value !== void 0 && value !== "");
           if (matched === void 0) continue;
           candidates.push({
             category: this.id,
@@ -13107,6 +13637,7 @@ var progressAffordanceCheck;
 var init_progress_affordance = __esm({
   "src/checks/progress-affordance.ts"() {
     "use strict";
+    init_observation();
     init_shared();
     progressAffordanceCheck = {
       id: "progress-affordance",
@@ -13151,6 +13682,17 @@ var init_progress_affordance = __esm({
           const late = step.firstMs === null ? "" : `; the first appeared after ${step.firstMs}ms`;
           const settled = step.settledMs === void 0 ? "" : `; the step settled after ${step.settledMs}ms`;
           candidates.push({
+            observation: observed(
+              {
+                source: "progress",
+                kind: step.action,
+                selector: step.selector,
+                name: "longRunning",
+                stepIndex: step.stepIndex
+              },
+              step,
+              { windowMs: step.observedMs }
+            ),
             category: this.id,
             severity: "major",
             rule: "idiom:progress-affordance",
@@ -13215,7 +13757,7 @@ var init_published_budget = __esm({
             candidates: []
           };
         const candidates = [];
-        const missing = [];
+        const missing2 = [];
         const { scrollWidth, clientWidth } = observation.document;
         if (scrollWidth > clientWidth + 1)
           candidates.push({
@@ -13235,7 +13777,7 @@ var init_published_budget = __esm({
           });
         const reported = /* @__PURE__ */ new Set();
         const images = observation.version === 2 ? observation.images : void 0;
-        if (images === void 0) missing.push("image signal (recapture)");
+        if (images === void 0) missing2.push("image signal (recapture)");
         for (const image2 of images ?? []) {
           const url = image2.currentSrc || image2.src;
           if (!image2.complete || image2.naturalWidth !== 0 || url === "") continue;
@@ -13270,7 +13812,7 @@ var init_published_budget = __esm({
             })
           });
         }
-        if (tuple.axe === void 0) missing.push("axe results (axe.json)");
+        if (tuple.axe === void 0) missing2.push("axe results (axe.json)");
         for (const violation of axeViolations(tuple.axe)) {
           if (!gatedImpacts.has(violation.impact ?? "")) continue;
           const first = violation.nodes[0];
@@ -13293,7 +13835,7 @@ var init_published_budget = __esm({
         const pixel2 = published.pixel;
         const max = published.maxDiffRatio;
         if (pixel2?.status === "unavailable")
-          missing.push(`pixel difference (${pixel2.reason})`);
+          missing2.push(`pixel difference (${pixel2.reason})`);
         if (pixel2?.status === "measured" && max !== void 0 && pixel2.ratio > max)
           candidates.push({
             category: this.id,
@@ -13310,10 +13852,10 @@ var init_published_budget = __esm({
             })
           });
         return {
-          coverage: missing.length === 0 ? { check: this.id, status: "ran" } : {
+          coverage: missing2.length === 0 ? { check: this.id, status: "ran" } : {
             check: this.id,
             status: "unavailable",
-            reason: `could not measure: ${missing.join("; ")}`
+            reason: `could not measure: ${missing2.join("; ")}`
           },
           candidates
         };
@@ -14323,13 +14865,13 @@ function analyse2(tuples, config) {
   for (const tuple of [...tuples].sort(
     (left, right) => tupleSortKey2(left).localeCompare(tupleSortKey2(right))
   )) {
-    const observed = signalledElements(tuple);
-    if ("reason" in observed) continue;
+    const observed3 = signalledElements(tuple);
+    if ("reason" in observed3) continue;
     const tupleNotes = [];
-    const raw = scaleMeasurements(tuple, observed.elements, config, tupleNotes);
+    const raw = scaleMeasurements(tuple, observed3.elements, config, tupleNotes);
     const painted3 = scaleMeasurements(
       tuple,
-      observed.elements.filter(isElementPainted),
+      observed3.elements.filter(isElementPainted),
       config,
       []
     );
@@ -14699,8 +15241,8 @@ var init_scale_conformance = __esm({
     scaleConformanceCheck = {
       id: "scale-conformance",
       run({ tuple, config, tuples }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
         const analysis = analysisFor(
           tuples?.includes(tuple) ? tuples : [tuple],
           config
@@ -14708,7 +15250,7 @@ var init_scale_conformance = __esm({
         const gate = paintedGate(tuple, ["idiom:scale-outlier"]);
         for (const measurement of scaleMeasurements(
           tuple,
-          observed.elements,
+          observed3.elements,
           config,
           []
         ))
@@ -15286,7 +15828,7 @@ function interactiveKind(element) {
   if (element.tag === "input") return "input";
   return void 0;
 }
-function nearestBoundary(element, available, observed, side) {
+function nearestBoundary(element, available, observed3, side) {
   const start = element.rect.y;
   const end = element.rect.y + element.rect.height;
   const viewportBottom = available.find(
@@ -15304,7 +15846,7 @@ function nearestBoundary(element, available, observed, side) {
     return leftDistance - rightDistance || left.source.localeCompare(right.source) || left.path.localeCompare(right.path) || left.edge.localeCompare(right.edge);
   })[0];
   if (nearest === void 0) return void 0;
-  const interveningContent = observed.some((other) => {
+  const interveningContent = observed3.some((other) => {
     if (!other.visible || isVisuallyHidden(other) || other.rect.width <= 0 || other.rect.height <= 0 || other.structuralPath === element.structuralPath || pathContains(element.structuralPath, other.structuralPath) || pathContains(other.structuralPath, element.structuralPath) || Math.min(nearest.x + nearest.width, other.rect.x + other.rect.width) <= Math.max(nearest.x, other.rect.x))
       return false;
     return side === "boundary-above" ? other.rect.y < start && other.rect.y + other.rect.height > nearest.coordinate : other.rect.y + other.rect.height > end && other.rect.y < nearest.coordinate;
@@ -15464,6 +16006,7 @@ function candidateFor2(outlier) {
   const { placement, prevailing, support, exemplar } = outlier;
   const direction2 = placement.side === "boundary-above" ? "above" : "below";
   return {
+    targetSelectors: [placement.element.selector],
     category: "spacing-rhythm",
     severity: "minor",
     rule: "idiom:spacing-rhythm-outlier",
@@ -15666,12 +16209,12 @@ var init_text_centering = __esm({
     textCenteringCheck = {
       id: "text-centering",
       run({ tuple, config }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
         const gate = paintedGate(tuple, ["idiom:label-off-centre"]);
         const elements = gate.filter(
           "idiom:label-off-centre",
-          observed.elements.filter(isBounded)
+          observed3.elements.filter(isBounded)
         );
         const bounded2 = new Set(
           elements.filter(isBounded).map((element) => element.selector)
@@ -15688,13 +16231,13 @@ var init_text_centering = __esm({
           const label4 = labelOf(element);
           if (label4.lineCount !== 1 || label4.inkCenterY === void 0) continue;
           if (label4.textRect === void 0) continue;
-          const { text: text3 } = label4;
-          if (text3 === "" || text3.length > 40 || text3.includes("\n")) continue;
+          const { text: text4 } = label4;
+          if (text4 === "" || text4.length > 40 || text4.includes("\n")) continue;
           const height = element.rect.height;
           if (height < 12 || height > 64 || height > label4.textRect.height * 3.2)
             continue;
           const inner = elements.some(
-            (other) => other !== element && bounded2.has(other.selector) && other.ancestorSelectors.includes(element.selector) && labelOf(other).text === text3
+            (other) => other !== element && bounded2.has(other.selector) && other.ancestorSelectors.includes(element.selector) && labelOf(other).text === text4
           );
           if (inner) continue;
           const box = measuredBox(element);
@@ -15719,7 +16262,7 @@ var init_text_centering = __esm({
             groups.set(key4, {
               offset: offset2,
               selectors: [element.selector],
-              text: text3,
+              text: text4,
               height: box.height,
               basis: box.basis,
               ruleSide: box.ruleSide
@@ -15875,6 +16418,7 @@ var touchReachabilityCheck;
 var init_touch_reachability = __esm({
   "src/checks/touch-reachability.ts"() {
     "use strict";
+    init_observation();
     init_shared();
     touchReachabilityCheck = {
       id: "touch-reachability",
@@ -15930,6 +16474,16 @@ var init_touch_reachability = __esm({
           if (entry.hover.status !== "revealed" || entry.focus.status === "revealed")
             continue;
           candidates.push({
+            observation: observed(
+              {
+                source: "touch-trial",
+                kind: "hover/focus",
+                selector: entry.selector,
+                name: entry.name
+              },
+              entry,
+              entry.elapsedMs === void 0 ? void 0 : { elapsedMs: entry.elapsedMs }
+            ),
             category: this.id,
             severity: "major",
             rule: "idiom:touch-hover-only",
@@ -16039,8 +16593,8 @@ var init_types = __esm({
 });
 
 // src/checks/unexplained-control.ts
-function isGlyphLabel(text3) {
-  const trimmed = text3.replace(/\s+/g, "");
+function isGlyphLabel(text4) {
+  const trimmed = text4.replace(/\s+/g, "");
   if (trimmed === "") return true;
   const characters = [...trimmed];
   if (characters.length === 1) return true;
@@ -16056,16 +16610,17 @@ var meaningful, hasTooltip, unexplainedControlCheck;
 var init_unexplained_control = __esm({
   "src/checks/unexplained-control.ts"() {
     "use strict";
+    init_observation();
     init_shared();
     meaningful = (name, visible2) => name.trim() !== "" && name.trim() !== visible2.trim() && /\p{L}{3,}/u.test(name);
     hasTooltip = (record2) => record2.tooltips.some((tip) => tip.text.trim() !== "");
     unexplainedControlCheck = {
       id: "unexplained-control",
       run({ tuple, config }) {
-        const observed = signalledElements(tuple);
-        if ("reason" in observed) return unavailable(this.id, observed.reason);
+        const observed3 = signalledElements(tuple);
+        if ("reason" in observed3) return unavailable(this.id, observed3.reason);
         const visibleMode = config.explanation === "visible";
-        if (visibleMode && observed.elements.some(
+        if (visibleMode && observed3.elements.some(
           (element) => element.interactive && !isVisuallyHidden(element) && element.signals.explanation === void 0
         ))
           return unavailable(
@@ -16073,7 +16628,7 @@ var init_unexplained_control = __esm({
             "Visible explanation evidence is missing; recapture with the current version."
           );
         const candidates = [];
-        for (const element of observed.elements) {
+        for (const element of observed3.elements) {
           if (!element.interactive || isVisuallyHidden(element)) continue;
           if (["input", "select", "textarea"].includes(element.tag)) continue;
           const { signals } = element;
@@ -16106,6 +16661,22 @@ var init_unexplained_control = __esm({
               severity: enabled ? "major" : "minor",
               rule: enabled ? "idiom:unexplained-control" : "idiom:unavailable-control-without-reason",
               selectorHint: element.selector,
+              ...records.length ? {
+                observation: observed(
+                  {
+                    source: "explanation-trial",
+                    kind: "hover/focus",
+                    selector: element.selector,
+                    name: "explanation"
+                  },
+                  { records },
+                  records.every((r) => r.elapsedMs !== void 0) && records.length ? {
+                    windowMs: Math.max(
+                      ...records.map((r) => r.elapsedMs ?? 0)
+                    )
+                  } : void 0
+                )
+              } : {},
               explanation: `${element.selector} shows ${label5}${enabled ? "" : " disabled"}, with no visible label, visible description, or tooltip observed on both hover and focus. An accessible name or native title alone does not supply a visible explanation.`,
               acceptance: [
                 `${element.selector} has a meaningful visible label, visible aria-describedby text, or a tooltip that appears on both hover and focus${enabled ? "." : " and explains why it is unavailable."}`
@@ -16155,6 +16726,22 @@ var init_unexplained_control = __esm({
               severity: "minor",
               rule: "idiom:unexplained-control",
               selectorHint: element.selector,
+              ...records.length ? {
+                observation: observed(
+                  {
+                    source: "explanation-trial",
+                    kind: "hover/focus",
+                    selector: element.selector,
+                    name: "explanation"
+                  },
+                  { records },
+                  records.every((r) => r.elapsedMs !== void 0) && records.length ? {
+                    windowMs: Math.max(
+                      ...records.map((r) => r.elapsedMs ?? 0)
+                    )
+                  } : void 0
+                )
+              } : {},
               explanation: `${element.selector} shows "${glyph2}" with no painted label and no tooltip observed on hover or focus; its accessible name ${JSON.stringify(signals.name)}${signals.title === void 0 ? " is" : " and native title are"} not visible.`,
               acceptance: [
                 `${element.selector} has a visible label, painted aria-describedby text, or a tooltip that appears on hover and focus.`
@@ -16636,39 +17223,39 @@ var init_coordinate = __esm({
 });
 
 // src/baseline/schema.ts
-import { z as z12 } from "zod";
+import { z as z13 } from "zod";
 var fingerprint, baselineFindingSchema, baselineTupleSchema, baselineRecordSchema, baselineFileSchema;
 var init_schema2 = __esm({
   "src/baseline/schema.ts"() {
     "use strict";
     init_finding();
-    fingerprint = z12.string().regex(/^[0-9a-f]+$/);
-    baselineFindingSchema = z12.object({
+    fingerprint = z13.string().regex(/^[0-9a-f]+$/);
+    baselineFindingSchema = z13.object({
       fingerprint,
-      aliases: z12.array(fingerprint),
-      category: z12.enum(findingCategories),
-      rule: z12.string(),
-      severity: z12.enum(["blocker", "major", "minor"]),
-      selector: z12.string()
+      aliases: z13.array(fingerprint),
+      category: z13.enum(findingCategories),
+      rule: z13.string(),
+      severity: z13.enum(["blocker", "major", "minor"]),
+      selector: z13.string()
     }).strict();
-    baselineTupleSchema = z12.object({
-      state: z12.string().min(1),
-      viewport: z12.string().min(1),
-      colorScheme: z12.enum(["light", "dark"]).optional(),
-      combination: z12.string().min(1).optional(),
-      findings: z12.array(baselineFindingSchema)
+    baselineTupleSchema = z13.object({
+      state: z13.string().min(1),
+      viewport: z13.string().min(1),
+      colorScheme: z13.enum(["light", "dark"]).optional(),
+      combination: z13.string().min(1).optional(),
+      findings: z13.array(baselineFindingSchema)
     }).strict();
-    baselineRecordSchema = z12.object({
-      commit: z12.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/),
-      recordedAt: z12.iso.datetime(),
-      idiomVersion: z12.string().min(1),
-      configHash: z12.string().regex(/^sha256:[0-9a-f]{64}$/),
-      tuples: z12.array(baselineTupleSchema)
+    baselineRecordSchema = z13.object({
+      commit: z13.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/),
+      recordedAt: z13.iso.datetime(),
+      idiomVersion: z13.string().min(1),
+      configHash: z13.string().regex(/^sha256:[0-9a-f]{64}$/),
+      tuples: z13.array(baselineTupleSchema)
     }).strict();
-    baselineFileSchema = z12.object({
-      version: z12.literal(1),
-      flow: z12.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
-      records: z12.array(baselineRecordSchema)
+    baselineFileSchema = z13.object({
+      version: z13.literal(1),
+      flow: z13.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+      records: z13.array(baselineRecordSchema)
     }).strict();
   }
 });
@@ -16691,12 +17278,12 @@ function baselinePath(directory, flow) {
 function pixelBaselineDirectory(directory, flow) {
   return join4(dirname2(baselinePath(directory, flow)), `${flow}.pixels`);
 }
-function pixelBaselineName(coordinate5) {
+function pixelBaselineName(coordinate6) {
   const segments = [
-    coordinate5.state,
-    coordinate5.viewport,
-    ...coordinate5.colorScheme === void 0 ? [] : [coordinate5.colorScheme],
-    ...coordinate5.combination === void 0 ? [] : [coordinate5.combination.replace(/[^A-Za-z0-9._-]+/g, "-")]
+    coordinate6.state,
+    coordinate6.viewport,
+    ...coordinate6.colorScheme === void 0 ? [] : [coordinate6.colorScheme],
+    ...coordinate6.combination === void 0 ? [] : [coordinate6.combination.replace(/[^A-Za-z0-9._-]+/g, "-")]
   ];
   for (const segment of segments) {
     if (segment === "" || segment.includes("/") || segment.includes("\\") || segment.includes(".."))
@@ -16706,10 +17293,10 @@ function pixelBaselineName(coordinate5) {
   }
   return `${segments.join("--")}.png`;
 }
-function pixelBaselinePath(directory, flow, coordinate5) {
+function pixelBaselinePath(directory, flow, coordinate6) {
   return join4(
     pixelBaselineDirectory(directory, flow),
-    pixelBaselineName(coordinate5)
+    pixelBaselineName(coordinate6)
   );
 }
 async function readBaselineFile(path) {
@@ -16773,7 +17360,7 @@ var init_store = __esm({
 // src/capture/run-record.ts
 import { readFile as readFile5 } from "fs/promises";
 import { join as join5 } from "path";
-import { z as z13 } from "zod";
+import { z as z14 } from "zod";
 async function loadRunRecord(directory) {
   let content;
   try {
@@ -16788,45 +17375,48 @@ async function loadRunRecord(directory) {
     throw new IdiomError(`invalid run.json in ${directory}: ${String(error)}`);
   }
 }
-var id, coordinateSchema, runRecordSchema;
+var id, coordinateSchema2, runRecordSchema;
 var init_run_record = __esm({
   "src/capture/run-record.ts"() {
     "use strict";
     init_errors();
     init_resolve();
     init_timings();
-    id = z13.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
-    coordinateSchema = z13.object({ state: id, viewport: id, colorScheme: z13.enum(["light", "dark"]) }).strict();
-    runRecordSchema = z13.object({
-      version: z13.literal(1),
+    id = z14.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+    coordinateSchema2 = z14.object({ state: id, viewport: id, colorScheme: z14.enum(["light", "dark"]) }).strict();
+    runRecordSchema = z14.object({
+      version: z14.literal(1),
+      captureSettingsIdentity: z14.string().regex(/^[a-f0-9]{64}$/).optional(),
       flow: id,
-      source: z13.object({ commit: z13.string().min(1), dirty: z13.boolean() }).strict(),
-      declared: z13.array(coordinateSchema),
-      selected: z13.array(coordinateSchema),
-      viewports: z13.array(
-        z13.object({
+      source: z14.object({ commit: z14.string().min(1), dirty: z14.boolean() }).strict(),
+      declared: z14.array(coordinateSchema2),
+      selected: z14.array(coordinateSchema2),
+      viewports: z14.array(
+        z14.object({
           name: id,
-          width: z13.number().positive(),
-          height: z13.number().positive(),
-          touch: z13.boolean().optional()
+          width: z14.number().positive(),
+          height: z14.number().positive(),
+          touch: z14.boolean().optional()
         }).strict()
       ),
-      probe: z13.object({
-        policy: z13.enum(["once-per-state", "everywhere", "unsupported"]),
-        fallback: z13.boolean(),
-        intended: z13.array(coordinateSchema),
-        executed: z13.array(coordinateSchema)
+      probe: z14.object({
+        policy: z14.enum(["once-per-state", "everywhere", "unsupported"]),
+        fallback: z14.boolean(),
+        intended: z14.array(coordinateSchema2),
+        executed: z14.array(coordinateSchema2)
       }).strict(),
-      timings: z13.object({
-        slowestControls: z13.array(controlTimingSchema).max(5).optional(),
+      timings: z14.object({
+        slowestControls: z14.array(controlTimingSchema).max(5).optional(),
         build: phaseTimingSchema,
         start: phaseTimingSchema,
-        tuples: z13.array(
-          coordinateSchema.extend({ total: phaseTimingSchema, probe: phaseTimingSchema }).strict()
+        tuples: z14.array(
+          coordinateSchema2.extend({ total: phaseTimingSchema, probe: phaseTimingSchema }).strict()
         ),
         probe: phaseTimingSchema,
         checks: phaseTimingSchema
-      }).strict()
+      }).strict(),
+      /** The prefers-reduced-motion mode every tuple was captured under. */
+      capture: z14.object({ reducedMotion: z14.boolean() }).strict().optional()
     }).strict().superRefine((record2, ctx) => {
       const keys = (tuples) => tuples.map(captureTupleKey);
       for (const field of ["declared", "selected"])
@@ -16860,71 +17450,72 @@ var init_run_record = __esm({
 });
 
 // src/checks/dynamic-schema.ts
-import { z as z14 } from "zod";
+import { z as z15 } from "zod";
 var identity5, dimension2, rect2, diagnosticBase, trial, touchReachabilityArtifactSchema, livenessArtifactSchema;
 var init_dynamic_schema = __esm({
   "src/checks/dynamic-schema.ts"() {
     "use strict";
     init_project();
-    identity5 = z14.string().trim().min(1);
-    dimension2 = z14.number().finite().nonnegative();
-    rect2 = z14.object({
-      x: z14.number().finite(),
-      y: z14.number().finite(),
+    identity5 = z15.string().trim().min(1);
+    dimension2 = z15.number().finite().nonnegative();
+    rect2 = z15.object({
+      x: z15.number().finite(),
+      y: z15.number().finite(),
       width: dimension2,
       height: dimension2
     }).strict();
     diagnosticBase = {
-      version: z14.literal(1),
-      status: z14.enum(["ran", "partial", "unavailable"]),
-      diagnostics: z14.array(identity5)
+      version: z15.literal(1),
+      status: z15.enum(["ran", "partial", "unavailable"]),
+      diagnostics: z15.array(identity5)
     };
-    trial = z14.object({
-      status: z14.enum(["revealed", "hidden", "unavailable"]),
+    trial = z15.object({
+      status: z15.enum(["revealed", "hidden", "unavailable"]),
       reason: identity5.optional()
     }).strict();
-    touchReachabilityArtifactSchema = z14.object({
+    touchReachabilityArtifactSchema = z15.object({
       ...diagnosticBase,
       declaration: touchReachabilityConfigSchema,
-      eligible: z14.number().int().nonnegative(),
-      restored: z14.boolean(),
-      entries: z14.array(
-        z14.object({
+      eligible: z15.number().int().nonnegative(),
+      restored: z15.boolean(),
+      entries: z15.array(
+        z15.object({
           selector: identity5,
           identity: identity5,
-          name: z14.string(),
+          name: z15.string(),
           rect: rect2,
+          elapsedMs: dimension2.optional(),
           owner: identity5,
-          baseline: z14.object({
+          baseline: z15.object({
             visibility: identity5,
-            opacity: z14.number().finite().min(0).max(1)
+            opacity: z15.number().finite().min(0).max(1)
           }).strict(),
-          cause: z14.enum(["visibility", "opacity", "visibility and opacity"]),
+          cause: z15.enum(["visibility", "opacity", "visibility and opacity"]),
           hover: trial,
           focus: trial.extend({ target: identity5.optional() }).strict()
         }).strict()
       )
     }).strict();
-    livenessArtifactSchema = z14.object({
+    livenessArtifactSchema = z15.object({
       ...diagnosticBase,
       declaration: livenessConfigSchema,
-      entries: z14.array(
-        z14.discriminatedUnion("status", [
-          z14.object({
-            status: z14.literal("measured"),
+      entries: z15.array(
+        z15.discriminatedUnion("status", [
+          z15.object({
+            status: z15.literal("measured"),
             selector: identity5,
             identity: identity5,
-            source: z14.enum(["declared", "automatic"]),
+            source: z15.enum(["declared", "automatic"]),
             declaration: identity5.optional(),
             before: identity5,
             after: identity5,
             elapsedMs: dimension2
           }).strict(),
-          z14.object({
-            status: z14.literal("unavailable"),
+          z15.object({
+            status: z15.literal("unavailable"),
             selector: identity5,
             identity: identity5,
-            source: z14.enum(["declared", "automatic"]),
+            source: z15.enum(["declared", "automatic"]),
             declaration: identity5.optional(),
             reason: identity5
           }).strict()
@@ -16935,183 +17526,184 @@ var init_dynamic_schema = __esm({
 });
 
 // src/checks/artifact-schema.ts
-import { z as z15 } from "zod";
+import { z as z16 } from "zod";
 var finite, dimension3, rectSchema, stylesSchema, expandedStylesSchema, elementSchema, motionStylesSchema, motionSampleSchema, motionEffectSchema, motionArtifactSchema, timelineStatusSchema, visibleChangeSchema, timelinePointSchema, pendingIndicatorKindSchema, heldChangeSchema, heldIndicatorSchema, heldReplaySchema, failureReplaySchema, actionTimelineSchema, actionTimelineArtifactSchema, rgbSchema, alphaSchema, unavailablePaintSchema, paintColorSchema, paintSchema, pointSchema, edgeBase, frameEdgeSchema, explanationTextSchema, explanationArtifactSchema, signalsSchema, probeCollectionSchema, countSchema, probeSafetySchema, probeSchema, componentSchema, invariantObservationSchema, selectionGroupSchema, dialogSchema, overlapKind, overlapSchema, clippedTextSchema, fieldGroupSchema, emptyRegionsSchema, mediaBandSchema, mediaFrameSchema, collectionSchema, progressArtifactSchema, styleSourceSchema, elementV2Schema, headingSchema, tokenSchema, observationCommon, observationArtifactV1Schema, identifier, offset, bandEdgeSchema, wordFragmentSchema, wordBreakSchema, geometryScan, failedRequestSchema, fontObservationSchema, linkResultSchema, linkSchema, focusVisibleSchema, lineLengthSchema, orphanWordSchema, imageRenderSchema, layoutShiftSchema, visibilityGeometrySchema, shellVisibilitySchema, sizeSchema, screenshotGeometrySchema, observationArtifactV2Schema, observationArtifactSchema;
 var init_artifact_schema = __esm({
   "src/checks/artifact-schema.ts"() {
     "use strict";
     init_invariant();
     init_dynamic_schema();
-    finite = z15.number().finite();
+    finite = z16.number().finite();
     dimension3 = finite.nonnegative();
-    rectSchema = z15.object({ x: finite, y: finite, width: dimension3, height: dimension3 }).strict();
-    stylesSchema = z15.object({
-      color: z15.string(),
-      backgroundColor: z15.string(),
-      borderTopColor: z15.string(),
-      borderRightColor: z15.string(),
-      borderBottomColor: z15.string(),
-      borderLeftColor: z15.string(),
-      borderTopWidth: z15.string(),
-      borderRightWidth: z15.string(),
-      borderBottomWidth: z15.string(),
-      borderLeftWidth: z15.string(),
-      outlineColor: z15.string(),
-      outlineWidth: z15.string(),
-      outlineStyle: z15.string().optional(),
-      outlineOffset: z15.string().optional(),
-      userSelect: z15.string().optional(),
-      textOverflow: z15.string().optional(),
-      fill: z15.string(),
-      stroke: z15.string(),
-      borderTopLeftRadius: z15.string(),
-      borderTopRightRadius: z15.string(),
-      borderBottomRightRadius: z15.string(),
-      borderBottomLeftRadius: z15.string(),
-      overflowX: z15.string(),
-      overflowY: z15.string(),
-      position: z15.string()
+    rectSchema = z16.object({ x: finite, y: finite, width: dimension3, height: dimension3 }).strict();
+    stylesSchema = z16.object({
+      color: z16.string(),
+      backgroundColor: z16.string(),
+      borderTopColor: z16.string(),
+      borderRightColor: z16.string(),
+      borderBottomColor: z16.string(),
+      borderLeftColor: z16.string(),
+      borderTopWidth: z16.string(),
+      borderRightWidth: z16.string(),
+      borderBottomWidth: z16.string(),
+      borderLeftWidth: z16.string(),
+      outlineColor: z16.string(),
+      outlineWidth: z16.string(),
+      outlineStyle: z16.string().optional(),
+      outlineOffset: z16.string().optional(),
+      userSelect: z16.string().optional(),
+      textOverflow: z16.string().optional(),
+      fill: z16.string(),
+      stroke: z16.string(),
+      borderTopLeftRadius: z16.string(),
+      borderTopRightRadius: z16.string(),
+      borderBottomRightRadius: z16.string(),
+      borderBottomLeftRadius: z16.string(),
+      overflowX: z16.string(),
+      overflowY: z16.string(),
+      position: z16.string()
     }).strict();
     expandedStylesSchema = stylesSchema.extend({
-      borderTopStyle: z15.string().optional(),
-      borderRightStyle: z15.string().optional(),
-      borderBottomStyle: z15.string().optional(),
-      borderLeftStyle: z15.string().optional(),
-      display: z15.string(),
-      visibility: z15.string(),
-      opacity: z15.string(),
-      fontFamily: z15.string(),
-      fontSize: z15.string(),
-      fontWeight: z15.string(),
-      lineHeight: z15.string(),
-      letterSpacing: z15.string(),
-      textAlign: z15.string(),
-      textDecorationLine: z15.string(),
-      textTransform: z15.string(),
-      whiteSpace: z15.string(),
-      wordBreak: z15.string(),
-      paddingTop: z15.string(),
-      paddingRight: z15.string(),
-      paddingBottom: z15.string(),
-      paddingLeft: z15.string(),
-      marginTop: z15.string(),
-      marginRight: z15.string(),
-      marginBottom: z15.string(),
-      marginLeft: z15.string(),
-      gap: z15.string(),
-      flexDirection: z15.string(),
-      justifyContent: z15.string(),
-      alignItems: z15.string(),
-      gridTemplateColumns: z15.string(),
-      boxShadow: z15.string(),
-      transform: z15.string(),
-      zIndex: z15.string()
+      borderTopStyle: z16.string().optional(),
+      borderRightStyle: z16.string().optional(),
+      borderBottomStyle: z16.string().optional(),
+      borderLeftStyle: z16.string().optional(),
+      display: z16.string(),
+      visibility: z16.string(),
+      opacity: z16.string(),
+      fontFamily: z16.string(),
+      fontSize: z16.string(),
+      fontWeight: z16.string(),
+      lineHeight: z16.string(),
+      letterSpacing: z16.string(),
+      textAlign: z16.string(),
+      textDecorationLine: z16.string(),
+      textTransform: z16.string(),
+      whiteSpace: z16.string(),
+      wordBreak: z16.string(),
+      paddingTop: z16.string(),
+      paddingRight: z16.string(),
+      paddingBottom: z16.string(),
+      paddingLeft: z16.string(),
+      marginTop: z16.string(),
+      marginRight: z16.string(),
+      marginBottom: z16.string(),
+      marginLeft: z16.string(),
+      gap: z16.string(),
+      flexDirection: z16.string(),
+      justifyContent: z16.string(),
+      alignItems: z16.string(),
+      gridTemplateColumns: z16.string(),
+      boxShadow: z16.string(),
+      transform: z16.string(),
+      zIndex: z16.string()
     });
-    elementSchema = z15.object({
-      selector: z15.string().min(1),
-      tag: z15.string().min(1),
-      text: z15.string(),
-      visible: z15.boolean(),
-      painted: z15.discriminatedUnion("value", [
-        z15.object({ value: z15.literal(true) }).strict(),
-        z15.object({
-          value: z15.literal(false),
-          reason: z15.string().min(1),
-          boundary: z15.string().min(1).optional()
+    elementSchema = z16.object({
+      selector: z16.string().min(1),
+      tag: z16.string().min(1),
+      text: z16.string(),
+      visible: z16.boolean(),
+      painted: z16.discriminatedUnion("value", [
+        z16.object({ value: z16.literal(true) }).strict(),
+        z16.object({
+          value: z16.literal(false),
+          reason: z16.string().min(1),
+          boundary: z16.string().min(1).optional()
         }).strict()
       ]).optional(),
-      paintedContent: z15.object({
-        selectors: z15.array(z15.string()),
+      paintedContent: z16.object({
+        selectors: z16.array(z16.string()),
         width: dimension3,
         height: dimension3,
-        clipped: z15.object({
-          text: z15.array(z15.string()),
-          interactive: z15.array(z15.string()),
-          marquee: z15.array(z15.string())
+        clipped: z16.object({
+          text: z16.array(z16.string()),
+          interactive: z16.array(z16.string()),
+          marquee: z16.array(z16.string())
         }).strict().optional()
       }).strict().optional(),
-      interactive: z15.boolean(),
-      enabled: z15.boolean(),
-      headingLevel: z15.number().int().min(1).max(6).optional(),
+      interactive: z16.boolean(),
+      enabled: z16.boolean(),
+      headingLevel: z16.number().int().min(1).max(6).optional(),
       rect: rectSchema,
       scrollWidth: dimension3,
       scrollHeight: dimension3,
       clientWidth: dimension3,
       clientHeight: dimension3,
-      outOfFlow: z15.boolean(),
-      inlineTextTarget: z15.boolean().optional(),
-      targetSizeLabels: z15.array(
-        z15.object({
-          selector: z15.string().min(1),
-          rects: z15.array(rectSchema)
+      outOfFlow: z16.boolean(),
+      inlineTextTarget: z16.boolean().optional(),
+      targetSizeLabels: z16.array(
+        z16.object({
+          selector: z16.string().min(1),
+          rects: z16.array(rectSchema)
         }).strict()
       ).optional(),
-      ancestorSelectors: z15.array(z15.string()),
-      authoredProperties: z15.array(z15.string()).optional(),
+      ancestorSelectors: z16.array(z16.string()),
+      authoredProperties: z16.array(z16.string()).optional(),
       styles: stylesSchema,
-      hitTestWith: z15.array(z15.string())
+      hitTestWith: z16.array(z16.string())
     }).strict();
-    motionStylesSchema = z15.object({
-      transitionProperty: z15.string(),
-      transitionDuration: z15.string(),
-      transitionDelay: z15.string(),
-      animationName: z15.string(),
-      animationDuration: z15.string(),
-      animationDelay: z15.string(),
-      animationIterationCount: z15.string(),
-      animationPlayState: z15.string()
+    motionStylesSchema = z16.object({
+      transitionProperty: z16.string(),
+      transitionDuration: z16.string(),
+      transitionDelay: z16.string(),
+      animationName: z16.string(),
+      animationDuration: z16.string(),
+      animationDelay: z16.string(),
+      animationIterationCount: z16.string(),
+      animationPlayState: z16.string()
     }).strict();
-    motionSampleSchema = z15.object({
+    motionSampleSchema = z16.object({
       rect: rectSchema,
       opacity: finite.min(0).max(1),
-      rendered: z15.boolean(),
-      transform: z15.string(),
-      state: z15.string(),
-      transition: z15.string(),
-      animation: z15.string(),
+      rendered: z16.boolean(),
+      transform: z16.string(),
+      state: z16.string(),
+      transition: z16.string(),
+      animation: z16.string(),
       motion: motionStylesSchema.optional()
     }).strict();
-    motionEffectSchema = z15.object({
-      kind: z15.enum(["transition", "animation", "web-animation"]),
-      property: z15.string().min(1),
-      name: z15.string(),
+    motionEffectSchema = z16.object({
+      kind: z16.enum(["transition", "animation", "web-animation"]),
+      property: z16.string().min(1),
+      name: z16.string(),
       durationMs: finite.nonnegative().nullable(),
-      timing: z15.enum(["finite", "infinite", "unsupported"]),
+      timing: z16.enum(["finite", "infinite", "unsupported"]),
       delayMs: finite,
-      started: z15.boolean(),
-      canceled: z15.boolean()
+      started: z16.boolean(),
+      canceled: z16.boolean()
     }).strict().refine(
       (e) => e.timing === "finite" ? e.durationMs !== null : e.durationMs === null,
       "finite effects require a duration; non-finite effects require null"
     );
-    motionArtifactSchema = z15.object({
-      version: z15.literal(1),
-      status: z15.enum(["ran", "partial", "unavailable"]),
-      reason: z15.string().min(1).optional(),
-      reducedMotion: z15.boolean(),
-      actions: z15.array(
-        z15.object({
-          source: z15.enum(["probe-hover", "probe-click", "web-step"]),
-          timelineId: z15.string().min(1).optional(),
-          selector: z15.string().min(1),
-          name: z15.string(),
-          stepIndex: z15.number().int().positive().optional(),
-          status: z15.enum(["ran", "partial", "unavailable"]),
-          reason: z15.string().min(1).optional(),
-          changes: z15.array(
-            z15.object({
-              selector: z15.string().min(1),
-              name: z15.string(),
-              role: z15.string(),
-              tag: z15.string(),
-              ownerSelector: z15.string().min(1),
-              ownerName: z15.string(),
-              surface: z15.boolean(),
-              tooltip: z15.boolean(),
+    motionArtifactSchema = z16.object({
+      version: z16.literal(1),
+      status: z16.enum(["ran", "partial", "unavailable"]),
+      reason: z16.string().min(1).optional(),
+      reducedMotion: z16.boolean(),
+      actions: z16.array(
+        z16.object({
+          elapsedMs: z16.number().finite().nonnegative().optional(),
+          source: z16.enum(["probe-hover", "probe-click", "web-step"]),
+          timelineId: z16.string().min(1).optional(),
+          selector: z16.string().min(1),
+          name: z16.string(),
+          stepIndex: z16.number().int().positive().optional(),
+          status: z16.enum(["ran", "partial", "unavailable"]),
+          reason: z16.string().min(1).optional(),
+          changes: z16.array(
+            z16.object({
+              selector: z16.string().min(1),
+              name: z16.string(),
+              role: z16.string(),
+              tag: z16.string(),
+              ownerSelector: z16.string().min(1),
+              ownerName: z16.string(),
+              surface: z16.boolean(),
+              tooltip: z16.boolean(),
               before: motionSampleSchema.nullable(),
               after: motionSampleSchema.nullable(),
-              changed: z15.array(
-                z15.enum([
+              changed: z16.array(
+                z16.enum([
                   "presence",
                   "size",
                   "position",
@@ -17119,11 +17711,11 @@ var init_artifact_schema = __esm({
                   "transform"
                 ])
               ),
-              toggled: z15.boolean(),
-              direction: z15.enum(["expand", "collapse", "change"]),
-              animated: z15.boolean().nullable(),
-              reason: z15.string().min(1).optional(),
-              effects: z15.array(motionEffectSchema)
+              toggled: z16.boolean(),
+              direction: z16.enum(["expand", "collapse", "change"]),
+              animated: z16.boolean().nullable(),
+              reason: z16.string().min(1).optional(),
+              effects: z16.array(motionEffectSchema)
             }).strict().refine(
               (change) => change.animated !== null || !!change.reason,
               "unknown animation evidence requires a reason"
@@ -17138,14 +17730,14 @@ var init_artifact_schema = __esm({
       (artifact) => artifact.status === "ran" || !!artifact.reason,
       "incomplete motion collection requires a reason"
     );
-    timelineStatusSchema = z15.enum(["ran", "partial", "unavailable"]);
-    visibleChangeSchema = z15.object({
+    timelineStatusSchema = z16.enum(["ran", "partial", "unavailable"]);
+    visibleChangeSchema = z16.object({
       /** The appeared/disappeared root, or the resized region. */
-      selector: z15.string().min(1),
+      selector: z16.string().min(1),
       /** The grouping surface: a panel slot, list, live region or `main`. */
-      container: z15.string().min(1),
-      containerName: z15.string().max(120),
-      kind: z15.enum([
+      container: z16.string().min(1),
+      containerName: z16.string().max(120),
+      kind: z16.enum([
         "content-swap",
         "expand-collapse",
         "list-item",
@@ -17153,21 +17745,21 @@ var init_artifact_schema = __esm({
         "route"
       ]),
       /** `${kind}|${container}`: how the probe and the check group changes. */
-      key: z15.string().min(1),
-      direction: z15.enum(["in", "out", "resize"]),
+      key: z16.string().min(1),
+      direction: z16.enum(["in", "out", "resize"]),
       before: rectSchema.nullable(),
       after: rectSchema.nullable(),
       /** Pixels: the smaller side of an appearing box, or a resize delta. */
       extent: finite.nonnegative(),
       /** Only text changed (counters, echoes); never a snap. */
-      textOnly: z15.boolean(),
+      textOnly: z16.boolean(),
       /** Indices into this action's `animations` covering the change. */
-      animations: z15.array(z15.number().int().nonnegative()),
+      animations: z16.array(z16.number().int().nonnegative()),
       /** Inline style changed over 3+ frames: a script-driven tween. */
-      progressive: z15.boolean()
+      progressive: z16.boolean()
     }).strict();
-    timelinePointSchema = z15.object({ x: finite, y: finite }).strict();
-    pendingIndicatorKindSchema = z15.enum([
+    timelinePointSchema = z16.object({ x: finite, y: finite }).strict();
+    pendingIndicatorKindSchema = z16.enum([
       "progressbar",
       "busy",
       "spinner",
@@ -17179,122 +17771,122 @@ var init_artifact_schema = __esm({
       "trigger-busy",
       "trigger-pressed"
     ]);
-    heldChangeSchema = z15.object({ time: finite, selector: z15.string().min(1) }).strict();
-    heldIndicatorSchema = z15.object({
+    heldChangeSchema = z16.object({ time: finite, selector: z16.string().min(1) }).strict();
+    heldIndicatorSchema = z16.object({
       kind: pendingIndicatorKindSchema,
-      selector: z15.string().min(1),
+      selector: z16.string().min(1),
       time: finite,
-      text: z15.string().max(80).optional()
+      text: z16.string().max(80).optional()
     }).strict();
-    heldReplaySchema = z15.object({
-      of: z15.enum(["web-step", "probe-click"]),
-      delayMs: z15.number().int().positive(),
-      withinMs: z15.number().int().positive(),
+    heldReplaySchema = z16.object({
+      of: z16.enum(["web-step", "probe-click"]),
+      delayMs: z16.number().int().positive(),
+      withinMs: z16.number().int().positive(),
       /** False when the action's dispatch was never observed in the page. */
-      dispatched: z15.boolean(),
-      requests: z15.array(
-        z15.object({
-          method: z15.string().min(1),
-          path: z15.string(),
-          resourceType: z15.string(),
+      dispatched: z16.boolean(),
+      requests: z16.array(
+        z16.object({
+          method: z16.string().min(1),
+          path: z16.string(),
+          resourceType: z16.string(),
           startTime: finite,
           releasedAt: finite.nullable(),
           /** The guard let it through after the hold (a safe method). */
-          forwarded: z15.boolean(),
+          forwarded: z16.boolean(),
           /** A main-frame document navigation. */
-          navigation: z15.boolean()
+          navigation: z16.boolean()
         }).strict()
       ),
       releasedAt: finite.nullable(),
       indicator: heldIndicatorSchema.nullable(),
-      indicators: z15.array(
-        heldIndicatorSchema.extend({ inMain: z15.boolean(), progressText: z15.boolean() }).strict()
+      indicators: z16.array(
+        heldIndicatorSchema.extend({ inMain: z16.boolean(), progressText: z16.boolean() }).strict()
       ).max(12),
       firstChange: heldChangeSchema.nullable(),
       firstMainChange: heldChangeSchema.nullable(),
-      changedAfterRelease: z15.boolean(),
+      changedAfterRelease: z16.boolean(),
       changeAfterReleaseAt: finite.nullable(),
-      mainChangedAfterRelease: z15.boolean(),
+      mainChangedAfterRelease: z16.boolean(),
       mainChangeAfterReleaseAt: finite.nullable(),
-      mainSelector: z15.string().min(1),
-      mainEmpty: z15.object({ from: finite, to: finite.nullable() }).strict().nullable(),
-      routeChange: z15.object({ from: z15.string(), to: z15.string(), time: finite }).strict().nullable(),
-      trigger: z15.object({
+      mainSelector: z16.string().min(1),
+      mainEmpty: z16.object({ from: finite, to: finite.nullable() }).strict().nullable(),
+      routeChange: z16.object({ from: z16.string(), to: z16.string(), time: finite }).strict().nullable(),
+      trigger: z16.object({
         checkedAt: finite.nullable(),
-        enabled: z15.boolean().nullable()
+        enabled: z16.boolean().nullable()
       }).strict(),
-      secondActivation: z15.object({
-        attempted: z15.boolean(),
+      secondActivation: z16.object({
+        attempted: z16.boolean(),
         at: finite.optional(),
-        reason: z15.string().optional(),
-        duplicates: z15.array(
-          z15.object({
-            method: z15.string().min(1),
-            path: z15.string(),
+        reason: z16.string().optional(),
+        duplicates: z16.array(
+          z16.object({
+            method: z16.string().min(1),
+            path: z16.string(),
             time: finite
           }).strict()
         )
       }).strict(),
-      notes: z15.array(z15.string())
+      notes: z16.array(z16.string())
     }).strict();
-    failureReplaySchema = z15.object({
-      of: z15.enum(["web-step", "probe-click"]),
-      sourceAction: z15.string(),
-      mode: z15.enum(["status", "network"]),
-      status: z15.number().int().min(400).max(599),
-      feedbackWithinMs: z15.number().int().positive(),
-      eligibility: z15.object({
-        basis: z15.enum(["response", "release"]),
+    failureReplaySchema = z16.object({
+      of: z16.enum(["web-step", "probe-click"]),
+      sourceAction: z16.string(),
+      mode: z16.enum(["status", "network"]),
+      status: z16.number().int().min(400).max(599),
+      feedbackWithinMs: z16.number().int().positive(),
+      eligibility: z16.object({
+        basis: z16.enum(["response", "release"]),
         responseAt: finite,
         changeAt: finite,
-        selector: z15.string()
+        selector: z16.string()
       }).strict(),
-      dispatched: z15.boolean(),
-      navigated: z15.boolean(),
-      requests: z15.array(
-        z15.object({
-          method: z15.string(),
-          path: z15.string(),
-          resourceType: z15.enum(["fetch", "xhr"]),
+      dispatched: z16.boolean(),
+      navigated: z16.boolean(),
+      requests: z16.array(
+        z16.object({
+          method: z16.string(),
+          path: z16.string(),
+          resourceType: z16.enum(["fetch", "xhr"]),
           startTime: finite,
           injectedAt: finite.nullable(),
-          delivered: z15.boolean()
+          delivered: z16.boolean()
         }).strict()
       ).max(60),
       observationStart: finite.nullable(),
       observationEnd: finite.nullable(),
-      feedback: z15.array(
-        z15.object({
+      feedback: z16.array(
+        z16.object({
           time: finite,
-          selector: z15.string(),
-          text: z15.string().max(160),
-          kind: z15.enum(["alert", "status", "live", "invalid", "error"])
+          selector: z16.string(),
+          text: z16.string().max(160),
+          kind: z16.enum(["alert", "status", "live", "invalid", "error"])
         }).strict()
       ).max(40),
-      changes: z15.array(heldChangeSchema).max(40),
-      trigger: z15.object({
-        disabled: z15.boolean().nullable(),
-        busy: z15.boolean().nullable(),
-        hidden: z15.boolean().nullable(),
-        inert: z15.boolean().nullable(),
-        initiallyEnabled: z15.boolean().nullable()
+      changes: z16.array(heldChangeSchema).max(40),
+      trigger: z16.object({
+        disabled: z16.boolean().nullable(),
+        busy: z16.boolean().nullable(),
+        hidden: z16.boolean().nullable(),
+        inert: z16.boolean().nullable(),
+        initiallyEnabled: z16.boolean().nullable()
       }).strict(),
-      pending: z15.array(
-        z15.object({ selector: z15.string(), text: z15.string().max(160) }).strict()
+      pending: z16.array(
+        z16.object({ selector: z16.string(), text: z16.string().max(160) }).strict()
       ).max(40).nullable(),
-      main: z15.object({
-        selector: z15.string(),
-        initiallyEmpty: z15.boolean().nullable(),
-        empty: z15.boolean().nullable()
+      main: z16.object({
+        selector: z16.string(),
+        initiallyEmpty: z16.boolean().nullable(),
+        empty: z16.boolean().nullable()
       }).strict(),
-      retry: z15.array(z15.string()).max(40).nullable(),
-      complete: z15.boolean(),
-      truncated: z15.boolean(),
-      notes: z15.array(z15.string())
+      retry: z16.array(z16.string()).max(40).nullable(),
+      complete: z16.boolean(),
+      truncated: z16.boolean(),
+      notes: z16.array(z16.string())
     }).strict();
-    actionTimelineSchema = z15.object({
-      id: z15.string().min(1).optional(),
-      source: z15.enum([
+    actionTimelineSchema = z16.object({
+      id: z16.string().min(1).optional(),
+      source: z16.enum([
         "load",
         "web-step",
         "probe-click",
@@ -17302,23 +17894,23 @@ var init_artifact_schema = __esm({
         "slow-replay",
         "failure-replay"
       ]),
-      kind: z15.string().min(1),
-      selector: z15.string().min(1).optional(),
-      name: z15.string(),
-      stepIndex: z15.number().int().positive().optional(),
+      kind: z16.string().min(1),
+      selector: z16.string().min(1).optional(),
+      name: z16.string(),
+      stepIndex: z16.number().int().positive().optional(),
       /** Document path only; never the query. */
-      url: z15.string(),
+      url: z16.string(),
       /** Epoch milliseconds. */
       startedAt: finite,
       /** Epoch origin of the in-page timeline clock. */
       clockOrigin: finite.optional(),
       durationMs: finite.nonnegative(),
       /** False when the window ended at its bound rather than at quiet. */
-      settled: z15.boolean(),
+      settled: z16.boolean(),
       status: timelineStatusSchema,
-      reason: z15.string().min(1).optional(),
-      truncated: z15.array(
-        z15.enum([
+      reason: z16.string().min(1).optional(),
+      truncated: z16.array(
+        z16.enum([
           "frames",
           "elements",
           "changes",
@@ -17330,24 +17922,24 @@ var init_artifact_schema = __esm({
         ])
       ),
       /** Document path when the window began (detects client-side routes). */
-      fromUrl: z15.string().optional(),
+      fromUrl: z16.string().optional(),
       /** The prefers-reduced-motion preference the window was recorded under. */
-      reducedMotion: z15.boolean().optional(),
+      reducedMotion: z16.boolean().optional(),
       /**
        * A probe replay, under normal motion, of the preceding window with the
        * same source and selector. Evidence for motion snaps only: not a user
        * action of its own.
        */
-      confirmation: z15.literal(true).optional(),
+      confirmation: z16.literal(true).optional(),
       /** Every layout-shift entry, including those after recent input. */
-      shifts: z15.array(
-        z15.object({
+      shifts: z16.array(
+        z16.object({
           time: finite,
           value: finite.nonnegative(),
-          hadRecentInput: z15.boolean(),
-          sources: z15.array(
-            z15.object({
-              selector: z15.string().min(1),
+          hadRecentInput: z16.boolean(),
+          sources: z16.array(
+            z16.object({
+              selector: z16.string().min(1),
               previousRect: rectSchema,
               currentRect: rectSchema
             }).strict()
@@ -17359,16 +17951,16 @@ var init_artifact_schema = __esm({
        * elements whose scroll-compensated position or size changed, or that
        * joined the tracked set after a scroll.
        */
-      frames: z15.array(
-        z15.object({
+      frames: z16.array(
+        z16.object({
           time: finite,
           scroll: timelinePointSchema,
-          scrollers: z15.array(
-            z15.object({ selector: z15.string().min(1), x: finite, y: finite }).strict()
+          scrollers: z16.array(
+            z16.object({ selector: z16.string().min(1), x: finite, y: finite }).strict()
           ),
-          elements: z15.array(
-            z15.object({
-              selector: z15.string().min(1),
+          elements: z16.array(
+            z16.object({
+              selector: z16.string().min(1),
               /** Viewport-relative. */
               rect: rectSchema,
               /** Cumulative scroll of the element's scroll chain. */
@@ -17377,51 +17969,67 @@ var init_artifact_schema = __esm({
           )
         }).strict()
       ),
-      mutations: z15.array(
-        z15.object({
+      mutations: z16.array(
+        z16.object({
           time: finite,
-          type: z15.enum(["insert", "remove"]),
-          selector: z15.string().min(1),
+          type: z16.enum(["insert", "remove"]),
+          selector: z16.string().min(1),
           rect: rectSchema.nullable()
         }).strict()
       ),
-      animations: z15.array(
-        z15.object({
-          target: z15.string().min(1),
-          pseudoElement: z15.string().min(1).optional(),
-          kind: z15.enum(["transition", "animation", "web-animation"]),
-          properties: z15.array(z15.string()),
+      animations: z16.array(
+        z16.object({
+          target: z16.string().min(1),
+          pseudoElement: z16.string().min(1).optional(),
+          kind: z16.enum(["transition", "animation", "web-animation"]),
+          properties: z16.array(z16.string()),
           durationMs: finite.nonnegative().nullable(),
           delayMs: finite,
-          iterations: z15.union([finite.nonnegative(), z15.literal("infinite")]),
+          iterations: z16.union([finite.nonnegative(), z16.literal("infinite")]),
           startTime: finite,
           endTime: finite.nullable()
         }).strict()
       ),
-      requests: z15.array(
-        z15.object({
-          method: z15.string().min(1),
-          resourceType: z15.string(),
-          path: z15.string(),
+      requests: z16.array(
+        z16.object({
+          method: z16.string().min(1),
+          resourceType: z16.string(),
+          path: z16.string(),
           startTime: finite,
           endTime: finite.nullable(),
-          status: z15.number().int().nullable(),
-          outcome: z15.enum(["ok", "failed", "blocked", "pending"])
+          status: z16.number().int().nullable(),
+          outcome: z16.enum(["ok", "failed", "blocked", "pending"])
         }).strict()
       ),
-      viewTransition: z15.object({
-        used: z15.boolean(),
-        kind: z15.enum(["same-document", "cross-document"]).optional()
+      viewTransition: z16.object({
+        used: z16.boolean(),
+        kind: z16.enum(["same-document", "cross-document"]).optional()
       }).strict(),
-      effectRegion: z15.object({
-        control: z15.string().min(1).optional(),
-        controls: z15.array(z15.string().min(1)),
-        commonAncestor: z15.string().min(1).optional()
+      effectRegion: z16.object({
+        control: z16.string().min(1).optional(),
+        controls: z16.array(z16.string().min(1)),
+        commonAncestor: z16.string().min(1).optional()
       }).strict(),
+      /**
+       * Whether the page scrolls: the baseline, then each change (at most 8).
+       * `gutter` is the measured innerWidth - clientWidth (0 without layout
+       * scrollbars, as in headless capture).
+       */
+      rootScroll: z16.array(
+        z16.object({
+          time: finite,
+          gutter: finite.nonnegative(),
+          scrollable: z16.boolean(),
+          stableGutter: z16.boolean(),
+          /** What made the page stop scrolling, e.g. `body overflow: hidden`. */
+          lockedBy: z16.string().min(1).optional(),
+          compensation: z16.boolean()
+        }).strict()
+      ).optional(),
       /** Present exactly on `slow-replay` actions. */
       held: heldReplaySchema.optional(),
       failure: failureReplaySchema.optional(),
-      visibleChanges: z15.array(visibleChangeSchema).optional()
+      visibleChanges: z16.array(visibleChangeSchema).optional()
     }).strict().refine(
       (action) => action.status === "ran" || !!action.reason,
       "incomplete timeline requires a reason"
@@ -17432,24 +18040,24 @@ var init_artifact_schema = __esm({
       (action) => action.source === "failure-replay" === (action.failure !== void 0),
       "failure facts belong to exactly the failure-replay actions"
     );
-    actionTimelineArtifactSchema = z15.object({
-      version: z15.literal(1),
+    actionTimelineArtifactSchema = z16.object({
+      version: z16.literal(1),
       status: timelineStatusSchema,
-      reason: z15.string().min(1).optional(),
-      limits: z15.object({
-        frames: z15.number().int().positive(),
-        elements: z15.number().int().positive(),
-        changesPerFrame: z15.number().int().positive(),
-        shifts: z15.number().int().positive(),
-        mutations: z15.number().int().positive(),
-        animations: z15.number().int().positive(),
-        requests: z15.number().int().positive(),
-        actions: z15.number().int().positive(),
-        visibleChanges: z15.number().int().positive().optional()
+      reason: z16.string().min(1).optional(),
+      limits: z16.object({
+        frames: z16.number().int().positive(),
+        elements: z16.number().int().positive(),
+        changesPerFrame: z16.number().int().positive(),
+        shifts: z16.number().int().positive(),
+        mutations: z16.number().int().positive(),
+        animations: z16.number().int().positive(),
+        requests: z16.number().int().positive(),
+        actions: z16.number().int().positive(),
+        visibleChanges: z16.number().int().positive().optional()
       }).strict(),
       /** Actions dropped beyond limits.actions. */
-      truncated: z15.object({ actions: z15.number().int().nonnegative() }).strict(),
-      actions: z15.array(actionTimelineSchema)
+      truncated: z16.object({ actions: z16.number().int().nonnegative() }).strict(),
+      actions: z16.array(actionTimelineSchema)
     }).strict().refine(
       (artifact) => artifact.status === "ran" || !!artifact.reason,
       "incomplete timeline collection requires a reason"
@@ -17457,84 +18065,84 @@ var init_artifact_schema = __esm({
       (artifact) => artifact.actions.length <= artifact.limits.actions,
       "timeline actions exceed their recorded limit"
     );
-    rgbSchema = z15.object({
+    rgbSchema = z16.object({
       r: finite.min(0).max(255),
       g: finite.min(0).max(255),
       b: finite.min(0).max(255)
     }).strict();
     alphaSchema = finite.min(0).max(1);
-    unavailablePaintSchema = z15.object({ status: z15.literal("unavailable"), reason: z15.string().min(1) }).strict();
-    paintColorSchema = z15.object({ color: rgbSchema, sources: z15.array(z15.string().min(1)) }).strict();
-    paintSchema = z15.object({
-      background: z15.discriminatedUnion("status", [
-        paintColorSchema.extend({ status: z15.literal("measured") }),
+    unavailablePaintSchema = z16.object({ status: z16.literal("unavailable"), reason: z16.string().min(1) }).strict();
+    paintColorSchema = z16.object({ color: rgbSchema, sources: z16.array(z16.string().min(1)) }).strict();
+    paintSchema = z16.object({
+      background: z16.discriminatedUnion("status", [
+        paintColorSchema.extend({ status: z16.literal("measured") }),
         unavailablePaintSchema
       ]),
-      surface: z15.boolean(),
-      primaryAction: z15.boolean(),
-      text: z15.discriminatedUnion("status", [
-        z15.object({
-          status: z15.literal("measured"),
-          samples: z15.array(
-            z15.object({
+      surface: z16.boolean(),
+      primaryAction: z16.boolean(),
+      text: z16.discriminatedUnion("status", [
+        z16.object({
+          status: z16.literal("measured"),
+          samples: z16.array(
+            z16.object({
               foreground: rgbSchema,
               background: rgbSchema,
-              sources: z15.array(z15.string().min(1))
+              sources: z16.array(z16.string().min(1))
             }).strict()
           ).min(1)
         }).strict(),
-        z15.object({ status: z15.literal("none") }).strict(),
+        z16.object({ status: z16.literal("none") }).strict(),
         unavailablePaintSchema
       ]).optional()
     }).strict();
-    pointSchema = z15.object({ x: finite, y: finite }).strict();
+    pointSchema = z16.object({ x: finite, y: finite }).strict();
     edgeBase = {
-      side: z15.enum(["top", "right", "bottom", "left"]),
+      side: z16.enum(["top", "right", "bottom", "left"]),
       insidePoint: pointSchema,
       outsidePoint: pointSchema
     };
-    frameEdgeSchema = z15.discriminatedUnion("status", [
-      z15.object({ ...edgeBase, status: z15.literal("offscreen") }).strict(),
-      z15.object({
+    frameEdgeSchema = z16.discriminatedUnion("status", [
+      z16.object({ ...edgeBase, status: z16.literal("offscreen") }).strict(),
+      z16.object({
         ...edgeBase,
-        status: z15.literal("unavailable"),
-        reason: z15.string().min(1),
-        occluder: z15.string().min(1).optional()
+        status: z16.literal("unavailable"),
+        reason: z16.string().min(1),
+        occluder: z16.string().min(1).optional()
       }).strict(),
-      z15.object({
+      z16.object({
         ...edgeBase,
-        status: z15.literal("measured"),
+        status: z16.literal("measured"),
         inside: paintColorSchema,
         surround: paintColorSchema,
-        border: z15.union([
-          z15.object({
-            status: z15.literal("measured").optional(),
+        border: z16.union([
+          z16.object({
+            status: z16.literal("measured").optional(),
             width: dimension3,
-            style: z15.string().min(1),
+            style: z16.string().min(1),
             paint: paintColorSchema.optional(),
             color: rgbSchema,
             alpha: alphaSchema
           }).strict(),
-          unavailablePaintSchema.extend({ width: dimension3, style: z15.string().min(1) }).strict()
+          unavailablePaintSchema.extend({ width: dimension3, style: z16.string().min(1) }).strict()
         ]),
-        shadows: z15.discriminatedUnion("status", [
-          z15.object({
-            status: z15.literal("measured"),
-            samples: z15.array(
+        shadows: z16.discriminatedUnion("status", [
+          z16.object({
+            status: z16.literal("measured"),
+            samples: z16.array(
               paintColorSchema.extend({
-                inset: z15.boolean(),
+                inset: z16.boolean(),
                 distance: dimension3,
                 backdrop: rgbSchema
               }).strict()
             ).optional(),
-            layers: z15.array(
-              z15.object({
+            layers: z16.array(
+              z16.object({
                 color: rgbSchema,
                 paint: paintColorSchema.optional(),
                 alpha: alphaSchema,
                 extent: finite,
-                inset: z15.boolean(),
-                clipped: z15.boolean()
+                inset: z16.boolean(),
+                clipped: z16.boolean()
               }).strict()
             )
           }).strict(),
@@ -17542,23 +18150,24 @@ var init_artifact_schema = __esm({
         ])
       }).strict()
     ]);
-    explanationTextSchema = z15.object({
-      selector: z15.string().min(1),
-      text: z15.string().trim().min(1)
+    explanationTextSchema = z16.object({
+      selector: z16.string().min(1),
+      text: z16.string().trim().min(1)
     }).strict();
-    explanationArtifactSchema = z15.object({
-      version: z15.literal(1),
-      status: z15.enum(["ran", "partial"]),
-      reason: z15.string().min(1).optional(),
-      records: z15.array(
-        z15.object({
-          selector: z15.string().min(1),
-          controlId: z15.string().min(1).optional(),
-          trigger: z15.enum(["hover", "focus"]),
-          source: z15.enum(["probe", "capture"]),
-          status: z15.enum(["observed", "absent", "unavailable"]),
-          reason: z15.string().min(1).optional(),
-          tooltips: z15.array(explanationTextSchema)
+    explanationArtifactSchema = z16.object({
+      version: z16.literal(1),
+      status: z16.enum(["ran", "partial"]),
+      reason: z16.string().min(1).optional(),
+      records: z16.array(
+        z16.object({
+          selector: z16.string().min(1),
+          elapsedMs: z16.number().finite().nonnegative().optional(),
+          controlId: z16.string().min(1).optional(),
+          trigger: z16.enum(["hover", "focus"]),
+          source: z16.enum(["probe", "capture"]),
+          status: z16.enum(["observed", "absent", "unavailable"]),
+          reason: z16.string().min(1).optional(),
+          tooltips: z16.array(explanationTextSchema)
         }).strict().refine(
           (record2) => record2.status === "observed" ? record2.tooltips.length > 0 : record2.tooltips.length === 0,
           "only observed records have nonempty tooltip evidence"
@@ -17571,95 +18180,96 @@ var init_artifact_schema = __esm({
       (artifact) => artifact.status !== "partial" || artifact.reason !== void 0,
       "partial evidence requires a reason"
     );
-    signalsSchema = z15.object({
-      explanation: z15.object({
-        controlId: z15.string().min(1).optional(),
-        inViewport: z15.boolean().optional(),
-        nativeDisabled: z15.boolean().optional(),
-        visibleText: z15.string(),
-        descriptions: z15.array(explanationTextSchema)
+    signalsSchema = z16.object({
+      explanation: z16.object({
+        controlId: z16.string().min(1).optional(),
+        inViewport: z16.boolean().optional(),
+        nativeDisabled: z16.boolean().optional(),
+        visibleText: z16.string(),
+        descriptions: z16.array(explanationTextSchema)
       }).strict().optional(),
       paint: paintSchema.optional(),
-      frameEdges: z15.array(frameEdgeSchema).optional(),
-      role: z15.string(),
-      name: z15.string(),
-      described: z15.boolean(),
-      title: z15.string().optional(),
-      href: z15.string().optional(),
-      controls: z15.string().optional(),
-      haspopup: z15.string().optional(),
-      appearance: z15.string(),
-      cursor: z15.string(),
-      hasGraphic: z15.boolean(),
-      renderedContent: z15.object({
-        text: z15.boolean(),
-        directText: z15.boolean(),
-        graphic: z15.boolean(),
-        textEvidence: z15.discriminatedUnion("status", [
-          z15.object({
-            status: z15.literal("available"),
-            font: z15.object({ fontSize: z15.string(), fontWeight: z15.string() }).strict().nullable()
+      frameEdges: z16.array(frameEdgeSchema).optional(),
+      role: z16.string(),
+      name: z16.string(),
+      described: z16.boolean(),
+      title: z16.string().optional(),
+      href: z16.string().optional(),
+      controls: z16.string().optional(),
+      haspopup: z16.string().optional(),
+      appearance: z16.string(),
+      cursor: z16.string(),
+      hasGraphic: z16.boolean(),
+      renderedContent: z16.object({
+        text: z16.boolean(),
+        directText: z16.boolean(),
+        graphic: z16.boolean(),
+        textEvidence: z16.discriminatedUnion("status", [
+          z16.object({
+            status: z16.literal("available"),
+            font: z16.object({ fontSize: z16.string(), fontWeight: z16.string() }).strict().nullable()
           }).strict(),
-          z15.object({
-            status: z15.literal("unavailable"),
-            reason: z15.string().min(1)
+          z16.object({
+            status: z16.literal("unavailable"),
+            reason: z16.string().min(1)
           }).strict()
         ]).optional()
       }).strict().optional(),
-      lineCount: z15.number().int().min(0),
+      lineCount: z16.number().int().min(0),
       textRect: rectSchema.optional(),
       inkCenterY: finite.optional(),
-      labelInk: z15.object({
-        text: z15.string(),
-        lineCount: z15.number().int().min(0),
+      labelInk: z16.object({
+        text: z16.string(),
+        lineCount: z16.number().int().min(0),
         textRect: rectSchema.optional(),
         inkCenterY: finite.optional(),
-        glyph: z15.literal(true).optional()
+        glyph: z16.literal(true).optional()
       }).strict().optional(),
       contentBox: rectSchema,
-      transition: z15.string(),
-      animation: z15.string(),
+      transition: z16.string(),
+      animation: z16.string(),
       motion: motionStylesSchema.optional(),
-      nodeId: z15.string().optional(),
-      focused: z15.boolean(),
-      repeatedItem: z15.boolean(),
+      nodeId: z16.string().optional(),
+      focused: z16.boolean(),
+      repeatedItem: z16.boolean(),
       viewportIntersection: rectSchema.optional(),
-      adornment: z15.discriminatedUnion("status", [
-        z15.object({
-          status: z15.literal("measured"),
-          source: z15.literal("background"),
+      adornment: z16.discriminatedUnion("status", [
+        z16.object({
+          status: z16.literal("measured"),
+          source: z16.literal("background"),
           rect: rectSchema
         }).strict(),
-        z15.object({ status: z15.literal("none") }).strict(),
-        z15.object({
-          status: z15.literal("unmeasured"),
-          reason: z15.string().min(1)
+        z16.object({ status: z16.literal("none") }).strict(),
+        z16.object({
+          status: z16.literal("unmeasured"),
+          reason: z16.string().min(1)
         }).strict()
       ]).optional(),
-      alarm: z15.object({ context: z15.boolean(), iconHint: z15.string().optional() }).strict().optional(),
-      value: z15.string().optional()
+      alarm: z16.object({ context: z16.boolean(), iconHint: z16.string().optional() }).strict().optional(),
+      value: z16.string().optional()
     }).strict();
-    probeCollectionSchema = z15.object({
-      selector: z15.string().min(1),
-      item: z15.string().min(1).optional(),
-      menus: z15.array(
-        z15.object({
-          trigger: z15.enum(["button", "contextmenu"]),
-          name: z15.string(),
-          items: z15.array(z15.string())
+    probeCollectionSchema = z16.object({
+      elapsedMs: z16.number().finite().nonnegative().optional(),
+      selector: z16.string().min(1),
+      item: z16.string().min(1).optional(),
+      menus: z16.array(
+        z16.object({
+          trigger: z16.enum(["button", "contextmenu"]),
+          name: z16.string(),
+          items: z16.array(z16.string())
         }).strict()
       ),
-      reason: z15.string().optional()
+      reason: z16.string().optional()
     }).strict();
-    countSchema = z15.number().int().nonnegative();
-    probeSafetySchema = z15.object({
-      policy: z15.literal("third-party"),
-      origins: z15.array(z15.string().min(1)),
-      requests: z15.object({
-        sent: z15.record(z15.string().min(1), countSchema),
-        blocked: z15.record(z15.string().min(1), countSchema)
+    countSchema = z16.number().int().nonnegative();
+    probeSafetySchema = z16.object({
+      policy: z16.literal("third-party"),
+      origins: z16.array(z16.string().min(1)),
+      requests: z16.object({
+        sent: z16.record(z16.string().min(1), countSchema),
+        blocked: z16.record(z16.string().min(1), countSchema)
       }).strict(),
-      blocked: z15.object({
+      blocked: z16.object({
         crossOriginNavigation: countSchema,
         formSubmission: countSchema,
         download: countSchema,
@@ -17668,38 +18278,42 @@ var init_artifact_schema = __esm({
         beforeunload: countSchema,
         permission: countSchema
       }).strict(),
-      skipped: z15.object({ destructive: countSchema }).strict()
+      skipped: z16.object({ destructive: countSchema }).strict()
     }).strict();
-    probeSchema = z15.object({
+    probeSchema = z16.object({
       safety: probeSafetySchema.optional(),
-      failureReplay: z15.object({
-        mode: z15.enum(["status", "network"]),
-        status: z15.number().int().min(400).max(599),
-        feedbackWithinMs: z15.number().int().positive(),
+      failureReplay: z16.object({
+        mode: z16.enum(["status", "network"]),
+        status: z16.number().int().min(400).max(599),
+        feedbackWithinMs: z16.number().int().positive(),
         queued: countSchema,
         ran: countSchema,
-        completed: z15.array(z15.string()),
-        notes: z15.array(z15.string())
+        /** Web-step failure replays copied from the state that ran them. */
+        reused: countSchema.optional(),
+        completed: z16.array(z16.string()),
+        notes: z16.array(z16.string())
       }).strict().optional(),
-      heldReplay: z15.object({
-        delayMs: z15.number().int().positive(),
+      heldReplay: z16.object({
+        delayMs: z16.number().int().positive(),
         queued: countSchema,
         ran: countSchema,
-        notes: z15.array(z15.string())
+        /** Web-step held replays copied from the state that ran them. */
+        reused: countSchema.optional(),
+        notes: z16.array(z16.string())
       }).strict().optional(),
-      status: z15.enum(["ran", "partial", "timed-out"]),
-      selector: z15.string().min(1).optional(),
-      step: z15.string().min(1).optional(),
-      reason: z15.string().optional(),
+      status: z16.enum(["ran", "partial", "timed-out"]),
+      selector: z16.string().min(1).optional(),
+      step: z16.string().min(1).optional(),
+      reason: z16.string().optional(),
       explanations: explanationArtifactSchema.optional(),
       motion: motionArtifactSchema.optional(),
-      collections: z15.array(probeCollectionSchema).optional(),
-      results: z15.array(
-        z15.object({
-          selector: z15.string().min(1),
-          name: z15.string(),
-          effects: z15.array(
-            z15.enum([
+      collections: z16.array(probeCollectionSchema).optional(),
+      results: z16.array(
+        z16.object({
+          selector: z16.string().min(1),
+          name: z16.string(),
+          effects: z16.array(
+            z16.enum([
               "dom",
               "focus",
               "navigation",
@@ -17714,18 +18328,18 @@ var init_artifact_schema = __esm({
               "download"
             ])
           ),
-          signature: z15.string().optional(),
-          persistent: z15.boolean(),
-          repeated: z15.boolean().optional(),
-          region: z15.string().optional(),
-          primary: z15.boolean().optional(),
-          skipped: z15.string().optional(),
+          signature: z16.string().optional(),
+          persistent: z16.boolean(),
+          repeated: z16.boolean().optional(),
+          region: z16.string().optional(),
+          primary: z16.boolean().optional(),
+          skipped: z16.string().optional(),
           elapsedMs: finite.nonnegative().optional(),
-          status: z15.enum(["completed", "timed-out", "not-reached"]).optional(),
-          timeoutScope: z15.enum(["control", "state"]).optional(),
-          reusedFrom: z15.string().min(1).optional(),
-          replayRequired: z15.boolean().optional(),
-          timings: z15.object({
+          status: z16.enum(["completed", "timed-out", "not-reached"]).optional(),
+          timeoutScope: z16.enum(["control", "state"]).optional(),
+          reusedFrom: z16.string().min(1).optional(),
+          replayRequired: z16.boolean().optional(),
+          timings: z16.object({
             clickMs: finite.nonnegative(),
             effectWindowMs: finite.nonnegative(),
             restoreCheckMs: finite.nonnegative(),
@@ -17735,51 +18349,51 @@ var init_artifact_schema = __esm({
         }).strict()
       )
     }).strict();
-    componentSchema = z15.object({
-      name: z15.string().min(1),
-      selector: z15.string(),
+    componentSchema = z16.object({
+      name: z16.string().min(1),
+      selector: z16.string(),
       width: finite.positive(),
       height: finite.positive(),
-      tolerance: z15.object({
+      tolerance: z16.object({
         ratio: finite.min(0),
         px: finite.min(0),
-        mode: z15.enum(["tighter", "looser"]).optional()
+        mode: z16.enum(["tighter", "looser"]).optional()
       }).strict(),
-      rects: z15.array(rectSchema.extend({ selector: z15.string().min(1) })),
-      inferred: z15.object({
-        source: z15.string().min(1),
-        words: z15.array(z15.string().min(1)).min(1),
-        axis: z15.enum(["width", "height"]).optional(),
-        matchedBy: z15.literal("modifier").optional()
+      rects: z16.array(rectSchema.extend({ selector: z16.string().min(1) })),
+      inferred: z16.object({
+        source: z16.string().min(1),
+        words: z16.array(z16.string().min(1)).min(1),
+        axis: z16.enum(["width", "height"]).optional(),
+        matchedBy: z16.literal("modifier").optional()
       }).strict().optional(),
-      unresolved: z15.literal(true).optional()
+      unresolved: z16.literal(true).optional()
     }).strict().refine(
       (component) => component.selector !== "" || component.unresolved === true,
       { message: "selector is required unless the component is unresolved" }
     );
-    invariantObservationSchema = z15.object({
+    invariantObservationSchema = z16.object({
       declaration: invariantSchema,
       origin: invariantOriginSchema,
-      selectors: z15.array(
-        z15.object({
-          selector: z15.string().trim().min(1),
-          matches: z15.array(
-            z15.object({ selector: z15.string().min(1), rect: rectSchema }).strict()
+      selectors: z16.array(
+        z16.object({
+          selector: z16.string().trim().min(1),
+          matches: z16.array(
+            z16.object({ selector: z16.string().min(1), rect: rectSchema }).strict()
           )
         }).strict()
       ),
-      groups: z15.array(
-        z15.object({
-          list: z15.string().min(1),
-          owner: z15.object({
-            selector: z15.string().min(1),
-            value: z15.string().nullable()
+      groups: z16.array(
+        z16.object({
+          list: z16.string().min(1),
+          owner: z16.object({
+            selector: z16.string().min(1),
+            value: z16.string().nullable()
           }).strict().nullable(),
-          items: z15.array(
-            z15.object({
-              selector: z15.string().min(1),
-              label: z15.string(),
-              value: z15.string().nullable()
+          items: z16.array(
+            z16.object({
+              selector: z16.string().min(1),
+              label: z16.string(),
+              value: z16.string().nullable()
             }).strict()
           )
         }).strict()
@@ -17793,136 +18407,136 @@ var init_artifact_schema = __esm({
         (selector) => selectors.some((entry) => entry.selector === selector)
       );
     }, "selector evidence must cover each authored selector exactly once");
-    selectionGroupSchema = z15.object({
-      container: z15.string().min(1),
-      role: z15.string(),
-      memberRole: z15.string(),
-      single: z15.boolean(),
-      members: z15.array(
-        z15.object({
-          selector: z15.string().min(1),
-          control: z15.string().min(1),
-          selected: z15.boolean(),
-          source: z15.enum([
+    selectionGroupSchema = z16.object({
+      container: z16.string().min(1),
+      role: z16.string(),
+      memberRole: z16.string(),
+      single: z16.boolean(),
+      members: z16.array(
+        z16.object({
+          selector: z16.string().min(1),
+          control: z16.string().min(1),
+          selected: z16.boolean(),
+          source: z16.enum([
             "aria-selected",
             "aria-checked",
             "aria-pressed",
             "checked"
           ]),
-          nativeIndicator: z15.boolean(),
-          decoration: z15.record(z15.string(), z15.string()),
-          paintedDecoration: z15.record(z15.string(), z15.string()).optional(),
-          decorationOwners: z15.array(z15.string()).optional()
+          nativeIndicator: z16.boolean(),
+          decoration: z16.record(z16.string(), z16.string()),
+          paintedDecoration: z16.record(z16.string(), z16.string()).optional(),
+          decorationOwners: z16.array(z16.string()).optional()
         }).strict()
       )
     }).strict();
-    dialogSchema = z15.object({
-      selector: z15.string().min(1),
-      modal: z15.boolean(),
-      labelledBy: z15.array(z15.string().min(1)),
-      submit: z15.array(z15.string().min(1))
+    dialogSchema = z16.object({
+      selector: z16.string().min(1),
+      modal: z16.boolean(),
+      labelledBy: z16.array(z16.string().min(1)),
+      submit: z16.array(z16.string().min(1))
     }).strict();
-    overlapKind = z15.enum(["interactive", "text"]);
-    overlapSchema = z15.object({
-      a: z15.string().min(1),
-      b: z15.string().min(1),
-      kinds: z15.tuple([overlapKind, overlapKind]),
+    overlapKind = z16.enum(["interactive", "text"]);
+    overlapSchema = z16.object({
+      a: z16.string().min(1),
+      b: z16.string().min(1),
+      kinds: z16.tuple([overlapKind, overlapKind]),
       rect: rectSchema,
-      partial: z15.array(z15.string().min(1)),
-      samples: z15.number().int().min(0),
-      hits: z15.number().int().min(0)
+      partial: z16.array(z16.string().min(1)),
+      samples: z16.number().int().min(0),
+      hits: z16.number().int().min(0)
     }).strict();
-    clippedTextSchema = z15.object({
-      selector: z15.string().min(1),
-      owner: z15.string().min(1),
-      axis: z15.enum(["x", "y", "both"]),
-      overflow: z15.object({ x: dimension3, y: dimension3 }).strict(),
-      lines: z15.number().int().min(0),
-      visibleLines: z15.number().int().min(0),
-      cut: z15.enum(["mid-word", "word-boundary", "sliced-line", "hidden-lines"]),
-      visibleText: z15.string().max(80),
-      text: z15.string().max(160)
+    clippedTextSchema = z16.object({
+      selector: z16.string().min(1),
+      owner: z16.string().min(1),
+      axis: z16.enum(["x", "y", "both"]),
+      overflow: z16.object({ x: dimension3, y: dimension3 }).strict(),
+      lines: z16.number().int().min(0),
+      visibleLines: z16.number().int().min(0),
+      cut: z16.enum(["mid-word", "word-boundary", "sliced-line", "hidden-lines"]),
+      visibleText: z16.string().max(80),
+      text: z16.string().max(160)
     }).strict();
-    fieldGroupSchema = z15.object({
-      container: z15.string().min(1),
-      region: z15.string().min(1),
-      members: z15.array(
-        z15.object({
-          selector: z15.string().min(1),
-          role: z15.enum(["label", "control", "helper"]),
+    fieldGroupSchema = z16.object({
+      container: z16.string().min(1),
+      region: z16.string().min(1),
+      members: z16.array(
+        z16.object({
+          selector: z16.string().min(1),
+          role: z16.enum(["label", "control", "helper"]),
           rect: rectSchema
         }).strict()
       )
     }).strict();
-    emptyRegionsSchema = z15.object({
-      configured: z15.array(
-        z15.object({
-          selector: z15.string().min(1),
-          matched: z15.number().int().min(0)
+    emptyRegionsSchema = z16.object({
+      configured: z16.array(
+        z16.object({
+          selector: z16.string().min(1),
+          matched: z16.number().int().min(0)
         }).strict()
       ),
-      auto: z15.boolean(),
-      regions: z15.array(
-        z15.object({
-          selector: z15.string().min(1),
-          source: z15.enum(["configured", "list", "table", "feed"]),
-          configured: z15.string().min(1).optional(),
+      auto: z16.boolean(),
+      regions: z16.array(
+        z16.object({
+          selector: z16.string().min(1),
+          source: z16.enum(["configured", "list", "table", "feed"]),
+          configured: z16.string().min(1).optional(),
           rect: rectSchema,
-          scope: z15.enum(["region", "adjacent"]),
-          cta: z15.array(z15.string().min(1)).max(5),
-          text: z15.string().max(160)
+          scope: z16.enum(["region", "adjacent"]),
+          cta: z16.array(z16.string().min(1)).max(5),
+          text: z16.string().max(160)
         }).strict()
       )
     }).strict();
-    mediaBandSchema = z15.object({ depth: finite.min(0).max(1), color: rgbSchema }).strict().nullable();
-    mediaFrameSchema = z15.object({
-      selector: z15.string().min(1),
-      kind: z15.enum(["img", "iframe", "video", "canvas"]),
+    mediaBandSchema = z16.object({ depth: finite.min(0).max(1), color: rgbSchema }).strict().nullable();
+    mediaFrameSchema = z16.object({
+      selector: z16.string().min(1),
+      kind: z16.enum(["img", "iframe", "video", "canvas"]),
       frame: rectSchema,
-      group: z15.string().min(1),
-      backdrop: z15.array(rgbSchema).min(1).max(2),
-      loaded: z15.boolean(),
-      bands: z15.discriminatedUnion("status", [
-        z15.object({
-          status: z15.literal("measured"),
+      group: z16.string().min(1),
+      backdrop: z16.array(rgbSchema).min(1).max(2),
+      loaded: z16.boolean(),
+      bands: z16.discriminatedUnion("status", [
+        z16.object({
+          status: z16.literal("measured"),
           top: mediaBandSchema,
           bottom: mediaBandSchema,
           left: mediaBandSchema,
           right: mediaBandSchema,
-          blank: z15.boolean()
+          blank: z16.boolean()
         }).strict(),
-        z15.object({ status: z15.literal("unavailable"), reason: z15.string() }).strict()
+        z16.object({ status: z16.literal("unavailable"), reason: z16.string() }).strict()
       ]).optional()
     }).strict();
-    collectionSchema = z15.object({
-      selector: z15.string().min(1),
-      matched: z15.number().int().min(0),
-      invalid: z15.literal(true).optional(),
-      items: z15.array(
-        z15.object({
-          selector: z15.string().min(1),
+    collectionSchema = z16.object({
+      selector: z16.string().min(1),
+      matched: z16.number().int().min(0),
+      invalid: z16.literal(true).optional(),
+      items: z16.array(
+        z16.object({
+          selector: z16.string().min(1),
           rect: rectSchema,
-          open: z15.boolean(),
-          controls: z15.array(z15.string()).max(30),
-          menuTriggers: z15.array(
-            z15.object({ selector: z15.string().min(1), name: z15.string() }).strict()
+          open: z16.boolean(),
+          controls: z16.array(z16.string()).max(30),
+          menuTriggers: z16.array(
+            z16.object({ selector: z16.string().min(1), name: z16.string() }).strict()
           )
         }).strict()
       )
     }).strict();
-    progressArtifactSchema = z15.object({
-      version: z15.literal(1),
-      withinMs: z15.number().int().positive(),
-      steps: z15.array(
-        z15.object({
-          stepIndex: z15.number().int().positive(),
-          action: z15.enum(["click", "fill", "press", "select"]),
-          selector: z15.string().min(1),
-          status: z15.enum(["ran", "unavailable"]),
-          reason: z15.string().optional(),
+    progressArtifactSchema = z16.object({
+      version: z16.literal(1),
+      withinMs: z16.number().int().positive(),
+      steps: z16.array(
+        z16.object({
+          stepIndex: z16.number().int().positive(),
+          action: z16.enum(["click", "fill", "press", "select"]),
+          selector: z16.string().min(1),
+          status: z16.enum(["ran", "unavailable"]),
+          reason: z16.string().optional(),
           firstMs: dimension3.nullable(),
-          affordance: z15.object({
-            kind: z15.enum([
+          affordance: z16.object({
+            kind: z16.enum([
               "progressbar",
               "busy",
               "spinner",
@@ -17930,105 +18544,105 @@ var init_artifact_schema = __esm({
               "control-text",
               "progress-text"
             ]),
-            selector: z15.string().min(1),
-            text: z15.string().max(80).optional()
+            selector: z16.string().min(1),
+            text: z16.string().max(80).optional()
           }).strict().optional(),
           observedMs: dimension3,
           settledMs: dimension3.optional()
         }).strict()
       )
     }).strict();
-    styleSourceSchema = z15.object({
-      sheet: z15.string(),
-      selector: z15.string(),
-      tokens: z15.array(z15.string()).optional(),
-      unresolved: z15.array(z15.string()).optional()
+    styleSourceSchema = z16.object({
+      sheet: z16.string(),
+      selector: z16.string(),
+      tokens: z16.array(z16.string()).optional(),
+      unresolved: z16.array(z16.string()).optional()
     }).strict();
     elementV2Schema = elementSchema.extend({
-      styleSources: z15.record(z15.string(), styleSourceSchema).optional(),
+      styleSources: z16.record(z16.string(), styleSourceSchema).optional(),
       signals: signalsSchema.optional(),
-      structuralPath: z15.string().min(1),
-      legacyRenderedPath: z15.string().min(1).optional(),
-      directText: z15.string(),
-      attributes: z15.record(z15.string(), z15.string()),
-      temporal: z15.boolean(),
-      stableIslandPath: z15.string().min(1),
+      structuralPath: z16.string().min(1),
+      legacyRenderedPath: z16.string().min(1).optional(),
+      directText: z16.string(),
+      attributes: z16.record(z16.string(), z16.string()),
+      temporal: z16.boolean(),
+      stableIslandPath: z16.string().min(1),
       relativeRect: rectSchema,
       styles: expandedStylesSchema
     });
-    headingSchema = z15.object({
-      selector: z15.string().min(1),
-      level: z15.number().int().min(1).max(6),
-      text: z15.string(),
-      axeTargets: z15.array(z15.string()).optional()
+    headingSchema = z16.object({
+      selector: z16.string().min(1),
+      level: z16.number().int().min(1).max(6),
+      text: z16.string(),
+      axeTargets: z16.array(z16.string()).optional()
     }).strict();
-    tokenSchema = z15.discriminatedUnion("status", [
-      z15.object({ status: z15.literal("not-configured") }).strict(),
-      z15.object({
-        status: z15.literal("configured"),
-        source: z15.string().min(1),
-        declarations: z15.record(z15.string(), z15.string()).refine((value) => Object.keys(value).length > 0),
-        normalizedValues: z15.array(z15.string()),
-        typedValues: z15.array(
-          z15.object({
-            kind: z15.enum([
+    tokenSchema = z16.discriminatedUnion("status", [
+      z16.object({ status: z16.literal("not-configured") }).strict(),
+      z16.object({
+        status: z16.literal("configured"),
+        source: z16.string().min(1),
+        declarations: z16.record(z16.string(), z16.string()).refine((value) => Object.keys(value).length > 0),
+        normalizedValues: z16.array(z16.string()),
+        typedValues: z16.array(
+          z16.object({
+            kind: z16.enum([
               "color",
               "radius",
               "spacing",
               "control-height",
               "other"
             ]),
-            value: z15.string(),
-            name: z15.string().optional(),
-            theme: z15.string().optional()
+            value: z16.string(),
+            name: z16.string().optional(),
+            theme: z16.string().optional()
           }).strict()
         ).optional()
       }).strict()
     ]);
     observationCommon = {
-      viewport: z15.object({ width: finite.positive(), height: finite.positive() }).strict(),
-      document: z15.object({
-        contentType: z15.string().trim().min(1).optional(),
+      viewport: z16.object({ width: finite.positive(), height: finite.positive() }).strict(),
+      document: z16.object({
+        contentType: z16.string().trim().min(1).optional(),
         scrollWidth: dimension3,
         scrollHeight: dimension3,
         clientWidth: dimension3,
         clientHeight: dimension3
       }).strict(),
-      headings: z15.array(headingSchema),
+      headings: z16.array(headingSchema),
       tokens: tokenSchema
     };
-    observationArtifactV1Schema = z15.object({
-      version: z15.literal(1),
+    observationArtifactV1Schema = z16.object({
+      version: z16.literal(1),
       ...observationCommon,
-      elements: z15.array(elementSchema)
+      elements: z16.array(elementSchema)
     }).strict();
-    identifier = z15.string().trim().min(1);
-    offset = z15.number().int().nonnegative();
-    bandEdgeSchema = z15.object({
+    identifier = z16.string().trim().min(1);
+    offset = z16.number().int().nonnegative();
+    bandEdgeSchema = z16.object({
       selector: identifier,
       rect: rectSchema,
-      fullBleedMedia: z15.boolean(),
-      content: z15.object({
+      fullBleedMedia: z16.boolean(),
+      content: z16.object({
         left: finite,
         right: finite,
-        selectors: z15.array(identifier).min(1)
+        selectors: z16.array(identifier).min(1)
       }).strict().refine((v) => v.right >= v.left, "content edges must be ordered").nullable()
     }).strict();
-    wordFragmentSchema = z15.object({
+    wordFragmentSchema = z16.object({
       selector: identifier,
       node: offset,
       start: offset,
       end: offset,
-      text: z15.string().min(1).max(160),
+      text: z16.string().min(1).max(160),
       rect: rectSchema
     }).strict().refine(
       (v) => v.end > v.start && v.end - v.start === v.text.length,
       "fragment offsets must match text"
     );
-    wordBreakSchema = z15.object({
+    wordBreakSchema = z16.object({
       selector: identifier,
-      word: z15.string().min(1).max(160),
-      text: z15.string().max(160),
+      word: z16.string().min(1).max(160),
+      text: z16.string().max(160),
       start: offset,
       end: offset,
       before: wordFragmentSchema,
@@ -18037,159 +18651,161 @@ var init_artifact_schema = __esm({
       (v) => v.end > v.start && v.end - v.start === v.word.length,
       "word offsets must match text"
     );
-    geometryScan = (record2) => z15.discriminatedUnion("status", [
-      z15.object({ status: z15.literal("ran"), records: z15.array(record2) }).strict(),
-      z15.object({
-        status: z15.enum(["partial", "unavailable"]),
+    geometryScan = (record2) => z16.discriminatedUnion("status", [
+      z16.object({ status: z16.literal("ran"), records: z16.array(record2) }).strict(),
+      z16.object({
+        status: z16.enum(["partial", "unavailable"]),
         reason: identifier,
-        records: z15.array(record2)
+        records: z16.array(record2)
       }).strict()
     ]);
-    failedRequestSchema = z15.object({ url: z15.string(), reason: z15.string() }).strict();
-    fontObservationSchema = z15.object({
-      status: z15.enum(["ran", "unavailable"]),
-      reason: z15.string().optional(),
-      faces: z15.array(
-        z15.object({
-          family: z15.string(),
-          status: z15.enum(["unloaded", "loading", "loaded", "error"]),
-          weight: z15.string(),
-          style: z15.string(),
-          urls: z15.array(z15.string())
+    failedRequestSchema = z16.object({ url: z16.string(), reason: z16.string() }).strict();
+    fontObservationSchema = z16.object({
+      status: z16.enum(["ran", "unavailable"]),
+      reason: z16.string().optional(),
+      faces: z16.array(
+        z16.object({
+          family: z16.string(),
+          status: z16.enum(["unloaded", "loading", "loaded", "error"]),
+          weight: z16.string(),
+          style: z16.string(),
+          urls: z16.array(z16.string())
         }).strict()
       ),
-      used: z15.array(
-        z15.object({
-          family: z15.string(),
-          selectors: z15.array(identifier).max(5),
-          fallback: z15.boolean()
+      used: z16.array(
+        z16.object({
+          family: z16.string(),
+          selectors: z16.array(identifier).max(5),
+          fallback: z16.boolean()
         }).strict()
       ),
-      failedRequests: z15.array(failedRequestSchema)
+      failedRequests: z16.array(failedRequestSchema)
     }).strict();
-    linkResultSchema = z15.discriminatedUnion("status", [
-      z15.object({ status: z15.literal("ok"), code: z15.number().int().nonnegative() }).strict(),
-      z15.object({
-        status: z15.literal("broken"),
-        code: z15.number().int().nonnegative().nullable(),
-        reason: z15.string()
+    linkResultSchema = z16.discriminatedUnion("status", [
+      z16.object({ status: z16.literal("ok"), code: z16.number().int().nonnegative() }).strict(),
+      z16.object({
+        status: z16.literal("broken"),
+        code: z16.number().int().nonnegative().nullable(),
+        reason: z16.string()
       }).strict(),
-      z15.object({ status: z15.literal("unchecked"), reason: z15.string() }).strict()
+      z16.object({ status: z16.literal("unchecked"), reason: z16.string() }).strict()
     ]);
-    linkSchema = z15.object({
+    linkSchema = z16.object({
       selector: identifier,
-      text: z15.string().max(80),
-      href: z15.string().min(1),
-      sameOrigin: z15.boolean(),
+      text: z16.string().max(80),
+      href: z16.string().min(1),
+      sameOrigin: z16.boolean(),
       result: linkResultSchema.optional()
     }).strict();
-    focusVisibleSchema = z15.object({
+    focusVisibleSchema = z16.object({
+      elapsedMs: z16.number().finite().nonnegative().optional(),
       selector: identifier,
-      name: z15.string(),
+      name: z16.string(),
       rect: rectSchema,
-      changed: z15.array(z15.string()),
+      changed: z16.array(z16.string()),
       proxy: identifier.optional()
     }).strict();
-    lineLengthSchema = z15.object({
+    lineLengthSchema = z16.object({
       selector: identifier,
-      chars: z15.number().nonnegative(),
-      width: z15.number().nonnegative(),
-      charWidth: z15.number().positive(),
-      lines: z15.number().int().nonnegative(),
-      text: z15.string().max(160)
+      chars: z16.number().nonnegative(),
+      width: z16.number().nonnegative(),
+      charWidth: z16.number().positive(),
+      lines: z16.number().int().nonnegative(),
+      text: z16.string().max(160)
     }).strict();
-    orphanWordSchema = z15.object({
+    orphanWordSchema = z16.object({
       selector: identifier,
-      word: z15.string().min(1),
-      lines: z15.number().int().min(2),
-      text: z15.string().max(160),
+      word: z16.string().min(1),
+      lines: z16.number().int().min(2),
+      text: z16.string().max(160),
       rect: rectSchema.optional(),
       lastLine: rectSchema.optional(),
-      ink: z15.discriminatedUnion("status", [
-        z15.object({
-          status: z15.literal("measured"),
-          share: z15.number().min(0).max(1)
+      ink: z16.discriminatedUnion("status", [
+        z16.object({
+          status: z16.literal("measured"),
+          share: z16.number().min(0).max(1)
         }).strict(),
-        z15.object({ status: z15.literal("unavailable"), reason: z15.string() }).strict()
+        z16.object({ status: z16.literal("unavailable"), reason: z16.string() }).strict()
       ]).optional()
     }).strict();
-    imageRenderSchema = z15.object({
+    imageRenderSchema = z16.object({
       selector: identifier,
-      src: z15.string().max(200),
-      naturalWidth: z15.number().nonnegative(),
-      naturalHeight: z15.number().nonnegative(),
+      src: z16.string().max(200),
+      naturalWidth: z16.number().nonnegative(),
+      naturalHeight: z16.number().nonnegative(),
       rendered: rectSchema,
-      objectFit: z15.string(),
-      distortion: z15.number().nonnegative(),
-      broken: z15.boolean()
+      objectFit: z16.string(),
+      distortion: z16.number().nonnegative(),
+      broken: z16.boolean()
     }).strict();
-    layoutShiftSchema = z15.object({
-      status: z15.enum(["ran", "unavailable"]),
-      reason: z15.string().optional(),
-      score: z15.number().nonnegative(),
-      entries: z15.array(
-        z15.object({
-          value: z15.number().nonnegative(),
-          startTime: z15.number(),
-          sources: z15.array(identifier)
+    layoutShiftSchema = z16.object({
+      elapsedMs: z16.number().finite().nonnegative().optional(),
+      status: z16.enum(["ran", "unavailable"]),
+      reason: z16.string().optional(),
+      score: z16.number().nonnegative(),
+      entries: z16.array(
+        z16.object({
+          value: z16.number().nonnegative(),
+          startTime: z16.number(),
+          sources: z16.array(identifier)
         }).strict()
       ).max(150)
     }).strict();
-    visibilityGeometrySchema = z15.object({
+    visibilityGeometrySchema = z16.object({
       rect: rectSchema,
       client: rectSchema,
       visible: rectSchema,
-      rendered: z15.boolean(),
-      reason: z15.string().optional(),
-      boundary: z15.string().optional()
+      rendered: z16.boolean(),
+      reason: z16.string().optional(),
+      boundary: z16.string().optional()
     }).strict();
-    shellVisibilitySchema = z15.object({
-      shell: z15.discriminatedUnion("status", [
-        z15.object({ status: z15.literal("not-configured") }).strict(),
-        z15.object({
-          status: z15.enum(["missing", "ambiguous", "invalid"]),
-          selector: z15.string().min(1),
-          count: z15.number().int().nonnegative()
+    shellVisibilitySchema = z16.object({
+      shell: z16.discriminatedUnion("status", [
+        z16.object({ status: z16.literal("not-configured") }).strict(),
+        z16.object({
+          status: z16.enum(["missing", "ambiguous", "invalid"]),
+          selector: z16.string().min(1),
+          count: z16.number().int().nonnegative()
         }).strict(),
-        z15.object({
-          status: z15.literal("measured"),
-          selector: z15.string().min(1),
+        z16.object({
+          status: z16.literal("measured"),
+          selector: z16.string().min(1),
           rect: rectSchema,
           client: rectSchema,
           viewport: rectSchema,
           scrollHeight: dimension3,
           clientHeight: dimension3,
-          extending: z15.array(
-            z15.object({
-              selector: z15.string().min(1),
+          extending: z16.array(
+            z16.object({
+              selector: z16.string().min(1),
               rect: rectSchema,
-              description: z15.string().optional()
+              description: z16.string().optional()
             }).strict()
           )
         }).strict()
       ]),
-      overlays: z15.array(
-        z15.object({
-          selector: z15.string().min(1),
-          status: z15.enum(["measured", "invalid"]),
-          matches: z15.array(
+      overlays: z16.array(
+        z16.object({
+          selector: z16.string().min(1),
+          status: z16.enum(["measured", "invalid"]),
+          matches: z16.array(
             visibilityGeometrySchema.extend({
-              selector: z15.string().min(1),
-              ancestors: z15.array(z15.string())
+              selector: z16.string().min(1),
+              ancestors: z16.array(z16.string())
             })
           )
         }).strict()
       )
     }).strict();
-    sizeSchema = z15.object({ width: dimension3, height: dimension3 }).strict();
-    screenshotGeometrySchema = z15.object({
-      strategy: z15.enum(["viewport", "full-page", "tiled"]),
+    sizeSchema = z16.object({ width: dimension3, height: dimension3 }).strict();
+    screenshotGeometrySchema = z16.object({
+      strategy: z16.enum(["viewport", "full-page", "tiled"]),
       scale: finite.positive(),
       width: dimension3,
       height: dimension3,
-      tiles: z15.number().int().positive().optional(),
-      drift: z15.object({ observed: sizeSchema, captured: sizeSchema }).strict().optional(),
-      rects: z15.record(z15.string().min(1), rectSchema).optional()
+      tiles: z16.number().int().positive().optional(),
+      drift: z16.object({ observed: sizeSchema, captured: sizeSchema }).strict().optional(),
+      rects: z16.record(z16.string().min(1), rectSchema).optional()
     }).strict().refine(
       (value) => value.tiles === void 0 || value.strategy === "tiled",
       "tiles are recorded only for tiled screenshots"
@@ -18197,35 +18813,35 @@ var init_artifact_schema = __esm({
       (value) => value.rects === void 0 || value.drift !== void 0,
       "screenshot rects are recorded only when layout drifted"
     );
-    observationArtifactV2Schema = z15.object({
-      version: z15.literal(2),
+    observationArtifactV2Schema = z16.object({
+      version: z16.literal(2),
       rootFontSize: finite.positive().optional(),
-      theme: z15.string().optional(),
+      theme: z16.string().optional(),
       ...observationCommon,
-      input: z15.object({
-        pointer: z15.enum(["fine", "coarse", "none"]),
-        hover: z15.enum(["hover", "none"]),
-        maxTouchPoints: z15.number().int().min(0)
+      input: z16.object({
+        pointer: z16.enum(["fine", "coarse", "none"]),
+        hover: z16.enum(["hover", "none"]),
+        maxTouchPoints: z16.number().int().min(0)
       }).strict().optional(),
-      elements: z15.array(elementV2Schema),
-      maskMembership: z15.array(
-        z15.object({
-          selector: z15.string(),
-          paths: z15.array(z15.string().min(1))
+      elements: z16.array(elementV2Schema),
+      maskMembership: z16.array(
+        z16.object({
+          selector: z16.string(),
+          paths: z16.array(z16.string().min(1))
         }).strict()
       ),
-      components: z15.array(componentSchema).optional(),
-      invariants: z15.array(invariantObservationSchema).optional(),
+      components: z16.array(componentSchema).optional(),
+      invariants: z16.array(invariantObservationSchema).optional(),
       shellVisibility: shellVisibilitySchema.optional(),
       probe: probeSchema.optional(),
       explanations: explanationArtifactSchema.optional(),
       motion: motionArtifactSchema.optional(),
-      selectionGroups: z15.array(selectionGroupSchema).optional(),
-      dialogs: z15.array(dialogSchema).optional(),
-      fresh: z15.boolean().optional(),
-      selectorMarks: z15.array(
-        z15.object({
-          purpose: z15.enum([
+      selectionGroups: z16.array(selectionGroupSchema).optional(),
+      dialogs: z16.array(dialogSchema).optional(),
+      fresh: z16.boolean().optional(),
+      selectorMarks: z16.array(
+        z16.object({
+          purpose: z16.enum([
             "history",
             "unsaved",
             "disguised-ignore",
@@ -18245,35 +18861,35 @@ var init_artifact_schema = __esm({
             "adjacent-region",
             "sibling-region"
           ]),
-          selector: z15.string().min(1),
-          matches: z15.array(z15.string().min(1)),
-          invalid: z15.literal(true).optional()
+          selector: z16.string().min(1),
+          matches: z16.array(z16.string().min(1)),
+          invalid: z16.literal(true).optional()
         }).strict()
       ).optional(),
-      overlaps: z15.array(overlapSchema).optional(),
-      clippedText: z15.array(clippedTextSchema).optional(),
+      overlaps: z16.array(overlapSchema).optional(),
+      clippedText: z16.array(clippedTextSchema).optional(),
       bandEdges: geometryScan(bandEdgeSchema).optional(),
       wordBreaks: geometryScan(wordBreakSchema).optional(),
-      fieldGroups: z15.array(fieldGroupSchema).optional(),
-      images: z15.array(
-        z15.object({
-          selector: z15.string().min(1),
-          src: z15.string(),
-          currentSrc: z15.string(),
-          complete: z15.boolean(),
-          naturalWidth: z15.number().nonnegative(),
-          naturalHeight: z15.number().nonnegative(),
-          visible: z15.boolean()
+      fieldGroups: z16.array(fieldGroupSchema).optional(),
+      images: z16.array(
+        z16.object({
+          selector: z16.string().min(1),
+          src: z16.string(),
+          currentSrc: z16.string(),
+          complete: z16.boolean(),
+          naturalWidth: z16.number().nonnegative(),
+          naturalHeight: z16.number().nonnegative(),
+          visible: z16.boolean()
         }).strict()
       ).optional(),
-      failedImageRequests: z15.array(z15.object({ url: z15.string(), reason: z15.string() }).strict()).optional(),
+      failedImageRequests: z16.array(z16.object({ url: z16.string(), reason: z16.string() }).strict()).optional(),
       emptyRegions: emptyRegionsSchema.optional(),
       progress: progressArtifactSchema.optional(),
       touchReachability: touchReachabilityArtifactSchema.optional(),
       liveness: livenessArtifactSchema.optional(),
-      mediaFrames: z15.array(mediaFrameSchema).optional(),
-      mediaFill: z15.object({ tolerance: z15.number().int().min(0).max(64) }).strict().optional(),
-      collections: z15.array(collectionSchema).optional(),
+      mediaFrames: z16.array(mediaFrameSchema).optional(),
+      mediaFill: z16.object({ tolerance: z16.number().int().min(0).max(64) }).strict().optional(),
+      collections: z16.array(collectionSchema).optional(),
       fonts: fontObservationSchema.optional(),
       links: geometryScan(linkSchema).optional(),
       focusVisible: geometryScan(focusVisibleSchema).optional(),
@@ -18283,7 +18899,7 @@ var init_artifact_schema = __esm({
       layoutShift: layoutShiftSchema.optional(),
       screenshot: screenshotGeometrySchema.optional()
     }).strict();
-    observationArtifactSchema = z15.discriminatedUnion("version", [
+    observationArtifactSchema = z16.discriminatedUnion("version", [
       observationArtifactV1Schema,
       observationArtifactV2Schema
     ]);
@@ -18498,11 +19114,11 @@ function compareDesignImage(options) {
     label4[start] = id2;
     let left = Number.POSITIVE_INFINITY, top = Number.POSITIVE_INFINITY, right = -1, bottom = -1, changedCells = 0, deltaSum = 0;
     while (stack.length) {
-      const cell3 = stack.pop();
-      const column = cell3 % columns, row = Math.floor(cell3 / columns);
+      const cell4 = stack.pop();
+      const column = cell4 % columns, row = Math.floor(cell4 / columns);
       if (changed(column, row)) {
         changedCells++;
-        deltaSum += delta2[cell3];
+        deltaSum += delta2[cell4];
         left = Math.min(left, column);
         top = Math.min(top, row);
         right = Math.max(right, column);
@@ -18650,13 +19266,13 @@ var init_image_diff = __esm({
 });
 
 // src/design/types.ts
-import { z as z16 } from "zod";
+import { z as z17 } from "zod";
 var matchMethodSchema, matchesSchema, rectSchema2, designRegionsSchema, designImageMediaTypeSchema, elementArtifacts, elementOnlyArtifacts, figmaProvenanceSchema, designDescriptorSchema;
 var init_types2 = __esm({
   "src/design/types.ts"() {
     "use strict";
     init_finding();
-    matchMethodSchema = z16.enum([
+    matchMethodSchema = z17.enum([
       "root",
       "data-node-id",
       "data-idiom-name",
@@ -18665,19 +19281,19 @@ var init_types2 = __esm({
       "descendants",
       "parent-position"
     ]);
-    matchesSchema = z16.object({
-      version: z16.literal(1),
-      pairs: z16.array(
-        z16.object({
-          id: z16.string().min(1),
-          app: z16.string().min(1),
-          design: z16.string().min(1),
+    matchesSchema = z17.object({
+      version: z17.literal(1),
+      pairs: z17.array(
+        z17.object({
+          id: z17.string().min(1),
+          app: z17.string().min(1),
+          design: z17.string().min(1),
           method: matchMethodSchema,
-          parent: z16.string().nullable()
+          parent: z17.string().nullable()
         }).strict()
       ),
-      unmatchedApp: z16.array(z16.string()),
-      unmatchedDesign: z16.array(z16.string())
+      unmatchedApp: z17.array(z17.string()),
+      unmatchedDesign: z17.array(z17.string())
     }).strict().superRefine((value, context2) => {
       for (const key4 of ["id", "app", "design"])
         if (new Set(value.pairs.map((p) => p[key4])).size !== value.pairs.length)
@@ -18702,42 +19318,42 @@ var init_types2 = __esm({
       ))
         context2.addIssue({ code: "custom", message: "unknown matched parent" });
     });
-    rectSchema2 = z16.object({
-      x: z16.number().finite(),
-      y: z16.number().finite(),
-      width: z16.number().finite().nonnegative(),
-      height: z16.number().finite().nonnegative()
+    rectSchema2 = z17.object({
+      x: z17.number().finite(),
+      y: z17.number().finite(),
+      width: z17.number().finite().nonnegative(),
+      height: z17.number().finite().nonnegative()
     }).strict();
-    designRegionsSchema = z16.object({
-      version: z16.literal(1),
+    designRegionsSchema = z17.object({
+      version: z17.literal(1),
       /** CSS px; design y = app y + offset. */
-      offset: z16.number().int(),
-      compared: z16.object({
-        top: z16.number().int().nonnegative(),
-        height: z16.number().int().nonnegative()
+      offset: z17.number().int(),
+      compared: z17.object({
+        top: z17.number().int().nonnegative(),
+        height: z17.number().int().nonnegative()
       }).strict(),
-      uncompared: z16.array(
-        z16.object({
-          top: z16.number().int().nonnegative(),
-          height: z16.number().int().positive(),
-          side: z16.enum(["app", "design"])
+      uncompared: z17.array(
+        z17.object({
+          top: z17.number().int().nonnegative(),
+          height: z17.number().int().positive(),
+          side: z17.enum(["app", "design"])
         }).strict()
       ),
-      regions: z16.array(
-        z16.object({
-          id: z16.string().regex(/^region-\d+$/),
+      regions: z17.array(
+        z17.object({
+          id: z17.string().regex(/^region-\d+$/),
           rect: rectSchema2,
           designRect: rectSchema2,
-          owner: z16.string().nullable(),
-          elements: z16.array(z16.string()),
-          changedCells: z16.number().int().positive(),
-          cells: z16.number().int().positive(),
-          meanDelta: z16.number().finite().nonnegative()
+          owner: z17.string().nullable(),
+          elements: z17.array(z17.string()),
+          changedCells: z17.number().int().positive(),
+          cells: z17.number().int().positive(),
+          meanDelta: z17.number().finite().nonnegative()
         }).strict()
       ),
-      omitted: z16.number().int().nonnegative()
+      omitted: z17.number().int().nonnegative()
     }).strict();
-    designImageMediaTypeSchema = z16.enum([
+    designImageMediaTypeSchema = z17.enum([
       "image/png",
       "image/jpeg",
       "image/webp"
@@ -18749,43 +19365,43 @@ var init_types2 = __esm({
       "axe",
       "figma"
     ];
-    figmaProvenanceSchema = z16.object({
-      fileKey: z16.string().min(1),
-      nodeId: z16.string().min(1),
-      version: z16.string().min(1),
-      lastModified: z16.string().optional(),
-      frame: z16.object({ width: z16.number().positive(), height: z16.number().positive() }).strict(),
+    figmaProvenanceSchema = z17.object({
+      fileKey: z17.string().min(1),
+      nodeId: z17.string().min(1),
+      version: z17.string().min(1),
+      lastModified: z17.string().optional(),
+      frame: z17.object({ width: z17.number().positive(), height: z17.number().positive() }).strict(),
       /** "resolved", or "unavailable: <why>" when variable names could not be read. */
-      variables: z16.string().min(1),
-      link: z16.string().min(1),
+      variables: z17.string().min(1),
+      link: z17.string().min(1),
       /** Project-relative cache directory of the pinned version. */
-      cache: z16.string().min(1)
+      cache: z17.string().min(1)
     }).strict();
-    designDescriptorSchema = z16.object({
-      version: z16.literal(1),
-      source: z16.string().min(1),
+    designDescriptorSchema = z17.object({
+      version: z17.literal(1),
+      source: z17.string().min(1),
       /** Reference name; present when a state declares several references. */
-      name: z16.string().min(1).optional(),
-      resolved: z16.object({
-        kind: z16.enum(["file", "url", "inline", "site", "image", "figma"]),
-        requested: z16.string(),
-        final: z16.string(),
-        entry: z16.string().optional(),
+      name: z17.string().min(1).optional(),
+      resolved: z17.object({
+        kind: z17.enum(["file", "url", "inline", "site", "image", "figma"]),
+        requested: z17.string(),
+        final: z17.string(),
+        entry: z17.string().optional(),
         mediaType: designImageMediaTypeSchema.optional(),
-        sha256: z16.string().regex(/^[a-f\d]{64}$/).optional()
+        sha256: z17.string().regex(/^[a-f\d]{64}$/).optional()
       }).strict().optional(),
-      coordinate: z16.object({
-        state: z16.string(),
-        viewport: z16.string(),
-        width: z16.number().positive(),
-        height: z16.number().positive(),
-        colorScheme: z16.enum(["light", "dark"])
+      coordinate: z17.object({
+        state: z17.string(),
+        viewport: z17.string(),
+        width: z17.number().positive(),
+        height: z17.number().positive(),
+        colorScheme: z17.enum(["light", "dark"])
       }).strict(),
-      runtimeVersion: z16.string(),
-      status: z16.enum(["captured", "failed"]),
-      failure: z16.string().optional(),
+      runtimeVersion: z17.string(),
+      status: z17.enum(["captured", "failed"]),
+      failure: z17.string().optional(),
       figma: figmaProvenanceSchema.optional(),
-      artifacts: z16.object({
+      artifacts: z17.object({
         observations: artifactPathSchema.optional(),
         screenshot: artifactPathSchema,
         dom: artifactPathSchema.optional(),
@@ -18934,15 +19550,15 @@ async function writeDesignArtifacts(options) {
 async function loadDesignArtifacts(runDirectory, raw, tuple) {
   const descriptor = designDescriptorSchema.parse(raw), loaded = { descriptor };
   try {
-    const coordinate5 = descriptor.coordinate;
-    if (coordinate5.state !== tuple.state || coordinate5.viewport !== tuple.viewport || coordinate5.width !== tuple.width || coordinate5.height !== tuple.height || coordinate5.colorScheme !== (tuple.colorScheme ?? "light"))
+    const coordinate6 = descriptor.coordinate;
+    if (coordinate6.state !== tuple.state || coordinate6.viewport !== tuple.viewport || coordinate6.width !== tuple.width || coordinate6.height !== tuple.height || coordinate6.colorScheme !== (tuple.colorScheme ?? "light"))
       throw new Error("design coordinate disagrees with app tuple");
     const base = `${relative3(
       runDirectory,
       resolve4(runDirectory, tuple.metadataPath, "..")
     ).split(sep3).join("/")}/design/`;
     const root2 = await realpath3(runDirectory);
-    const missing = [];
+    const missing2 = [];
     for (const path of Object.values(descriptor.artifacts)) {
       if (path === void 0) continue;
       if (!path.startsWith(base))
@@ -18952,7 +19568,7 @@ async function loadDesignArtifacts(runDirectory, raw, tuple) {
         physical = await realpath3(resolve4(runDirectory, path));
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
-        missing.push(path);
+        missing2.push(path);
         continue;
       }
       const rel = relative3(root2, physical);
@@ -18960,9 +19576,9 @@ async function loadDesignArtifacts(runDirectory, raw, tuple) {
         throw new Error("design artifact escapes run directory");
       tuple.artifactPaths.push(path);
     }
-    if (descriptor.status === "captured" && missing.length)
+    if (descriptor.status === "captured" && missing2.length)
       throw new Error(
-        `missing design artifacts: ${missing.join(", ")}; recapture`
+        `missing design artifacts: ${missing2.join(", ")}; recapture`
       );
     if (descriptor.status !== "captured")
       throw new Error(descriptor.failure ?? "design capture failed");
@@ -19039,6 +19655,52 @@ var init_artifacts = __esm({
     init_types2();
     json = (value) => `${JSON.stringify(value, null, 2)}
 `;
+  }
+});
+
+// src/findings/settings.ts
+import { createHash as createHash8 } from "crypto";
+function stable(value) {
+  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+  if (value && typeof value === "object")
+    return `{${Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${stable(v)}`).join(",")}}`;
+  return JSON.stringify(value) ?? "undefined";
+}
+function settingsHash(value) {
+  return createHash8("sha256").update(stable(value)).digest("hex");
+}
+function capturePredicateIdentity(project, flow) {
+  const {
+    concurrency: _lanes,
+    maxMinutes: _deadline,
+    ...capture
+  } = project.capture;
+  const checks = {
+    ...project.checks,
+    links: { ...project.checks.links, concurrency: void 0 }
+  };
+  return settingsHash({
+    checks,
+    capture,
+    invariants: flow.invariants,
+    states: flow.states.map(
+      (state) => Object.fromEntries(
+        Object.entries(state).filter(
+          ([key4]) => !["description", "url", "urlFrom"].includes(key4)
+        )
+      )
+    )
+  });
+}
+function annotateDeclaredExpectations(tuples, flow) {
+  for (const tuple of tuples) {
+    const state = [...flow.states].sort((a, b) => b.id.length - a.id.length).find((s) => tuple.state === s.id || tuple.state.startsWith(`${s.id}.`));
+    if (state) tuple.declaredExpectations = state.expect;
+  }
+}
+var init_settings = __esm({
+  "src/findings/settings.ts"() {
+    "use strict";
   }
 });
 
@@ -19210,13 +19872,14 @@ var artifacts_exports = {};
 __export(artifacts_exports, {
   assertEvidencePaths: () => assertEvidencePaths,
   findLatestCapture: () => findLatestCapture,
+  findNewestCapture: () => findNewestCapture,
   loadCaptureRun: () => loadCaptureRun,
   loadRunTuples: () => loadRunTuples,
   resolveStoredRun: () => resolveStoredRun
 });
 import { access, readdir as readdir2, readFile as readFile8 } from "fs/promises";
 import { isAbsolute as isAbsolute3, join as join7, relative as relative4, resolve as resolve5, sep as sep4 } from "path";
-import { z as z17 } from "zod";
+import { z as z18 } from "zod";
 function validBuild(value) {
   if (value === null || typeof value !== "object") return false;
   const build = value;
@@ -19334,15 +19997,7 @@ function resolveStoredRun(projectDirectory, runId) {
 }
 async function findLatestCapture(options) {
   const reports = resolve5(options.projectDirectory, ".idiom", "reports");
-  let entries;
-  try {
-    entries = await readdir2(reports, { withFileTypes: true });
-  } catch {
-    entries = [];
-  }
-  const runs = entries.filter(
-    (entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}T/.test(entry.name)
-  ).map((entry) => entry.name).sort().reverse();
+  const runs = await storedRunsNewestFirst(reports);
   for (const run2 of runs) {
     let baseline;
     try {
@@ -19365,6 +20020,44 @@ async function findLatestCapture(options) {
   throw new IdiomError(
     `no fully passing capture of ${JSON.stringify(options.flow)} at ${options.commit.slice(0, 12)} with a clean tree; run \`idiom capture ${options.flow}\` first`
   );
+}
+async function storedRunsNewestFirst(reports) {
+  let entries;
+  try {
+    entries = await readdir2(reports, { withFileTypes: true });
+  } catch {
+    entries = [];
+  }
+  return entries.filter(
+    (entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}T/.test(entry.name)
+  ).map((entry) => entry.name).sort().reverse();
+}
+async function findNewestCapture(options) {
+  const reports = resolve5(options.projectDirectory, ".idiom", "reports");
+  for (const run2 of await storedRunsNewestFirst(reports)) {
+    const directory = join7(reports, run2);
+    let recorded;
+    try {
+      recorded = JSON.parse(
+        await readFile8(join7(directory, "run.json"), "utf8")
+      );
+    } catch {
+      recorded = void 0;
+    }
+    if (typeof recorded === "object" && recorded !== null && "flow" in recorded) {
+      if (recorded.flow === options.flow) return directory;
+      continue;
+    }
+    let baseline;
+    try {
+      baseline = await readFile8(join7(directory, "baseline.md"), "utf8");
+    } catch {
+      continue;
+    }
+    if (baseline.match(/Flow `([^`]+)`/)?.[1] === options.flow)
+      return directory;
+  }
+  return void 0;
 }
 async function findFirstMetadata(directory, depth = 0) {
   if (depth > 4) return void 0;
@@ -19550,13 +20243,13 @@ async function loadCaptureRun(options) {
       if (await exists2(screenshot2)) present2["screenshot.png"] = screenshot2;
     }
     if (record2.failure === null) {
-      const missing = artifactNames.filter(
+      const missing2 = artifactNames.filter(
         (name) => present2[name] === void 0
       );
-      if (missing.length > 0) {
-        const coordinate5 = `${record2.state.id}/${record2.viewport.name}${record2.colorSchemeAxis ? `/${record2.colorScheme}` : ""}`;
+      if (missing2.length > 0) {
+        const coordinate6 = `${record2.state.id}/${record2.viewport.name}${record2.colorSchemeAxis ? `/${record2.colorScheme}` : ""}`;
         throw new IdiomError(
-          `successful capture tuple ${coordinate5} is stale or corrupt; missing ${missing.join(", ")}; recapture the flow`
+          `successful capture tuple ${coordinate6} is stale or corrupt; missing ${missing2.join(", ")}; recapture the flow`
         );
       }
     }
@@ -19596,6 +20289,7 @@ async function loadCaptureRun(options) {
     const expectedStatus = options.expectedStatusByState?.get(record2.state.id);
     const url = documentUrl(record2.url);
     tuples.push({
+      ...runRecord?.captureSettingsIdentity ? { captureSettingsIdentity: runRecord.captureSettingsIdentity } : {},
       ...record2.layoutRepresentative === void 0 ? {} : { layoutRepresentative: record2.layoutRepresentative },
       ...record2.combination === void 0 ? {} : { combination: record2.combination.label },
       flow: record2.flow.id,
@@ -19769,6 +20463,7 @@ async function loadRunTuples(validated, flow, runDirectory) {
     legacyColorScheme: validated.project.capture.colorScheme
   });
   const record2 = loaded.record;
+  annotateDeclaredExpectations(loaded.tuples, flow);
   if (isPublishedFlow(flow))
     await attachPublished(validated, flow, runDirectory, loaded.tuples);
   return {
@@ -19794,39 +20489,40 @@ var init_artifacts2 = __esm({
     init_filmstrip_schema();
     init_artifacts();
     init_errors();
+    init_settings();
     init_flow();
     init_compare();
-    storedCombinationSchema = z17.object({
-      base: z17.string().min(1),
-      label: z17.string().min(1),
-      options: z17.record(z17.string(), z17.string()),
-      equivalent: z17.array(z17.string())
+    storedCombinationSchema = z18.object({
+      base: z18.string().min(1),
+      label: z18.string().min(1),
+      options: z18.record(z18.string(), z18.string()),
+      equivalent: z18.array(z18.string())
     }).strict();
-    combinationsReportSchema = z17.object({
-      version: z17.literal(1),
-      evidence: z17.literal("per-combination").optional(),
-      captured: z17.number().int().nonnegative(),
-      collapsed: z17.array(
-        z17.object({
-          state: z17.string().min(1),
-          viewport: z17.string().min(1),
-          colorScheme: z17.enum(["light", "dark"]),
-          colorSchemeAxis: z17.boolean(),
-          combination: z17.string().min(1),
-          sameAs: z17.object({
-            state: z17.string().min(1),
-            combination: z17.string().min(1)
+    combinationsReportSchema = z18.object({
+      version: z18.literal(1),
+      evidence: z18.literal("per-combination").optional(),
+      captured: z18.number().int().nonnegative(),
+      collapsed: z18.array(
+        z18.object({
+          state: z18.string().min(1),
+          viewport: z18.string().min(1),
+          colorScheme: z18.enum(["light", "dark"]),
+          colorSchemeAxis: z18.boolean(),
+          combination: z18.string().min(1),
+          sameAs: z18.object({
+            state: z18.string().min(1),
+            combination: z18.string().min(1)
           }).strict()
         }).strict()
       ),
-      cap: z17.object({ combined: z17.array(z17.string()), held: z17.array(z17.string()) }).strict().optional(),
-      notes: z17.array(z17.string())
+      cap: z18.object({ combined: z18.array(z18.string()), held: z18.array(z18.string()) }).strict().optional(),
+      notes: z18.array(z18.string())
     }).strict();
   }
 });
 
 // src/design/identity.ts
-import { createHash as createHash8 } from "crypto";
+import { createHash as createHash9 } from "crypto";
 function designIdentity(tuple) {
   const designs = tupleDesigns(tuple);
   if (designEvidenceProblem(tuple) || !designs.length) return void 0;
@@ -19836,12 +20532,12 @@ function designIdentity(tuple) {
     if (identity7 === void 0) return void 0;
     identities3.push(identity7);
   }
-  return identities3.length === 1 ? identities3[0] : createHash8("sha256").update(JSON.stringify(identities3)).digest("hex");
+  return identities3.length === 1 ? identities3[0] : createHash9("sha256").update(JSON.stringify(identities3)).digest("hex");
 }
 function referenceIdentity(design) {
   const resolved = design.descriptor.resolved;
   if (resolved?.kind === "image")
-    return createHash8("sha256").update(
+    return createHash9("sha256").update(
       JSON.stringify({
         kind: "image",
         sha256: resolved.sha256,
@@ -19873,7 +20569,7 @@ function referenceIdentity(design) {
       ])
     )
   }));
-  return createHash8("sha256").update(
+  return createHash9("sha256").update(
     JSON.stringify({
       viewport: design.observations.viewport,
       scheme: design.descriptor.coordinate.colorScheme,
@@ -19892,7 +20588,7 @@ var init_identity = __esm({
 });
 
 // src/review/fingerprint.ts
-import { createHash as createHash9 } from "crypto";
+import { createHash as createHash10 } from "crypto";
 function legacyNormalizeSelectorHint(value) {
   return value.trim().replace(
     /(?:\.[A-Za-z_][A-Za-z0-9_-]*){2,}/g,
@@ -19909,9 +20605,9 @@ function normalizeSelectorHint(value) {
     return part.replace(
       /(?:\.[A-Za-z_][A-Za-z0-9_-]*)+/g,
       (classes, offset2) => {
-        const stable2 = classes.slice(1).split(".").filter((name) => !generatedClass(name)).sort();
-        if (stable2.length > 0)
-          return stable2.map((name) => `.${name}`).join("");
+        const stable3 = classes.slice(1).split(".").filter((name) => !generatedClass(name)).sort();
+        if (stable3.length > 0)
+          return stable3.map((name) => `.${name}`).join("");
         const before = part.slice(0, offset2);
         const after = part.slice(offset2 + classes.length);
         const compoundStart = Math.max(
@@ -19933,7 +20629,7 @@ function normalizeSelectorHint(value) {
   }).join(" | ");
 }
 function hashFingerprint(input, selectorHint) {
-  return createHash9("sha256").update(
+  return createHash10("sha256").update(
     [
       input.category,
       input.flow,
@@ -19972,7 +20668,7 @@ function findingFingerprintIdentity(input) {
   };
 }
 function findingGroupKey(input) {
-  return createHash9("sha256").update(
+  return createHash10("sha256").update(
     [
       "idiom-group-v1",
       input.category,
@@ -20013,10 +20709,489 @@ var init_occurrences = __esm({
   }
 });
 
+// src/findings/contract.ts
+function settingsIdentity(config) {
+  return settingsHash({ ...checksConfigFrom(), ...config });
+}
+function coordinate(tuple) {
+  return {
+    flow: tuple.flow,
+    state: tuple.state,
+    viewport: tuple.viewport,
+    ...tuple.colorScheme === void 0 ? {} : { colorScheme: tuple.colorScheme },
+    ...tuple.combination === void 0 ? {} : { combination: tuple.combination }
+  };
+}
+function buildRuleContract(tuple, candidate2, config, tuples = [tuple]) {
+  const params = candidate2.verification.params ?? {};
+  const timeline = temporalAction(tuple, candidate2);
+  const action = timeline ? actionIdentity(timeline) : candidate2.observation?.action;
+  const required2 = crossChecks.has(candidate2.category) ? tuples : candidate2.evidenceTuples ?? [tuple];
+  const realSelectors = new Set(
+    tuple.observations?.elements.map((e) => e.selector) ?? []
+  );
+  const explicit = candidate2.targetSelectors ?? (Array.isArray(params.selectors) && params.selectors.every((s) => typeof s === "string") ? params.selectors : typeof params.selector === "string" ? [
+    params.selector,
+    ...typeof params.neighbour === "string" ? [params.neighbour] : []
+  ] : typeof params.a === "string" && typeof params.b === "string" ? [params.a, params.b] : void 0);
+  const selectors = explicit ?? [candidate2.selectorHint];
+  const relatedActions = [];
+  let unresolvedActions = 0;
+  if (candidate2.rule === "idiom:motion-snap" && Array.isArray(params.actions)) {
+    for (const raw of params.actions) {
+      const recorded = raw;
+      const matches = tuple.timelines?.actions.filter(
+        (a) => a.source === recorded.source && a.selector === recorded.selector && a.name === recorded.name && a.stepIndex === recorded.stepIndex
+      ) ?? [];
+      if (matches.length === 1 && matches[0])
+        relatedActions.push(actionIdentity(matches[0]));
+      else unresolvedActions++;
+    }
+  }
+  const target2 = action ? {
+    kind: "action",
+    action,
+    ...relatedActions.length ? { relatedActions } : {}
+  } : candidate2.documentScope || !explicit && !selectors.every((s) => realSelectors.has(s)) ? {
+    kind: "document",
+    scope: candidate2.fingerprintHint ?? candidate2.selectorHint,
+    ...candidate2.designDrift?.region ? {
+      region: candidate2.designDrift.region.rect,
+      ...candidate2.designDrift.reference ? { reference: candidate2.designDrift.reference } : {}
+    } : {}
+  } : { kind: "selectors", selectors };
+  const settings = config ?? checksConfigFrom();
+  const thresholds = {
+    interactionShift: settings.interactionShift,
+    layoutShift: settings.layoutShift,
+    withinMs: settings.progressWithinMs,
+    loading: settings.loading,
+    failure: settings.failure
+  };
+  const actionEvidence = timeline ? jsonRecord({
+    status: timeline.status,
+    durationMs: timeline.durationMs,
+    held: timeline.held,
+    failure: timeline.failure
+  }) : candidate2.observation?.result ?? {};
+  const basisDetails = action ? {
+    kind: "observed",
+    summary: candidate2.explanation,
+    action,
+    timing: timeline ? { elapsedMs: timeline.durationMs } : candidate2.observation?.timing ?? {
+      reason: "Timing was not recorded in this capture."
+    },
+    result: actionEvidence
+  } : {
+    kind: "measured",
+    rule: candidate2.rule,
+    summary: candidate2.explanation,
+    measurement: jsonRecord({
+      ...params,
+      result: candidate2.explanation,
+      ...candidate2.axeNodes ? { axeNodes: candidate2.axeNodes } : {}
+    })
+  };
+  return {
+    basis: action ? "observed" : "measured",
+    basisDetails,
+    acceptance: {
+      version: 1,
+      kind: "rule",
+      rule: candidate2.rule,
+      check: candidate2.verification.check,
+      doneWhen: candidate2.acceptance,
+      coordinate: coordinate(tuple),
+      requiredCoordinates: [
+        ...new Map(
+          [tuple, ...required2].map((t) => [
+            stable(coordinate(t)),
+            coordinate(t)
+          ])
+        ).values()
+      ],
+      target: target2,
+      condition: {
+        kind: "rule-clear",
+        settingsIdentity: settingsIdentity(config),
+        parameters: jsonRecord({
+          ...params,
+          thresholds,
+          ...candidate2.category === "component-size" && tuple.observations?.version === 2 ? {
+            componentSettingsIdentity: settingsHash(
+              tuple.observations.components?.filter(
+                (c) => c.name === params.component && c.selector === params.selector
+              ).map(
+                ({
+                  name,
+                  selector,
+                  width,
+                  height,
+                  tolerance: tolerance2,
+                  inferred
+                }) => ({
+                  name,
+                  selector,
+                  width,
+                  height,
+                  tolerance: tolerance2,
+                  inferred
+                })
+              )
+            )
+          } : {},
+          ...tuple.captureSettingsIdentity ? { captureSettingsIdentity: tuple.captureSettingsIdentity } : {},
+          ...[
+            "interaction-shift",
+            "target-size",
+            "spacing-rhythm",
+            "overflow-clip",
+            "adjacent-gap"
+          ].includes(candidate2.category) ? { units: { distance: "CSS px" } } : {},
+          ...[
+            "motion",
+            "liveness",
+            "loading-state-missing",
+            "double-submit",
+            "progress-affordance",
+            "error-state-missing",
+            "retry-blocked"
+          ].includes(candidate2.category) ? { units: { time: "ms" } } : {},
+          ...unresolvedActions ? { unresolvedActions } : {},
+          ...timeline?.failure ? {
+            failureRequests: timeline.failure.requests.map((r) => ({
+              method: r.method,
+              path: r.path
+            })).sort((a, b) => stable(a).localeCompare(stable(b))),
+            failureMode: timeline.failure.mode,
+            failureStatus: timeline.failure.status,
+            feedbackWithinMs: timeline.failure.feedbackWithinMs
+          } : {},
+          ...timeline?.held ? {
+            requests: timeline.held.requests.map((r) => ({
+              method: r.method,
+              path: r.path,
+              resourceType: r.resourceType
+            })).sort((a, b) => stable(a).localeCompare(stable(b))),
+            delayMs: timeline.held.delayMs
+          } : {}
+        }),
+        allowRemoval: candidate2.allowRemoval ?? false
+      }
+    }
+  };
+}
+var crossChecks;
+var init_contract = __esm({
+  "src/findings/contract.ts"() {
+    "use strict";
+    init_registry();
+    init_temporal_evidence();
+    init_json();
+    init_settings();
+    crossChecks = /* @__PURE__ */ new Set([
+      "responsive-break",
+      "spacing-rhythm",
+      "luminance-parity",
+      "sibling-chrome",
+      "cross-surface-naming"
+    ]);
+  }
+});
+
+// src/verify/acceptance.ts
+function unavailableAcceptance(contract, reason) {
+  return {
+    contract,
+    status: "not-recheckable",
+    reason: reason ?? (contract.kind === "legacy" ? "Historical record has no executable acceptance condition; the finding uses legacy verification." : contract.kind === "rule" ? "Executable acceptance could not be safely evaluated." : "No executable condition was recorded; human acceptance has not been proven.")
+  };
+}
+function sameCoordinate(a, b) {
+  return a.flow === b.flow && a.state === b.state && a.viewport === b.viewport && (a.colorScheme ?? "light") === (b.colorScheme ?? "light") && a.combination === b.combination;
+}
+function sameTarget(a, b) {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "action" && b.kind === "action")
+    return [a.action, ...a.relatedActions ?? []].some(
+      (left) => [b.action, ...b.relatedActions ?? []].some(
+        (right) => sameAction(left, right)
+      )
+    );
+  if (a.kind === "selectors" && b.kind === "selectors")
+    return [...a.selectors].sort().join("\0") === [...b.selectors].sort().join("\0");
+  if (a.kind === "document" && b.kind === "document" && a.region && b.region)
+    return a.reference === b.reference && a.region.x < b.region.x + b.region.width && b.region.x < a.region.x + a.region.width && a.region.y < b.region.y + b.region.height && b.region.y < a.region.y + a.region.height;
+  return a.kind === "document" && b.kind === "document" && a.scope === b.scope;
+}
+function targetEvidence(contract, tuple, config) {
+  const target2 = contract.target;
+  if (contract.condition.parameters.captureSettingsIdentity && tuple.captureSettingsIdentity !== contract.condition.parameters.captureSettingsIdentity)
+    return "Capture predicate settings or declarations changed; removing an expectation cannot prove acceptance.";
+  if (contract.check === "missing-state" && contract.rule.startsWith("idiom:expectation-")) {
+    const { kind, expected } = contract.condition.parameters;
+    const declaration = tuple.declaredExpectations;
+    const present2 = kind === "status" ? declaration?.status === expected : (kind === "text-present" ? declaration?.textPresent : kind === "selector-present" ? declaration?.selectorPresent : declaration?.selectorAbsent)?.includes(String(expected));
+    if (!present2)
+      return "The original expectation is not declared in the current capture; it was not rechecked.";
+  }
+  const obs = tuple.observations?.version === 2 ? tuple.observations : void 0;
+  if (contract.check === "layout-invariants" || contract.check === "group-invariants") {
+    const parameters = contract.condition.parameters;
+    const matches2 = obs?.invariants?.filter(
+      (record2) => stable(record2.declaration) === stable(parameters.invariant) && JSON.stringify(record2.origin) === JSON.stringify(parameters.origin)
+    ) ?? [];
+    return matches2.length === 1 ? void 0 : "The original invariant declaration was not measured or changed; another invariant cannot substitute for it.";
+  }
+  if (target2.kind === "document" && contract.check === "design-drift" && target2.region) {
+    const design = tupleDesigns(tuple).find(
+      (d, index) => (d.descriptor.name ?? (index ? `design-${index + 1}` : "design")) === (target2.reference ?? "design")
+    );
+    const region = target2.region;
+    if (!design?.regions || design.regions.uncompared.some(
+      (band) => band.top < region.y + region.height && band.top + band.height > region.y
+    ))
+      return "The original design-image region was not completely compared.";
+    return void 0;
+  }
+  if (contract.check === "component-size") {
+    const p = contract.condition.parameters;
+    const matches2 = obs?.components?.filter(
+      (c) => c.name === p.component && c.selector === p.selector
+    ) ?? [];
+    const identity7 = settingsHash(
+      matches2.map(({ name, selector: selector2, width, height, tolerance: tolerance2, inferred }) => ({
+        name,
+        selector: selector2,
+        width,
+        height,
+        tolerance: tolerance2,
+        inferred
+      }))
+    );
+    return matches2.length === 1 && matches2[0]?.rects.length && !matches2[0].unresolved && identity7 === p.componentSettingsIdentity ? void 0 : "Original component measurement or size declaration is missing, unresolved or changed.";
+  }
+  if (target2.kind === "selectors") {
+    for (const selector2 of target2.selectors) {
+      const matches2 = tuple.observations?.elements.filter((e) => e.selector === selector2) ?? [];
+      if (matches2.length !== 1 && !(matches2.length === 0 && contract.condition.allowRemoval))
+        return `Target ${selector2} is missing or ambiguous; removal was not established by this condition.`;
+    }
+    const scans = {
+      "line-length": obs?.lineLengths,
+      "orphan-word": obs?.orphanWords,
+      "image-distortion": obs?.imageRenders
+    };
+    if (Object.hasOwn(scans, contract.check)) {
+      const scan = scans[contract.check];
+      if (!scan?.records || target2.selectors.some(
+        (s) => !scan.records?.some((r) => r.selector === s)
+      ))
+        return "The relevant target has no usable measurement in the current scan.";
+    }
+    return void 0;
+  }
+  if (target2.kind === "document" && contract.rule === "idiom:document-horizontal-overflow")
+    return void 0;
+  if (target2.kind === "document")
+    return [
+      "missing-state",
+      "console-error",
+      "heading-structure",
+      "font-loading",
+      "published-budget",
+      "page-content"
+    ].includes(contract.check) ? void 0 : "Original structural target was not recorded as a resolvable selector; document-level coverage alone cannot prove it clear.";
+  if (contract.condition.parameters.unresolvedActions)
+    return "Some recorded motion actions lack unambiguous timeline evidence.";
+  for (const action2 of target2.relatedActions ?? []) {
+    const reason = targetEvidence(
+      { ...contract, target: { kind: "action", action: action2 } },
+      tuple,
+      config
+    );
+    if (reason) return reason;
+  }
+  const action = target2.action;
+  const selector = action.selector;
+  const only = (entries, usable) => entries.length === 1 && usable(entries[0]);
+  if (action.source === "probe-click" && contract.check === "dead-control") {
+    const records = obs?.probe?.results.filter(
+      (r) => r.selector === selector && r.name === action.name
+    ) ?? [];
+    return only(
+      records,
+      (r) => r.skipped === void 0 && (r.status === "completed" || r.status === void 0 && obs?.probe?.status === "ran")
+    ) ? void 0 : "Original control was not completely probed (missing, skipped, timed out or ambiguous).";
+  }
+  if (action.source === "load-sample")
+    return obs?.layoutShift?.status === "ran" ? void 0 : "Page-load shift observation is unavailable.";
+  if (action.source === "focus-trial")
+    return only(
+      obs?.focusVisible?.records.filter((r) => r.selector === selector) ?? [],
+      () => true
+    ) ? void 0 : "Original keyboard focus target was not measured.";
+  if (action.source === "liveness")
+    return only(
+      obs?.liveness?.entries.filter(
+        (r) => r.selector === selector && r.identity === action.name
+      ) ?? [],
+      (r) => r.status === "measured"
+    ) ? void 0 : "Original liveness target was not sampled.";
+  if (action.source === "touch-trial")
+    return only(
+      obs?.touchReachability?.entries.filter((r) => r.selector === selector) ?? [],
+      (r) => r.hover.status !== "unavailable" && r.focus.status !== "unavailable" && obs?.touchReachability?.restored === true
+    ) ? void 0 : "Original hover/focus trial is incomplete.";
+  if (action.source === "progress")
+    return only(
+      obs?.progress?.steps.filter(
+        (r) => r.selector === selector && r.stepIndex === action.stepIndex && r.action === action.kind
+      ) ?? [],
+      (r) => r.status === "ran" && (r.firstMs !== null || r.observedMs >= Number(contract.condition.parameters.withinMs))
+    ) ? void 0 : "Original long-running step lacks a complete feedback window.";
+  if (action.source === "explanation-trial") {
+    const records = (obs?.explanations ?? obs?.probe?.explanations)?.records ?? [];
+    return ["hover", "focus"].every(
+      (trigger) => records.some(
+        (r) => r.selector === selector && r.trigger === trigger && r.status !== "unavailable"
+      )
+    ) ? void 0 : "Original control lacks complete hover and focus explanation trials.";
+  }
+  if (action.source === "collection-probe")
+    return only(
+      obs?.probe?.collections?.filter((r) => r.selector === selector) ?? [],
+      (r) => r.reason === void 0 && r.menus.length > 0
+    ) ? void 0 : "Original collection menu/context menu probe is incomplete.";
+  const matches = tuple.timelines?.actions.filter(
+    (r) => sameAction(action, actionIdentity(r))
+  ) ?? [];
+  if (matches.length !== 1)
+    return "Original action/replay is missing or ambiguous; another action cannot substitute for it.";
+  const timeline = matches[0];
+  if (timeline?.status !== "ran" || timeline.truncated.length || !timeline.settled)
+    return "Original action timeline is partial, truncated or did not settle.";
+  if (timeline.held) {
+    const requests = contract.condition.parameters.requests;
+    const actual = timeline.held.requests.map((r) => ({
+      method: r.method,
+      path: r.path,
+      resourceType: r.resourceType
+    })).sort((a, b) => stable(a).localeCompare(stable(b)));
+    if (JSON.stringify(requests) !== JSON.stringify(actual) || timeline.held.delayMs !== contract.condition.parameters.delayMs)
+      return "Held replay request identity or delay changed.";
+    const withinMs = Number(contract.condition.parameters.withinMs);
+    const verdict = contract.check === "double-submit" ? judgeDoubleSubmit({ ...timeline, held: timeline.held }, withinMs) : judgeLoading(
+      { ...timeline, held: timeline.held },
+      withinMs,
+      (index) => obs?.progress?.steps.some(
+        (s) => s.stepIndex === index && s.status === "ran"
+      ) ?? false
+    );
+    if (!verdict.fires && !verdict.judged)
+      return `Original held replay cannot be judged: ${verdict.note}`;
+  }
+  if (timeline.failure) {
+    if (JSON.stringify(contract.condition.parameters.failureRequests) !== JSON.stringify(
+      timeline.failure.requests.map((r) => ({
+        method: r.method,
+        path: r.path
+      }))
+    ) || timeline.failure.mode !== contract.condition.parameters.failureMode || timeline.failure.status !== contract.condition.parameters.failureStatus || timeline.failure.feedbackWithinMs !== contract.condition.parameters.feedbackWithinMs)
+      return "Failure replay requests or recovery settings changed.";
+    const verdict = judgeFailure({ ...timeline, failure: timeline.failure });
+    if (!verdict.judged)
+      return `Original failure replay cannot be judged: ${verdict.note}`;
+  }
+  void config;
+  return void 0;
+}
+function evaluateRuleAcceptance(options) {
+  const { contract } = options;
+  const result2 = (status, reason) => ({ contract, status, reason });
+  if (!deterministicCheckIds.includes(contract.check))
+    return unavailableAcceptance(
+      contract,
+      `Unknown acceptance evaluator ${contract.check}.`
+    );
+  if (settingsIdentity(options.config) !== contract.condition.settingsIdentity)
+    return unavailableAcceptance(
+      contract,
+      "Effective check settings changed; disabled checks or relaxed thresholds cannot prove acceptance."
+    );
+  const statuses = [options.currentA, options.currentB].map((tuples, index) => {
+    const checked = options.checkedCaptures?.[index] ?? runDeterministicChecks(tuples, options.expectedTupleKeys, options.config);
+    const matching = checked.candidates.some(
+      ({ tuple, candidate: candidate2 }) => sameCoordinate(contract.coordinate, tuple) && candidate2.rule === contract.rule && sameTarget(
+        contract.target,
+        buildRuleContract(tuple, candidate2, options.config, tuples).acceptance.target
+      )
+    );
+    if (matching)
+      return {
+        status: "failed",
+        reason: `${contract.rule} still emits for the original target/action.`
+      };
+    for (const coordinate6 of contract.requiredCoordinates) {
+      const matches = tuples.filter((t) => sameCoordinate(coordinate6, t));
+      if (matches.length !== 1)
+        return {
+          status: "not-recheckable",
+          reason: `Required tuple ${coordinate6.state}/${coordinate6.viewport}/${coordinate6.colorScheme ?? "light"} is missing or ambiguous.`
+        };
+      const tuple = matches[0];
+      if (tuple.failure || !tuple.observations)
+        return {
+          status: "not-recheckable",
+          reason: "Required capture failed or lacks observations."
+        };
+      const coverage = checked.coverage.find(
+        (r) => r.tuple === tuple && r.coverage.check === contract.check
+      )?.coverage;
+      if (coverage?.status !== "ran")
+        return {
+          status: "not-recheckable",
+          reason: coverage?.reason ?? "Rule did not run on a required tuple."
+        };
+      if (sameCoordinate(contract.coordinate, tuple)) {
+        const reason = targetEvidence(contract, tuple, options.config);
+        if (reason) return { status: "not-recheckable", reason };
+      }
+    }
+    return {
+      status: "passed",
+      reason: `${contract.rule} is clear for the original target/action with complete evidence under unchanged settings.`
+    };
+  });
+  if (statuses[0]?.status !== statuses[1]?.status)
+    return result2(
+      "not-recheckable",
+      "Acceptance results disagree between current calibration captures A and B."
+    );
+  const agreed = statuses[0];
+  return result2(
+    agreed?.status ?? "not-recheckable",
+    agreed?.reason ?? "No current captures."
+  );
+}
+var init_acceptance2 = __esm({
+  "src/verify/acceptance.ts"() {
+    "use strict";
+    init_failure_state();
+    init_loading_state();
+    init_registry();
+    init_temporal_evidence();
+    init_types();
+    init_evidence();
+    init_contract();
+    init_settings();
+  }
+});
+
 // src/verify/locus.ts
-import { createHash as createHash10 } from "crypto";
+import { createHash as createHash11 } from "crypto";
 function identity6(element) {
-  return createHash10("sha256").update(`${element.tag}\0${element.selector}`).digest("hex");
+  return createHash11("sha256").update(`${element.tag}\0${element.selector}`).digest("hex");
 }
 function plausibleCss(value) {
   if (value.trim() !== value || value === "" || /[{};]/.test(value))
@@ -20081,7 +21256,7 @@ function uniqueRecord(profile, selector) {
   return matches[0];
 }
 function identityForRecord(record2) {
-  return createHash10("sha256").update(`${record2.tag}\0${record2.selector}`).digest("hex");
+  return createHash11("sha256").update(`${record2.tag}\0${record2.selector}`).digest("hex");
 }
 function regionRecords(profile, region) {
   return profile.records.filter(
@@ -20090,7 +21265,7 @@ function regionRecords(profile, region) {
 }
 function recordsSignature(profile, root2, includeGeometry) {
   const records = regionRecords(profile, root2);
-  return createHash10("sha256").update(
+  return createHash11("sha256").update(
     JSON.stringify(
       records.map(({ selector: _selector, path, geometry, ...record2 }) => ({
         ...record2,
@@ -20250,21 +21425,21 @@ var init_locus = __esm({
 
 // src/verify/evaluate.ts
 function requireTuple(tuples, state, viewport, colorScheme, label4) {
-  const coordinate5 = `${state}/${viewport}${tuples.some((tuple2) => tuple2.colorSchemeAxis) ? `/${colorScheme}` : ""}`;
+  const coordinate6 = `${state}/${viewport}${tuples.some((tuple2) => tuple2.colorSchemeAxis) ? `/${colorScheme}` : ""}`;
   const matches = tuples.filter(
     (tuple2) => tuple2.state === state && tuple2.viewport === viewport && (tuple2.colorScheme ?? "light") === colorScheme
   );
   if (matches.length !== 1)
     throw new IdiomError(
-      `${label4} has ${matches.length} tuples for ${coordinate5}`
+      `${label4} has ${matches.length} tuples for ${coordinate6}`
     );
   const tuple = matches[0];
   if (tuple.failure !== void 0)
     throw new IdiomError(
-      `${label4} tuple ${coordinate5} failed at ${tuple.failure.stage}: ${tuple.failure.message}`
+      `${label4} tuple ${coordinate6} failed at ${tuple.failure.stage}: ${tuple.failure.message}`
     );
   if (tuple.observations === void 0)
-    throw new IdiomError(`${label4} tuple ${coordinate5} has no observations`);
+    throw new IdiomError(`${label4} tuple ${coordinate6} has no observations`);
   return tuple;
 }
 function assertSameMachine(baseline, currentA, currentB) {
@@ -20333,8 +21508,8 @@ function candidateFingerprints(tuples, legacyColorScheme, expectedTupleKeys, con
         legacyColorScheme
       } : {}
     });
-    const coordinate5 = `${tuple.state}\0${tuple.viewport}\0${tuple.colorScheme ?? legacyColorScheme}`;
-    result2.set(`${coordinate5}\0${identity7.fingerprint}`, {
+    const coordinate6 = `${tuple.state}\0${tuple.viewport}\0${tuple.colorScheme ?? legacyColorScheme}`;
+    result2.set(`${coordinate6}\0${identity7.fingerprint}`, {
       identities: /* @__PURE__ */ new Set([identity7.fingerprint, ...identity7.aliases]),
       blocker: candidate2.severity === "blocker",
       label: `${candidate2.category} on ${tuple.state}/${tuple.viewport}${tuple.colorSchemeAxis ? `/${tuple.colorScheme ?? legacyColorScheme}` : ""}: ${candidate2.explanation}`
@@ -20396,7 +21571,7 @@ function evaluateVerification(options) {
   const calibrations = tupleKeys.map((tupleKey4) => {
     const [state = "", viewport = "", rawColorScheme = legacyColorScheme] = tupleKey4.split("\0");
     const colorScheme = rawColorScheme;
-    const coordinate5 = `${state}/${viewport}${axisAware ? `/${colorScheme}` : ""}`;
+    const coordinate6 = `${state}/${viewport}${axisAware ? `/${colorScheme}` : ""}`;
     const baseline = requireTuple(
       options.baseline,
       state,
@@ -20420,18 +21595,18 @@ function evaluateVerification(options) {
     );
     if (baseline.width !== currentA.width || baseline.height !== currentA.height || currentA.width !== currentB.width || currentA.height !== currentB.height)
       throw new IdiomError(
-        `viewport dimensions drift for ${coordinate5}: baseline ${baseline.width}x${baseline.height}, A ${currentA.width}x${currentA.height}, B ${currentB.width}x${currentB.height}`
+        `viewport dimensions drift for ${coordinate6}: baseline ${baseline.width}x${baseline.height}, A ${currentA.width}x${currentA.height}, B ${currentB.width}x${currentB.height}`
       );
     assertSameMachine(baseline, currentA, currentB);
     if (currentA.observations?.version !== 2 || currentB.observations?.version !== 2)
       throw new IdiomError(
-        `fresh verify captures must emit observation version 2 for ${coordinate5}`
+        `fresh verify captures must emit observation version 2 for ${coordinate6}`
       );
     try {
       assertMaskAgreement(currentA.observations, currentB.observations);
     } catch (error) {
       throw new IdiomError(
-        `${error instanceof Error ? error.message : String(error)} for ${coordinate5}`
+        `${error instanceof Error ? error.message : String(error)} for ${coordinate6}`
       );
     }
     const fullA = buildSemanticProfile({
@@ -20444,7 +21619,7 @@ function evaluateVerification(options) {
     });
     if (fullA.signature !== fullB.signature)
       throw new IdiomError(
-        `nondeterministic v2-full signature for ${coordinate5}`
+        `nondeterministic v2-full signature for ${coordinate6}`
       );
     const negotiated = baseline.observations?.version === 1 ? "v1-compatible" : "v2-full";
     const membership = currentB.observations.maskMembership;
@@ -20465,7 +21640,7 @@ function evaluateVerification(options) {
     });
     if (currentProfileA.signature !== currentProfileB.signature)
       throw new IdiomError(
-        `nondeterministic ${negotiated} signature for ${coordinate5}`
+        `nondeterministic ${negotiated} signature for ${coordinate6}`
       );
     return {
       state,
@@ -20500,9 +21675,23 @@ function evaluateVerification(options) {
     options.expectedTupleKeys,
     options.checksConfig
   );
-  const findings = options.findings.map((finding) => {
+  const checkedCaptures = options.findings.some(
+    (f) => !Array.isArray(f.acceptance) && f.acceptance.kind === "rule"
+  ) ? [options.currentA, options.currentB].map(
+    (tuples) => runDeterministicChecks(
+      tuples,
+      options.expectedTupleKeys,
+      options.checksConfig
+    )
+  ) : void 0;
+  const findings = options.findings.map((input) => {
+    const finding = findingSchema.parse(input);
+    const acceptance = unavailableAcceptance(
+      finding.acceptance,
+      finding.verification.kind === "manual" ? "Manual findings cannot be proven fixed by offline verification." : void 0
+    );
     if (finding.verification.kind === "deterministic-check") {
-      const coordinate5 = `${finding.state}\0${finding.viewport}\0${finding.colorScheme ?? legacyColorScheme}`;
+      const coordinate6 = `${finding.state}\0${finding.viewport}\0${finding.colorScheme ?? legacyColorScheme}`;
       if (finding.category === "design-drift") {
         const identities3 = [
           options.baseline,
@@ -20510,29 +21699,51 @@ function evaluateVerification(options) {
           options.currentB
         ].map((tuples) => {
           const tuple = tuples.find(
-            (t) => `${t.state}\0${t.viewport}\0${t.colorScheme ?? legacyColorScheme}` === coordinate5
+            (t) => `${t.state}\0${t.viewport}\0${t.colorScheme ?? legacyColorScheme}` === coordinate6
           );
           return tuple ? designIdentity(tuple) : void 0;
         });
         if (options.checksConfig?.designDrift?.enabled === false || identities3.some((id2) => id2 === void 0) || new Set(identities3).size !== 1)
           return {
             finding,
+            acceptance: unavailableAcceptance(
+              finding.acceptance,
+              "Design comparison requires usable, unchanged intended reference evidence in baseline and both current captures."
+            ),
             status: "unverifiable",
             reason: "Design comparison requires usable, unchanged intended reference evidence in baseline and both current captures."
           };
       }
+      if (finding.acceptance.kind === "rule") {
+        const evaluated = evaluateRuleAcceptance({
+          contract: finding.acceptance,
+          checkedCaptures,
+          currentA: options.currentA,
+          currentB: options.currentB,
+          config: options.checksConfig,
+          expectedTupleKeys: options.expectedTupleKeys
+        });
+        return {
+          finding,
+          acceptance: evaluated,
+          status: evaluated.status === "passed" ? "fixed" : evaluated.status === "failed" ? "reproduced" : "unverifiable",
+          reason: evaluated.reason
+        };
+      }
       const reproduced = [...currentCandidates.entries()].some(
-        ([key4, candidate2]) => key4.startsWith(`${coordinate5}\0`) && candidate2.identities.has(finding.fingerprint)
+        ([key4, candidate2]) => key4.startsWith(`${coordinate6}\0`) && candidate2.identities.has(finding.fingerprint)
       );
       return {
         finding,
+        acceptance,
         status: reproduced ? "reproduced" : "fixed",
-        reason: reproduced ? `declared deterministic fingerprint ${finding.fingerprint} still emits` : `declared deterministic fingerprint ${finding.fingerprint} no longer emits`
+        reason: reproduced ? `legacy fingerprint evaluation: declared deterministic fingerprint ${finding.fingerprint} still emits` : `legacy fingerprint evaluation: declared deterministic fingerprint ${finding.fingerprint} no longer emits`
       };
     }
     if (finding.verification.kind === "manual")
       return {
         finding,
+        acceptance,
         status: "unverifiable",
         reason: "manual findings cannot be proven fixed by offline verification"
       };
@@ -20549,6 +21760,7 @@ function evaluateVerification(options) {
     });
     return {
       finding,
+      acceptance,
       status: locus.changed ? "fixed" : "reproduced",
       reason: locus.changed ? `negotiated ${calibration.negotiated} evidence changed within ${locus.source}` : `negotiated ${calibration.negotiated} evidence is unchanged within ${locus.source}`,
       locus
@@ -20562,9 +21774,9 @@ function evaluateVerification(options) {
   );
   const newBlockers = [...currentCandidates.entries()].filter(([key4, candidate2]) => {
     if (!candidate2.blocker) return false;
-    const coordinate5 = key4.split("\0").slice(0, 3).join("\0");
+    const coordinate6 = key4.split("\0").slice(0, 3).join("\0");
     return ![...baselineCandidates.entries()].some(
-      ([baselineKey, baseline]) => baselineKey.startsWith(`${coordinate5}\0`) && [...candidate2.identities].some(
+      ([baselineKey, baseline]) => baselineKey.startsWith(`${coordinate6}\0`) && [...candidate2.identities].some(
         (identity7) => baseline.identities.has(identity7)
       )
     );
@@ -20601,6 +21813,8 @@ var init_evaluate = __esm({
     init_errors();
     init_fingerprint2();
     init_occurrences();
+    init_finding();
+    init_acceptance2();
     init_locus();
     init_profile();
   }
@@ -20624,25 +21838,25 @@ var init_version = __esm({
     "use strict";
     SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
     IDIOM_VERSION = readPackageVersion();
-    IDIOM_BUILD_COMMIT = true ? "7c8a589c79f34545c0f8a3b148865077e846363a" : "unknown";
+    IDIOM_BUILD_COMMIT = true ? "cda3b2d7adce837514f1536223f562c37d836ac4" : "unknown";
     IDIOM_VERSION_DISPLAY = `${IDIOM_VERSION} (${IDIOM_BUILD_COMMIT.slice(0, 7)})`;
   }
 });
 
 // src/baseline/config-hash.ts
-import { createHash as createHash11 } from "crypto";
-function stable(value) {
-  if (Array.isArray(value)) return value.map(stable);
+import { createHash as createHash12 } from "crypto";
+function stable2(value) {
+  if (Array.isArray(value)) return value.map(stable2);
   if (value !== null && typeof value === "object")
     return Object.fromEntries(
-      Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key4, item]) => [key4, stable(item)])
+      Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key4, item]) => [key4, stable2(item)])
     );
   return value;
 }
 function checksConfigHash(checks) {
-  return `sha256:${createHash11("sha256").update(
+  return `sha256:${createHash12("sha256").update(
     JSON.stringify(
-      stable({
+      stable2({
         checks,
         checkIds: [...deterministicCheckIds].sort()
       })
@@ -20802,12 +22016,12 @@ async function recordBaseline(options) {
   });
   const tuples = new Map(
     loaded.tuples.map((tuple) => {
-      const coordinate5 = tupleCoordinate2(tuple);
-      return [tupleCoordinateKey(coordinate5), { ...coordinate5, findings: [] }];
+      const coordinate6 = tupleCoordinate2(tuple);
+      return [tupleCoordinateKey(coordinate6), { ...coordinate6, findings: [] }];
     })
   );
-  for (const { key: key4, coordinate: coordinate5, ...finding } of candidates) {
-    const tuple = tuples.get(key4) ?? { ...coordinate5, findings: [] };
+  for (const { key: key4, coordinate: coordinate6, ...finding } of candidates) {
+    const tuple = tuples.get(key4) ?? { ...coordinate6, findings: [] };
     if (!tuple.findings.some(
       (existing) => existing.fingerprint === finding.fingerprint
     ))
@@ -21049,7 +22263,7 @@ var init_design_components = __esm({
       "icon"
     ]);
     sizePattern = /(?<![\w.-])(\d+(?:\.\d+)?)(?:\s*px)?(?:\s*[×x]\s*(\d+(?:\.\d+)?))?\s*px\b(?:\s+(high|tall|wide))?/gi;
-    tokens = (text3) => text3.replace(/\.\.\./g, " \u2026 ").replace(/[*_`"'“”‘’]/g, " ").replace(/([,:~…—–])/g, " $1 ").split(/\s+/).filter((token) => token !== "");
+    tokens = (text4) => text4.replace(/\.\.\./g, " \u2026 ").replace(/[*_`"'“”‘’]/g, " ").replace(/([,:~…—–])/g, " $1 ").split(/\s+/).filter((token) => token !== "");
     letterWord = /^[a-z]+(?:-[a-z]+)*$/i;
   }
 });
@@ -21070,12 +22284,12 @@ async function discoverSources(root2) {
         if (/^tailwind\.config\.(?:[cm]?[jt]s)$/.test(entry.name))
           sources.push({ path, kind: "tailwind" });
         else if (entry.name.endsWith(".css")) {
-          const text3 = await readFile11(join10(root2, path), "utf8");
-          if (/(?:@theme\b|:root\b|\[data-theme[^\]]*\])/.test(text3) && /--[\w*-]+\s*:/.test(text3))
+          const text4 = await readFile11(join10(root2, path), "utf8");
+          if (/(?:@theme\b|:root\b|\[data-theme[^\]]*\])/.test(text4) && /--[\w*-]+\s*:/.test(text4))
             sources.push({ path, kind: "css" });
         } else if (entry.name.endsWith(".json")) {
-          const text3 = await readFile11(join10(root2, path), "utf8");
-          if (/"\$value"\s*:/.test(text3) || /(?:^|\.)tokens\.json$/.test(entry.name))
+          const text4 = await readFile11(join10(root2, path), "utf8");
+          if (/"\$value"\s*:/.test(text4) || /(?:^|\.)tokens\.json$/.test(entry.name))
             sources.push({ path, kind: "dtcg" });
         }
       }
@@ -21244,8 +22458,8 @@ async function extractCss(root2, paths, options = {}) {
   };
   const imported = /* @__PURE__ */ new Set();
   for (const path of paths) {
-    const text3 = await readFile12(resolve6(root2, path), "utf8");
-    for (const match of text3.matchAll(/@import\s+["']([^"']+)["']/g))
+    const text4 = await readFile12(resolve6(root2, path), "utf8");
+    for (const match of text4.matchAll(/@import\s+["']([^"']+)["']/g))
       imported.add(
         relative5(root2, resolve6(root2, dirname3(path), match[1]))
       );
@@ -21441,7 +22655,7 @@ function installExplanationDom(documentId) {
     const rgba = /^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\s*\)$/.exec(color);
     return rgba ? Number(rgba[1]) : 1;
   };
-  const text3 = (element, excludeTooltips = false) => {
+  const text4 = (element, excludeTooltips = false) => {
     const parts = [];
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
@@ -21481,7 +22695,7 @@ function installExplanationDom(documentId) {
   };
   scope.__idiomExplanationDom = {
     document,
-    text: text3,
+    text: text4,
     identity(element) {
       let id2 = identities3.get(element);
       if (!id2) {
@@ -21503,7 +22717,7 @@ function installExplanationDom(documentId) {
           (name) => element.getAttribute(name)
         ),
         (element.getAttribute("aria-labelledby") ?? "").split(/\s+/).map((id2) => document.getElementById(id2)?.textContent ?? ""),
-        text3(element, true),
+        text4(element, true),
         element.matches(":disabled")
       ]);
     }
@@ -21553,7 +22767,7 @@ async function sampleLiveness(page, declaration) {
             return false;
         return true;
       };
-      const text3 = (el) => el.innerText?.replace(/\s+/g, " ").trim() ?? "";
+      const text4 = (el) => el.innerText?.replace(/\s+/g, " ").trim() ?? "";
       const query = (selector, kind) => {
         try {
           return [...document.querySelectorAll(selector)];
@@ -21582,7 +22796,7 @@ async function sampleLiveness(page, declaration) {
             targets.set(el, { source: "declared", declaration: selector });
       }
       if (declaration2.auto) {
-        const numeric = (el) => /^\d+(?:\s*:\s*\d+){2,}$/.test(text3(el));
+        const numeric = (el) => /^\d+(?:\s*:\s*\d+){2,}$/.test(text4(el));
         const semantic = [
           ...document.querySelectorAll('[role="timer"]')
         ].filter((el) => painted3(el) && !ignore(el));
@@ -21610,20 +22824,20 @@ async function sampleLiveness(page, declaration) {
         ...meta,
         selector: el.id ? `#${CSS.escape(el.id)}` : path(el),
         identity: path(el),
-        before: painted3(el) ? text3(el) : ""
+        before: painted3(el) ? text4(el) : ""
       }));
       if (pending.length)
         await new Promise((resolve62) => setTimeout(resolve62, 1500));
       const elapsedMs = performance.now() - started;
       for (const { el, before, ...meta } of pending) {
-        const reason = !el.isConnected ? "target detached or replaced" : !painted3(el) ? "target hidden or unmeasurable" : !before ? "first sample empty or hidden" : !text3(el) ? "second sample empty" : void 0;
+        const reason = !el.isConnected ? "target detached or replaced" : !painted3(el) ? "target hidden or unmeasurable" : !before ? "first sample empty or hidden" : !text4(el) ? "second sample empty" : void 0;
         if (reason) entries.push({ ...meta, status: "unavailable", reason });
         else
           entries.push({
             ...meta,
             status: "measured",
             before,
-            after: text3(el),
+            after: text4(el),
             elapsedMs
           });
       }
@@ -22492,23 +23706,23 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         if (label4) return label4;
         const labelledBy = element.getAttribute("aria-labelledby");
         if (labelledBy) {
-          const text4 = labelledBy.split(/\s+/).map(textOf2).join(" ").trim();
-          if (text4) return text4;
+          const text5 = labelledBy.split(/\s+/).map(textOf2).join(" ").trim();
+          if (text5) return text5;
         }
         const tag = element.tagName.toLowerCase();
         if (["input", "select", "textarea"].includes(tag)) {
           const id2 = element.getAttribute("id");
           const labelled = (id2 ? document.querySelector(`label[for="${CSS.escape(id2)}"]`) : null) ?? element.closest("label");
-          const text4 = (labelled?.textContent ?? "").replace(/\s+/g, " ").trim();
-          if (text4) return text4;
+          const text5 = (labelled?.textContent ?? "").replace(/\s+/g, " ").trim();
+          if (text5) return text5;
           const input = element;
           if (["button", "submit", "reset"].includes(input.type ?? ""))
             return input.value ?? "";
           return element.getAttribute("placeholder")?.trim() ?? "";
         }
         if (tag === "img") return element.getAttribute("alt")?.trim() ?? "";
-        const text3 = (element.innerText ?? element.textContent ?? "").replace(/\s+/g, " ").trim();
-        if (text3) return text3.slice(0, 200);
+        const text4 = (element.innerText ?? element.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (text4) return text4.slice(0, 200);
         for (const graphic of element.querySelectorAll(
           "img[alt], svg [aria-label], svg title, [aria-label]"
         )) {
@@ -22634,13 +23848,13 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
       const graphemes2 = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(void 0, { granularity: "grapheme" }) : void 0;
       const labelInk = (element) => {
         const lines2 = measureLines(element, visibleTextParent);
-        const text3 = lines2.texts.join("").replace(/\s+/g, " ").trim();
-        if (lines2.textRect === void 0 || text3 === "")
-          return { text: text3.slice(0, 120), lineCount: 0 };
-        const glyph2 = graphemes2 !== void 0 && [...graphemes2.segment(text3)].length === 1 && !/[\p{L}\p{N}]/u.test(text3);
-        const inkCenterY = lines2.lineCount === 1 && lines2.firstText !== void 0 ? measureInk2(lines2.firstText, lines2.firstRect, text3, glyph2) : void 0;
+        const text4 = lines2.texts.join("").replace(/\s+/g, " ").trim();
+        if (lines2.textRect === void 0 || text4 === "")
+          return { text: text4.slice(0, 120), lineCount: 0 };
+        const glyph2 = graphemes2 !== void 0 && [...graphemes2.segment(text4)].length === 1 && !/[\p{L}\p{N}]/u.test(text4);
+        const inkCenterY = lines2.lineCount === 1 && lines2.firstText !== void 0 ? measureInk2(lines2.firstText, lines2.firstRect, text4, glyph2) : void 0;
         return {
-          text: text3.slice(0, 120),
+          text: text4.slice(0, 120),
           lineCount: lines2.lineCount,
           textRect: lines2.textRect,
           ...inkCenterY === void 0 ? {} : { inkCenterY },
@@ -22674,8 +23888,8 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         descriptions: (element.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean).flatMap((id2) => {
           const target2 = document.getElementById(id2);
           if (target2 === null) return [];
-          const text3 = explanationDom.text(target2);
-          return text3 === "" ? [] : [{ selector: selectorFor(target2), text: text3 }];
+          const text4 = explanationDom.text(target2);
+          return text4 === "" ? [] : [{ selector: selectorFor(target2), text: text4 }];
         })
       });
       const renderedContent = (element) => {
@@ -22697,13 +23911,13 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             unavailable2 = `unsupported generated content in ${pseudo}`;
             return;
           }
-          const text3 = (literal[1] ?? "").slice(1, -1).replace(
+          const text4 = (literal[1] ?? "").slice(1, -1).replace(
             /\\(?:([0-9a-f]{1,6})\s?|([\s\S]))/gi,
             (_match, hex4, escaped) => hex4 === void 0 ? escaped ?? "" : String.fromCodePoint(
               Math.min(Number.parseInt(hex4, 16), 1114111)
             )
           );
-          if (text3.trim()) rememberFont(style);
+          if (text4.trim()) rememberFont(style);
         };
         const visit = (owner2) => {
           if (!isVisibleContent(owner2, false)) return;
@@ -23732,7 +24946,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           ];
         });
       };
-      const observed = all.map((element) => {
+      const observed3 = all.map((element) => {
         const html = element;
         const styles = getComputedStyle(element);
         const rect3 = element.getBoundingClientRect();
@@ -23782,10 +24996,10 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               };
             if (!listed3) return void 0;
             for (const shorthand of shorthands2) {
-              const text3 = style.getPropertyValue(shorthand).trim();
-              if (text3 !== "")
+              const text4 = style.getPropertyValue(shorthand).trim();
+              if (text4 !== "")
                 return {
-                  text: text3,
+                  text: text4,
                   important: style.getPropertyPriority(shorthand) === "important" || style.getPropertyPriority(kebab) === "important"
                 };
             }
@@ -23980,7 +25194,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           }
         };
       });
-      const interactive = observed.filter(
+      const interactive = observed3.filter(
         (entry) => entry.value.visible && entry.value.interactive
       );
       for (let leftIndex = 0; leftIndex < interactive.length; leftIndex += 1) {
@@ -24178,7 +25392,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         return false;
       };
       const overlapCandidates = [];
-      for (const { element, value } of observed) {
+      for (const { element, value } of observed3) {
         if (!value.visible || element === document.body) continue;
         const kind = value.interactive ? "interactive" : value.directText !== "" && !["option", "input", "textarea", "select"].includes(value.tag) && value.styles.display !== "contents" && !insideInteractive(element) ? "text" : void 0;
         if (kind === void 0 || !isVisibleContent(element)) continue;
@@ -24379,7 +25593,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
       };
       const tickerTracks = /* @__PURE__ */ new WeakMap();
       const repeatedTrack = (track) => {
-        const normalize2 = (text3) => text3.replace(/\s+/g, " ").trim();
+        const normalize2 = (text4) => text4.replace(/\s+/g, " ").trim();
         const runs = [...track.childNodes].map((node) => normalize2(node.textContent ?? "")).filter(Boolean);
         for (let period = 1; period <= runs.length / 2; period += 1) {
           if (runs.length % period !== 0) continue;
@@ -24517,8 +25731,8 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         }
         measureCanvas.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
         return lines2.every((line) => {
-          const text3 = style.textTransform === "uppercase" ? line.text.toLocaleUpperCase() : style.textTransform === "lowercase" ? line.text.toLocaleLowerCase() : line.text;
-          const metrics = measureCanvas.measureText(text3);
+          const text4 = style.textTransform === "uppercase" ? line.text.toLocaleUpperCase() : style.textTransform === "lowercase" ? line.text.toLocaleLowerCase() : line.text;
+          const metrics = measureCanvas.measureText(text4);
           const ascent = metrics.fontBoundingBoxAscent;
           const descent = metrics.fontBoundingBoxDescent;
           const inkAscent = metrics.actualBoundingBoxAscent;
@@ -24530,7 +25744,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         });
       };
       const clippedText = [];
-      for (const { element, value } of observed) {
+      for (const { element, value } of observed3) {
         if (!value.visible || value.directText === "" || element === document.body || ["input", "textarea", "select", "option"].includes(value.tag))
           continue;
         const clip2 = clipFor(element, true);
@@ -24685,7 +25899,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         if (shown.length === 0) continue;
         const ownerFor = xCut && xClip !== void 0 ? clip2.hiddenOwners[xClip.edge] : yClip === void 0 ? void 0 : clip2.hiddenOwners[yClip.edge];
         let peeking = false;
-        for (let current = element.parentElement; current !== null && current !== ownerFor && !peeking; current = current.parentElement) {
+        for (let current = element === ownerFor ? null : element.parentElement; current !== null && current !== ownerFor && !peeking; current = current.parentElement) {
           const others = [...current.children].filter(
             (child) => !child.contains(element) && renderedPaths.has(child)
           );
@@ -25332,8 +26546,8 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
                 (rect3) => rect3.width > 0 && rect3.height > 0
               ))
                 continue;
-              const text3 = (node.textContent ?? "").replace(/\s+/g, " ").trim();
-              if (text3) words2.push(text3);
+              const text4 = (node.textContent ?? "").replace(/\s+/g, " ").trim();
+              if (text4) words2.push(text4);
             }
           }
           return { cta, text: words2.join(" ").slice(0, 160) };
@@ -25413,7 +26627,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               selector: "table, [role=table], [role=grid], [role=treegrid]",
               hasItems: (region) => [...region.querySelectorAll("tr, [role=row]")].some(
                 (row) => renderedItem(row) && row.closest("thead") === null && [...row.children].some(
-                  (cell3) => cell3.matches(
+                  (cell4) => cell4.matches(
                     "td, [role=cell], [role=gridcell], [role=rowheader]"
                   )
                 )
@@ -25667,7 +26881,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         })
       );
       const dialogSelectors = new Set(dialogs.map((dialog) => dialog.selector));
-      const dialogControls = observed.filter(
+      const dialogControls = observed3.filter(
         ({ value }) => value.visible && value.interactive && value.ancestorSelectors.some(
           (selector) => dialogSelectors.has(selector)
         )
@@ -25678,10 +26892,10 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           markMatches.filter(({ mark }) => mark.purpose === "frame").flatMap(({ elements }) => elements)
         )
       ];
-      const primaryActions = observed.filter(
+      const primaryActions = observed3.filter(
         ({ value }) => value.signals?.paint?.primaryAction
       );
-      const backgroundActions = observed.filter(
+      const backgroundActions = observed3.filter(
         ({ value }) => value.signals?.paint !== void 0
       );
       if (frames.length > 0 || backgroundActions.length > 0) {
@@ -26258,7 +27472,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         return { x: r.x, y: r.y, width: r.width, height: r.height };
       };
       const observedDom = new Map(
-        observed.map((entry) => [entry.element, entry.value])
+        observed3.map((entry) => [entry.element, entry.value])
       );
       const geometrySelector = (element) => observedDom.get(element)?.selector ?? selectorFor(element);
       const bandEdges = bandEdgesInput ? (() => {
@@ -26324,10 +27538,10 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         const bands = expand(document.body, true);
         const records = bands.map((band) => {
           const allMedia = [];
-          let text3 = false;
+          let text4 = false;
           const inspect = (element) => {
             if (excluded(element)) return;
-            if (directText(element)) text3 = true;
+            if (directText(element)) text4 = true;
             if (media2(element)) {
               allMedia.push(element);
               return;
@@ -26339,11 +27553,11 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             const r = element.getBoundingClientRect();
             return Math.abs(r.left) <= 1 && Math.abs(r.right - document.documentElement.clientWidth) <= 1;
           };
-          const fullBleedMedia = !text3 && allMedia.some(fullWidth);
+          const fullBleedMedia = !text4 && allMedia.some(fullWidth);
           const frontier = [];
           const descend = (element, parent) => {
             if (excluded(element) || !foreground(element)) return;
-            if (text3 && media2(element) && fullWidth(element)) return;
+            if (text4 && media2(element) && fullWidth(element)) return;
             const r = element.getBoundingClientRect();
             const style = getComputedStyle(element);
             if (style.display === "contents") {
@@ -26368,7 +27582,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               style.display
             );
             const padded = pxOf(style.paddingLeft) > 0 || pxOf(style.paddingRight) > 0;
-            const mixedMedia = text3 && allMedia.some(
+            const mixedMedia = text4 && allMedia.some(
               (image2) => element.contains(image2) && fullWidth(image2)
             );
             if (!mixedMedia && (inset || padded || directText(element) || media2(element))) {
@@ -26439,14 +27653,14 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             continue;
           }
           const pieces = [];
-          let text3 = "";
+          let text4 = "";
           let nodeIndex = 0;
           let truncated = false;
           const boundary = () => {
-            text3 += "\n";
+            text4 += "\n";
           };
           const walk3 = (node) => {
-            if (text3.length > 2e4 || nodeIndex > 2e3) {
+            if (text4.length > 2e4 || nodeIndex > 2e3) {
               truncated = true;
               return;
             }
@@ -26460,16 +27674,16 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               const original = node.textContent ?? "";
               const value = original.slice(
                 0,
-                Math.max(0, 2e4 - text3.length)
+                Math.max(0, 2e4 - text4.length)
               );
               if (value.length < original.length) truncated = true;
               pieces.push({
                 node,
                 index,
-                start: text3.length,
-                end: text3.length + value.length
+                start: text4.length,
+                end: text4.length + value.length
               });
-              text3 += value;
+              text4 += value;
               return;
             }
             if (!(node instanceof Element)) return;
@@ -26520,7 +27734,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               node: piece.index,
               start: start - piece.start,
               end: end - piece.start,
-              text: text3.slice(start, end),
+              text: text4.slice(start, end),
               rect: {
                 x: box.x,
                 y: box.y,
@@ -26532,7 +27746,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             return result2;
           };
           const sameLine = (a, b) => Math.min(a.y + a.height, b.y + b.height) > Math.max(a.y, b.y) + 0.5;
-          for (const segment of wordSegmenter.segment(text3)) {
+          for (const segment of wordSegmenter.segment(text4)) {
             if (work > 3e4) {
               reasons.add("Text range work limit reached");
               break;
@@ -26616,7 +27830,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               records.push({
                 selector: geometrySelector(owner2),
                 word: segment.segment,
-                text: text3.slice(Math.max(0, start - 30), start + 130),
+                text: text4.slice(Math.max(0, start - 30), start + 130),
                 start,
                 end,
                 before,
@@ -26668,6 +27882,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         const unique4 = [...new Set(collected)];
         return {
           status: "ran",
+          elapsedMs: performance.now(),
           score: 0,
           entries: unique4.slice(0, 150).map((entry) => ({
             value: entry.value,
@@ -26882,7 +28097,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           );
           let nodes = 0;
           let length = 0;
-          let text3 = "";
+          let text4 = "";
           let incomplete = false;
           for (let node = walker.nextNode(); node; node = walker.nextNode()) {
             if (nodes >= 2e3 || length + (node.nodeValue?.length ?? 0) > 2e4) {
@@ -26904,7 +28119,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               incomplete = true;
               break;
             }
-            text3 += value;
+            text4 += value;
             for (const { segment, index } of graphemes3.segment(value)) {
               if (work >= 1e5) {
                 reasons.add(
@@ -26943,8 +28158,8 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             if (incomplete) break;
           }
           if (incomplete) continue;
-          text3 = text3.replace(/\s+/g, " ").trim();
-          if (text3.length < 20 || !glyphs.length) continue;
+          text4 = text4.replace(/\s+/g, " ").trim();
+          if (text4.length < 20 || !glyphs.length) continue;
           const bands = [];
           glyphs.sort(
             (a, b) => a.bottom - a.top - (b.bottom - b.top) || a.top - b.top
@@ -26997,7 +28212,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             width: Math.round(width * 100) / 100,
             charWidth: Math.max(1e-3, Math.round(charWidth * 1e3) / 1e3),
             lines: lines2.length,
-            text: text3.slice(0, 160)
+            text: text4.slice(0, 160)
           });
         }
         return reasons.size ? { status: "partial", reason: [...reasons].join("; "), records } : { status: "ran", records };
@@ -27359,13 +28574,13 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         if (!verdict && getComputedStyle(el).transform !== "none") {
           const seen = /* @__PURE__ */ new Set();
           for (const child of el.children) {
-            const text3 = (child instanceof HTMLElement ? child.innerText : "").replace(/\s+/g, " ").trim();
-            if (text3 === "") continue;
-            if (seen.has(text3)) {
+            const text4 = (child instanceof HTMLElement ? child.innerText : "").replace(/\s+/g, " ").trim();
+            if (text4 === "") continue;
+            if (seen.has(text4)) {
               verdict = true;
               break;
             }
-            seen.add(text3);
+            seen.add(text4);
           }
         }
         marqueeVerdicts.set(el, verdict);
@@ -27394,7 +28609,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           clientWidth: root2.clientWidth,
           clientHeight: root2.clientHeight
         },
-        elements: observed.map(({ element, value }) => {
+        elements: observed3.map(({ element, value }) => {
           const viewportIntersection = viewportIntersections.get(element);
           const style = getComputedStyle(element);
           let paintedContent;
@@ -27411,7 +28626,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               element,
               ...element.querySelectorAll("*")
             ]) {
-              const text3 = [...contributor.childNodes].some(
+              const text4 = [...contributor.childNodes].some(
                 (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim() !== ""
               );
               const media2 = [
@@ -27429,13 +28644,13 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
                   contributorStyle.getPropertyValue(`border-${side}-color`)
                 ) > 0
               );
-              if (!text3 && !media2 && !decorated) continue;
+              if (!text4 && !media2 && !decorated) continue;
               selectors.push(selectorFor(contributor));
               if (!paintedOf(contributor).value) continue;
               const rects = [];
               if (media2 || decorated)
                 rects.push(contributor.getBoundingClientRect());
-              if (text3)
+              if (text4)
                 for (const node of contributor.childNodes) {
                   if (node.nodeType !== Node.TEXT_NODE) continue;
                   const range = document.createRange();
@@ -27512,7 +28727,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             }
           };
         }),
-        headings: observed.flatMap(
+        headings: observed3.flatMap(
           (entry) => entry.value.headingLevel === void 0 || !entry.value.visible ? [] : [
             {
               selector: entry.value.selector,
@@ -27649,6 +28864,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
     const entries = artifact.layoutShift.entries;
     artifact.layoutShift = {
       status: "ran",
+      elapsedMs: artifact.layoutShift.elapsedMs,
       score: layoutShiftScore(entries),
       entries: entries.filter((entry) => entry.hadRecentInput !== true).map(({ value, startTime, sources }) => ({
         value: Math.round(value * 1e4) / 1e4,
@@ -27760,129 +28976,129 @@ var init_client = __esm({
       }
       status;
     };
-    scrub = (text3, token) => token ? text3.split(token).join("<FIGMA_TOKEN>") : text3;
+    scrub = (text4, token) => token ? text4.split(token).join("<FIGMA_TOKEN>") : text4;
   }
 });
 
 // src/design/figma/types.ts
-import { z as z18 } from "zod";
+import { z as z19 } from "zod";
 var colorSchema, paintSchema2, boxSchema, figmaNodeSchema, figmaFileSchema, figmaNodesSchema, figmaImagesSchema, aliasSchema, figmaVariablesSchema, isVariableAlias, figmaMetaSchema;
 var init_types3 = __esm({
   "src/design/figma/types.ts"() {
     "use strict";
-    colorSchema = z18.object({
-      r: z18.number(),
-      g: z18.number(),
-      b: z18.number(),
-      a: z18.number().optional()
+    colorSchema = z19.object({
+      r: z19.number(),
+      g: z19.number(),
+      b: z19.number(),
+      a: z19.number().optional()
     }).loose();
-    paintSchema2 = z18.object({
-      type: z18.string(),
-      visible: z18.boolean().optional(),
-      opacity: z18.number().optional(),
+    paintSchema2 = z19.object({
+      type: z19.string(),
+      visible: z19.boolean().optional(),
+      opacity: z19.number().optional(),
       color: colorSchema.optional(),
-      boundVariables: z18.record(z18.string(), z18.unknown()).optional()
+      boundVariables: z19.record(z19.string(), z19.unknown()).optional()
     }).loose();
-    boxSchema = z18.object({
-      x: z18.number(),
-      y: z18.number(),
-      width: z18.number(),
-      height: z18.number()
+    boxSchema = z19.object({
+      x: z19.number(),
+      y: z19.number(),
+      width: z19.number(),
+      height: z19.number()
     }).loose();
-    figmaNodeSchema = z18.lazy(
-      () => z18.object({
-        id: z18.string().min(1),
-        name: z18.string().optional(),
-        type: z18.string().min(1),
-        visible: z18.boolean().optional(),
-        opacity: z18.number().optional(),
-        children: z18.array(figmaNodeSchema).optional(),
+    figmaNodeSchema = z19.lazy(
+      () => z19.object({
+        id: z19.string().min(1),
+        name: z19.string().optional(),
+        type: z19.string().min(1),
+        visible: z19.boolean().optional(),
+        opacity: z19.number().optional(),
+        children: z19.array(figmaNodeSchema).optional(),
         absoluteBoundingBox: boxSchema.nullable().optional(),
-        fills: z18.array(paintSchema2).optional(),
-        strokes: z18.array(paintSchema2).optional(),
-        strokeWeight: z18.number().optional(),
-        individualStrokeWeights: z18.object({
-          top: z18.number(),
-          right: z18.number(),
-          bottom: z18.number(),
-          left: z18.number()
+        fills: z19.array(paintSchema2).optional(),
+        strokes: z19.array(paintSchema2).optional(),
+        strokeWeight: z19.number().optional(),
+        individualStrokeWeights: z19.object({
+          top: z19.number(),
+          right: z19.number(),
+          bottom: z19.number(),
+          left: z19.number()
         }).loose().optional(),
-        strokeAlign: z18.string().optional(),
-        cornerRadius: z18.number().optional(),
-        rectangleCornerRadii: z18.array(z18.number()).length(4).optional(),
-        layoutMode: z18.string().optional(),
-        itemSpacing: z18.number().optional(),
-        paddingLeft: z18.number().optional(),
-        paddingRight: z18.number().optional(),
-        paddingTop: z18.number().optional(),
-        paddingBottom: z18.number().optional(),
-        characters: z18.string().optional(),
-        style: z18.object({
-          fontFamily: z18.string().optional(),
-          fontWeight: z18.number().optional(),
-          fontSize: z18.number().optional(),
-          lineHeightPx: z18.number().optional(),
-          lineHeightUnit: z18.string().optional(),
-          letterSpacing: z18.number().optional(),
-          textAlignHorizontal: z18.string().optional()
+        strokeAlign: z19.string().optional(),
+        cornerRadius: z19.number().optional(),
+        rectangleCornerRadii: z19.array(z19.number()).length(4).optional(),
+        layoutMode: z19.string().optional(),
+        itemSpacing: z19.number().optional(),
+        paddingLeft: z19.number().optional(),
+        paddingRight: z19.number().optional(),
+        paddingTop: z19.number().optional(),
+        paddingBottom: z19.number().optional(),
+        characters: z19.string().optional(),
+        style: z19.object({
+          fontFamily: z19.string().optional(),
+          fontWeight: z19.number().optional(),
+          fontSize: z19.number().optional(),
+          lineHeightPx: z19.number().optional(),
+          lineHeightUnit: z19.string().optional(),
+          letterSpacing: z19.number().optional(),
+          textAlignHorizontal: z19.string().optional()
         }).loose().optional(),
-        componentId: z18.string().optional(),
-        boundVariables: z18.record(z18.string(), z18.unknown()).optional()
+        componentId: z19.string().optional(),
+        boundVariables: z19.record(z19.string(), z19.unknown()).optional()
       }).loose()
     );
-    figmaFileSchema = z18.object({
-      name: z18.string().optional(),
-      version: z18.string().min(1),
-      lastModified: z18.string().optional()
+    figmaFileSchema = z19.object({
+      name: z19.string().optional(),
+      version: z19.string().min(1),
+      lastModified: z19.string().optional()
     }).loose();
-    figmaNodesSchema = z18.object({
-      nodes: z18.record(
-        z18.string(),
-        z18.object({ document: figmaNodeSchema }).loose().nullable()
+    figmaNodesSchema = z19.object({
+      nodes: z19.record(
+        z19.string(),
+        z19.object({ document: figmaNodeSchema }).loose().nullable()
       )
     }).loose();
-    figmaImagesSchema = z18.object({
-      err: z18.string().nullable().optional(),
-      images: z18.record(z18.string(), z18.string().nullable())
+    figmaImagesSchema = z19.object({
+      err: z19.string().nullable().optional(),
+      images: z19.record(z19.string(), z19.string().nullable())
     }).loose();
-    aliasSchema = z18.object({ type: z18.literal("VARIABLE_ALIAS"), id: z18.string() }).loose();
-    figmaVariablesSchema = z18.object({
-      meta: z18.object({
-        variables: z18.record(
-          z18.string(),
-          z18.object({
-            id: z18.string(),
-            name: z18.string(),
-            variableCollectionId: z18.string(),
-            resolvedType: z18.string(),
-            valuesByMode: z18.record(z18.string(), z18.unknown()),
-            remote: z18.boolean().optional(),
-            scopes: z18.array(z18.string()).optional()
+    aliasSchema = z19.object({ type: z19.literal("VARIABLE_ALIAS"), id: z19.string() }).loose();
+    figmaVariablesSchema = z19.object({
+      meta: z19.object({
+        variables: z19.record(
+          z19.string(),
+          z19.object({
+            id: z19.string(),
+            name: z19.string(),
+            variableCollectionId: z19.string(),
+            resolvedType: z19.string(),
+            valuesByMode: z19.record(z19.string(), z19.unknown()),
+            remote: z19.boolean().optional(),
+            scopes: z19.array(z19.string()).optional()
           }).loose()
         ),
-        variableCollections: z18.record(
-          z18.string(),
-          z18.object({
-            name: z18.string(),
-            modes: z18.array(
-              z18.object({ modeId: z18.string(), name: z18.string() }).loose()
+        variableCollections: z19.record(
+          z19.string(),
+          z19.object({
+            name: z19.string(),
+            modes: z19.array(
+              z19.object({ modeId: z19.string(), name: z19.string() }).loose()
             ),
-            defaultModeId: z18.string()
+            defaultModeId: z19.string()
           }).loose()
         )
       }).loose()
     }).loose();
     isVariableAlias = (value) => aliasSchema.safeParse(value).success;
-    figmaMetaSchema = z18.object({
-      fileKey: z18.string(),
-      nodeId: z18.string(),
-      version: z18.string(),
-      lastModified: z18.string().optional(),
-      name: z18.string().optional(),
-      fetchedAt: z18.string(),
-      scale: z18.number(),
-      variables: z18.string(),
-      link: z18.string()
+    figmaMetaSchema = z19.object({
+      fileKey: z19.string(),
+      nodeId: z19.string(),
+      version: z19.string(),
+      lastModified: z19.string().optional(),
+      name: z19.string().optional(),
+      fetchedAt: z19.string(),
+      scale: z19.number(),
+      variables: z19.string(),
+      link: z19.string()
     }).strict();
   }
 });
@@ -28188,8 +29404,8 @@ function boxStyles(node, styles) {
   styles.paddingLeft = px3(node.paddingLeft ?? 0);
   if (node.opacity !== void 0) styles.opacity = String(round4(node.opacity));
 }
-function textStyles(text3, styles) {
-  const style = text3.style ?? {};
+function textStyles(text4, styles) {
+  const style = text4.style ?? {};
   if (style.fontFamily !== void 0) styles.fontFamily = style.fontFamily;
   if (style.fontSize !== void 0) styles.fontSize = px3(style.fontSize);
   if (style.fontWeight !== void 0)
@@ -28203,9 +29419,9 @@ function textStyles(text3, styles) {
     RIGHT: "right",
     JUSTIFIED: "justify"
   }[style.textAlignHorizontal ?? ""] ?? "start";
-  styles.color = paintColor(solid(text3.fills)) ?? "rgb(0, 0, 0)";
+  styles.color = paintColor(solid(text4.fills)) ?? "rgb(0, 0, 0)";
 }
-function boundNames(node, text3, vector, variables) {
+function boundNames(node, text4, vector, variables) {
   if (!variables) return {};
   const names = {};
   const name = (alias) => isVariableAlias(alias) ? variables.meta.variables[alias.id]?.name : void 0;
@@ -28217,7 +29433,7 @@ function boundNames(node, text3, vector, variables) {
   };
   set(vector ? "fill" : "backgroundColor", paintAlias(node, "fills"));
   set("borderColor", paintAlias(node, "strokes"));
-  if (text3) set("color", paintAlias(text3, "fills"));
+  if (text4) set("color", paintAlias(text4, "fills"));
   const bound = node.boundVariables ?? {};
   set("gap", bound.itemSpacing);
   set("borderWidth", bound.strokeWeight);
@@ -28232,7 +29448,7 @@ function boundNames(node, text3, vector, variables) {
     ["paddingLeft", "paddingLeft"]
   ])
     set(property, bound[key4]);
-  const textBound = text3?.boundVariables ?? {};
+  const textBound = text4?.boundVariables ?? {};
   for (const key4 of ["fontSize", "fontWeight", "lineHeight", "fontFamily"])
     set(key4, first(textBound[key4]));
   return names;
@@ -28366,7 +29582,7 @@ function figmaObservation(frame, options) {
         (kid) => visible(kid) && kid.opacity !== 0
       );
       const folded = WRAPPER_TYPES.has(child.type) && visibleKids.length === 1 && visibleKids[0]?.type === "TEXT" ? visibleKids[0] : void 0;
-      const text3 = child.type === "TEXT" ? child : folded;
+      const text4 = child.type === "TEXT" ? child : folded;
       const vector = VECTOR_TYPES.has(child.type);
       const styles = baseStyles();
       boxStyles(child, styles);
@@ -28384,8 +29600,8 @@ function figmaObservation(frame, options) {
           styles[`border${side}Width`] = "0px";
           styles[`border${side}Style`] = "none";
         }
-      if (text3) textStyles(text3, styles);
-      const characters = text3?.characters?.replace(/\s+/g, " ").trim() ?? "";
+      if (text4) textStyles(text4, styles);
+      const characters = text4?.characters?.replace(/\s+/g, " ").trim() ?? "";
       const hint = layer && !isAutoName(layer) ? layer : "";
       const role = inferredRole(
         `${layer} ${child.type === "INSTANCE" ? child.componentId ?? "" : ""}`
@@ -28402,7 +29618,7 @@ function figmaObservation(frame, options) {
           attributes: figmaAttributes(
             child,
             layerNames,
-            boundNames(child, text3, vector, options.variables)
+            boundNames(child, text4, vector, options.variables)
           ),
           text: characters,
           interactive: role !== "",
@@ -28745,7 +29961,7 @@ var init_limits = __esm({
 });
 
 // src/design/source.ts
-import { createHash as createHash12 } from "crypto";
+import { createHash as createHash13 } from "crypto";
 import { readdir as readdir6, readFile as readFile15, realpath as realpath5, stat as stat2 } from "fs/promises";
 import {
   createServer as createServer2
@@ -28834,7 +30050,7 @@ async function resolveDesignImage(source, extension, cwd, signal) {
       final: entry,
       entry,
       mediaType: sniffed,
-      sha256: createHash12("sha256").update(bytes).digest("hex")
+      sha256: createHash13("sha256").update(bytes).digest("hex")
     },
     image: {
       bytes,
@@ -28989,7 +30205,7 @@ async function navigateDesign(page, source) {
     source.provenance.final = page.url();
   const access12 = await page.evaluate(() => {
     const title = document.title.trim();
-    const text3 = document.body?.innerText.trim() ?? "";
+    const text4 = document.body?.innerText.trim() ?? "";
     const painted3 = [...document.querySelectorAll("body, body *")].some(
       (element) => {
         const rect3 = element.getBoundingClientRect(), style = getComputedStyle(element);
@@ -29003,10 +30219,10 @@ async function navigateDesign(page, source) {
         );
       }
     );
-    return !text3 && !document.querySelector("img,svg,canvas,video") && !painted3 || /^(?:sign in|log in|access denied|unauthorized|forbidden|not found|link expired)(?:\b|$)/i.test(
+    return !text4 && !document.querySelector("img,svg,canvas,video") && !painted3 || /^(?:sign in|log in|access denied|unauthorized|forbidden|not found|link expired)(?:\b|$)/i.test(
       title
-    ) || text3.length < 1500 && /^(?:sign in to|log in to|access denied|this (?:link|design|artifact) (?:has expired|is (?:private|unavailable)))/i.test(
-      text3
+    ) || text4.length < 1500 && /^(?:sign in to|log in to|access denied|this (?:link|design|artifact) (?:has expired|is (?:private|unavailable)))/i.test(
+      text4
     );
   });
   if (access12)
@@ -29173,6 +30389,419 @@ var init_capture2 = __esm({
     init_capture();
     init_references();
     init_source();
+  }
+});
+
+// src/coverage/states.ts
+function totals(dimensions) {
+  const observedCount = dimensions.filter(
+    (dimension4) => dimension4.status === "observed"
+  ).length;
+  const notApplicableCount = dimensions.filter(
+    (dimension4) => dimension4.status === "not-applicable"
+  ).length;
+  const applicable = dimensions.length - notApplicableCount;
+  return {
+    observed: observedCount,
+    applicable,
+    notApplicable: notApplicableCount,
+    percent: applicable === 0 ? null : Math.round(observedCount * 100 / applicable)
+  };
+}
+function succeeded(tuple) {
+  return tuple.failure === void 0 && tuple.mismatches.length === 0;
+}
+function computeFlowStateCoverage(options) {
+  const { project, flow, record: record2 } = options;
+  const recapture = `recapture the whole flow: idiom capture ${flow.id}`;
+  const recaptureVersion = `recapture with this Idiom version: idiom capture ${flow.id}`;
+  const flowViewports = selectViewports(project, flow);
+  const flowSchemes = selectColorSchemes(project, flow);
+  const keyOf = (tuple) => captureTupleKey({
+    state: tuple.state,
+    viewport: tuple.viewport,
+    colorScheme: tuple.colorScheme ?? project.capture.colorScheme
+  });
+  const tupleByKey = new Map(
+    options.tuples.map((tuple) => [keyOf(tuple), tuple])
+  );
+  const collapsed = new Set(options.collapsedTupleKeys);
+  const selected2 = record2 ? new Set(record2.selected.map(captureTupleKey)) : void 0;
+  const coordinatesOf = (state) => stateViewports(flowViewports, state).flatMap(
+    (viewport) => flowSchemes.map((colorScheme) => ({
+      state: state.id,
+      viewport: viewport.name,
+      colorScheme
+    }))
+  );
+  const successful = (coordinate6) => {
+    const key4 = captureTupleKey(coordinate6);
+    const tuple = tupleByKey.get(key4);
+    return collapsed.has(key4) || tuple !== void 0 && succeeded(tuple);
+  };
+  const evidenceFor = (coordinates) => {
+    if (coordinates.some(successful)) return observed2;
+    const chosen = coordinates.filter(
+      (coordinate6) => selected2 === void 0 || selected2.has(captureTupleKey(coordinate6))
+    );
+    const first = chosen[0];
+    if (first === void 0) return missing("not selected", recapture);
+    const tuple = tupleByKey.get(captureTupleKey(first));
+    const problem = tuple?.failure !== void 0 ? `${tuple.failure.stage} failure` : tuple === void 0 ? "missing capture" : "expectation mismatch";
+    return missing(
+      "failed",
+      `fix the ${problem} at ${coordinateLabel(first)} and recapture`
+    );
+  };
+  const mode = record2?.capture?.reducedMotion ?? options.tuples.map(
+    (tuple) => tuple.observations?.version === 2 ? tuple.observations.motion?.reducedMotion ?? tuple.observations.probe?.motion?.reducedMotion : void 0
+  ).find((value) => value !== void 0);
+  const policy = record2?.probe.policy ?? (isElectronFlow(flow) ? "unsupported" : "once-per-state");
+  const projectViewports = [
+    ...project.viewports.map(({ name }) => name),
+    ...flowViewports.map(({ name }) => name).filter((name) => !project.viewports.some((v) => v.name === name))
+  ];
+  const states = flow.states.map((state) => {
+    const dimensions = [];
+    const add = (kind, value, label5, evidence) => dimensions.push({ kind, value, label: label5, ...evidence });
+    const coordinates = coordinatesOf(state);
+    const stateNames = new Set(coordinates.map(({ viewport }) => viewport));
+    for (const viewport of projectViewports) {
+      const label5 = `viewport ${viewport}`;
+      if (!flowViewports.some(({ name }) => name === viewport))
+        add(
+          "viewport",
+          viewport,
+          label5,
+          missing(
+            "excluded by flow",
+            `add "${viewport}" to "viewports" in flow ${flow.id}`
+          )
+        );
+      else if (!stateNames.has(viewport))
+        add(
+          "viewport",
+          viewport,
+          label5,
+          missing(
+            "excluded by state",
+            `add "${viewport}" to "viewports" on state ${state.id} in flow ${flow.id}`
+          )
+        );
+      else
+        add(
+          "viewport",
+          viewport,
+          label5,
+          evidenceFor(coordinates.filter((c) => c.viewport === viewport))
+        );
+    }
+    for (const scheme of schemes) {
+      const label5 = `${scheme} scheme`;
+      if (!project.colorSchemes.includes(scheme))
+        add(
+          "colorScheme",
+          scheme,
+          label5,
+          missing(
+            "not in project",
+            `add "${scheme}" to "colorSchemes" in project.json (set capture.colorSchemeAttribute if the app themes by attribute)`
+          )
+        );
+      else if (!flowSchemes.includes(scheme))
+        add(
+          "colorScheme",
+          scheme,
+          label5,
+          missing(
+            "excluded by flow",
+            `add "${scheme}" to "colorSchemes" in flow ${flow.id}`
+          )
+        );
+      else
+        add(
+          "colorScheme",
+          scheme,
+          label5,
+          evidenceFor(coordinates.filter((c) => c.colorScheme === scheme))
+        );
+    }
+    const any = evidenceFor(coordinates);
+    for (const value of [true, false]) {
+      const label5 = `reduced motion ${value ? "on" : "off"}`;
+      add(
+        "reducedMotion",
+        value ? "on" : "off",
+        label5,
+        any.status === "missing" ? any : mode === void 0 ? missing("mode not recorded", recaptureVersion) : mode === value ? observed2 : missing(
+          "other mode captured",
+          `capture once with "capture": { "reducedMotion": ${value} } in project.json`
+        )
+      );
+    }
+    add("network", "fast", "fast network", any);
+    const successes = coordinates.flatMap((coordinate6) => {
+      const tuple = tupleByKey.get(captureTupleKey(coordinate6));
+      return tuple !== void 0 && succeeded(tuple) ? [tuple] : [];
+    });
+    const probes = successes.flatMap(
+      (tuple) => tuple.observations?.version === 2 && tuple.observations.probe !== void 0 ? [tuple.observations.probe] : []
+    );
+    const probeEnabled = state.probe ?? project.checks.probe.enabled;
+    const base = "combination" in state && state.combination !== void 0 ? state.combination.base : state.id;
+    const probeGap = policy === "unsupported" ? notApplicable("the probe is not supported for this target") : !probeEnabled ? state.probe === false || base !== state.id ? missing(
+      "probe off",
+      `set "probe": true on state ${base} in flow ${flow.id}`
+    ) : missing(
+      "probe off",
+      "set checks.probe.enabled: true in project.json"
+    ) : probes.length === 0 ? any.status === "missing" ? any : missing("probe not executed", recapture) : void 0;
+    const replay = (field, label5, value) => {
+      if (probeGap !== void 0) return add("network", value, label5, probeGap);
+      const runs = probes.map((probe) => probe[field]);
+      if (runs.some(
+        (entry) => entry !== void 0 && (entry.ran > 0 || (entry.reused ?? 0) > 0)
+      ))
+        return add("network", value, label5, observed2);
+      if (runs.every((entry) => entry !== void 0 && entry.queued === 0))
+        return add(
+          "network",
+          value,
+          label5,
+          notApplicable("no probed action sent requests")
+        );
+      if (runs.some((entry) => entry === void 0))
+        return add(
+          "network",
+          value,
+          label5,
+          missing("replay not recorded", recaptureVersion)
+        );
+      const note = runs.flatMap((entry) => entry?.notes ?? [])[0];
+      return add(
+        "network",
+        value,
+        label5,
+        missing(
+          "replay did not run",
+          `${note === void 0 ? "the probe budget ran out before the replay" : `the replay did not run (${note})`}; reduce checks.probe.maxControls (now ${project.checks.probe.maxControls}) or split the state`
+        )
+      );
+    };
+    replay("heldReplay", "slow network replay", "slow");
+    replay("failureReplay", "failure replay", "failure");
+    const probeLabel = "probe reached controls";
+    if (probeGap !== void 0)
+      add("interaction", "probe", probeLabel, probeGap);
+    else if (probes.every(
+      (probe) => probe.results.length === 0 && (probe.candidates ?? []).length === 0
+    ))
+      add("interaction", "probe", probeLabel, notApplicable("no controls"));
+    else if (probes.some(
+      (probe) => probe.status === "ran" && !probe.results.some((result2) => result2.status === "not-reached")
+    ))
+      add("interaction", "probe", probeLabel, observed2);
+    else
+      add(
+        "interaction",
+        "probe",
+        probeLabel,
+        probes.some((probe) => probe.status === "timed-out") ? missing(
+          "probe timed out",
+          `raise checks.probe.stateTimeoutMs (now ${project.checks.probe.stateTimeoutMs}) or split the state`
+        ) : missing(
+          "controls not reached",
+          `raise checks.probe.maxControls (now ${project.checks.probe.maxControls}) or split the state`
+        )
+      );
+    const sweeps = successes.flatMap(
+      (tuple) => tuple.observations?.version === 2 && tuple.observations.focusVisible !== void 0 ? [tuple.observations.focusVisible] : []
+    );
+    const incomplete = sweeps.find((sweep) => sweep.status !== "ran");
+    add(
+      "interaction",
+      "focus",
+      "focus sweep",
+      // The focus sweep runs inside the probe pass, at the probed coordinate.
+      probeGap?.status === "not-applicable" ? probeGap : !project.checks.focusVisible.enabled ? missing(
+        "focus sweep off",
+        "set checks.focusVisible.enabled: true in project.json"
+      ) : probeGap !== void 0 ? probeGap : sweeps.some((sweep) => sweep.status === "ran") ? observed2 : incomplete !== void 0 && "reason" in incomplete ? missing(
+        `focus sweep ${incomplete.status}`,
+        `fix what stopped the focus sweep (${incomplete.reason}) and recapture`
+      ) : missing("focus sweep not recorded", recaptureVersion)
+    );
+    const label4 = stateChainLabel(state);
+    return {
+      state: state.id,
+      ...label4 === state.id ? {} : { label: label4 },
+      dimensions,
+      ...totals(dimensions)
+    };
+  });
+  const declaresData = flow.states.some((state) => state.data !== void 0);
+  const data = dataStates.map((kind) => {
+    const label4 = `${kind} data`;
+    if (!declaresData)
+      return {
+        kind: "data",
+        value: kind,
+        label: label4,
+        ...notApplicable("the flow declares no data states")
+      };
+    const declared2 = flow.states.filter((state) => state.data === kind);
+    if (declared2.length === 0)
+      return {
+        kind: "data",
+        value: kind,
+        label: label4,
+        ...missing(
+          "not declared",
+          `add a state with "data": "${kind}" to flow ${flow.id}, seeded by a "setup" command`
+        )
+      };
+    return {
+      kind: "data",
+      value: kind,
+      label: label4,
+      ...evidenceFor(declared2.flatMap(coordinatesOf))
+    };
+  });
+  return {
+    flow: flow.id,
+    ...options.runId === void 0 ? {} : { run: { id: options.runId, commit: options.commit ?? "unknown" } },
+    captured: true,
+    states,
+    data,
+    ...totals([...states.flatMap((entry) => entry.dimensions), ...data]),
+    missing: gaps(states, data)
+  };
+}
+function gaps(states, data) {
+  const byKey = /* @__PURE__ */ new Map();
+  const record2 = (dimension4, state) => {
+    if (dimension4.status !== "missing" || dimension4.remedy === void 0)
+      return;
+    const key4 = `${dimension4.label}\0${dimension4.remedy}`;
+    const gap = byKey.get(key4) ?? {
+      label: dimension4.label,
+      remedy: dimension4.remedy,
+      states: []
+    };
+    byKey.set(key4, gap);
+    if (state !== void 0 && !gap.states.includes(state))
+      gap.states.push(state);
+  };
+  const width = Math.max(0, ...states.map((entry) => entry.dimensions.length));
+  for (let index = 0; index < width; index += 1)
+    for (const entry of states) {
+      const dimension4 = entry.dimensions[index];
+      if (dimension4 !== void 0) record2(dimension4, entry.state);
+    }
+  for (const dimension4 of data) record2(dimension4);
+  return [...byKey.values()];
+}
+function uncapturedFlowCoverage(flow, reason) {
+  return {
+    flow: flow.id,
+    captured: false,
+    states: flow.states.map((state) => ({
+      state: state.id,
+      dimensions: [],
+      observed: 0,
+      applicable: 0,
+      notApplicable: 0,
+      percent: null
+    })),
+    data: [],
+    observed: 0,
+    applicable: 0,
+    notApplicable: 0,
+    percent: null,
+    missing: [
+      {
+        label: "every state",
+        remedy: reason === void 0 ? `idiom capture ${flow.id}` : `recapture: ${reason}`,
+        states: []
+      }
+    ]
+  };
+}
+function stateCoverageLine(coverage) {
+  if (!coverage.captured)
+    return `State coverage: not captured yet; run \`idiom capture ${coverage.flow}\`. ${coverageDisclaimer}.`;
+  const head = `State coverage: ${coverage.observed} of ${coverage.applicable} applicable dimensions observed${coverage.percent === null ? "" : ` (${coverage.percent}%)`}, ${coverage.notApplicable} not applicable`;
+  const labels = [...new Set(coverage.missing.map((gap) => gap.label))];
+  if (labels.length === 0) return `${head}. ${coverageDisclaimer}.`;
+  const shown = labels.slice(0, 4).join(", ");
+  const more = labels.length > 4 ? `, +${labels.length - 4} more` : "";
+  return `${head}; not observed: ${shown}${more}. ${coverageDisclaimer}; run \`idiom coverage --states\` for the changes that cover the rest.`;
+}
+function cell(value) {
+  return value.replaceAll("|", "\\|");
+}
+function renderStateCoverage(summary) {
+  const lines2 = [
+    "State coverage: which dimensions each flow's latest capture observed. It describes what was reviewed, not a measure of quality; not applicable dimensions are never counted."
+  ];
+  for (const flow of summary.flows) {
+    lines2.push("");
+    if (!flow.captured) {
+      lines2.push(
+        `Flow ${flow.flow} \u2014 not captured: ${flow.missing[0]?.remedy ?? `idiom capture ${flow.flow}`}`
+      );
+      continue;
+    }
+    const run2 = flow.run === void 0 ? "" : ` \u2014 run ${flow.run.id} at ${flow.run.commit.slice(0, 12)}`;
+    lines2.push(
+      `Flow ${flow.flow}${run2}: ${flow.observed} of ${flow.applicable} applicable dimensions observed${flow.percent === null ? "" : ` (${flow.percent}%)`}, ${flow.notApplicable} not applicable.`,
+      "",
+      "| State | Observed | Applicable | % | Not observed |",
+      "| --- | --- | --- | --- | --- |",
+      ...flow.states.map(
+        (entry) => `| ${cell(entry.label ?? entry.state)} | ${entry.observed} | ${entry.applicable} | ${entry.percent === null ? "n/a" : entry.percent} | ${cell(
+          entry.dimensions.filter((dimension4) => dimension4.status === "missing").map((dimension4) => dimension4.label).join(", ") || "none"
+        )} |`
+      ),
+      "",
+      `Data states: ${flow.data.map(
+        (dimension4) => `${dimension4.value} ${dimension4.status === "not-applicable" ? "n/a" : dimension4.status}`
+      ).join(
+        ", "
+      )}${flow.data.every((d) => d.status === "not-applicable") ? ` (${flow.data[0]?.reason ?? "not applicable"}; add "data" to a state to declare them)` : ""}.`
+    );
+    if (flow.missing.length > 0) {
+      lines2.push("", "To cover:");
+      const all = flow.states.length;
+      for (const gap of flow.missing)
+        lines2.push(
+          `- ${gap.label} (${gap.states.length === 0 ? "flow" : gap.states.length === all && all > 1 ? "all states" : gap.states.join(", ")}): ${gap.remedy}`
+        );
+    }
+  }
+  return `${lines2.join("\n")}
+`;
+}
+var dataStates, schemes, observed2, missing, notApplicable, coordinateLabel, coverageDisclaimer;
+var init_states = __esm({
+  "src/coverage/states.ts"() {
+    "use strict";
+    init_resolve();
+    init_flow();
+    dataStates = ["empty", "one", "many", "error"];
+    schemes = ["light", "dark"];
+    observed2 = { status: "observed" };
+    missing = (reason, remedy2) => ({
+      status: "missing",
+      reason,
+      remedy: remedy2
+    });
+    notApplicable = (reason) => ({
+      status: "not-applicable",
+      reason
+    });
+    coordinateLabel = (coordinate6) => `${coordinate6.state}/${coordinate6.viewport}/${coordinate6.colorScheme}`;
+    coverageDisclaimer = "This is coverage of what was reviewed, not a measure of quality";
   }
 });
 
@@ -29667,12 +31296,12 @@ function buildReviewCoverage(options) {
       tuple
     ])
   );
-  const unresolvedTuples = (record2?.selected ?? []).filter((coordinate5) => {
-    const tuple = byKey.get(captureTupleKey(coordinate5));
+  const unresolvedTuples = (record2?.selected ?? []).filter((coordinate6) => {
+    const tuple = byKey.get(captureTupleKey(coordinate6));
     return !tuple || tuple.failure?.stage === "url-resolution";
   });
-  const failedTuples = (record2?.selected ?? []).filter((coordinate5) => {
-    const tuple = byKey.get(captureTupleKey(coordinate5));
+  const failedTuples = (record2?.selected ?? []).filter((coordinate6) => {
+    const tuple = byKey.get(captureTupleKey(coordinate6));
     return tuple && !tupleSucceeded(tuple) && tuple.failure?.stage !== "url-resolution";
   });
   const limitations = [
@@ -29721,7 +31350,8 @@ function buildReviewCoverage(options) {
     commits: [{ label: "Captured commit", value: options.commit }],
     limitations,
     ...surfaceCoverage === void 0 ? {} : { surfaceCoverage },
-    ...options.interaction === void 0 ? {} : { interaction: options.interaction }
+    ...options.interaction === void 0 ? {} : { interaction: options.interaction },
+    ...options.stateCoverage === void 0 ? {} : { stateCoverage: options.stateCoverage }
   };
 }
 function buildVerificationCoverage(options) {
@@ -29792,7 +31422,7 @@ function renderCoverageMarkdown(coverage) {
   const viewports = coverage.viewports.length === 0 ? "none" : coverage.viewports.map(
     ({ name, width, height }) => `${markdownText(name)} (${width}\xD7${height})`
   ).join(", ");
-  const schemes = coverage.colorSchemes.length === 0 ? "none" : coverage.colorSchemes.map(markdownText).join(", ");
+  const schemes2 = coverage.colorSchemes.length === 0 ? "none" : coverage.colorSchemes.map(markdownText).join(", ");
   const surfaceLines = coverage.surfaceCoverage === void 0 ? [] : [
     "### Project surfaces",
     "",
@@ -29817,8 +31447,9 @@ function renderCoverageMarkdown(coverage) {
     `- Flow: ${markdownText(coverage.flow)}`,
     `- States: ${coverage.states.length} of ${coverage.declaredStateCount} declared (${states})`,
     `- Viewports: ${viewports}`,
-    `- Colour schemes: ${schemes}`,
+    `- Colour schemes: ${schemes2}`,
     `- Successful tuples: ${coverage.successfulTuples} of ${coverage.selectedTuples} selected`,
+    ...coverage.stateCoverage === void 0 ? [] : [`- ${markdownText(stateCoverageLine(coverage.stateCoverage))}`],
     ...coverage.commits.map(
       ({ label: label4, value }) => `- ${markdownText(label4)}: \`${markdownText(value)}\``
     ),
@@ -29855,10 +31486,10 @@ function renderCoverageHtml(coverage) {
   const viewports = coverage.viewports.length === 0 ? "none" : coverage.viewports.map(
     ({ name, width, height }) => `${escapeHtml(name)} (${width}\xD7${height})`
   ).join(", ");
-  const schemes = coverage.colorSchemes.length === 0 ? "none" : coverage.colorSchemes.map(escapeHtml).join(", ");
+  const schemes2 = coverage.colorSchemes.length === 0 ? "none" : coverage.colorSchemes.map(escapeHtml).join(", ");
   const surfaces = coverage.surfaceCoverage;
   const surfaceHtml = surfaces === void 0 ? "" : `<h3>Project surfaces</h3><dl>${renderSurfaceGroupHtml("Judged in this review", surfaces.judged)}${renderSurfaceGroupHtml("Governed by another flow, not judged here", surfaces.governedNotJudged)}${renderSurfaceGroupHtml("Ungoverned (no flow captures this surface)", surfaces.ungoverned)}</dl>`;
-  return `<section class="panel coverage" aria-labelledby="coverage-heading"><h2 id="coverage-heading">Coverage and limits</h2><p>${escapeHtml(coverage.purpose)}</p><dl><dt>Flow</dt><dd>${escapeHtml(coverage.flow)}</dd><dt>States</dt><dd>${coverage.states.length} of ${coverage.declaredStateCount} declared (${states})</dd><dt>Viewports</dt><dd>${viewports}</dd><dt>Colour schemes</dt><dd>${schemes}</dd><dt>Successful tuples</dt><dd>${coverage.successfulTuples} of ${coverage.selectedTuples} selected</dd>${coverage.commits.map(({ label: label4, value }) => `<dt>${escapeHtml(label4)}</dt><dd><code>${escapeHtml(value)}</code></dd>`).join("")}</dl>${surfaceHtml}${interactionHtml(coverage.interaction)}<h3>Limitations</h3><ul>${coverage.limitations.map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("")}</ul></section>`;
+  return `<section class="panel coverage" aria-labelledby="coverage-heading"><h2 id="coverage-heading">Coverage and limits</h2><p>${escapeHtml(coverage.purpose)}</p><dl><dt>Flow</dt><dd>${escapeHtml(coverage.flow)}</dd><dt>States</dt><dd>${coverage.states.length} of ${coverage.declaredStateCount} declared (${states})</dd><dt>Viewports</dt><dd>${viewports}</dd><dt>Colour schemes</dt><dd>${schemes2}</dd><dt>Successful tuples</dt><dd>${coverage.successfulTuples} of ${coverage.selectedTuples} selected</dd>${coverage.stateCoverage === void 0 ? "" : `<dt>State coverage</dt><dd>${escapeHtml(stateCoverageLine(coverage.stateCoverage))}</dd>`}${coverage.commits.map(({ label: label4, value }) => `<dt>${escapeHtml(label4)}</dt><dd><code>${escapeHtml(value)}</code></dd>`).join("")}</dl>${surfaceHtml}${interactionHtml(coverage.interaction)}<h3>Limitations</h3><ul>${coverage.limitations.map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("")}</ul></section>`;
 }
 function interactionHtml(interaction) {
   if (interaction === void 0) return "";
@@ -29876,6 +31507,7 @@ var init_coverage = __esm({
   "src/report/coverage.ts"() {
     "use strict";
     init_resolve();
+    init_states();
     init_interaction();
     init_flow();
     init_html();
@@ -30678,6 +32310,7 @@ var init_explanations = __esm({
           });
       }
       async start(identity7) {
+        const actionStarted = Date.now();
         const token = `${Date.now()}:${Math.random()}`;
         let finished = false;
         try {
@@ -30741,8 +32374,8 @@ var init_explanations = __esm({
               const replayed = identity8 ? document.querySelector(identity8.selector) : null;
               const snapshot3 = () => [...document.querySelectorAll('[role="tooltip"]')].flatMap(
                 (element) => {
-                  const text3 = dom2.text(element);
-                  return text3 ? [{ selector: selectorFor(element), text: text3, element }] : [];
+                  const text4 = dom2.text(element);
+                  return text4 ? [{ selector: selectorFor(element), text: text4, element }] : [];
                 }
               );
               const baseline = new Map(
@@ -30800,9 +32433,9 @@ var init_explanations = __esm({
                   const associated = linked.length ? linked : changed.length === 1 ? changed : [];
                   if (associated.length) {
                     record2.status = "observed";
-                    record2.tooltips = associated.map(({ selector, text: text3 }) => ({
+                    record2.tooltips = associated.map(({ selector, text: text4 }) => ({
                       selector,
-                      text: text3
+                      text: text4
                     }));
                   }
                 }
@@ -30853,7 +32486,13 @@ var init_explanations = __esm({
                 },
                 { token, reason }
               );
-              if (records) this.records.push(...records);
+              if (records)
+                this.records.push(
+                  ...records.map((record2) => ({
+                    ...record2,
+                    elapsedMs: Date.now() - actionStarted
+                  }))
+                );
               else
                 this.reasons.push(
                   "explanation window unavailable after navigation"
@@ -31633,6 +33272,7 @@ async function diagnoseTouchReachability(page, declaration) {
       }
     };
     for (const candidate2 of scan.candidates) {
+      const trialStarted = Date.now();
       let hover;
       let focus = { status: "hidden" };
       try {
@@ -31676,6 +33316,7 @@ async function diagnoseTouchReachability(page, declaration) {
         name: candidate2.name,
         rect: candidate2.rect,
         owner: candidate2.owner,
+        elapsedMs: Date.now() - trialStarted,
         baseline: candidate2.baseline,
         cause: candidate2.cause,
         hover,
@@ -32044,12 +33685,14 @@ async function sweepFocusVisible(page, options) {
         reason = "focus sweep time budget exhausted";
         break;
       }
+      const trialStarted = now();
       await page.keyboard.press("Tab");
       const result2 = await page.evaluate(
         () => window.__idiomFocusSweep.step()
       );
       if (result2.kind === "end") break;
-      if (result2.kind === "record") records.push(result2.record);
+      if (result2.kind === "record")
+        records.push({ ...result2.record, elapsedMs: now() - trialStarted });
     }
   } finally {
     await page.evaluate(() => {
@@ -32198,11 +33841,24 @@ var init_links = __esm({
 });
 
 // src/capture/request-policy.ts
+function analyticsRequest(request2) {
+  if (request2.resourceType() === "ping") return true;
+  let url;
+  try {
+    url = new URL(request2.url());
+  } catch {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  return ANALYTICS_HOSTS.some((pattern) => pattern.test(host)) || ANALYTICS_PATHS.some(
+    (entry) => (entry.host === void 0 || entry.host.test(host)) && entry.path.test(url.pathname)
+  );
+}
 function probeRequestAllowed(request2, policy = "app") {
   if (safeMethods2.has(request2.method())) return true;
   return policy === "app" && ignoredRequest(request2);
 }
-var safeMethods2, ignoredRequest;
+var safeMethods2, ignoredRequest, ANALYTICS_HOSTS, ANALYTICS_PATHS;
 var init_request_policy = __esm({
   "src/capture/request-policy.ts"() {
     "use strict";
@@ -32210,6 +33866,30 @@ var init_request_policy = __esm({
     ignoredRequest = (request2) => /(?:webpack-hmr|__nextjs|_next\/static|hot-update|favicon|\/__vite|sockjs)/.test(
       request2.url()
     );
+    ANALYTICS_HOSTS = [
+      /(?:^|\.)google-analytics\.com$/,
+      /(?:^|\.)analytics\.google\.com$/,
+      /(?:^|\.)googletagmanager\.com$/,
+      /(?:^|\.)doubleclick\.net$/,
+      /^api\.segment\.io$/,
+      /^cdn\.segment\.com$/,
+      /^api[\w-]*\.mixpanel\.com$/,
+      /^api[\w-]*\.amplitude\.com$/,
+      /(?:^|\.)posthog\.com$/,
+      /(?:^|\.)clarity\.ms$/,
+      /^bat\.bing\.com$/,
+      /\.ingest(?:\.[a-z]+)?\.sentry\.io$/,
+      /^browser-intake-[\w.-]*datadoghq\.(?:com|eu)$/,
+      /^rs\.fullstory\.com$/,
+      /(?:^|\.)hotjar\.(?:com|io)$/,
+      /(?:^|\.)heapanalytics\.com$/,
+      /(?:^|\.)cloudflareinsights\.com$/
+    ];
+    ANALYTICS_PATHS = [
+      { host: /^plausible\.io$/, path: /^\/api\/event\b/ },
+      { host: /(?:^|\.)facebook\.com$/, path: /^\/tr\/?$/ },
+      { path: /^\/_vercel\/(?:speed-)?insights\// }
+    ];
   }
 });
 
@@ -32222,7 +33902,7 @@ async function beginEffectWindow(page, maximumMs, options = {}) {
   const request2 = (value) => {
     pending.add(value);
     networkAt = performance.now();
-    if (!ignoredRequest(value) && !["document", "eventsource", "websocket"].includes(value.resourceType()))
+    if (!ignoredRequest(value) && !analyticsRequest(value) && !["document", "eventsource", "websocket"].includes(value.resourceType()))
       awaited.add(value);
   };
   const finished = (value) => {
@@ -32239,6 +33919,7 @@ async function beginEffectWindow(page, maximumMs, options = {}) {
       const state = scope.__idiomQuiet;
       if (!state || state.token !== token2) return;
       state.observer.disconnect();
+      if (window.fetch !== state.fetch) window.fetch = state.fetch;
       document.removeEventListener("focusin", state.activity, true);
       document.removeEventListener("focusout", state.activity, true);
       delete scope.__idiomQuiet;
@@ -32256,7 +33937,43 @@ async function beginEffectWindow(page, maximumMs, options = {}) {
         observer: void 0,
         activity: () => {
           state.last = performance.now();
+        },
+        keepalive: [],
+        fetch: window.fetch
+      };
+      const original = state.fetch;
+      window.fetch = function(...args) {
+        const promise = original.apply(this, args);
+        const [input, init] = args;
+        const keepalive = init?.keepalive ?? (input instanceof Request && input.keepalive);
+        if (!keepalive) return promise;
+        let url;
+        try {
+          url = new URL(
+            input instanceof Request ? input.url : String(input),
+            location.href
+          ).href;
+        } catch {
+          return promise;
         }
+        const entry = { url, waited: false };
+        if (state.keepalive.length < 50) state.keepalive.push(entry);
+        const then = promise.then;
+        Object.defineProperties(promise, {
+          // biome-ignore lint/suspicious/noThenProperty: observes who reads this one keepalive fetch; delegates to the native then().
+          then: {
+            configurable: true,
+            writable: true,
+            value(...handlers) {
+              if (typeof handlers[0] === "function") entry.waited = true;
+              return Reflect.apply(then, this, handlers);
+            }
+          },
+          // `await` adopts a native promise without reading then(); an
+          // instance constructor makes it resolve through the method above.
+          constructor: { configurable: true, writable: true, value: void 0 }
+        });
+        return promise;
       };
       state.observer = new MutationObserver(state.activity);
       state.observer.observe(document, {
@@ -32285,13 +34002,23 @@ async function beginEffectWindow(page, maximumMs, options = {}) {
       }, token).catch(() => void 0);
       const pendingMs = Math.max(maximumMs, options.pendingMs ?? maximumMs);
       let extended = false;
-      const open3 = () => {
+      let beacons = false;
+      const open3 = async () => {
         const elapsed = performance.now() - begun;
         if (elapsed < maximumMs) return true;
+        if (!beacons && awaited.size > 0) {
+          beacons = true;
+          const unread = await page.evaluate((token2) => {
+            const state = window.__idiomQuiet;
+            return state?.token === token2 ? state.keepalive.filter((entry) => !entry.waited).map((entry) => entry.url) : [];
+          }, token).catch(() => []);
+          for (const value of [...awaited])
+            if (unread.includes(value.url())) awaited.delete(value);
+        }
         if (!extended) extended = awaited.size > 0;
         return extended && elapsed < pendingMs;
       };
-      while (open3()) {
+      while (await open3()) {
         const quiet = await page.evaluate((token2) => {
           const state = window.__idiomQuiet;
           if (!state || state.token !== token2) return false;
@@ -32371,7 +34098,7 @@ function installFeedback() {
   const progressSelector = "[role=progressbar], progress, [aria-busy=true]";
   const statusSelector = "[role=status], [role=log], [aria-live]:not([aria-live=off]), output";
   const progressWords = /\b(loading|saving|generating|working|processing|thinking|uploading|sending|submitting|please wait)\b/i;
-  const progressText = (text3) => text3 !== "" && (progressWords.test(text3) || /(?:…|\.\.\.)$/.test(text3));
+  const progressText = (text4) => text4 !== "" && (progressWords.test(text4) || /(?:…|\.\.\.)$/.test(text4));
   const skeletal = (element) => /skeleton|shimmer|placeholder|loading/i.test(
     typeof element.className === "string" ? element.className : ""
   ) || [...element.attributes].some(
@@ -32379,6 +34106,143 @@ function installFeedback() {
       `${attribute.name} ${attribute.value}`
     )
   );
+  const mainOf = () => document.querySelector("main, [role=main]") ?? document.body;
+  const actionEvents = (action) => action === "click" ? ["pointerdown", "click"] : action === "press" ? ["keydown"] : action === "select" ? ["input", "change"] : ["keydown", "beforeinput", "input"];
+  const dispatchTarget = (event, trigger, selector, action) => {
+    let target2 = trigger;
+    if (trigger !== null && (action === "fill" || action === "select") && !trigger.matches("input, textarea, select") && !(trigger instanceof HTMLElement && trigger.isContentEditable))
+      target2 = trigger.closest("label")?.control ?? trigger;
+    return event.composedPath().find((node) => {
+      if (!(node instanceof Element)) return false;
+      if (node === target2) return true;
+      try {
+        return node.matches(selector);
+      } catch {
+        return false;
+      }
+    });
+  };
+  const infinite = (animation) => animation.effect?.getTiming().iterations === Number.POSITIVE_INFINITY;
+  const animationTarget = (animation) => {
+    const target2 = animation.effect?.target;
+    return target2 instanceof Element ? target2 : null;
+  };
+  const indicatorBaseline = (options) => {
+    const status = /* @__PURE__ */ new WeakMap();
+    for (const region of document.querySelectorAll(statusSelector))
+      status.set(region, rendered(region) ? textOf2(region) : "");
+    return {
+      progress: new WeakSet(
+        [...document.querySelectorAll(progressSelector)].filter(rendered)
+      ),
+      animations: new WeakSet(
+        document.getAnimations().filter((animation) => {
+          if (!infinite(animation)) return false;
+          if (!options.visibleAnimationsOnly) return true;
+          const target2 = animationTarget(animation);
+          return target2 !== null && rendered(target2);
+        })
+      ),
+      status
+    };
+  };
+  const scanIndicators = (baseline, options) => {
+    const { trigger, visit, isNoisy } = options;
+    const records = options.records ?? [];
+    for (const element of document.querySelectorAll(progressSelector)) {
+      const becameBusy = options.rebusyBaseline && element.getAttribute("aria-busy") === "true" && records.some(
+        (mutation) => mutation.target === element && mutation.attributeName === "aria-busy" && mutation.oldValue !== "true"
+      );
+      if (baseline.progress.has(element) && !becameBusy || !rendered(element))
+        continue;
+      if (options.skipTrigger && element === trigger) continue;
+      if (visit(
+        element.getAttribute("aria-busy") === "true" && !element.matches("[role=progressbar], progress") ? "busy" : "progressbar",
+        element
+      ))
+        return true;
+    }
+    for (const animation of document.getAnimations()) {
+      if (!infinite(animation) || baseline.animations.has(animation)) continue;
+      const target2 = animationTarget(animation);
+      if (target2 && rendered(target2) && !isNoisy?.(target2)) {
+        if (visit("spinner", target2)) return true;
+      }
+    }
+    for (const region of document.querySelectorAll(statusSelector)) {
+      if (!rendered(region) || isNoisy?.(region)) continue;
+      const text4 = textOf2(region);
+      if (text4 !== "" && text4 !== (baseline.status.get(region) ?? "")) {
+        if (visit("status-text", region, text4)) return true;
+      }
+    }
+    if (trigger?.isConnected) {
+      options.onTrigger?.(trigger);
+      if (rendered(trigger)) {
+        const text4 = textOf2(trigger);
+        if (text4 !== "" && text4 !== options.triggerText) {
+          if (visit("control-text", trigger, text4)) return true;
+        }
+      }
+    }
+    return false;
+  };
+  const addedProgressText = (records, visit, onNode) => {
+    for (const mutation of records) {
+      const nodes = mutation.type === "characterData" ? [mutation.target] : mutation.type === "attributes" ? [] : [...mutation.addedNodes];
+      for (const node of nodes) {
+        const element = node instanceof Element ? node : node.parentElement;
+        if (element === null || !rendered(element)) continue;
+        const text4 = normalize2(
+          node instanceof HTMLElement ? node.innerText : node.textContent
+        );
+        if (progressText(text4)) {
+          if (visit("progress-text", element, text4)) return true;
+        }
+        onNode?.(node, element);
+      }
+    }
+    return false;
+  };
+  const noiseSet = () => {
+    const noisy = /* @__PURE__ */ new Set();
+    const has = (element) => {
+      for (let current = element; current; current = current.parentElement)
+        if (noisy.has(current)) return true;
+      return false;
+    };
+    return {
+      add: (element) => {
+        noisy.add(element);
+      },
+      has,
+      markRecords: (records, except) => {
+        for (const record2 of records) {
+          const element = record2.target instanceof Element ? record2.target : record2.target.parentElement;
+          if (element && !except.includes(element)) noisy.add(element);
+        }
+      }
+    };
+  };
+  const noiseMarkers = "[aria-roledescription], marquee, [autoplay], [data-autoplay], [data-ride=carousel], [data-bs-ride]";
+  const noiseToken = /(?:^|[\s_-])(?:carousel|slideshow|swiper|ticker|marquee|rotator)(?:$|[\s_-])/i;
+  const structurallyNoisy = (element) => element.matches(noiseMarkers) && (!element.hasAttribute("aria-roledescription") || /carousel|slide/i.test(
+    element.getAttribute("aria-roledescription") ?? ""
+  )) || noiseToken.test(
+    typeof element.className === "string" ? element.className : ""
+  ) || noiseToken.test(element.id);
+  const structuralNoise = (root2 = document) => {
+    const found = [];
+    if (root2 instanceof Element && structurallyNoisy(root2)) found.push(root2);
+    let count = 0;
+    for (const element of root2.querySelectorAll(
+      `${noiseMarkers}, [class], [id]`
+    )) {
+      if (count++ > 1e4) break;
+      if (structurallyNoisy(element)) found.push(element);
+    }
+    return found;
+  };
   window.__idiomFeedback = {
     rendered,
     selectorFor,
@@ -32388,7 +34252,17 @@ function installFeedback() {
     statusSelector,
     progressWords,
     progressText,
-    skeletal
+    skeletal,
+    mainOf,
+    actionEvents,
+    dispatchTarget,
+    infinite,
+    animationTarget,
+    indicatorBaseline,
+    scanIndicators,
+    addedProgressText,
+    noiseSet,
+    structuralNoise
   };
 }
 var init_feedback = __esm({
@@ -32398,6 +34272,112 @@ var init_feedback = __esm({
 });
 
 // src/capture/loading.ts
+function installNoiseRecorder() {
+  const scope = window;
+  if (scope.__idiomNoiseLog) return;
+  const BATCH_GAP_MS = 100;
+  const MIN_PERIOD_MS = 250;
+  const MAX_BATCHES = 200;
+  const MAX_ROOTS = 50;
+  const MAX_TARGETS = 20;
+  const batches2 = [];
+  const roots = /* @__PURE__ */ new Set();
+  const inputs = [];
+  let current = null;
+  for (const type of ["pointerdown", "keydown", "input"])
+    window.addEventListener(
+      type,
+      (event) => {
+        if (!event.isTrusted) return;
+        inputs.push(performance.now());
+        if (inputs.length > 20) inputs.shift();
+      },
+      true
+    );
+  const ancestors = (element) => {
+    const chain = [];
+    for (let node = element; node; node = node.parentElement)
+      chain.push(node);
+    return chain;
+  };
+  const commonAncestor = (targets) => {
+    const [first, ...rest] = targets;
+    if (!first) return null;
+    let chain = ancestors(first);
+    for (const target2 of rest) {
+      const own = new Set(ancestors(target2));
+      chain = chain.filter((element) => own.has(element));
+    }
+    return chain[0] ?? null;
+  };
+  const flush = () => {
+    const batch = current;
+    current = null;
+    if (batch === null) return;
+    const targets = [...batch.targets].filter((target2) => target2.isConnected);
+    const root2 = commonAncestor(targets);
+    if (root2 === null) return;
+    if (!roots.has(root2)) {
+      if (roots.size >= MAX_ROOTS) return;
+      roots.add(root2);
+    }
+    batches2.push({ time: batch.start, root: root2, targets });
+    if (batches2.length > MAX_BATCHES) batches2.shift();
+  };
+  const observer = new MutationObserver((records) => {
+    const now = performance.now();
+    if (current !== null && now - current.last > BATCH_GAP_MS) flush();
+    current ??= { start: now, last: now, targets: /* @__PURE__ */ new Set() };
+    current.last = now;
+    for (const record2 of records) {
+      if (current.targets.size >= MAX_TARGETS) break;
+      const element = record2.target instanceof Element ? record2.target : record2.target.parentElement;
+      if (element) current.targets.add(element);
+    }
+  });
+  observer.observe(document, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    characterData: true
+  });
+  const period = (times) => {
+    for (let index = 2; index < times.length; index++) {
+      const start = times[index - 2] ?? 0;
+      const a = (times[index - 1] ?? 0) - start;
+      const b = (times[index] ?? 0) - (times[index - 1] ?? 0);
+      if (a >= MIN_PERIOD_MS && b >= MIN_PERIOD_MS && Math.max(a, b) <= 1.33 * Math.min(a, b))
+        return { from: start, ms: (a + b) / 2 };
+    }
+    return null;
+  };
+  const caused = (times, ms, anchors) => {
+    const tolerance2 = Math.max(60, 0.12 * ms);
+    return anchors.some((anchor) => {
+      const first = times.find((time) => time >= anchor);
+      if (first === void 0 || times.some((time) => time < anchor))
+        return false;
+      const phase = (first - anchor) % ms;
+      return phase <= tolerance2 || ms - phase <= tolerance2;
+    });
+  };
+  const broad = (element) => element === document.documentElement || element === document.body || element.matches("main, [role=main]");
+  scope.__idiomNoiseLog = {
+    periodic: (extra = []) => {
+      if (current !== null && performance.now() - current.last > BATCH_GAP_MS)
+        flush();
+      const anchors = [...inputs, ...extra];
+      const periodic = [...roots].filter((root2) => {
+        const times = batches2.filter((batch) => batch.root === root2).map((batch) => batch.time);
+        const found = period(times);
+        return found !== null && !caused(times, found.ms, anchors);
+      });
+      return periodic.flatMap(
+        (root2) => broad(root2) ? batches2.filter((batch) => batch.root === root2).flatMap((batch) => batch.targets).filter((target2) => !broad(target2)) : [root2]
+      );
+    }
+  };
+}
 function pendingWatcher(config) {
   const scope = window;
   scope.__idiomPending?.dispose();
@@ -32411,21 +34391,26 @@ function pendingWatcher(config) {
     selectorFor,
     normalize: normalize2,
     textOf: textOf2,
-    progressSelector,
-    statusSelector,
     progressText,
-    skeletal
+    skeletal,
+    mainOf,
+    actionEvents: eventsFor,
+    dispatchTarget,
+    animationTarget,
+    indicatorBaseline,
+    scanIndicators,
+    addedProgressText,
+    noiseSet,
+    structuralNoise
   } = window.__idiomFeedback;
   const transient = /^(?:data-(?:focus|hover|press|active|focus-visible)[\w-]*|tabindex)$/;
   const tooltipish = (element) => element.closest("[role=tooltip], [data-radix-popper-content-wrapper]") !== null;
   const elementOf = (node) => node === null ? null : node instanceof Element ? node : node.parentElement;
-  const noisy = /* @__PURE__ */ new Set();
-  const isNoisy = (element) => {
-    for (let current = element; current; current = current.parentElement)
-      if (noisy.has(current)) return true;
-    return false;
-  };
-  const mainOf = () => document.querySelector("main, [role=main]") ?? document.body;
+  const noisy = noiseSet();
+  const isNoisy = noisy.has;
+  for (const element of structuralNoise()) noisy.add(element);
+  for (const element of window.__idiomNoiseLog?.periodic() ?? [])
+    noisy.add(element);
   let mainElement = mainOf();
   const mainSelectorOf = (element) => element === null || element === document.body ? "body" : element.matches("main") ? "main" : "[role=main]";
   const empty = (element) => {
@@ -32453,13 +34438,10 @@ function pendingWatcher(config) {
   });
   let triggerAtArm = triggerFlags();
   let triggerText = trigger ? textOf2(trigger) : "";
-  let progressBaseline = /* @__PURE__ */ new WeakSet();
-  let animationBaseline = /* @__PURE__ */ new WeakSet();
-  let statusBaseline = /* @__PURE__ */ new WeakMap();
-  const infinite = (animation) => animation.effect?.getTiming().iterations === Number.POSITIVE_INFINITY;
-  const animationTarget = (animation) => {
-    const target2 = animation.effect?.target;
-    return target2 instanceof Element ? target2 : null;
+  let baseline = {
+    progress: /* @__PURE__ */ new WeakSet(),
+    animations: /* @__PURE__ */ new WeakSet(),
+    status: /* @__PURE__ */ new WeakMap()
   };
   const route = () => location.pathname + (location.hash.startsWith("#/") ? location.hash : "");
   let routeFrom = route();
@@ -32483,61 +34465,83 @@ function pendingWatcher(config) {
   };
   window.addEventListener("popstate", onRoute);
   window.addEventListener("hashchange", onRoute);
-  const indicators = [];
-  const seen = /* @__PURE__ */ new Set();
-  const record2 = (kind, element, text3) => {
-    if (startedAt === null || seen.has(kind) || indicators.length >= 12) return;
-    seen.add(kind);
-    const label4 = (text3 ?? textOf2(element)).slice(0, 80);
-    indicators.push({
-      kind,
-      selector: selectorFor(element),
-      time: since(),
-      ...label4 ? { text: label4 } : {},
-      inMain: inMain(element),
-      progressText: progressText(label4)
+  const filterable = /* @__PURE__ */ new Set(["spinner", "status-text", "progress-text"]);
+  const candidates = [];
+  const record2 = (kind, element, text4) => {
+    if (startedAt === null) return false;
+    const same = candidates.filter(
+      (candidate2) => candidate2.indicator.kind === kind
+    );
+    if (same.length >= (filterable.has(kind) ? 5 : 1) || same.some((candidate2) => candidate2.element === element))
+      return false;
+    const label4 = (text4 ?? textOf2(element)).slice(0, 80);
+    candidates.push({
+      element,
+      indicator: {
+        kind,
+        selector: selectorFor(element),
+        time: since(),
+        ...label4 ? { text: label4 } : {},
+        inMain: inMain(element),
+        progressText: progressText(label4)
+      }
     });
+    return false;
   };
-  let firstChange = null;
-  let firstMainChange = null;
-  let changeAfterReleaseAt = null;
-  let mainChangeAfterReleaseAt = null;
+  const early = [];
+  const late = [];
+  const MAX_CHANGES = 50;
+  const keep = (list5, entry) => {
+    if (list5.length < MAX_CHANGES || entry.main && list5.filter((seen) => seen.main).length < MAX_CHANGES)
+      list5.push(entry);
+  };
+  const periodicNoise = () => {
+    const anchors = startedAt !== null && releasedAt !== null ? [startedAt + releasedAt] : [];
+    const noise = new Set(
+      window.__idiomNoiseLog?.periodic(anchors) ?? []
+    );
+    return (element) => {
+      if (noise.size === 0) return false;
+      for (let current = element; current; current = current.parentElement)
+        if (noise.has(current)) return true;
+      return false;
+    };
+  };
   let mainEmpty = null;
+  const visibilityLimit = 1e4;
+  const priorRendered = /* @__PURE__ */ new Map();
+  const rememberVisibility = (root2) => {
+    const remember = (element) => {
+      if (priorRendered.has(element) || priorRendered.size < visibilityLimit)
+        priorRendered.set(element, rendered(element));
+    };
+    remember(root2);
+    const walker = document.createTreeWalker(root2, NodeFilter.SHOW_ELEMENT);
+    let count = 0;
+    while (count++ < visibilityLimit) {
+      const element = walker.nextNode();
+      if (!(element instanceof Element)) break;
+      remember(element);
+    }
+  };
   const scan = () => {
     if (startedAt === null) return;
-    for (const element of document.querySelectorAll(progressSelector)) {
-      if (progressBaseline.has(element) || !rendered(element)) continue;
-      if (element === trigger) continue;
-      record2(
-        element.getAttribute("aria-busy") === "true" && !element.matches("[role=progressbar], progress") ? "busy" : "progressbar",
-        element
-      );
-    }
-    for (const animation of document.getAnimations()) {
-      if (!infinite(animation) || animationBaseline.has(animation)) continue;
-      const target2 = animationTarget(animation);
-      if (target2 && rendered(target2) && !isNoisy(target2))
-        record2("spinner", target2);
-    }
-    for (const region of document.querySelectorAll(statusSelector)) {
-      if (!rendered(region)) continue;
-      const text3 = textOf2(region);
-      if (text3 !== "" && text3 !== (statusBaseline.get(region) ?? ""))
-        record2("status-text", region, text3);
-    }
-    if (trigger?.isConnected) {
-      const flags = triggerFlags();
-      if (flags.disabled && !triggerAtArm.disabled)
-        record2("trigger-disabled", trigger);
-      if (flags.busy && !triggerAtArm.busy) record2("trigger-busy", trigger);
-      if (flags.pressed && !triggerAtArm.pressed)
-        record2("trigger-pressed", trigger);
-      if (rendered(trigger)) {
-        const text3 = textOf2(trigger);
-        if (text3 !== "" && text3 !== triggerText)
-          record2("control-text", trigger, text3);
-      }
-    }
+    scanIndicators(baseline, {
+      trigger,
+      triggerText,
+      skipTrigger: true,
+      rebusyBaseline: false,
+      isNoisy,
+      onTrigger: (trigger2) => {
+        const flags = triggerFlags();
+        if (flags.disabled && !triggerAtArm.disabled)
+          record2("trigger-disabled", trigger2);
+        if (flags.busy && !triggerAtArm.busy) record2("trigger-busy", trigger2);
+        if (flags.pressed && !triggerAtArm.pressed)
+          record2("trigger-pressed", trigger2);
+      },
+      visit: record2
+    });
   };
   const changed = (record3) => {
     const element = elementOf(record3.target);
@@ -32546,7 +34550,7 @@ function pendingWatcher(config) {
       const name = record3.attributeName ?? "";
       if (transient.test(name)) return null;
       if (record3.oldValue === element.getAttribute(name)) return null;
-      return rendered(element) || rendered(element.parentElement) ? element : null;
+      return rendered(element) || priorRendered.get(element) === true ? element : null;
     }
     if (record3.type === "characterData")
       return rendered(element) && normalize2(record3.target.textContent) !== normalize2(record3.oldValue) ? element : null;
@@ -32557,17 +34561,18 @@ function pendingWatcher(config) {
       } else if (normalize2(node.textContent) !== "") return element;
     }
     for (const node of record3.removedNodes)
-      if (node instanceof Element || normalize2(node.textContent) !== "")
+      if (node instanceof Element ? priorRendered.get(node) === true : normalize2(node.textContent) !== "")
         return element;
     return null;
   };
   const onMutations = (records) => {
     if (startedAt === null) {
       if (frozen) return;
-      for (const record3 of records) {
-        const element = elementOf(record3.target);
-        if (element && element !== document.body) noisy.add(element);
-      }
+      noisy.markRecords(records, [document.body]);
+      for (const record3 of records)
+        for (const node of record3.addedNodes)
+          if (node instanceof Element)
+            for (const element of structuralNoise(node)) noisy.add(element);
       return;
     }
     const time = since();
@@ -32579,27 +34584,22 @@ function pendingWatcher(config) {
     else if (!isEmpty && mainEmpty !== null && mainEmpty.to === null)
       mainEmpty.to = time;
     for (const mutation of records) {
-      const nodes = mutation.type === "characterData" ? [mutation.target] : mutation.type === "attributes" ? [] : [...mutation.addedNodes];
-      for (const node of nodes) {
-        const element2 = elementOf(node);
-        if (element2 === null || !rendered(element2)) continue;
-        const text3 = normalize2(
-          node instanceof HTMLElement ? node.innerText : node.textContent
-        );
-        if (progressText(text3)) record2("progress-text", element2, text3);
-        if (node instanceof Element) {
-          for (const candidate2 of [
-            node,
-            ...[...node.querySelectorAll("*")].slice(0, 50)
-          ])
-            if (skeletal(candidate2) && rendered(candidate2)) {
-              record2("skeleton", candidate2);
-              break;
-            }
+      addedProgressText(
+        [mutation],
+        (kind, element2, text4) => !isNoisy(element2) && record2(kind, element2, text4),
+        (node) => {
+          if (node instanceof Element) {
+            for (const candidate2 of [
+              node,
+              ...[...node.querySelectorAll("*")].slice(0, 50)
+            ])
+              if (skeletal(candidate2) && rendered(candidate2)) {
+                record2("skeleton", candidate2);
+                break;
+              }
+          }
         }
-      }
-      if (mutation.type === "attributes" && mutation.target instanceof Element && (mutation.attributeName === "class" || mutation.attributeName?.startsWith("data-")) && skeletal(mutation.target) && rendered(mutation.target))
-        record2("skeleton", mutation.target);
+      );
       const element = changed(mutation);
       if (element === null || isNoisy(element)) continue;
       if (isEmpty) continue;
@@ -32608,13 +34608,19 @@ function pendingWatcher(config) {
         (node) => node instanceof Element && node.matches("main, [role=main]")
       );
       const main = (inMain(element) || mainReplaced) && !(trigger !== null && (trigger === element || trigger.contains(element)));
-      firstChange ??= { time, selector: selector2 };
-      if (main) firstMainChange ??= { time, selector: selector2 };
-      if (releasedAt !== null && time >= releasedAt) {
-        changeAfterReleaseAt ??= time;
-        if (main) mainChangeAfterReleaseAt ??= time;
-      }
+      keep(releasedAt !== null && time >= releasedAt ? late : early, {
+        time,
+        selector: selector2,
+        element,
+        main
+      });
     }
+    for (const mutation of records) {
+      const element = elementOf(mutation.target);
+      if (element) rememberVisibility(element);
+    }
+    for (const element of priorRendered.keys())
+      if (!element.isConnected) priorRendered.delete(element);
     scan();
   };
   const observer = new MutationObserver(onMutations);
@@ -32634,35 +34640,17 @@ function pendingWatcher(config) {
     }
   }, 50);
   const interval = setInterval(scan, 50);
-  const actionEvents = action === "click" ? ["pointerdown", "click"] : action === "press" ? ["keydown"] : action === "select" ? ["input", "change"] : ["keydown", "beforeinput", "input"];
+  const actionEvents = eventsFor(action);
   const onAction = (event) => {
     if (startedAt !== null || (action === "click" || action === "press") && !event.isTrusted)
       return;
-    let dispatchTarget = trigger;
-    if (trigger !== null && (action === "fill" || action === "select") && !trigger.matches("input, textarea, select") && !(trigger instanceof HTMLElement && trigger.isContentEditable))
-      dispatchTarget = trigger.closest("label")?.control ?? trigger;
-    const target2 = event.composedPath().find((node) => {
-      if (!(node instanceof Element)) return false;
-      if (node === dispatchTarget) return true;
-      try {
-        return node.matches(selector);
-      } catch {
-        return false;
-      }
-    });
+    const target2 = dispatchTarget(event, trigger, selector, action);
     if (!target2) return;
     onMutations(observer.takeRecords());
     startedAt = performance.now();
     trigger = target2;
-    progressBaseline = new WeakSet(
-      [...document.querySelectorAll(progressSelector)].filter(rendered)
-    );
-    animationBaseline = new WeakSet(
-      document.getAnimations().filter((animation) => infinite(animation))
-    );
-    statusBaseline = /* @__PURE__ */ new WeakMap();
-    for (const region of document.querySelectorAll(statusSelector))
-      statusBaseline.set(region, rendered(region) ? textOf2(region) : "");
+    rememberVisibility(document.documentElement);
+    baseline = indicatorBaseline({ visibleAnimationsOnly: false });
     triggerText = textOf2(target2);
     triggerAtArm = triggerFlags();
     mainElement = mainOf();
@@ -32673,6 +34661,26 @@ function pendingWatcher(config) {
   };
   for (const type of actionEvents)
     window.addEventListener(type, onAction, true);
+  const settled = (noise) => {
+    const indicators = [];
+    const kinds = /* @__PURE__ */ new Set();
+    for (const { element, indicator } of candidates) {
+      if (kinds.has(indicator.kind) || indicators.length >= 12) continue;
+      if (filterable.has(indicator.kind) && noise(element)) continue;
+      kinds.add(indicator.kind);
+      indicators.push(indicator);
+    }
+    const change = (seen) => seen ? { time: seen.time, selector: seen.selector } : null;
+    const quiet = [...early, ...late].filter(({ element }) => !noise(element));
+    const after = late.filter(({ element }) => !noise(element));
+    return {
+      indicators,
+      firstChange: change(quiet[0]),
+      firstMainChange: change(quiet.find(({ main }) => main)),
+      changeAfterReleaseAt: after[0]?.time ?? null,
+      mainChangeAfterReleaseAt: after.find(({ main }) => main)?.time ?? null
+    };
+  };
   scope.__idiomPending = {
     token: config.token,
     bind: (element) => {
@@ -32700,11 +34708,7 @@ function pendingWatcher(config) {
       return {
         dispatched: startedAt !== null,
         elapsed: startedAt === null ? null : since(),
-        indicators: [...indicators],
-        firstChange,
-        firstMainChange,
-        changeAfterReleaseAt,
-        mainChangeAfterReleaseAt,
+        ...settled(periodicNoise()),
         mainSelector: mainSelectorOf(mainElement),
         mainEmpty: mainEmpty === null ? null : { ...mainEmpty },
         routeChange,
@@ -32881,10 +34885,15 @@ async function replayHeld(options) {
     secondActivation: { attempted: false, duplicates: [] },
     notes: []
   };
+  let hold;
+  const navigated = () => hold?.requests.some((request2) => request2.navigation) === true;
   const read = () => page.evaluate((token2) => {
     const active = window.__idiomPending;
     return active?.token === token2 ? active.read() : null;
-  }, token);
+  }, token).catch((error) => {
+    if (contextGone.test(String(error)) && navigated()) return null;
+    throw error;
+  });
   let before = null;
   const apply = (latest) => {
     if (latest === null) return;
@@ -32928,7 +34937,6 @@ async function replayHeld(options) {
     },
     snapshot3
   );
-  let hold;
   try {
     await page.evaluate(installFeedback);
     await page.evaluate(pendingWatcher, {
@@ -32968,6 +34976,11 @@ async function replayHeld(options) {
     else if (facts?.elapsed == null)
       await page.waitForTimeout(Math.max(0, withinMs - hold.since()));
     facts = await read();
+    if (facts === null && navigated()) {
+      held.notes.push(NAVIGATION_NOTE2);
+      await handle.finish(void 0, false);
+      return;
+    }
     apply(facts);
     if (facts?.dispatched !== true)
       held.notes.push("action dispatch was not observed at the trigger");
@@ -33035,10 +35048,22 @@ async function replayHeld(options) {
     await handle.dispose();
   }
 }
+function heldStepIndexes(actions, steps) {
+  return actions.flatMap((action) => {
+    if (action.source !== "web-step" || action.stepIndex === void 0)
+      return [];
+    if (!heldCandidate(action.requests)) return [];
+    const step = steps[action.stepIndex - 1];
+    return step && ["click", "fill", "press", "select"].includes(step.action) ? [action.stepIndex] : [];
+  });
+}
+function replayKey(navigationUrl, steps, stepIndex) {
+  return `${navigationUrl}\0${JSON.stringify(steps.slice(0, stepIndex))}`;
+}
 function heldCandidate(requests) {
   return requests.some((request2) => heldTypes.has(request2.resourceType));
 }
-var MAX_HELD_REPLAYS, NOISE_SAMPLE_MS, MAX_HELD_REQUESTS, safeMethods3, heldTypes;
+var NAVIGATION_NOTE2, contextGone, MAX_HELD_REPLAYS, NOISE_SAMPLE_MS, MAX_HELD_REQUESTS, safeMethods3, heldTypes;
 var init_loading = __esm({
   "src/capture/loading.ts"() {
     "use strict";
@@ -33046,6 +35071,8 @@ var init_loading = __esm({
     init_failure_identity();
     init_feedback();
     init_request_policy();
+    NAVIGATION_NOTE2 = "main-frame document navigation";
+    contextGone = /Execution context was destroyed|Cannot find context with specified id/;
     MAX_HELD_REPLAYS = 6;
     NOISE_SAMPLE_MS = 250;
     MAX_HELD_REQUESTS = 60;
@@ -33087,6 +35114,7 @@ var init_motion2 = __esm({
         if (typeof preference === "boolean") this.reducedMotion = preference;
       }
       async start(identity7, recording) {
+        const actionStarted = Date.now();
         const token = `${Date.now()}:${Math.random()}`;
         let failure3;
         try {
@@ -33513,6 +35541,7 @@ var init_motion2 = __esm({
                       change.reason = reason;
                     }
                 }
+                action.elapsedMs = Date.now() - actionStarted;
                 this.actions.push(linkRecording(action, recording));
               } catch (error) {
                 this.actions.push({
@@ -33944,16 +35973,16 @@ async function screenshotRects(page, selectors) {
     return rects;
   }, selectors);
 }
-function screenshotDrift(observed, captured) {
-  if (Math.abs(observed.width - captured.width) <= 1 && Math.abs(observed.height - captured.height) <= 1)
+function screenshotDrift(observed3, captured) {
+  if (Math.abs(observed3.width - captured.width) <= 1 && Math.abs(observed3.height - captured.height) <= 1)
     return void 0;
   return {
-    observed: { width: observed.width, height: observed.height },
+    observed: { width: observed3.width, height: observed3.height },
     captured: { width: captured.width, height: captured.height }
   };
 }
-async function withScreenshotGeometry(page, geometry, observed, selectors) {
-  const drift = observed === void 0 || geometry.strategy === "viewport" ? void 0 : screenshotDrift(observed, geometry);
+async function withScreenshotGeometry(page, geometry, observed3, selectors) {
+  const drift = observed3 === void 0 || geometry.strategy === "viewport" ? void 0 : screenshotDrift(observed3, geometry);
   if (drift === void 0) return geometry;
   return {
     ...geometry,
@@ -34134,6 +36163,77 @@ function timelineRecorder(config) {
   const inserted = /* @__PURE__ */ new WeakSet();
   const pendingJoins = [];
   let started = false;
+  const rootScroll = [];
+  const rightSide = [
+    "padding-right",
+    "margin-right",
+    "padding-inline-end",
+    "margin-inline-end"
+  ];
+  const rootFacts = () => {
+    const html = document.documentElement;
+    const body = document.body;
+    const htmlStyle = getComputedStyle(html);
+    const bodyStyle = body ? getComputedStyle(body) : null;
+    const fromBody = htmlStyle.overflowY === "visible" && bodyStyle !== null;
+    const overflowY = fromBody ? bodyStyle?.overflowY ?? "visible" : htmlStyle.overflowY;
+    const scroller = document.scrollingElement ?? html;
+    const hidden = overflowY === "hidden" || overflowY === "clip";
+    const fixed = bodyStyle?.position === "fixed";
+    const lockedBy = hidden ? `${fromBody ? "body" : "html"} overflow: ${overflowY}` : fixed ? "body position: fixed" : void 0;
+    return {
+      gutter: Math.max(0, Math.round(window.innerWidth - html.clientWidth)),
+      scrollable: overflowY === "scroll" || !hidden && !fixed && scroller.scrollHeight > scroller.clientHeight,
+      stableGutter: /stable/.test(
+        htmlStyle.getPropertyValue("scrollbar-gutter")
+      ),
+      ...lockedBy ? { lockedBy } : {}
+    };
+  };
+  const compensated = () => {
+    const roots = [document.documentElement, document.body].filter(
+      (element) => element instanceof HTMLElement
+    );
+    if (roots.some(
+      (element) => rightSide.some((name) => element.style.getPropertyValue(name) !== "")
+    ))
+      return true;
+    let budget = 3e3;
+    const visit = (rules) => {
+      for (const rule of rules) {
+        if (--budget < 0) return false;
+        if (rule instanceof CSSStyleRule) {
+          if (/[.[]/.test(rule.selectorText) && rightSide.some((name) => rule.style.getPropertyValue(name) !== ""))
+            try {
+              if (roots.some((element) => element.matches(rule.selectorText)))
+                return true;
+            } catch {
+            }
+        } else if ("cssRules" in rule && visit(rule.cssRules))
+          return true;
+      }
+      return false;
+    };
+    for (const sheet of document.styleSheets) {
+      let rules;
+      try {
+        rules = sheet.cssRules;
+      } catch {
+        continue;
+      }
+      if (visit(rules)) return true;
+    }
+    return false;
+  };
+  const sampleRoot = () => {
+    if (config.load || !document.body) return;
+    const facts = rootFacts();
+    const last = rootScroll.at(-1);
+    if (last && last.gutter === facts.gutter && last.scrollable === facts.scrollable && last.stableGutter === facts.stableGutter && last.lockedBy === facts.lockedBy)
+      return;
+    if (rootScroll.length >= 8) return;
+    rootScroll.push({ time: now(), ...facts, compensation: compensated() });
+  };
   let dirty = true;
   let stopped = false;
   let frame = 0;
@@ -34295,6 +36395,7 @@ function timelineRecorder(config) {
   const mutationObserver = new MutationObserver(onMutations);
   const sample = (final) => {
     if (!started) return;
+    sampleRoot();
     const full = frames.length >= limits.frames - (final ? 0 : 1);
     if (full && final) return;
     const time = now();
@@ -34485,10 +36586,10 @@ function timelineRecorder(config) {
   const visibleChanges = () => {
     const before = start;
     if (!before || !document.body) return [];
-    const parentOf = (element) => element.parentElement ?? removedParent.get(element) ?? null;
+    const parentOf2 = (element) => element.parentElement ?? removedParent.get(element) ?? null;
     const lineage = (element) => {
       const chain = [];
-      for (let current = parentOf(element); current && current !== document.body && current !== document.documentElement; current = parentOf(current))
+      for (let current = parentOf2(element); current && current !== document.body && current !== document.documentElement; current = parentOf2(current))
         chain.push(current);
       return chain;
     };
@@ -34640,7 +36741,7 @@ function timelineRecorder(config) {
     const classified = [];
     const parents = /* @__PURE__ */ new Map();
     for (const root2 of presence) {
-      const parent = parentOf(root2.element);
+      const parent = parentOf2(root2.element);
       if (!parent) continue;
       const directions = parents.get(parent) ?? /* @__PURE__ */ new Set();
       directions.add(root2.direction);
@@ -34649,7 +36750,7 @@ function timelineRecorder(config) {
     const routeRoots2 = [];
     for (const root2 of all) {
       const element = root2.element;
-      const parent = parentOf(element) ?? element;
+      const parent = parentOf2(element) ?? element;
       const rect3 = root2.after ?? root2.before;
       if (routed && (main ? within4(element, main) : !!rect3 && area2(rect3) >= 0.5 * window.innerWidth * window.innerHeight)) {
         routeRoots2.push(root2);
@@ -34681,11 +36782,11 @@ function timelineRecorder(config) {
       if (floating(element)) continue;
       const target2 = before.controls.find((control2) => within4(element, control2)) ?? closestVia(element, "[role=tabpanel]");
       if (target2) {
-        const swap = target2.matches("[role=tabpanel]") || (parents.get(parentOf(target2) ?? target2)?.size ?? 0) > 1 || target2 !== element && (parents.get(parent)?.size ?? 0) > 1;
+        const swap = target2.matches("[role=tabpanel]") || (parents.get(parentOf2(target2) ?? target2)?.size ?? 0) > 1 || target2 !== element && (parents.get(parent)?.size ?? 0) > 1;
         classified.push({
           ...root2,
           kind: swap ? "content-swap" : "expand-collapse",
-          container: swap ? target2 === element ? parent : parentOf(target2) ?? target2 : target2
+          container: swap ? target2 === element ? parent : parentOf2(target2) ?? target2 : target2
         });
         continue;
       }
@@ -34742,6 +36843,13 @@ function timelineRecorder(config) {
       "data",
       "output"
     ]);
+    const paintsBox = (element) => {
+      const style = getComputedStyle(element);
+      const opaque = (color) => !/^(?:transparent|rgba\([^)]*,\s*0\))$/.test(color.trim());
+      return opaque(style.backgroundColor) || style.backgroundImage !== "none" || style.boxShadow !== "none" || ["Top", "Right", "Bottom", "Left"].some(
+        (side) => Number.parseFloat(style[`border${side}Width`]) > 0 && style[`border${side}Style`] !== "none" && opaque(style[`border${side}Color`])
+      );
+    };
     const textOnlyOf = (root2) => {
       const element = root2.element;
       if (root2.kind === "route") return false;
@@ -34750,9 +36858,11 @@ function timelineRecorder(config) {
       if (element.children.length > 0) return false;
       const inlineLevel = (leaf) => leaf.isConnected ? /^(?:inline|contents)$/.test(getComputedStyle(leaf).display) : inline2.has(leaf.tagName.toLowerCase());
       if (inlineLevel(element)) return true;
+      if (element.isConnected && textTargets.has(element) && !inserted.has(element) && !lineage(element).some((ancestor) => inserted.has(ancestor)) && !paintsBox(element))
+        return true;
       if (element.isConnected) return false;
       return presence.some(
-        (other) => other.element !== element && other.direction !== root2.direction && parentOf(other.element) === parentOf(element) && other.element.tagName === element.tagName && other.element.children.length === 0 && inlineLevel(other.element)
+        (other) => other.element !== element && other.direction !== root2.direction && parentOf2(other.element) === parentOf2(element) && other.element.tagName === element.tagName && other.element.children.length === 0 && inlineLevel(other.element)
       );
     };
     const covers = (target2, element, rect3) => {
@@ -34766,7 +36876,7 @@ function timelineRecorder(config) {
       if (element.isConnected) return selectorFor(element);
       const tracked = entries.get(element)?.selector;
       if (tracked) return tracked;
-      const parent = parentOf(element);
+      const parent = parentOf2(element);
       const tag = element.tagName.toLowerCase();
       return parent?.isConnected ? `${selectorFor(parent)} > ${tag}` : tag;
     };
@@ -34832,6 +36942,7 @@ function timelineRecorder(config) {
       elements: [...entries.values()].map(sampleOf)
     };
     frames.push(first);
+    sampleRoot();
     mutationObserver.observe(document, { childList: true, subtree: true });
     snapshotStart();
     dirty = false;
@@ -34962,6 +37073,7 @@ function timelineRecorder(config) {
         url: location.pathname,
         ...start ? { fromUrl: start.fromUrl, reducedMotion: start.reducedMotion } : {},
         ...changes2 ? { visibleChanges: changes2 } : {},
+        ...rootScroll.length ? { rootScroll } : {},
         clockOrigin: performance.timeOrigin + startMark,
         truncated: [...truncated],
         notes: [...notes],
@@ -35525,17 +37637,17 @@ async function runAction(page, step) {
     }
     case "expectText": {
       const match = await page.waitForFunction(
-        (text3) => {
+        (text4) => {
           const roots = [document];
           for (const root2 of roots) {
             for (const element of root2.querySelectorAll("*")) {
               if (element.shadowRoot !== null) roots.push(element.shadowRoot);
-              if (element instanceof HTMLElement && element.getClientRects().length > 0 && getComputedStyle(element).visibility === "visible" && element.innerText.includes(text3))
+              if (element instanceof HTMLElement && element.getClientRects().length > 0 && getComputedStyle(element).visibility === "visible" && element.innerText.includes(text4))
                 return true;
             }
             if (root2 instanceof ShadowRoot && getComputedStyle(root2.host).visibility === "visible") {
               for (const node of root2.childNodes) {
-                if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.includes(text3))
+                if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.includes(text4))
                   continue;
                 const range = document.createRange();
                 range.selectNodeContents(node);
@@ -36022,9 +38134,9 @@ async function collectPageEvidence(options) {
         actual: status ?? "no response"
       });
     }
-    for (const text3 of options.state.expect.textPresent) {
-      if (!bodyText.includes(text3)) {
-        mismatches.push({ kind: "text-present", expected: text3 });
+    for (const text4 of options.state.expect.textPresent) {
+      if (!bodyText.includes(text4)) {
+        mismatches.push({ kind: "text-present", expected: text4 });
       }
     }
     for (const selector of options.state.expect.selectorPresent) {
@@ -36415,7 +38527,16 @@ function failureKey(selector, requests) {
 function recoveryWatcher(config) {
   const scope = window;
   scope.__idiomRecovery?.dispose();
-  const { rendered, selectorFor, normalize: normalize2, textOf: textOf2, progressText, skeletal } = scope.__idiomFeedback;
+  const {
+    rendered,
+    selectorFor,
+    normalize: normalize2,
+    textOf: textOf2,
+    progressText,
+    skeletal,
+    mainOf,
+    noiseSet
+  } = scope.__idiomFeedback;
   let trigger = null;
   try {
     trigger = document.querySelector(config.selector);
@@ -36423,15 +38544,15 @@ function recoveryWatcher(config) {
   }
   let started = null;
   let boundary = null;
-  let region = document.querySelector("main, [role=main]") ?? document.body;
+  let region = mainOf();
   let initialEmpty = null;
   let initiallyEnabled = null;
   let truncated = false;
   let regionSelector = "body";
   let pendingBaseline = /* @__PURE__ */ new WeakSet();
   const elapsed = () => started === null ? null : performance.now() - started;
-  const noisy = /* @__PURE__ */ new Set();
-  const noise = (e) => [...noisy].some((n) => n === e || n.contains(e));
+  const noisy = noiseSet();
+  const noise = noisy.has;
   const errorWords = /\b(error|failed|failure|unable|couldn.t|cannot|can.t|sorry|wrong|try again|went wrong|unsuccessful)\b/i;
   const signals = "[role=alert], [role=status], [aria-live]:not([aria-live=off]), [aria-invalid=true]";
   const baseline = /* @__PURE__ */ new Map();
@@ -36477,16 +38598,16 @@ function recoveryWatcher(config) {
         "[role=alert], [role=status], [aria-live]:not([aria-live=off])"
       );
       const invalid = e.matches("[aria-invalid=true]");
-      const text3 = invalid ? "aria-invalid=true" : normalize2(e.textContent);
-      if (!text3 || text3 === baseline.get(e) || progressText(text3) && !errorWords.test(text3))
+      const text4 = invalid ? "aria-invalid=true" : normalize2(e.textContent);
+      if (!text4 || text4 === baseline.get(e) || progressText(text4) && !errorWords.test(text4))
         continue;
-      if (live ? !announced(e) || !local(e) && !errorWords.test(text3) : !rendered(e) || !local(e))
+      if (live ? !announced(e) || !local(e) && !errorWords.test(text4) : !rendered(e) || !local(e))
         continue;
-      if (!live && !invalid && (!errorWords.test(text3) || !message(e)))
+      if (!live && !invalid && (!errorWords.test(text4) || !message(e)))
         continue;
       if (invalid && !region.contains(e)) continue;
       const selector = selectorFor(e);
-      const key4 = `${selector}|${text3}`;
+      const key4 = `${selector}|${text4}`;
       if (seen.has(key4)) continue;
       seen.add(key4);
       if (feedback.length >= 40) {
@@ -36496,17 +38617,14 @@ function recoveryWatcher(config) {
       feedback.push({
         time: elapsed() ?? 0,
         selector,
-        text: text3.slice(0, 160),
+        text: text4.slice(0, 160),
         kind: invalid ? "invalid" : e.matches("[role=alert]") ? "alert" : e.matches("[role=status]") ? "status" : live ? "live" : "error"
       });
     }
   };
   const observer = new MutationObserver((records) => {
     if (started === null) {
-      for (const r of records) {
-        const e = r.target instanceof Element ? r.target : r.target.parentElement;
-        if (e && e !== document.body && e !== region) noisy.add(e);
-      }
+      noisy.markRecords(records, [document.body, region]);
       return;
     }
     scan();
@@ -36516,8 +38634,8 @@ function recoveryWatcher(config) {
       const e = r.target instanceof Element ? r.target : r.target.parentElement;
       if (!e || !local(e) || noise(e) || e === trigger || trigger?.contains(e) || !rendered(e) || e.closest("[role=tooltip]"))
         continue;
-      const text3 = textOf2(e);
-      if (!text3 || text3 === baseline.get(e) || progressText(text3) || errorWords.test(text3) || e.matches(signals))
+      const text4 = textOf2(e);
+      if (!text4 || text4 === baseline.get(e) || progressText(text4) || errorWords.test(text4) || e.matches(signals))
         continue;
       const inserted = [...r.addedNodes].some(
         (n) => n instanceof Element ? rendered(n) && !skeletal(n) && n !== trigger : normalize2(n.textContent) !== ""
@@ -37283,9 +39401,9 @@ async function installInstrumentation(page, respectControlIntent) {
       if (clipboard !== void 0) {
         const original = clipboard.writeText;
         const write = original?.bind(clipboard);
-        const wrapped = async (text3) => {
+        const wrapped = async (text4) => {
           state.clipboard += 1;
-          return write === void 0 ? void 0 : write(text3).catch(() => void 0);
+          return write === void 0 ? void 0 : write(text4).catch(() => void 0);
         };
         clipboard.writeText = wrapped;
         restore.push(() => {
@@ -37372,7 +39490,7 @@ async function snapshot2(page) {
       const style = getComputedStyle(element);
       return style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) > 0;
     };
-    const text3 = (id2) => id2 === null ? "" : id2.split(/\s+/).map((part) => document.getElementById(part)?.textContent ?? "").join(" ").replace(/\s+/g, " ").trim();
+    const text4 = (id2) => id2 === null ? "" : id2.split(/\s+/).map((part) => document.getElementById(part)?.textContent ?? "").join(" ").replace(/\s+/g, " ").trim();
     const regions2 = document.querySelectorAll(
       "dialog[open], [role=dialog], [role=alertdialog], [role=menu], [role=listbox], [role=region], [role=tabpanel], aside, [aria-modal=true], [popover]"
     );
@@ -37381,7 +39499,7 @@ async function snapshot2(page) {
       if (!visible2(region)) continue;
       const role = region.getAttribute("role") ?? region.tagName.toLowerCase();
       const heading = region.querySelector("h1, h2, h3, h4, [role=heading]");
-      const name = region.getAttribute("aria-label") ?? (text3(region.getAttribute("aria-labelledby")) || (heading?.textContent ?? "").replace(/\s+/g, " ").trim());
+      const name = region.getAttribute("aria-label") ?? (text4(region.getAttribute("aria-labelledby")) || (heading?.textContent ?? "").replace(/\s+/g, " ").trim());
       const parts = [];
       for (let current = region; current && current !== document.documentElement; current = current.parentElement) {
         const tag = current.tagName.toLowerCase();
@@ -37410,9 +39528,9 @@ async function stateFingerprint(page) {
     const hash3 = () => {
       let value = 2166136261;
       return {
-        add(text4) {
-          for (let index2 = 0; index2 < text4.length; index2 += 1) {
-            value ^= text4.charCodeAt(index2);
+        add(text5) {
+          for (let index2 = 0; index2 < text5.length; index2 += 1) {
+            value ^= text5.charCodeAt(index2);
             value = Math.imul(value, 16777619);
           }
           value ^= 31;
@@ -37421,7 +39539,7 @@ async function stateFingerprint(page) {
         get: () => (value >>> 0).toString(36)
       };
     };
-    const text3 = hash3();
+    const text4 = hash3();
     const attributes = hash3();
     const visibility = hash3();
     let shown = 0;
@@ -37463,14 +39581,14 @@ async function stateFingerprint(page) {
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
         if (node.parentElement?.closest(roots)) continue;
         const value = node.nodeValue?.trim() ?? "";
-        if (value !== "") text3.add(value);
+        if (value !== "") text4.add(value);
       }
     }
     return [
       Math.round(window.scrollX),
       Math.round(window.scrollY),
       index,
-      text3.get(),
+      text4.get(),
       attributes.get(),
       shown,
       visibility.get()
@@ -37489,7 +39607,7 @@ async function closeControl(page, baseline) {
         const style = getComputedStyle(element);
         return style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) > 0;
       };
-      const text3 = (id2) => id2 === null ? "" : id2.split(/\s+/).map((part) => document.getElementById(part)?.textContent ?? "").join(" ").replace(/\s+/g, " ").trim();
+      const text4 = (id2) => id2 === null ? "" : id2.split(/\s+/).map((part) => document.getElementById(part)?.textContent ?? "").join(" ").replace(/\s+/g, " ").trim();
       const pathFor = (element) => {
         const parts = [];
         let current = element;
@@ -37511,7 +39629,7 @@ async function closeControl(page, baseline) {
         if (!visible2(region)) continue;
         const role = region.getAttribute("role") ?? region.tagName.toLowerCase();
         const heading = region.querySelector("h1, h2, h3, h4, [role=heading]");
-        const name = region.getAttribute("aria-label") ?? (text3(region.getAttribute("aria-labelledby")) || (heading?.textContent ?? "").replace(/\s+/g, " ").trim());
+        const name = region.getAttribute("aria-label") ?? (text4(region.getAttribute("aria-labelledby")) || (heading?.textContent ?? "").replace(/\s+/g, " ").trim());
         if (baseline2.includes(`${role}:${name.slice(0, 80)}`)) continue;
         for (const control of region.querySelectorAll(
           "button, [role=button], input[type=button]"
@@ -37764,7 +39882,7 @@ async function confirmClick(page, path, name, waitMs, timeline, respectControlIn
     await recording.dispose();
   }
 }
-async function clickAndObserve(page, path, waitMs, motion, timeline, name, respectControlIntent, observed, onOpened, timings, clock = () => performance.now(), onBlocked, lateContentMs = LATE_CONTENT_WINDOW_MS) {
+async function clickAndObserve(page, path, waitMs, motion, timeline, name, respectControlIntent, observed3, onOpened, timings, clock = () => performance.now(), onBlocked, lateContentMs = LATE_CONTENT_WINDOW_MS) {
   const hoverRecording = await timeline?.start({
     source: "probe-hover",
     kind: "hover",
@@ -37866,7 +39984,7 @@ async function clickAndObserve(page, path, waitMs, motion, timeline, name, respe
     page.off("request", onRequest);
     page.off("dialog", onDialog);
     page.off("popup", onPopup);
-    const effects = observed;
+    const effects = observed3;
     const after = await snapshot2(page).catch(() => ({
       url: "",
       revealed: [],
@@ -38684,6 +40802,10 @@ async function probeControls(options) {
     try {
       await deadline.run(async () => {
         const realPage = await ensurePage(deadline);
+        if (!noiseRecorded.has(realPage)) {
+          noiseRecorded.add(realPage);
+          await realPage.addInitScript(installNoiseRecorder);
+        }
         bound = deadlinePage(realPage, deadline);
         const page = bound.page;
         needsReplay = true;
@@ -38825,7 +40947,8 @@ async function probeControls(options) {
         },
         reach: step.reach,
         original: step.sourceAction,
-        requests: step.requests
+        requests: step.requests,
+        replayKey: step.replayKey
       })),
       ...[...heldQueue].sort(
         (a, b) => (a.candidate.order ?? Number.POSITIVE_INFINITY) - (b.candidate.order ?? Number.POSITIVE_INFINITY)
@@ -38871,14 +40994,24 @@ async function probeControls(options) {
       return;
     }
     const seenFailures = /* @__PURE__ */ new Set();
+    const replays = options.replayLedger;
+    const planned = replays?.planned(partition) === true;
+    let position = 0;
     for (const [index, entry] of items.entries()) {
+      const key4 = planned ? entry.replayKey : void 0;
+      if (replays && key4 !== void 0) {
+        const owner2 = replays.owner(partition, key4);
+        if (replays.lookup(partition, key4) || owner2 !== void 0 && owner2 !== stateId)
+          continue;
+      }
+      const slot = position++;
       if (failureSummary && entry.original) {
-        const key4 = failureKey(entry.item.selector, entry.original.requests);
-        if (seenFailures.has(key4)) continue;
-        seenFailures.add(key4);
+        const key5 = failureKey(entry.item.selector, entry.original.requests);
+        if (seenFailures.has(key5)) continue;
+        seenFailures.add(key5);
       }
       const left = items.length - index;
-      if (index >= MAX_HELD_REPLAYS) {
+      if (slot >= MAX_HELD_REPLAYS) {
         summary.notes.push(
           `not reached: ${left} held replays beyond the cap of ${MAX_HELD_REPLAYS}`
         );
@@ -38897,16 +41030,30 @@ async function probeControls(options) {
         break;
       }
       const before = timelines?.actions.length ?? 0;
+      const completedBefore = failureSummary?.completed.length ?? 0;
       const go = await heldAttempt(
         entry.item,
         entry.reach,
         summary.notes,
         entry.original,
         entry.requests,
-        index < MAX_HELD_REPLAYS
+        slot < MAX_HELD_REPLAYS
       );
-      if (index < MAX_HELD_REPLAYS && (timelines?.actions.length ?? 0) > before)
+      if (slot < MAX_HELD_REPLAYS && (timelines?.actions.length ?? 0) > before)
         summary.ran += 1;
+      if (replays && key4 !== void 0) {
+        const recorded = (timelines?.actions ?? []).filter(
+          (action) => (action.held?.of === "web-step" || action.failure?.of === "web-step") && action.stepIndex === entry.item.stepIndex
+        );
+        if (recorded.length && !recorded.some((action) => action.status === "unavailable"))
+          replays.record(
+            partition,
+            key4,
+            stateId,
+            recorded,
+            failureSummary?.completed.slice(completedBefore) ?? []
+          );
+      }
       if (!go) break;
     }
   };
@@ -39494,6 +41641,7 @@ async function probeControls(options) {
     }
     if (options.collections?.length) artifact.collections = [];
     for (const itemSelector of options.collections ?? []) {
+      const collectionStarted = Date.now();
       const entry = { selector: itemSelector, menus: [] };
       artifact.collections?.push(entry);
       let triggers = [];
@@ -39580,6 +41728,7 @@ async function probeControls(options) {
         if (!value)
           entry.reason = `collection sampling timed-out: ${trigger.selector}`;
       }
+      entry.elapsedMs = Date.now() - collectionStarted;
     }
     effects = void 0;
     selector = "html";
@@ -39647,19 +41796,19 @@ async function probeControls(options) {
         artifact.reason ?? "probe interrupted before replay coverage completed"
       );
     if (artifact.status !== "ran" && explanationIdentities.length) {
-      const missing = new ExplanationCollector(options.page);
+      const missing2 = new ExplanationCollector(options.page);
       for (const candidate2 of explanationIdentities) {
         if (!artifact.explanations?.records.some(
           (record2) => record2.selector === candidate2.selector
         ))
-          missing.unavailable(
+          missing2.unavailable(
             candidate2.selector,
             artifact.reason ?? "probe incomplete"
           );
       }
       artifact.explanations = mergeExplanations(
         artifact.explanations,
-        missing.evidence()
+        missing2.evidence()
       );
     }
     artifact.motion ??= initialMotion?.evidence(artifact.reason);
@@ -39677,7 +41826,7 @@ async function probeControls(options) {
   }
   return artifact;
 }
-var chromeRegion, menuItemSelector, destructive2, recordedRequests;
+var noiseRecorded, chromeRegion, menuItemSelector, destructive2, recordedRequests;
 var init_probe = __esm({
   "src/capture/probe.ts"() {
     "use strict";
@@ -39694,6 +41843,7 @@ var init_probe = __esm({
     init_probe_ledger();
     init_request_policy();
     init_timeline2();
+    noiseRecorded = /* @__PURE__ */ new WeakSet();
     chromeRegion = /^(?:banner|navigation|toolbar|menubar|contentinfo)\b/;
     menuItemSelector = "[role=menuitem], [role=menuitemradio], [role=menuitemcheckbox]";
     destructive2 = DESTRUCTIVE_ACTION_PATTERN;
@@ -39729,126 +41879,59 @@ var init_progress = __esm({
               let firstMs = null;
               let hit = null;
               const {
-                rendered,
                 selectorFor,
-                normalize: normalize2,
                 textOf: textOf2,
-                progressSelector,
-                statusSelector,
-                progressWords
+                actionEvents: eventsFor,
+                dispatchTarget,
+                indicatorBaseline,
+                scanIndicators,
+                addedProgressText
               } = window.__idiomFeedback;
-              let progressBaseline = new WeakSet(
-                [...document.querySelectorAll(progressSelector)].filter(rendered)
-              );
-              const infinite = (animation) => animation.effect?.getTiming().iterations === Infinity;
-              const visibleInfinite = (animation) => {
-                if (!infinite(animation)) return false;
-                const target3 = animation.effect?.target;
-                return target3 instanceof Element && rendered(target3);
-              };
-              let animationBaseline = new WeakSet(
-                document.getAnimations().filter(visibleInfinite)
-              );
-              let statusBaseline = /* @__PURE__ */ new WeakMap();
-              for (const region of document.querySelectorAll(statusSelector))
-                statusBaseline.set(region, rendered(region) ? textOf2(region) : "");
+              let baseline = indicatorBaseline({ visibleAnimationsOnly: true });
               let trigger = null;
               try {
                 trigger ??= document.querySelector(selector);
               } catch {
               }
               let triggerText = trigger === null ? "" : textOf2(trigger);
-              const actionEvents = action === "click" ? ["pointerdown", "click"] : action === "press" ? ["keydown"] : action === "select" ? ["input", "change"] : ["keydown", "beforeinput", "input"];
+              const actionEvents = eventsFor(action);
               const onAction = (event) => {
                 if (startedAt !== null || (action === "click" || action === "press") && !event.isTrusted)
                   return;
-                let dispatchTarget = trigger;
-                if (trigger !== null && (action === "fill" || action === "select") && !trigger.matches("input, textarea, select") && !(trigger instanceof HTMLElement && trigger.isContentEditable)) {
-                  dispatchTarget = trigger.closest("label")?.control ?? trigger;
-                }
-                const target3 = event.composedPath().find((node) => {
-                  if (!(node instanceof Element)) return false;
-                  if (node === dispatchTarget) return true;
-                  try {
-                    return node.matches(selector);
-                  } catch {
-                    return false;
-                  }
-                });
+                const target3 = dispatchTarget(event, trigger, selector, action);
                 if (!target3) return;
                 startedAt = performance.now();
                 trigger = target3;
-                progressBaseline = new WeakSet(
-                  [...document.querySelectorAll(progressSelector)].filter(rendered)
-                );
-                animationBaseline = new WeakSet(
-                  document.getAnimations().filter(visibleInfinite)
-                );
-                statusBaseline = /* @__PURE__ */ new WeakMap();
-                for (const region of document.querySelectorAll(statusSelector))
-                  statusBaseline.set(
-                    region,
-                    rendered(region) ? textOf2(region) : ""
-                  );
+                baseline = indicatorBaseline({ visibleAnimationsOnly: true });
                 triggerText = textOf2(trigger);
                 observer.takeRecords();
                 for (const type of actionEvents)
                   window.removeEventListener(type, onAction, true);
               };
               const record2 = (kind, element) => {
-                if (hit !== null || startedAt === null) return;
+                if (hit !== null || startedAt === null) return true;
                 firstMs = performance.now() - startedAt;
-                const text3 = textOf2(element).slice(0, 80);
+                const text4 = textOf2(element).slice(0, 80);
                 hit = {
                   kind,
                   selector: selectorFor(element),
-                  ...text3 ? { text: text3 } : {}
+                  ...text4 ? { text: text4 } : {}
                 };
                 stop();
+                return true;
               };
               const scan = (records = []) => {
                 if (hit !== null || startedAt === null) return;
-                for (const element of document.querySelectorAll(progressSelector)) {
-                  const becameBusy = element.getAttribute("aria-busy") === "true" && records.some(
-                    (mutation) => mutation.target === element && mutation.attributeName === "aria-busy" && mutation.oldValue !== "true"
-                  );
-                  if (progressBaseline.has(element) && !becameBusy || !rendered(element))
-                    continue;
-                  return record2(
-                    element.getAttribute("aria-busy") === "true" && !element.matches("[role=progressbar], progress") ? "busy" : "progressbar",
-                    element
-                  );
-                }
-                for (const animation of document.getAnimations()) {
-                  if (!infinite(animation) || animationBaseline.has(animation))
-                    continue;
-                  const target3 = animation.effect?.target;
-                  if (target3 instanceof Element && rendered(target3))
-                    return record2("spinner", target3);
-                }
-                for (const region of document.querySelectorAll(statusSelector)) {
-                  if (!rendered(region)) continue;
-                  const text3 = textOf2(region);
-                  if (text3 !== "" && text3 !== (statusBaseline.get(region) ?? ""))
-                    return record2("status-text", region);
-                }
-                if (trigger?.isConnected && rendered(trigger)) {
-                  const text3 = textOf2(trigger);
-                  if (text3 !== "" && text3 !== triggerText)
-                    return record2("control-text", trigger);
-                }
-                for (const mutation of records) {
-                  const nodes = mutation.type === "characterData" ? [mutation.target] : [...mutation.addedNodes];
-                  for (const node of nodes) {
-                    const element = node instanceof Element ? node : node.parentElement;
-                    if (element === null || !rendered(element)) continue;
-                    const text3 = normalize2(
-                      node instanceof HTMLElement ? node.innerText : node.textContent
-                    );
-                    if (text3 !== "" && (progressWords.test(text3) || /(?:…|\.\.\.)$/.test(text3)))
-                      return record2("progress-text", element);
-                  }
-                }
+                if (scanIndicators(baseline, {
+                  trigger,
+                  triggerText,
+                  records,
+                  skipTrigger: false,
+                  rebusyBaseline: true,
+                  visit: record2
+                }))
+                  return;
+                addedProgressText(records, record2);
               };
               const observer = new MutationObserver((records) => scan(records));
               observer.observe(document, {
@@ -40170,28 +42253,31 @@ async function captureInContext(context2, tuple, runtime, linkChecker) {
         await replay?.dispose();
       }
     };
-    const heldSteps = () => (timelines?.evidence().actions ?? []).flatMap((action) => {
-      if (action.source !== "web-step" || action.stepIndex === void 0)
-        return [];
-      if (!heldCandidate(action.requests)) return [];
-      const stepIndex = action.stepIndex;
-      const step = steps[stepIndex - 1];
-      if (step === void 0 || !(step.action === "click" || step.action === "fill" || step.action === "press" || step.action === "select"))
-        return [];
-      const selector = step.selector;
-      return [
-        {
-          stepIndex,
-          action: step.action,
-          selector,
-          sourceAction: action,
-          requests: timelines ? replayRequests(action) : [],
-          reach: (page2) => reachBefore(page2, stepIndex),
-          perform: (page2) => runAction(page2, step).then(() => void 0),
-          repeat: step.action === "click" ? (page2, timeout) => page2.locator(selector).first().click({ timeout, noWaitAfter: true }) : step.action === "press" ? (page2, timeout) => page2.locator(selector).first().press(step.key, { timeout, noWaitAfter: true }) : void 0
-        }
-      ];
-    });
+    const heldSteps = () => {
+      const actions = timelines?.evidence().actions ?? [];
+      return heldStepIndexes(actions, steps).flatMap((stepIndex) => {
+        const action = actions.find(
+          (entry) => entry.source === "web-step" && entry.stepIndex === stepIndex
+        );
+        const step = steps[stepIndex - 1];
+        if (action === void 0 || step === void 0 || !(step.action === "click" || step.action === "fill" || step.action === "press" || step.action === "select"))
+          return [];
+        const selector = step.selector;
+        return [
+          {
+            stepIndex,
+            replayKey: replayKey(tuple.navigationUrl, steps, stepIndex),
+            action: step.action,
+            selector,
+            sourceAction: action,
+            requests: timelines ? replayRequests(action) : [],
+            reach: (page2) => reachBefore(page2, stepIndex),
+            perform: (page2) => runAction(page2, step).then(() => void 0),
+            repeat: step.action === "click" ? (page2, timeout) => page2.locator(selector).first().click({ timeout, noWaitAfter: true }) : step.action === "press" ? (page2, timeout) => page2.locator(selector).first().press(step.key, { timeout, noWaitAfter: true }) : void 0
+          }
+        ];
+      });
+    };
     return await collectPageEvidence({
       page,
       signal: tuple.signal,
@@ -40350,6 +42436,7 @@ async function captureInContext(context2, tuple, runtime, linkChecker) {
             ({ selector }) => selector
           ),
           ledger: tuple.probeLedger,
+          replayLedger: tuple.replayLedger,
           ...safety === void 0 ? {} : {
             safety: { policy: "third-party", ledger: safety }
           },
@@ -40592,7 +42679,7 @@ var init_browser = __esm({
 });
 
 // src/capture/production-cache.ts
-import { createHash as createHash13, randomUUID as randomUUID5 } from "crypto";
+import { createHash as createHash14, randomUUID as randomUUID5 } from "crypto";
 import {
   cp,
   lstat as lstat3,
@@ -40603,7 +42690,7 @@ import {
   writeFile as writeFile9
 } from "fs/promises";
 import { dirname as dirname7, join as join15, relative as relative11, sep as sep7 } from "path";
-import { z as z19 } from "zod";
+import { z as z20 } from "zod";
 async function assertContainedPath(root2, path) {
   const child = relative11(root2, path);
   if (!child || child === ".." || child.startsWith(`..${sep7}`))
@@ -40723,19 +42810,19 @@ var init_production_cache = __esm({
   "src/capture/production-cache.ts"() {
     "use strict";
     init_errors();
-    metadataSchema = z19.object({
-      version: z19.literal(1),
-      inputHash: z19.string().regex(/^[a-f0-9]{64}$/),
-      port: z19.number().int().min(1).max(65535),
-      id: z19.string().min(1)
+    metadataSchema = z20.object({
+      version: z20.literal(1),
+      inputHash: z20.string().regex(/^[a-f0-9]{64}$/),
+      port: z20.number().int().min(1).max(65535),
+      id: z20.string().min(1)
     }).strict();
-    inputHash = (value) => createHash13("sha256").update(JSON.stringify(value)).digest("hex");
+    inputHash = (value) => createHash14("sha256").update(JSON.stringify(value)).digest("hex");
   }
 });
 
 // src/capture/process.ts
 import { spawn } from "child_process";
-import { createHash as createHash14 } from "crypto";
+import { createHash as createHash15 } from "crypto";
 import { lstat as lstat4, mkdir as mkdir9, mkdtemp as mkdtemp2, realpath as realpath6, rename as rename8, rm as rm7 } from "fs/promises";
 import { createConnection } from "net";
 import { dirname as dirname8, isAbsolute as isAbsolute8, join as join16, relative as relative12, resolve as resolve10, sep as sep8 } from "path";
@@ -41146,7 +43233,7 @@ async function prepareProduction(options) {
         env
       }
     };
-    const fallbackId = createHash14("sha256").update(`${production.build}\0${options.commit}`).digest("hex");
+    const fallbackId = createHash15("sha256").update(`${production.build}\0${options.commit}`).digest("hex");
     const hash3 = inputHash([
       root2,
       output,
@@ -41907,7 +43994,7 @@ function mergePlannedProbe(options) {
   const replayByKey = new Map(
     replayed.map((candidate2, index) => [replayKeys[index], candidate2])
   );
-  const missing = (candidate2, reason) => ({
+  const missing2 = (candidate2, reason) => ({
     selector: candidate2.selector,
     name: candidate2.name,
     region: candidate2.region,
@@ -41929,7 +44016,7 @@ function mergePlannedProbe(options) {
       ownFailure = allocation?.state === state && artifact.reason !== void 0;
       const reason = allocation?.reason ?? (allocation?.state === state ? artifact.reason ?? "control missing after assigned state replay" : `assigned state ${allocation?.state ?? "unavailable"} did not complete`);
       position = artifact.results.length;
-      artifact.results.push(missing(candidate2, reason));
+      artifact.results.push(missing2(candidate2, reason));
       partial();
     }
     if (!allocation?.state) continue;
@@ -41940,7 +44027,7 @@ function mergePlannedProbe(options) {
       const final = ledger.finalReason(partition, key4);
       if (final || allocation.state !== state) {
         partial();
-        artifact.results[position] = missing(
+        artifact.results[position] = missing2(
           candidate2,
           final ?? `assigned state ${allocation.state} did not complete`
         );
@@ -42006,6 +44093,9 @@ function accumulateProbeRound(previous, next) {
     delayMs: next.heldReplay.delayMs,
     queued: previous.heldReplay.queued + next.heldReplay.queued,
     ran: previous.heldReplay.ran + next.heldReplay.ran,
+    ...previous.heldReplay.reused || next.heldReplay.reused ? {
+      reused: (previous.heldReplay.reused ?? 0) + (next.heldReplay.reused ?? 0)
+    } : {},
     notes: [
       .../* @__PURE__ */ new Set([
         ...previous.heldReplay.notes,
@@ -42025,6 +44115,9 @@ function accumulateProbeRound(previous, next) {
         ...failure3,
         queued: (previous.failureReplay?.queued ?? 0) + (next.failureReplay?.queued ?? 0),
         ran: (previous.failureReplay?.ran ?? 0) + (next.failureReplay?.ran ?? 0),
+        ...previous.failureReplay?.reused || next.failureReplay?.reused ? {
+          reused: (previous.failureReplay?.reused ?? 0) + (next.failureReplay?.reused ?? 0)
+        } : {},
         completed: [
           .../* @__PURE__ */ new Set([
             ...previous.failureReplay?.completed ?? [],
@@ -42041,12 +44134,45 @@ function accumulateProbeRound(previous, next) {
     } : {}
   };
 }
+function fillReplays(options) {
+  const { ledger, partition, state, keys, probe } = options;
+  const raw = ledger.fill(partition, state, keys);
+  if (raw.reused === 0) return options.timelines;
+  const copy2 = options.normalizeCopy?.(raw) ?? raw;
+  if (probe) {
+    const held = probe.heldReplay ?? {
+      delayMs: options.delayMs,
+      queued: 0,
+      ran: 0,
+      notes: []
+    };
+    held.reused = (held.reused ?? 0) + copy2.reused;
+    probe.heldReplay = held;
+    if (probe.failureReplay) {
+      probe.failureReplay.completed = [
+        .../* @__PURE__ */ new Set([...probe.failureReplay.completed, ...copy2.failureKeys])
+      ];
+      if (copy2.failureReused)
+        probe.failureReplay.reused = (probe.failureReplay.reused ?? 0) + copy2.failureReused;
+    }
+  }
+  return withTimelineIds(
+    mergeTimelines(options.timelines, {
+      version: 1,
+      status: "ran",
+      limits: { ...TIMELINE_LIMITS },
+      truncated: { actions: 0 },
+      actions: copy2.actions
+    })
+  );
+}
 var keysFor;
 var init_probe_merge = __esm({
   "src/capture/probe-merge.ts"() {
     "use strict";
     init_explanations();
     init_probe_ledger();
+    init_timeline2();
     keysFor = (candidates) => identityKeys(
       candidates.map((candidate2) => ({
         ...candidate2,
@@ -42054,6 +44180,130 @@ var init_probe_merge = __esm({
         signature: candidate2.signature ?? candidate2.path
       }))
     );
+  }
+});
+
+// src/capture/replay-ledger.ts
+function createReplayLedger() {
+  const planned = /* @__PURE__ */ new Set();
+  const holders = /* @__PURE__ */ new Map();
+  const owners = /* @__PURE__ */ new Map();
+  const tried = /* @__PURE__ */ new Map();
+  const entries = /* @__PURE__ */ new Map();
+  const finals = /* @__PURE__ */ new Map();
+  const filled = /* @__PURE__ */ new Set();
+  const slot = (partition, key4) => `${partition}\0${key4}`;
+  const inPartition = (partition, id2) => id2.startsWith(`${partition}\0`);
+  const open3 = (id2) => !entries.has(id2) && !finals.has(id2);
+  const loads = (partition) => {
+    const counts = /* @__PURE__ */ new Map();
+    for (const [id2, state] of owners)
+      if (inPartition(partition, id2) && open3(id2))
+        counts.set(state, (counts.get(state) ?? 0) + 1);
+    return counts;
+  };
+  return {
+    plan(partition, states) {
+      planned.add(partition);
+      const counts = /* @__PURE__ */ new Map();
+      for (const { state, keys } of states)
+        for (const key4 of keys) {
+          const id2 = slot(partition, key4);
+          const list5 = holders.get(id2) ?? [];
+          if (!list5.includes(state)) list5.push(state);
+          holders.set(id2, list5);
+        }
+      for (const [id2, list5] of holders) {
+        if (!inPartition(partition, id2) || owners.has(id2)) continue;
+        let chosen;
+        for (const state of list5)
+          if (chosen === void 0 || (counts.get(state) ?? 0) < (counts.get(chosen) ?? 0))
+            chosen = state;
+        if (chosen === void 0) continue;
+        owners.set(id2, chosen);
+        counts.set(chosen, (counts.get(chosen) ?? 0) + 1);
+      }
+    },
+    planned: (partition) => planned.has(partition),
+    owner: (partition, key4) => owners.get(slot(partition, key4)),
+    assignedCount(partition, state) {
+      let count = 0;
+      for (const [id2, owner2] of owners)
+        if (owner2 === state && inPartition(partition, id2) && open3(id2))
+          count += 1;
+      return count;
+    },
+    record(partition, key4, state, actions, failureKeys) {
+      const id2 = slot(partition, key4);
+      if (entries.has(id2) || actions.length === 0) return;
+      entries.set(id2, {
+        state,
+        actions: actions.map(({ id: _id, ...action }) => clone(action)),
+        failureKeys: [...failureKeys]
+      });
+      finals.delete(id2);
+    },
+    lookup: (partition, key4) => entries.get(slot(partition, key4)),
+    steal(partition, ran2, runnable) {
+      const counts = loads(partition);
+      let reassigned = 0;
+      for (const [id2, owner2] of owners) {
+        if (!inPartition(partition, id2) || !open3(id2) || !ran2.has(owner2))
+          continue;
+        const attempts = tried.get(id2) ?? /* @__PURE__ */ new Set();
+        attempts.add(owner2);
+        tried.set(id2, attempts);
+        counts.set(owner2, Math.max(0, (counts.get(owner2) ?? 0) - 1));
+        let chosen;
+        for (const state of holders.get(id2) ?? [])
+          if (runnable.has(state) && !attempts.has(state) && (chosen === void 0 || (counts.get(state) ?? 0) < (counts.get(chosen) ?? 0)))
+            chosen = state;
+        if (chosen === void 0) {
+          finals.set(
+            id2,
+            `not completed in any state that shows it (tried ${[...attempts].join(", ")})`
+          );
+          continue;
+        }
+        owners.set(id2, chosen);
+        counts.set(chosen, (counts.get(chosen) ?? 0) + 1);
+        reassigned += 1;
+      }
+      return reassigned;
+    },
+    exhaust(partition, reason) {
+      for (const id2 of owners.keys())
+        if (inPartition(partition, id2) && open3(id2)) finals.set(id2, reason);
+    },
+    finalReason: (partition, key4) => finals.get(slot(partition, key4)),
+    fill(partition, state, keys) {
+      const copy2 = {
+        actions: [],
+        failureKeys: [],
+        reused: 0,
+        failureReused: 0
+      };
+      for (const key4 of keys) {
+        const id2 = slot(partition, key4);
+        const entry = entries.get(id2);
+        const pair = `${id2}\0${state}`;
+        if (!entry || entry.state === state || filled.has(pair)) continue;
+        filled.add(pair);
+        copy2.actions.push(...entry.actions.map(clone));
+        copy2.failureKeys.push(...entry.failureKeys);
+        copy2.reused += 1;
+        if (entry.actions.some((action) => action.source === "failure-replay"))
+          copy2.failureReused += 1;
+      }
+      return copy2;
+    }
+  };
+}
+var clone;
+var init_replay_ledger = __esm({
+  "src/capture/replay-ledger.ts"() {
+    "use strict";
+    clone = (value) => JSON.parse(JSON.stringify(value));
   }
 });
 
@@ -42088,13 +44338,13 @@ function resolveCaptureScope(options) {
     selectViewports(options.project, options.flow).map((v) => v.name),
     "viewports"
   );
-  const schemes = parse(
+  const schemes2 = parse(
     options.scope?.schemes,
     selectColorSchemes(options.project, options.flow),
     "schemes"
   );
   const selected2 = options.tuples !== void 0 ? selectCaptureTuples({ ...options, requested: options.tuples }) : declared2.filter(
-    (tuple) => (!states || states.has(tuple.state.id)) && (!viewports || viewports.has(tuple.viewport.name)) && (!schemes || schemes.has(tuple.colorScheme))
+    (tuple) => (!states || states.has(tuple.state.id)) && (!viewports || viewports.has(tuple.viewport.name)) && (!schemes2 || schemes2.has(tuple.colorScheme))
   );
   if (hasScope(options.scope) && selected2.length === 0)
     throw new IdiomError(
@@ -42109,14 +44359,14 @@ function probeCoordinates(project, flow, tuples) {
   const intended = [];
   if (isWebFlow(flow)) {
     if (project.checks.probe.everywhere)
-      intended.push(...enabled.map(coordinate));
+      intended.push(...enabled.map(coordinate2));
     else
       for (const state of new Set(enabled.map((tuple) => tuple.state.id))) {
         const candidates = enabled.filter((tuple) => tuple.state.id === state);
         const first = candidates[0];
         if (!first) continue;
         intended.push(
-          coordinate(
+          coordinate2(
             candidates.find(
               (tuple) => tuple.viewport.name === first.viewport.name && tuple.colorScheme === "light"
             ) ?? first
@@ -42131,14 +44381,14 @@ function probeCoordinates(project, flow, tuples) {
     executed: []
   };
 }
-var coordinate, hasScope;
+var coordinate2, hasScope;
 var init_scope = __esm({
   "src/capture/scope.ts"() {
     "use strict";
     init_errors();
     init_flow();
     init_resolve();
-    coordinate = (tuple) => ({
+    coordinate2 = (tuple) => ({
       state: tuple.state.id,
       viewport: tuple.viewport.name,
       colorScheme: tuple.colorScheme
@@ -42573,6 +44823,9 @@ async function captureOwned(options, owner2) {
       }
       const capturedByKey = /* @__PURE__ */ new Map();
       const probeLedger = createProbeLedger();
+      const injected = options.dependencies?.replayLedger;
+      const replayLedger = injected === null ? void 0 : injected ?? createReplayLedger();
+      const replayKeysOf = /* @__PURE__ */ new Map();
       let probeBudgets = /* @__PURE__ */ new Map();
       const probedOnce = /* @__PURE__ */ new Set();
       const session = browser;
@@ -42606,7 +44859,7 @@ async function captureOwned(options, owner2) {
             onActivity: owner2.stage,
             onProbeProgress: (event) => options.dependencies?.onProbeProgress?.({
               ...event,
-              ...coordinate(selected2)
+              ...coordinate2(selected2)
             }),
             shell: options.flow.shell,
             reuseScreenshot,
@@ -42631,6 +44884,8 @@ async function captureOwned(options, owner2) {
               probeLedger,
               failureReplays: previous?.artifact.result?.observations?.version === 2 ? previous.artifact.result.observations.probe?.failureReplay?.completed : void 0,
               enumerateProbe: session.planProbes && !probePass,
+              // Held replays run only in the probe pass.
+              ...probePass && replayLedger ? { replayLedger } : {},
               probeBudget: probePass ? probeBudgets.get(tupleId(selected2)) : void 0
             } : {},
             ...isPublishedFlow(options.flow) ? { published: true } : {}
@@ -42700,7 +44955,7 @@ async function captureOwned(options, owner2) {
           } : { status: "measured", ms: captured.probeMs };
           if (captured.probeMs !== void 0) executed = true;
           const timing = {
-            ...coordinate(selected2),
+            ...coordinate2(selected2),
             total: {
               status: "measured",
               ms: (previous?.timing.total.ms ?? 0) + Math.max(0, clock() - captureStarted)
@@ -42721,7 +44976,7 @@ async function captureOwned(options, owner2) {
             controls = (result2.observations.probe?.results ?? []).flatMap(
               (control) => control.elapsedMs === void 0 || control.status === "not-reached" ? [] : [
                 {
-                  ...coordinate(selected2),
+                  ...coordinate2(selected2),
                   selector: control.selector,
                   name: control.name,
                   elapsedMs: control.elapsedMs,
@@ -42749,7 +45004,7 @@ async function captureOwned(options, owner2) {
         } else {
           laneResults[index] = {
             timing: {
-              ...coordinate(selected2),
+              ...coordinate2(selected2),
               total: { status: "unavailable", ms: 0 },
               probe: {
                 status: probeKeys.has(tupleId(selected2)) ? "unavailable" : "skipped",
@@ -42805,6 +45060,74 @@ async function captureOwned(options, owner2) {
           states.add(selected2.state.id);
           runnable.set(partition, states);
         }
+        const replayPartitions = /* @__PURE__ */ new Map();
+        for (const [index, selected2] of selectedTuples.entries()) {
+          const partition = `${selected2.viewport.name}\0${selected2.colorScheme}`;
+          if (!runnable.get(partition)?.has(selected2.state.id)) continue;
+          const resolution = resolutionByState.get(selected2.state.id);
+          if (!resolution?.ok) continue;
+          const state = resolution.value.state;
+          const steps = "health" in state ? state.steps : [];
+          const held = heldStepIndexes(
+            laneResults[index]?.artifact.result?.timelines?.actions ?? [],
+            steps
+          ).map((stepIndex) => ({
+            stepIndex,
+            key: replayKey(resolution.value.navigationUrl, steps, stepIndex)
+          }));
+          replayKeysOf.set(index, held);
+          const states = replayPartitions.get(partition) ?? [];
+          states.push({
+            state: selected2.state.id,
+            keys: held.map(({ key: key4 }) => key4)
+          });
+          replayPartitions.set(partition, states);
+        }
+        for (const [partition, states] of replayPartitions)
+          replayLedger?.plan(partition, states);
+        const fillAll = () => {
+          if (!replayLedger) return;
+          for (const [index, held] of replayKeysOf) {
+            const selected2 = selectedTuples[index];
+            const result2 = laneResults[index]?.artifact.result;
+            if (!selected2 || !result2 || held.length === 0) continue;
+            const resolution = resolutionByState.get(selected2.state.id);
+            if (!resolution?.ok) continue;
+            const probe = result2.observations?.version === 2 ? result2.observations.probe : void 0;
+            result2.timelines = fillReplays({
+              ledger: replayLedger,
+              partition: `${selected2.viewport.name}\0${selected2.colorScheme}`,
+              state: selected2.state.id,
+              // A state that kept its own replay of a step (one that did not
+              // record) is not given a second.
+              keys: held.filter(
+                ({ stepIndex }) => !result2.timelines?.actions.some(
+                  (action) => action.held?.of === "web-step" && action.stepIndex === stepIndex
+                )
+              ).map(({ key: key4 }) => key4),
+              timelines: result2.timelines,
+              probe,
+              delayMs: project.checks.loading.delayMs,
+              // The ledger holds in-session evidence, while this tuple has
+              // already been sanitized. Normalize copies (including failure
+              // keys) for the receiving state's setup URL and configured
+              // origin, without rewriting its saved evidence a second time.
+              normalizeCopy: (copy2) => mapStrings(
+                copy2,
+                (value) => replaceOrigin(
+                  replaceDerivedValue(
+                    value,
+                    resolution.value.navigationUrl,
+                    resolution.value.metadataUrl,
+                    resolution.value.sanitizationAliases
+                  ),
+                  boundOrigin,
+                  configuredOrigin
+                )
+              )
+            });
+          }
+        };
         const wallTarget = options.dependencies?.probeWallTargetMs ?? PROBE_WALL_TARGET_MS;
         const flowDeadline = runStarted + wallTarget - PROBE_WALL_RESERVE_MS;
         for (let round5 = 1; ; round5 += 1) {
@@ -42814,17 +45137,12 @@ async function captureOwned(options, owner2) {
             ) === "non-html")
               return [];
             const partition = `${selected2.viewport.name}\0${selected2.colorScheme}`;
-            const count = probeLedger.assignedCount(
-              partition,
-              selected2.state.id
-            );
+            const replays = replayLedger?.assignedCount(partition, selected2.state.id) ?? 0;
+            const count = probeLedger.assignedCount(partition, selected2.state.id) + replays;
             return round5 === 1 || count > 0 ? [
               {
                 id: tupleId(selected2),
-                count: probeLedger.assignedWeight(
-                  partition,
-                  selected2.state.id
-                )
+                count: probeLedger.assignedWeight(partition, selected2.state.id) + replays
               }
             ] : [];
           });
@@ -42853,13 +45171,48 @@ async function captureOwned(options, owner2) {
                 await captureTuple(selected2, index, true);
             }
           });
+          fillAll();
           let requeued = 0;
-          for (const [partition, states] of runnable)
-            requeued += probeLedger.steal(partition, states);
+          for (const [partition, states] of runnable) {
+            const ran2 = new Set(
+              selectedTuples.filter(
+                (selected2) => ids.has(tupleId(selected2)) && `${selected2.viewport.name}\0${selected2.colorScheme}` === partition
+              ).map((selected2) => selected2.state.id)
+            );
+            requeued += probeLedger.steal(partition, states) + (replayLedger?.steal(partition, ran2, states) ?? 0);
+          }
           if (requeued === 0) break;
         }
-        for (const partition of runnable.keys())
+        for (const partition of runnable.keys()) {
           probeLedger.exhaust(partition, "flow probe time exhausted");
+          replayLedger?.exhaust(partition, "flow probe time exhausted");
+        }
+        fillAll();
+        for (const [index, held] of replayKeysOf) {
+          const selected2 = selectedTuples[index];
+          const result2 = laneResults[index]?.artifact.result;
+          if (!replayLedger || !selected2 || !result2 || result2.observations?.version !== 2)
+            continue;
+          const partition = `${selected2.viewport.name}\0${selected2.colorScheme}`;
+          for (const { key: key4, stepIndex } of held) {
+            if (replayLedger.lookup(partition, key4) || result2.timelines?.actions.some(
+              (action) => action.held?.of === "web-step" && action.stepIndex === stepIndex
+            ))
+              continue;
+            const reason = replayLedger.finalReason(partition, key4);
+            const probe = result2.observations.probe;
+            if (!reason || !probe) continue;
+            probe.heldReplay ??= {
+              delayMs: project.checks.loading.delayMs,
+              queued: 0,
+              ran: 0,
+              notes: []
+            };
+            const note = `not reached: ${reason} (step ${stepIndex})`;
+            if (!probe.heldReplay.notes.includes(note))
+              probe.heldReplay.notes.push(note);
+          }
+        }
         for (const [index, selected2] of selectedTuples.entries()) {
           if (!probeKeys.has(tupleId(selected2))) continue;
           const observation = laneResults[index]?.artifact.result?.observations;
@@ -42941,7 +45294,7 @@ async function captureOwned(options, owner2) {
           tokens: tokens2
         });
         timings.tuples.push({
-          ...coordinate(selected2),
+          ...coordinate2(selected2),
           total: {
             status: "measured",
             ms: Math.max(0, clock() - captureStarted)
@@ -43036,13 +45389,18 @@ async function captureOwned(options, owner2) {
     };
     const scope = runRecordSchema.parse({
       version: 1,
+      captureSettingsIdentity: capturePredicateIdentity(
+        options.project,
+        options.flow
+      ),
       flow: options.flow.id,
       source,
-      declared: selection2.declared.map(coordinate),
-      selected: selectedTuples.map(coordinate),
+      declared: selection2.declared.map(coordinate2),
+      selected: selectedTuples.map(coordinate2),
       viewports: selectViewports(options.project, options.flow),
       probe: probePolicy,
-      timings
+      timings,
+      capture: { reducedMotion: options.project.capture.reducedMotion }
     });
     await writeFile10(
       resolve12(workspace.stagingDirectory, "run.json"),
@@ -43117,6 +45475,7 @@ var init_run = __esm({
     init_capture2();
     init_document();
     init_errors();
+    init_settings();
     init_coverage();
     init_flow();
     init_invariant();
@@ -43127,6 +45486,7 @@ var init_run = __esm({
     init_explanations();
     init_failure();
     init_lanes();
+    init_loading();
     init_motion2();
     init_ownership();
     init_port();
@@ -43134,6 +45494,7 @@ var init_run = __esm({
     init_probe_ledger();
     init_probe_merge();
     init_process();
+    init_replay_ledger();
     init_resolve();
     init_run_record();
     init_scope();
@@ -43481,7 +45842,7 @@ var init_types4 = __esm({
 });
 
 // src/critique/schema.ts
-import { z as z20 } from "zod";
+import { z as z21 } from "zod";
 function pageIssues(index, finding, page) {
   const at = `findings.${index}`;
   if (page === void 0)
@@ -43749,8 +46110,8 @@ var init_schema3 = __esm({
     init_finding();
     init_ruling();
     init_types4();
-    modelFindingSchema = z20.object({
-      category: z20.enum([
+    modelFindingSchema = z21.object({
+      category: z21.enum([
         "hierarchy",
         "density",
         "brand-alignment",
@@ -43762,23 +46123,23 @@ var init_schema3 = __esm({
         "offer-change",
         "unsupported-claim"
       ]),
-      severity: z20.enum(["blocker", "major", "minor"]),
-      confidence: z20.number().min(0).lt(1),
-      rule: z20.string().trim().min(1),
-      selectorHint: z20.string().trim().min(1),
-      state: z20.string().trim().min(1),
-      viewport: z20.string().trim().min(1),
-      colorScheme: z20.enum(["light", "dark"]).optional(),
-      screenshots: z20.array(z20.string().trim().min(1)).min(1),
-      references: z20.array(z20.string().trim().min(1)),
-      explanation: z20.string().trim().min(1),
-      suggestedArea: z20.string().trim().min(1),
-      acceptance: z20.array(z20.string().trim().min(1)).min(1),
-      section: z20.string().trim().min(1).optional(),
-      citations: z20.array(briefCitationSchema).optional(),
-      fix: z20.string().trim().min(1).optional(),
-      focus: z20.enum(pageFocusAreas).optional(),
-      aspect: z20.enum(advisoryAspects).optional()
+      severity: z21.enum(["blocker", "major", "minor"]),
+      confidence: z21.number().min(0).lt(1),
+      rule: z21.string().trim().min(1),
+      selectorHint: z21.string().trim().min(1),
+      state: z21.string().trim().min(1),
+      viewport: z21.string().trim().min(1),
+      colorScheme: z21.enum(["light", "dark"]).optional(),
+      screenshots: z21.array(z21.string().trim().min(1)).min(1),
+      references: z21.array(z21.string().trim().min(1)),
+      explanation: z21.string().trim().min(1),
+      suggestedArea: z21.string().trim().min(1),
+      acceptance: z21.array(z21.string().trim().min(1)).min(1),
+      section: z21.string().trim().min(1).optional(),
+      citations: z21.array(briefCitationSchema).optional(),
+      fix: z21.string().trim().min(1).optional(),
+      focus: z21.enum(pageFocusAreas).optional(),
+      aspect: z21.enum(advisoryAspects).optional()
     }).strict();
     pageCategories2 = /* @__PURE__ */ new Set([
       "direction-drift",
@@ -43786,37 +46147,37 @@ var init_schema3 = __esm({
       "unsupported-claim"
     ]);
     collapse = (value) => value.replace(/\s+/g, " ").trim();
-    modelEnvelopeSchema = z20.object({
-      findings: z20.array(modelFindingSchema),
-      decisionObservations: z20.unknown().optional()
+    modelEnvelopeSchema = z21.object({
+      findings: z21.array(modelFindingSchema),
+      decisionObservations: z21.unknown().optional()
     }).strict();
-    transportPrecedentSchema = z20.object({
-      kind: z20.enum(["law", "governed-surface"]).optional(),
-      excerpt: z20.string().optional(),
-      screenshot: z20.string().optional(),
-      state: z20.string().optional(),
-      viewport: z20.string().optional(),
-      colorScheme: z20.enum(["light", "dark"]).optional()
+    transportPrecedentSchema = z21.object({
+      kind: z21.enum(["law", "governed-surface"]).optional(),
+      excerpt: z21.string().optional(),
+      screenshot: z21.string().optional(),
+      state: z21.string().optional(),
+      viewport: z21.string().optional(),
+      colorScheme: z21.enum(["light", "dark"]).optional()
     }).strict();
-    transportCandidateSchema = z20.object({
-      wording: z20.string().optional(),
+    transportCandidateSchema = z21.object({
+      wording: z21.string().optional(),
       precedent: transportPrecedentSchema.optional()
     }).strict();
-    transportObservationSchema = z20.object({
-      choiceKey: z20.string().optional(),
-      question: z20.string().optional(),
-      state: z20.string().optional(),
-      viewport: z20.string().optional(),
-      colorScheme: z20.enum(["light", "dark"]).optional(),
-      screenshot: z20.string().optional(),
-      nearestLawExcerpt: z20.string().optional(),
-      candidates: z20.array(transportCandidateSchema).optional()
+    transportObservationSchema = z21.object({
+      choiceKey: z21.string().optional(),
+      question: z21.string().optional(),
+      state: z21.string().optional(),
+      viewport: z21.string().optional(),
+      colorScheme: z21.enum(["light", "dark"]).optional(),
+      screenshot: z21.string().optional(),
+      nearestLawExcerpt: z21.string().optional(),
+      candidates: z21.array(transportCandidateSchema).optional()
     }).strict();
-    transportEnvelopeSchema = z20.object({
-      findings: z20.array(modelFindingSchema),
-      decisionObservations: z20.array(transportObservationSchema).optional()
+    transportEnvelopeSchema = z21.object({
+      findings: z21.array(modelFindingSchema),
+      decisionObservations: z21.array(transportObservationSchema).optional()
     }).strict();
-    modelResponseJsonSchema = z20.toJSONSchema(transportEnvelopeSchema, {
+    modelResponseJsonSchema = z21.toJSONSchema(transportEnvelopeSchema, {
       target: "draft-7"
     });
     MalformedCritiqueError = class extends Error {
@@ -44584,7 +46945,7 @@ function uniqueBy(items, key4) {
     return true;
   });
 }
-function coordinate2(observation) {
+function coordinate3(observation) {
   return {
     state: observation.state,
     viewport: observation.viewport,
@@ -44607,7 +46968,7 @@ function aggregateDecisionObservations(options) {
     const distinctStates = new Set(observations.map((item) => item.state));
     if (distinctStates.size < 2) return [];
     const occurrences = uniqueBy(
-      observations.map(coordinate2),
+      observations.map(coordinate3),
       (item) => `${item.state}\0${item.viewport}\0${item.colorScheme ?? ""}\0${item.screenshot}`
     ).sort(
       (left, right) => left.state.localeCompare(right.state) || left.viewport.localeCompare(right.viewport) || (left.colorScheme ?? "").localeCompare(right.colorScheme ?? "") || left.screenshot.localeCompare(right.screenshot)
@@ -44793,7 +47154,7 @@ var init_context = __esm({
 // src/rulings/artifacts.ts
 import { readFile as readFile21, rename as rename9, writeFile as writeFile11 } from "fs/promises";
 import { join as join19 } from "path";
-import { z as z21 } from "zod";
+import { z as z22 } from "zod";
 async function writeUnruledDecisions(runDirectory, decisions) {
   const parsed = artifactSchema.parse(decisions);
   const path = join19(runDirectory, "unruled-decisions.json");
@@ -44826,7 +47187,7 @@ var init_artifacts4 = __esm({
     "use strict";
     init_errors();
     init_ruling();
-    artifactSchema = z21.array(unruledDecisionSchema);
+    artifactSchema = z22.array(unruledDecisionSchema);
   }
 });
 
@@ -45003,7 +47364,7 @@ var init_baseline = __esm({
 // src/rulings/names.ts
 import { mkdir as mkdir10, readFile as readFile23, rename as rename10, writeFile as writeFile12 } from "fs/promises";
 import { join as join21, resolve as resolve17 } from "path";
-import { z as z22 } from "zod";
+import { z as z23 } from "zod";
 async function readRegistry(path) {
   let source;
   try {
@@ -45132,14 +47493,14 @@ var init_names = __esm({
     "use strict";
     init_errors();
     init_baseline();
-    rulingNameEntrySchema = z22.object({
-      name: z22.string().regex(/^ruling-[1-9]\d*$/),
-      fingerprint: z22.string().trim().min(1)
+    rulingNameEntrySchema = z23.object({
+      name: z23.string().regex(/^ruling-[1-9]\d*$/),
+      fingerprint: z23.string().trim().min(1)
     }).strict();
-    rulingNameRegistrySchema = z22.object({
-      version: z22.literal(1),
-      next: z22.number().int().positive(),
-      entries: z22.array(rulingNameEntrySchema)
+    rulingNameRegistrySchema = z23.object({
+      version: z23.literal(1),
+      next: z23.number().int().positive(),
+      entries: z23.array(rulingNameEntrySchema)
     }).strict().superRefine((registry, context2) => {
       const names = /* @__PURE__ */ new Map();
       const fingerprints = /* @__PURE__ */ new Map();
@@ -45508,11 +47869,11 @@ function radius3(element) {
   return new Set(labels).size === 1 ? labels[0] ?? "0" : "mixed";
 }
 function contrast(element, bySelector) {
-  const text3 = element.signals?.paint?.text;
-  if (text3?.status === "measured" && text3.samples.length > 0)
+  const text4 = element.signals?.paint?.text;
+  if (text4?.status === "measured" && text4.samples.length > 0)
     return round(
       Math.min(
-        ...text3.samples.map(
+        ...text4.samples.map(
           (sample) => contrastRatio(sample.foreground, sample.background)
         )
       ),
@@ -45755,28 +48116,28 @@ var init_project2 = __esm({
 });
 
 // src/schemas/rules.ts
-import { z as z23 } from "zod";
+import { z as z24 } from "zod";
 var findingSeveritySchema, ruleMatchSchema, ruleOverrideSchema, rulesSchema;
 var init_rules = __esm({
   "src/schemas/rules.ts"() {
     "use strict";
     init_finding();
-    findingSeveritySchema = z23.enum(["blocker", "major", "minor"]);
-    ruleMatchSchema = z23.object({
-      fingerprint: z23.string().trim().min(1).optional(),
-      category: z23.enum(findingCategories).optional(),
-      flow: z23.string().trim().min(1).optional(),
-      state: z23.string().trim().min(1).optional(),
-      rule: z23.string().trim().min(1).optional()
+    findingSeveritySchema = z24.enum(["blocker", "major", "minor"]);
+    ruleMatchSchema = z24.object({
+      fingerprint: z24.string().trim().min(1).optional(),
+      category: z24.enum(findingCategories).optional(),
+      flow: z24.string().trim().min(1).optional(),
+      state: z24.string().trim().min(1).optional(),
+      rule: z24.string().trim().min(1).optional()
     }).strict().refine((match) => Object.keys(match).length > 0, {
       message: "must contain at least one match field"
     });
-    ruleOverrideSchema = z23.object({
-      id: z23.string().trim().min(1),
+    ruleOverrideSchema = z24.object({
+      id: z24.string().trim().min(1),
       match: ruleMatchSchema,
-      action: z23.enum(["suppress", "severity"]),
+      action: z24.enum(["suppress", "severity"]),
       severity: findingSeveritySchema.optional(),
-      reason: z23.string().trim().min(1)
+      reason: z24.string().trim().min(1)
     }).strict().superRefine((override, context2) => {
       if (override.action === "severity" && override.severity === void 0) {
         context2.addIssue({
@@ -45793,9 +48154,9 @@ var init_rules = __esm({
         });
       }
     });
-    rulesSchema = z23.object({
-      version: z23.literal(1),
-      overrides: z23.array(ruleOverrideSchema)
+    rulesSchema = z24.object({
+      version: z24.literal(1),
+      overrides: z24.array(ruleOverrideSchema)
     }).strict().superRefine((rules, context2) => {
       const seen = /* @__PURE__ */ new Set();
       for (const [index, override] of rules.overrides.entries()) {
@@ -46002,6 +48363,19 @@ function selectFindingTuples(options) {
     (finding) => finding.rule === "idiom:missing-color-scheme" || finding.verification.params?.fullFlow === true
   );
   for (const finding of options.findings) {
+    if (finding.acceptance.kind === "rule") {
+      for (const coordinate6 of finding.acceptance.requiredCoordinates) {
+        if (coordinate6.flow !== options.flow.id || !stateIds.has(coordinate6.state) || !selectedViewportNames.has(coordinate6.viewport) || !selectedColorSchemeNames.has(
+          coordinate6.colorScheme ?? options.project.capture.colorScheme
+        ))
+          throw new IdiomError(
+            `acceptance for ${finding.id} requires an unknown or unselected tuple`
+          );
+        wanted.add(
+          `${coordinate6.state}\0${coordinate6.viewport}\0${coordinate6.colorScheme ?? options.project.capture.colorScheme}`
+        );
+      }
+    }
     if (finding.flow !== options.flow.id)
       throw new IdiomError(
         `embedded finding ${finding.id} references flow ${JSON.stringify(finding.flow)}, expected ${JSON.stringify(options.flow.id)}`
@@ -46047,7 +48421,7 @@ var init_spec = __esm({
 // src/review/names.ts
 import { mkdir as mkdir12, readdir as readdir10, readFile as readFile27, rename as rename11, writeFile as writeFile14 } from "fs/promises";
 import { join as join26, resolve as resolve20 } from "path";
-import { z as z24 } from "zod";
+import { z as z25 } from "zod";
 function issues2(error) {
   return error.issues.map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`).join("; ");
 }
@@ -46427,17 +48801,17 @@ var init_names2 = __esm({
     init_baseline();
     init_spec();
     FINDING_NAME_PATTERN = /^finding-([1-9]\d*)$/;
-    findingNameEntrySchema = z24.object({
-      name: z24.string().regex(FINDING_NAME_PATTERN).refine((value) => findingNameNumber(value) !== void 0, {
+    findingNameEntrySchema = z25.object({
+      name: z25.string().regex(FINDING_NAME_PATTERN).refine((value) => findingNameNumber(value) !== void 0, {
         message: "finding number must be a safe integer"
       }),
-      fingerprints: z24.array(z24.string().trim().min(1)).min(1),
-      legacyIds: z24.array(z24.string().trim().min(1))
+      fingerprints: z25.array(z25.string().trim().min(1)).min(1),
+      legacyIds: z25.array(z25.string().trim().min(1))
     }).strict();
-    findingNameRegistrySchema = z24.object({
-      version: z24.literal(1),
-      next: z24.number().int().positive(),
-      entries: z24.array(findingNameEntrySchema)
+    findingNameRegistrySchema = z25.object({
+      version: z25.literal(1),
+      next: z25.number().int().positive(),
+      entries: z25.array(findingNameEntrySchema)
     }).strict().superRefine((registry, context2) => {
       const names = /* @__PURE__ */ new Map();
       const identities3 = /* @__PURE__ */ new Map();
@@ -46550,7 +48924,7 @@ var init_names2 = __esm({
 });
 
 // src/schemas/exploration.ts
-import { z as z25 } from "zod";
+import { z as z26 } from "zod";
 function normalizeExplorationKey(value) {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
@@ -46558,25 +48932,25 @@ var nonblank2, explorationEditPathSchema, explorationEditSchema, explorationCand
 var init_exploration = __esm({
   "src/schemas/exploration.ts"() {
     "use strict";
-    nonblank2 = z25.string().trim().min(1);
+    nonblank2 = z26.string().trim().min(1);
     explorationEditPathSchema = nonblank2.refine(
       (path) => !path.startsWith("/") && !/^[A-Za-z]:/.test(path) && !path.includes("\\") && !path.split("/").some((part) => part === "" || part === "." || part === "..") && !path.startsWith(".idiom-explore-evidence/"),
       "must be a safe project-relative existing-file path"
     );
-    explorationEditSchema = z25.object({
+    explorationEditSchema = z26.object({
       path: explorationEditPathSchema,
-      oldText: z25.string().min(1),
-      newText: z25.string()
+      oldText: z26.string().min(1),
+      newText: z26.string()
     }).strict().refine((edit2) => edit2.oldText !== edit2.newText, {
       message: "oldText and newText must differ"
     });
-    explorationCandidateSchema = z25.object({
+    explorationCandidateSchema = z26.object({
       label: nonblank2,
       direction: nonblank2,
       choiceKey: nonblank2,
       rule: nonblank2,
       reason: nonblank2,
-      category: z25.enum([
+      category: z26.enum([
         "hierarchy",
         "density",
         "brand-alignment",
@@ -46584,8 +48958,8 @@ var init_exploration = __esm({
         "reference-mismatch"
       ]),
       repair: nonblank2,
-      references: z25.array(nonblank2),
-      edits: z25.array(explorationEditSchema).min(1)
+      references: z26.array(nonblank2),
+      edits: z26.array(explorationEditSchema).min(1)
     }).strict().superRefine((candidate2, context2) => {
       const paths = /* @__PURE__ */ new Set();
       for (const [index, edit2] of candidate2.edits.entries()) {
@@ -46598,7 +48972,7 @@ var init_exploration = __esm({
         paths.add(edit2.path);
       }
     });
-    explorationCandidatesSchema = z25.array(explorationCandidateSchema).length(3).superRefine((candidates, context2) => {
+    explorationCandidatesSchema = z26.array(explorationCandidateSchema).length(3).superRefine((candidates, context2) => {
       const normalizedLabels = candidates.map((candidate2) => normalizeExplorationKey(candidate2.label)).sort();
       if (JSON.stringify(normalizedLabels) !== JSON.stringify(["a", "b", "c"]))
         context2.addIssue({
@@ -46617,27 +48991,27 @@ var init_exploration = __esm({
         directions.add(direction2);
       }
     });
-    explorationRefinementSchema = z25.object({
+    explorationRefinementSchema = z26.object({
       direction: nonblank2,
       choiceKey: nonblank2,
       rule: nonblank2,
       reason: nonblank2,
       category: explorationCandidateSchema.shape.category,
       repair: nonblank2,
-      references: z25.array(nonblank2),
-      edits: z25.array(explorationEditSchema).min(1)
+      references: z26.array(nonblank2),
+      edits: z26.array(explorationEditSchema).min(1)
     }).strict();
-    explorationSteeringSchema = z25.object({
+    explorationSteeringSchema = z26.object({
       question: nonblank2.optional(),
-      decision: z25.string().regex(/^ruling-[1-9]\d*$/).optional()
+      decision: z26.string().regex(/^ruling-[1-9]\d*$/).optional()
     }).strict().refine(
       (value) => value.question === void 0 !== (value.decision === void 0),
       {
         message: "provide exactly one of question or decision"
       }
     );
-    persistedExplorationLabelSchema = nonblank2.transform((value) => normalizeExplorationKey(value).toUpperCase()).pipe(z25.enum(["A", "B", "C"]));
-    persistedExplorationCandidateSchema = z25.object({
+    persistedExplorationLabelSchema = nonblank2.transform((value) => normalizeExplorationKey(value).toUpperCase()).pipe(z26.enum(["A", "B", "C"]));
+    persistedExplorationCandidateSchema = z26.object({
       label: persistedExplorationLabelSchema,
       direction: nonblank2,
       choiceKey: nonblank2,
@@ -46645,43 +49019,43 @@ var init_exploration = __esm({
       reason: nonblank2,
       category: explorationCandidateSchema.shape.category,
       repair: nonblank2,
-      references: z25.array(nonblank2),
+      references: z26.array(nonblank2),
       capture: nonblank2.refine(
         (path) => !path.startsWith("/") && !/^[A-Za-z]:/.test(path) && !path.includes("\\") && !path.includes("\0") && !path.split("/").some((part) => part === "" || part === "." || part === ".."),
         "must be a safe run-relative capture path"
       ),
-      refined: z25.boolean()
+      refined: z26.boolean()
     }).strict();
-    persistedExplorationSteeringSchema = z25.object({
-      decision: z25.string().regex(/^ruling-[1-9]\d*$/),
+    persistedExplorationSteeringSchema = z26.object({
+      decision: z26.string().regex(/^ruling-[1-9]\d*$/),
       fingerprint: nonblank2,
       choiceKey: nonblank2
     }).strict();
-    explorationRunResolutionSchema = z25.discriminatedUnion("outcome", [
-      z25.object({
-        outcome: z25.literal("none"),
+    explorationRunResolutionSchema = z26.discriminatedUnion("outcome", [
+      z26.object({
+        outcome: z26.literal("none"),
         reason: nonblank2,
-        recordedAt: z25.string().datetime({ offset: true })
+        recordedAt: z26.string().datetime({ offset: true })
       }).strict(),
-      z25.object({
-        outcome: z25.literal("rule"),
+      z26.object({
+        outcome: z26.literal("rule"),
         reason: nonblank2,
-        recordedAt: z25.string().datetime({ offset: true }),
+        recordedAt: z26.string().datetime({ offset: true }),
         selected: persistedExplorationLabelSchema,
-        ruling: z25.object({
-          id: z25.string().regex(/^ruling-[1-9]\d*$/),
+        ruling: z26.object({
+          id: z26.string().regex(/^ruling-[1-9]\d*$/),
           fingerprint: nonblank2,
           choiceKey: nonblank2
         }).strict(),
-        repairs: z25.boolean()
+        repairs: z26.boolean()
       }).strict()
     ]);
-    explorationRunSchema = z25.object({
-      version: z25.literal(1),
+    explorationRunSchema = z26.object({
+      version: z26.literal(1),
       flow: nonblank2,
       state: nonblank2,
       question: nonblank2,
-      candidates: z25.array(persistedExplorationCandidateSchema).min(3).max(4),
+      candidates: z26.array(persistedExplorationCandidateSchema).min(3).max(4),
       selected: persistedExplorationLabelSchema.optional(),
       refined: nonblank2.optional(),
       steering: persistedExplorationSteeringSchema.optional(),
@@ -46739,6 +49113,7 @@ var init_schemas = __esm({
     "use strict";
     init_names2();
     init_names();
+    init_acceptance();
     init_decision();
     init_design();
     init_exploration();
@@ -47098,7 +49473,7 @@ function deterministicFinding(options) {
       },
       ...candidate2.fix === void 0 ? {} : { fix: candidate2.fix },
       explanation: candidate2.explanation,
-      acceptance: candidate2.acceptance,
+      ...buildRuleContract(tuple, candidate2, options.config, options.tuples),
       verification: {
         kind: "deterministic-check",
         check: candidate2.verification.check,
@@ -47131,6 +49506,8 @@ function buildDeterministicDrafts(options) {
   return sorted2.map(
     ({ tuple, candidate: candidate2 }, stableOrder) => deterministicFinding({
       runId: options.runId,
+      config: options.config,
+      tuples: options.tuples,
       tuple,
       candidate: candidate2,
       stableOrder,
@@ -47203,7 +49580,17 @@ function buildModelDrafts(options) {
         suggestedArea: candidate2.suggestedArea,
         ...candidate2.fix === void 0 ? {} : { fix: candidate2.fix },
         ...candidate2.focus === void 0 ? {} : { focus: candidate2.focus },
-        acceptance: candidate2.acceptance,
+        basis: "judged",
+        basisDetails: {
+          kind: "judged",
+          summary: "Model critique",
+          confidence: candidate2.confidence
+        },
+        acceptance: {
+          version: 1,
+          kind: "manual",
+          doneWhen: candidate2.acceptance
+        },
         verification: {
           kind: "recapture-visual",
           ...locus === void 0 ? {} : { locus }
@@ -47347,6 +49734,7 @@ var init_findings = __esm({
     "use strict";
     init_coordinate();
     init_temporal_evidence();
+    init_contract();
     init_rules2();
     init_finding();
     init_locus();
@@ -47656,7 +50044,7 @@ function repairSiblingLines(siblings) {
 function repairScopeBoundary(finding) {
   return finding.colorScheme === void 0 ? `- The default scope is flow ${finding.flow}, state ${finding.state}, and viewport ${finding.viewport}. An acceptance criterion that explicitly requires additional coverage extends the corresponding flow, state, or viewport scope; every flow, state, and viewport not required by that default tuple or an acceptance criterion remains out of scope.` : `- The default scope is flow ${finding.flow}, state ${finding.state}, viewport ${finding.viewport}, and color scheme ${finding.colorScheme}. An acceptance criterion that explicitly requires additional coverage extends the corresponding flow, state, viewport, or color-scheme scope; every coordinate not required by that default tuple or an acceptance criterion remains out of scope.`;
 }
-var init_presentation = __esm({
+var init_presentation2 = __esm({
   "src/repair/presentation.ts"() {
     "use strict";
     init_errors();
@@ -47664,10 +50052,10 @@ var init_presentation = __esm({
 });
 
 // src/tickets/render.ts
-import { createHash as createHash15 } from "crypto";
+import { createHash as createHash16 } from "crypto";
 import { relative as relative17, resolve as resolve22, sep as sep11 } from "path";
 function ticketId(fingerprint2, findingId) {
-  return `idiom-${createHash15("sha256").update(fingerprint2).update("\0").update(findingId).digest("hex")}`;
+  return `idiom-${createHash16("sha256").update(fingerprint2).update("\0").update(findingId).digest("hex")}`;
 }
 function ticketIdsForIdentities(identities3) {
   return [
@@ -47717,7 +50105,7 @@ function renderTicket(options) {
     "",
     "## Acceptance criteria",
     "",
-    ...finding.acceptance.map((criterion) => `- [ ] ${criterion}`),
+    ...acceptanceText(finding).map((criterion) => `- [ ] ${criterion}`),
     "",
     "## Out of scope",
     "",
@@ -47756,7 +50144,9 @@ function renderClusterTicket(options) {
   const title = causeTitle === void 0 ? `Resolve ${cluster.members[0]?.record.finding.category ?? "findings"} in ${cluster.component}` : causeTitle.length > 120 ? `${causeTitle.slice(0, 119)}\u2026` : causeTitle;
   const criteria = [
     ...new Set(
-      cluster.members.flatMap((member) => member.record.finding.acceptance)
+      cluster.members.flatMap(
+        (member) => acceptanceText(member.record.finding)
+      )
     )
   ];
   const causeLead = cause === void 0 ? [] : [
@@ -47786,13 +50176,13 @@ function renderClusterTicket(options) {
       ...new Set(
         cluster.members.map((member) => member.record.finding.explanation)
       )
-    ].flatMap((text3) => [text3, ""]),
+    ].flatMap((text4) => [text4, ""]),
     "## Acceptance criteria",
     "",
     ...cause === void 0 ? [] : [
       `- [ ] All ${cluster.members.length} symptoms below clear on recheck (one fix for the shared cause)`
     ],
-    ...criteria.map((text3) => `- [ ] ${text3}`),
+    ...criteria.map((text4) => `- [ ] ${text4}`),
     "",
     "## Out of scope",
     "",
@@ -47815,7 +50205,7 @@ function renderClusterTicket(options) {
       `Selector: ${JSON.stringify(selector ?? "unavailable")}; component: ${JSON.stringify(member.component)}.`,
       "",
       "Acceptance criteria for this member:",
-      ...finding.acceptance.map((text3) => `- ${text3}`),
+      ...acceptanceText(finding).map((text4) => `- ${text4}`),
       ""
     );
     const images = options.availableImages.get(member.id) ?? [];
@@ -47838,6 +50228,7 @@ var init_render2 = __esm({
   "src/tickets/render.ts"() {
     "use strict";
     init_presentation();
+    init_presentation2();
   }
 });
 
@@ -48586,7 +50977,7 @@ var init_filmstrips2 = __esm({
 function screenshotLabel(tuple) {
   return tuple.colorSchemeAxis ? `${tuple.state}/${tuple.viewport}/${tuple.colorScheme}` : `${tuple.state}/${tuple.viewport}`;
 }
-function coordinate3(tuple) {
+function coordinate4(tuple) {
   return {
     state: tuple.state,
     viewport: tuple.viewport,
@@ -48603,7 +50994,7 @@ async function scaleQuestionDecisions(options) {
     if (options.resolvedFingerprints.has(cluster.fingerprint)) continue;
     const coordinates = /* @__PURE__ */ new Map();
     for (const { tuple } of cluster.occurrences) {
-      const item = coordinate3(tuple);
+      const item = coordinate4(tuple);
       coordinates.set(
         `${item.state}\0${item.viewport}\0${item.colorScheme ?? ""}\0${item.screenshot}`,
         item
@@ -48683,10 +51074,10 @@ var init_scale_questions = __esm({
 });
 
 // src/review/groups.ts
-import { createHash as createHash16 } from "crypto";
+import { createHash as createHash17 } from "crypto";
 import { readFile as readFile32, rename as rename14, writeFile as writeFile19 } from "fs/promises";
 import { join as join33 } from "path";
-import { z as z26 } from "zod";
+import { z as z27 } from "zod";
 function coordinateOf(finding) {
   return {
     state: finding.state,
@@ -48697,8 +51088,8 @@ function coordinateOf(finding) {
 }
 function uniqueCoordinates(coordinates) {
   const byKey = /* @__PURE__ */ new Map();
-  for (const coordinate5 of coordinates)
-    byKey.set(tupleCoordinateKey(coordinate5), coordinate5);
+  for (const coordinate6 of coordinates)
+    byKey.set(tupleCoordinateKey(coordinate6), coordinate6);
   return [...byKey.values()].sort(
     (left, right) => compare(left.state, right.state) || compare(left.viewport, right.viewport) || compare(left.colorScheme ?? "", right.colorScheme ?? "") || compare(left.combination ?? "", right.combination ?? "")
   );
@@ -48712,13 +51103,13 @@ function unique3(values) {
 function coordinateIndex(drafts) {
   const index = /* @__PURE__ */ new Map();
   for (const draft of drafts) {
-    const coordinate5 = coordinateOf(draft.finding);
+    const coordinate6 = coordinateOf(draft.finding);
     for (const identity7 of /* @__PURE__ */ new Set([
       draft.finding.fingerprint,
       ...draft.fingerprintAliases ?? []
     ])) {
       const list5 = index.get(identity7) ?? [];
-      list5.push(coordinate5);
+      list5.push(coordinate6);
       index.set(identity7, list5);
     }
   }
@@ -48732,7 +51123,7 @@ function memberCoordinates(groups) {
   return index;
 }
 function groupId(key4) {
-  const hex4 = /^[0-9a-f]{12,}$/.test(key4) ? key4 : createHash16("sha256").update(key4).digest("hex");
+  const hex4 = /^[0-9a-f]{12,}$/.test(key4) ? key4 : createHash17("sha256").update(key4).digest("hex");
   return `group-${hex4.slice(0, 12)}`;
 }
 function groupRepeatedFindings(findings, coordinates, deferredIds = /* @__PURE__ */ new Set()) {
@@ -48762,7 +51153,7 @@ function groupRepeatedFindings(findings, coordinates, deferredIds = /* @__PURE__
     );
     const combinations = unique3(
       all.flatMap(
-        (coordinate5) => coordinate5.combination === void 0 ? [] : [coordinate5.combination]
+        (coordinate6) => coordinate6.combination === void 0 ? [] : [coordinate6.combination]
       )
     );
     const representative = bucket2.findings[0];
@@ -48781,11 +51172,11 @@ function groupRepeatedFindings(findings, coordinates, deferredIds = /* @__PURE__
       representative: representative.id,
       members,
       coordinates: all,
-      states: unique3(all.map((coordinate5) => coordinate5.state)),
-      viewports: unique3(all.map((coordinate5) => coordinate5.viewport)),
+      states: unique3(all.map((coordinate6) => coordinate6.state)),
+      viewports: unique3(all.map((coordinate6) => coordinate6.viewport)),
       colorSchemes: unique3(
         all.flatMap(
-          (coordinate5) => coordinate5.colorScheme === void 0 ? [] : [coordinate5.colorScheme]
+          (coordinate6) => coordinate6.colorScheme === void 0 ? [] : [coordinate6.colorScheme]
         )
       ),
       ...combinations.length === 0 ? {} : { combinations }
@@ -48829,50 +51220,50 @@ async function readGroups(runDirectory) {
       `cannot read finding groups ${path}: ${error instanceof Error ? error.message : String(error)}`
     );
   }
-  const parsed = z26.array(groupSchema).safeParse(value);
+  const parsed = z27.array(groupSchema).safeParse(value);
   if (!parsed.success)
     throw new IdiomError(
       `invalid finding groups ${path}: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`).join("; ")}`
     );
   return parsed.data;
 }
-var coordinateSchema2, memberSchema, groupSchema, severityOrder2;
+var coordinateSchema3, memberSchema, groupSchema, severityOrder2;
 var init_groups = __esm({
   "src/review/groups.ts"() {
     "use strict";
     init_coordinate();
     init_errors();
-    coordinateSchema2 = z26.object({
-      state: z26.string(),
-      viewport: z26.string(),
-      colorScheme: z26.enum(["light", "dark"]).optional(),
-      combination: z26.string().optional()
+    coordinateSchema3 = z27.object({
+      state: z27.string(),
+      viewport: z27.string(),
+      colorScheme: z27.enum(["light", "dark"]).optional(),
+      combination: z27.string().optional()
     }).strict();
-    memberSchema = z26.object({
-      id: z26.string().min(1),
-      fingerprint: z26.string(),
-      commit: z26.string(),
-      state: z26.string(),
-      colorScheme: z26.enum(["light", "dark"]).optional(),
-      severity: z26.enum(["blocker", "major", "minor"]),
-      status: z26.string(),
-      deferred: z26.literal(true).optional(),
-      coordinates: z26.array(coordinateSchema2)
+    memberSchema = z27.object({
+      id: z27.string().min(1),
+      fingerprint: z27.string(),
+      commit: z27.string(),
+      state: z27.string(),
+      colorScheme: z27.enum(["light", "dark"]).optional(),
+      severity: z27.enum(["blocker", "major", "minor"]),
+      status: z27.string(),
+      deferred: z27.literal(true).optional(),
+      coordinates: z27.array(coordinateSchema3)
     }).strict();
-    groupSchema = z26.object({
-      id: z26.string().regex(/^group-[0-9a-f]{12}$/),
-      key: z26.string().min(1),
-      layer: z26.enum(["deterministic", "model"]),
-      category: z26.string(),
-      rule: z26.string().optional(),
-      severity: z26.enum(["blocker", "major", "minor"]),
-      representative: z26.string().min(1),
-      members: z26.array(memberSchema).min(1),
-      coordinates: z26.array(coordinateSchema2),
-      states: z26.array(z26.string()),
-      viewports: z26.array(z26.string()),
-      colorSchemes: z26.array(z26.enum(["light", "dark"])),
-      combinations: z26.array(z26.string()).optional()
+    groupSchema = z27.object({
+      id: z27.string().regex(/^group-[0-9a-f]{12}$/),
+      key: z27.string().min(1),
+      layer: z27.enum(["deterministic", "model"]),
+      category: z27.string(),
+      rule: z27.string().optional(),
+      severity: z27.enum(["blocker", "major", "minor"]),
+      representative: z27.string().min(1),
+      members: z27.array(memberSchema).min(1),
+      coordinates: z27.array(coordinateSchema3),
+      states: z27.array(z27.string()),
+      viewports: z27.array(z27.string()),
+      colorSchemes: z27.array(z27.enum(["light", "dark"])),
+      combinations: z27.array(z27.string()).optional()
     }).strict();
     severityOrder2 = { blocker: 0, major: 1, minor: 2 };
   }
@@ -48885,10 +51276,10 @@ function pageScopeMarkdown(page) {
   return [
     "## Page-review scope",
     "",
-    `- Page: ${text(page.url)}`,
-    `- Brief: ${page.brief === void 0 ? "not supplied" : text(page.brief)}`,
-    `- Art direction: ${page.direction === void 0 ? "not supplied" : text(page.direction)}`,
-    `- Focus areas: ${page.focus.length === 0 ? "none" : page.focus.map(text).join(", ")}`,
+    `- Page: ${text2(page.url)}`,
+    `- Brief: ${page.brief === void 0 ? "not supplied" : text2(page.brief)}`,
+    `- Art direction: ${page.direction === void 0 ? "not supplied" : text2(page.direction)}`,
+    `- Focus areas: ${page.focus.length === 0 ? "none" : page.focus.map(text2).join(", ")}`,
     "",
     "Only the brief is the source of truth for the offer and every statistic; claims were not fact-checked against the web.",
     ""
@@ -48915,7 +51306,7 @@ function quickLimitsMarkdown(targets) {
     "",
     `Only the supplied public URL${targets.length === 1 ? " was" : "s were"} visited; Idiom did not crawl links, and form submission and non-GET requests were blocked while probing:`,
     "",
-    ...targets.map((target2) => `- ${text(target2)}`),
+    ...targets.map((target2) => `- ${text2(target2)}`),
     "",
     "The following were not judged because quick review has no declared states, fixtures, credentials, product document, or design document:",
     "",
@@ -48929,7 +51320,7 @@ function quickLimitsMarkdown(targets) {
     ""
   ];
 }
-function text(value) {
+function text2(value) {
   return value.replace(/([\\`|[\]*_#])/g, "\\$1").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/\r\n?|\n/g, "<br>");
 }
 function fencedEvidence(label4, value, language = "text") {
@@ -48955,19 +51346,19 @@ function designSystemQuestionsMarkdown(decisions) {
   for (const decision of questions) {
     const cluster = decision.scaleCluster;
     lines2.push(
-      `### ${text(decision.id)}: ${text(cluster.value)} on ${text(cluster.componentLabel)}`,
+      `### ${text2(decision.id)}: ${text2(cluster.value)} on ${text2(cluster.componentLabel)}`,
       "",
-      text(decision.question),
+      text2(decision.question),
       "",
       `- Occurrences: ${cluster.count} (${cluster.distinctStates} state${cluster.distinctStates === 1 ? "" : "s"}, ${cluster.distinctElements} element${cluster.distinctElements === 1 ? "" : "s"})`,
-      `- Context: ${text(cluster.context.component)} in ${text(cluster.context.landmark)} at ${text(cluster.context.viewport)}`,
-      `- Declared scale: ${text(decision.nearestLawExcerpt)}`,
+      `- Context: ${text2(cluster.context.component)} in ${text2(cluster.context.landmark)} at ${text2(cluster.context.viewport)}`,
+      `- Declared scale: ${text2(decision.nearestLawExcerpt)}`,
       `- Suggested token: \`${cluster.suggestedToken}\``,
       "",
       "Examples:",
       "",
       ...cluster.examples.map(
-        (example) => `- ${text(example.screenshot)} \u2014 \`${example.selector.replaceAll("`", "'")}\`${example.crop === void 0 ? "" : ` \u2014 [crop](${example.crop})`}`
+        (example) => `- ${text2(example.screenshot)} \u2014 \`${example.selector.replaceAll("`", "'")}\`${example.crop === void 0 ? "" : ` \u2014 [crop](${example.crop})`}`
       ),
       "",
       "Answer:",
@@ -49008,7 +51399,7 @@ function repeatedFindingsMarkdown(groups, findings) {
       const params = representative?.verification.params ?? {};
       const where = typeof params.selector === "string" ? params.selector : group.rule ?? group.category;
       const crop = groupCrop(group, findings);
-      return `- ${group.id}: ${group.category} (${group.severity}) \u2014 ${text(where)} \u2014 ${describeSpread(group)}. Members: ${group.members.map((member) => member.id).join(", ")}.${crop === void 0 ? "" : ` Crop: [${text(crop)}](${crop})`}`;
+      return `- ${group.id}: ${group.category} (${group.severity}) \u2014 ${text2(where)} \u2014 ${describeSpread(group)}. Members: ${group.members.map((member) => member.id).join(", ")}.${crop === void 0 ? "" : ` Crop: [${text2(crop)}](${crop})`}`;
     }),
     ""
   ];
@@ -49021,16 +51412,16 @@ function advisoryMarkdown(review) {
     ""
   ];
   if (review.outcome.kind === "degraded")
-    lines2.push(`Incomplete: ${text(review.outcome.reason)}`, "");
+    lines2.push(`Incomplete: ${text2(review.outcome.reason)}`, "");
   for (const pattern of review.patterns) {
     lines2.push(
-      `### ${text(pattern.id)}`,
+      `### ${text2(pattern.id)}`,
       "",
-      `Intent: ${text(pattern.intent)}`,
+      `Intent: ${text2(pattern.intent)}`,
       "",
-      `Reference: ${pattern.reference === void 0 ? "none" : text(pattern.reference)}`,
+      `Reference: ${pattern.reference === void 0 ? "none" : text2(pattern.reference)}`,
       "",
-      `Status: ${pattern.status}${pattern.reason === void 0 ? "" : ` (${text(pattern.reason)})`}`,
+      `Status: ${pattern.status}${pattern.reason === void 0 ? "" : ` (${text2(pattern.reason)})`}`,
       ""
     );
     if (pattern.status === "ok" && pattern.findings.length === 0)
@@ -49039,16 +51430,18 @@ function advisoryMarkdown(review) {
       lines2.push(
         `#### ${finding.id}: ${aspect} (${finding.severity}, advisory)`,
         "",
-        `Section: ${text(section2)}${sectionHeading === void 0 ? "" : ` (${text(sectionHeading)})`} \xB7 ${text(finding.state)}/${text(finding.viewport)}${finding.colorScheme === void 0 ? "" : `/${finding.colorScheme}`}`,
+        `Section: ${text2(section2)}${sectionHeading === void 0 ? "" : ` (${text2(sectionHeading)})`} \xB7 ${text2(finding.state)}/${text2(finding.viewport)}${finding.colorScheme === void 0 ? "" : `/${finding.colorScheme}`}`,
         "",
-        text(finding.explanation),
+        `Basis: ${text2(basisDescription(finding))}`,
+        `Machine condition: ${text2(acceptanceDescription(finding.acceptance))}`,
+        text2(finding.explanation),
         ...finding.evidence.filmstrip?.sheet ? [
-          `Filmstrip: [${text(finding.evidence.filmstrip.sheet)}](${finding.evidence.filmstrip.sheet})`,
+          `Filmstrip: [${text2(finding.evidence.filmstrip.sheet)}](${finding.evidence.filmstrip.sheet})`,
           ""
         ] : [],
         "",
-        ...finding.fix === void 0 ? [] : [`Fix: ${text(finding.fix)}`, ""],
-        ...finding.acceptance.map((line) => `Done when: ${text(line)}`),
+        ...finding.fix === void 0 ? [] : [`Fix: ${text2(finding.fix)}`, ""],
+        ...acceptanceText(finding).map((line) => `Done when: ${text2(line)}`),
         "",
         `${finding.evidence.filmstrip?.sheet ? `Filmstrip: [${finding.evidence.filmstrip.sheet}](${finding.evidence.filmstrip.sheet}) \xB7 ` : ""}Evidence: ${finding.evidence.screenshots.map((path) => `[${path}](${path})`).join(" \xB7 ")}`,
         ""
@@ -49090,7 +51483,7 @@ function renderReport(options) {
     lines2.push(
       "## Model layer did not run",
       "",
-      `${text(options.outcome.reason)} Deterministic findings remain available.`,
+      `${text2(options.outcome.reason)} Deterministic findings remain available.`,
       ""
     );
   }
@@ -49119,9 +51512,9 @@ function renderReport(options) {
       lines2.push("None qualified across multiple states in this review.", "");
     for (const decision of modelDecisions ?? []) {
       lines2.push(
-        `### ${text(decision.id)}: ${text(decision.choiceKey)}`,
+        `### ${text2(decision.id)}: ${text2(decision.choiceKey)}`,
         "",
-        text(decision.question),
+        text2(decision.question),
         "",
         ...fencedEvidence(
           "Nearest design-law passage:",
@@ -49131,7 +51524,7 @@ function renderReport(options) {
         "Recurring evidence:",
         "",
         ...decision.occurrences.map(
-          (item) => `- ${text(item.state)} / ${text(item.viewport)}${item.colorScheme === void 0 ? "" : ` / ${item.colorScheme}`} \u2014 ${text(item.screenshot)}`
+          (item) => `- ${text2(item.state)} / ${text2(item.viewport)}${item.colorScheme === void 0 ? "" : ` / ${item.colorScheme}`} \u2014 ${text2(item.screenshot)}`
         ),
         ""
       );
@@ -49143,7 +51536,7 @@ function renderReport(options) {
       } else {
         lines2.push("Candidate rulings (not applied):", "");
         for (const [index, candidate2] of decision.candidates.entries()) {
-          lines2.push(`${index + 1}. ${text(candidate2.wording)}`, "");
+          lines2.push(`${index + 1}. ${text2(candidate2.wording)}`, "");
           if (candidate2.precedent.kind === "law")
             lines2.push(
               ...fencedEvidence(
@@ -49158,7 +51551,7 @@ function renderReport(options) {
               candidate2.precedent.screenshot
             );
             lines2.push(
-              `   Precedent \u2014 governed screenshot: ${path === void 0 ? text(candidate2.precedent.screenshot) : `[${text(candidate2.precedent.screenshot)}](${path})`} (${text(candidate2.precedent.state)} / ${text(candidate2.precedent.viewport)}${candidate2.precedent.colorScheme === void 0 ? "" : ` / ${candidate2.precedent.colorScheme}`})`,
+              `   Precedent \u2014 governed screenshot: ${path === void 0 ? text2(candidate2.precedent.screenshot) : `[${text2(candidate2.precedent.screenshot)}](${path})`} (${text2(candidate2.precedent.state)} / ${text2(candidate2.precedent.viewport)}${candidate2.precedent.colorScheme === void 0 ? "" : ` / ${candidate2.precedent.colorScheme}`})`,
               ""
             );
           }
@@ -49173,14 +51566,14 @@ function renderReport(options) {
       (entry) => entry.state === state
     )) {
       lines2.push(
-        `### ${tuple.viewport}${axisAware ? ` / ${tuple.colorScheme}` : ""} (${tuple.width}\xD7${tuple.height})${tuple.combination === void 0 ? "" : ` [${text(tuple.combination)}]`}`,
+        `### ${tuple.viewport}${axisAware ? ` / ${tuple.colorScheme}` : ""} (${tuple.width}\xD7${tuple.height})${tuple.combination === void 0 ? "" : ` [${text2(tuple.combination)}]`}`,
         ""
       );
       const designs = tupleDesigns(tuple);
       for (const design of designs) {
-        const name = designs.length > 1 ? ` (${text(design.descriptor.name ?? "design")})` : "";
+        const name = designs.length > 1 ? ` (${text2(design.descriptor.name ?? "design")})` : "";
         lines2.push(
-          `${designSourceTitle(design.descriptor)}${name}: ${text(design.descriptor.source)}`,
+          `${designSourceTitle(design.descriptor)}${name}: ${text2(design.descriptor.source)}`,
           "",
           ...design.regions?.uncompared.length ? [
             `Not compared: ${design.regions.uncompared.map((band) => `${band.side} rows ${band.top}\u2013${band.top + band.height} px`).join("; ")}`,
@@ -49190,11 +51583,11 @@ function renderReport(options) {
         const figma = design.descriptor.figma;
         if (figma)
           lines2.push(
-            `Figma file version ${text(figma.version)} \xB7 [frame](${figma.link}) \xB7 variables: ${text(figma.variables)}`,
+            `Figma file version ${text2(figma.version)} \xB7 [frame](${figma.link}) \xB7 variables: ${text2(figma.variables)}`,
             ""
           );
         if (design.unavailable)
-          lines2.push(`Design unavailable: ${text(design.unavailable)}`, "");
+          lines2.push(`Design unavailable: ${text2(design.unavailable)}`, "");
         else if (design.screenshotPath)
           lines2.push(`![Design${name}](${design.screenshotPath})`, "");
       }
@@ -49207,7 +51600,7 @@ function renderReport(options) {
         );
       if (tuple.failure !== void 0)
         lines2.push(
-          `Capture failure: ${text(tuple.failure.message)} ([metadata](${tuple.metadataPath}))`,
+          `Capture failure: ${text2(tuple.failure.message)} ([metadata](${tuple.metadataPath}))`,
           ""
         );
       const findings = options.findings.filter(
@@ -49232,34 +51625,36 @@ function renderReport(options) {
               (crop) => `[${crop.label}](${crop.path})`
             ),
             "",
-            `Fix: ${text(finding.fix ?? "")}`,
+            `Fix: ${text2(finding.fix ?? "")}`,
             ""
           ] : [],
-          `Layer: ${finding.layer}${finding.layer === "model" ? ` \xB7 Confidence: ${finding.confidence}` : ""}`,
+          `Layer: ${finding.layer}${finding.basisDetails?.kind === "judged" && finding.basisDetails.confidence !== void 0 ? ` \xB7 Confidence: ${finding.basisDetails.confidence}` : ""}`,
           "",
           ...severityOverride === void 0 ? [] : [
-            `Severity override: ${severityOverride.original} -> ${severityOverride.effective} by rule ${text(severityOverride.override.id)} (${text(severityOverride.override.reason)})`,
+            `Severity override: ${severityOverride.original} -> ${severityOverride.effective} by rule ${text2(severityOverride.override.id)} (${text2(severityOverride.override.reason)})`,
             ""
           ],
-          ...finding.rule === void 0 ? [] : [`Guidance: ${text(finding.rule)}`, ""],
+          ...finding.rule === void 0 ? [] : [`Guidance: ${text2(finding.rule)}`, ""],
           ...(finding.evidence.references?.length ?? 0) === 0 ? [] : [
-            `References: ${finding.evidence.references?.map(text).join(" \xB7 ")}`,
+            `References: ${finding.evidence.references?.map(text2).join(" \xB7 ")}`,
             ""
           ],
-          text(finding.explanation),
+          `Basis: ${text2(basisDescription(finding))}`,
+          `Machine condition: ${text2(acceptanceDescription(finding.acceptance))}`,
+          text2(finding.explanation),
           ...finding.evidence.filmstrip?.sheet ? [
-            `Filmstrip: [${text(finding.evidence.filmstrip.sheet)}](${finding.evidence.filmstrip.sheet})`,
+            `Filmstrip: [${text2(finding.evidence.filmstrip.sheet)}](${finding.evidence.filmstrip.sheet})`,
             ""
           ] : [],
           ""
         );
         const pageEvidence = pageFindingEvidence(finding, options.page);
         if (pageEvidence.section !== void 0)
-          lines2.push(`Section: ${text(pageEvidence.section)}`, "");
+          lines2.push(`Section: ${text2(pageEvidence.section)}`, "");
         for (const citation of pageEvidence.citations)
-          lines2.push(text(citation), "");
+          lines2.push(text2(citation), "");
         if (pageEvidence.fix !== void 0)
-          lines2.push(`Fix: ${text(pageEvidence.fix)}`, "");
+          lines2.push(`Fix: ${text2(pageEvidence.fix)}`, "");
         if (finding.evidence.consoleExcerpt !== void 0)
           lines2.push(
             ...fencedEvidence(
@@ -49294,7 +51689,7 @@ function renderReport(options) {
         lines2.push(
           "Acceptance:",
           "",
-          ...finding.acceptance.map((criterion) => `- ${text(criterion)}`),
+          ...acceptanceText(finding).map((criterion) => `- ${text2(criterion)}`),
           ""
         );
         if (finding.verification.kind === "deterministic-check")
@@ -49319,22 +51714,24 @@ function renderReport(options) {
     for (const suppressed of options.suppressed ?? []) {
       const { finding } = suppressed;
       lines2.push(
-        `### ${finding.id}: ${finding.category} \u2014 ${finding.state}/${finding.viewport}${finding.colorScheme === void 0 ? "" : `/${finding.colorScheme}`}${finding.combination === void 0 ? "" : ` [${text(finding.combination)}]`}`,
+        `### ${finding.id}: ${finding.category} \u2014 ${finding.state}/${finding.viewport}${finding.colorScheme === void 0 ? "" : `/${finding.colorScheme}`}${finding.combination === void 0 ? "" : ` [${text2(finding.combination)}]`}`,
         "",
         `Layer: ${finding.layer}`,
         "",
         `Fingerprint: \`${finding.fingerprint}\``,
         "",
-        text(finding.explanation),
+        `Basis: ${text2(basisDescription(finding))}`,
+        `Machine condition: ${text2(acceptanceDescription(finding.acceptance))}`,
+        text2(finding.explanation),
         ...finding.evidence.filmstrip?.sheet ? [
-          `Filmstrip: [${text(finding.evidence.filmstrip.sheet)}](${finding.evidence.filmstrip.sheet})`,
+          `Filmstrip: [${text2(finding.evidence.filmstrip.sheet)}](${finding.evidence.filmstrip.sheet})`,
           ""
         ] : [],
         "",
         ..."decision" in suppressed ? [
-          `Decision: ${suppressed.decision.decision} (${suppressed.decision.scope}) on ${text(suppressed.decisionFindingId ?? finding.id)} \u2014 ${text(suppressed.decision.reason ?? "standing rule-scope rejection")}`
+          `Decision: ${suppressed.decision.decision} (${suppressed.decision.scope}) on ${text2(suppressed.decisionFindingId ?? finding.id)} \u2014 ${text2(suppressed.decision.reason ?? "standing rule-scope rejection")}`
         ] : [
-          `Rule: ${text(suppressed.override.id)} \u2014 ${text(suppressed.override.reason)}`
+          `Rule: ${text2(suppressed.override.id)} \u2014 ${text2(suppressed.override.reason)}`
         ],
         ""
       );
@@ -49353,12 +51750,12 @@ function renderReport(options) {
         (item) => item.fingerprint === finding.fingerprint
       );
       lines2.push(
-        `- ${finding.id} (${finding.severity}) \u2014 Layer: ${finding.layer}${finding.layer === "model" ? ` \xB7 Confidence: ${finding.confidence}` : ""} \u2014 ${text(finding.flow)} / ${text(finding.state)} / ${text(finding.viewport)}${finding.colorScheme === void 0 ? "" : ` / ${finding.colorScheme}`}${finding.combination === void 0 ? "" : ` [${text(finding.combination)}]`} \u2014 ${text(finding.explanation)}${severityOverride === void 0 ? "" : ` \u2014 Severity override: ${severityOverride.original} -> ${severityOverride.effective} by rule ${text(severityOverride.override.id)} (${text(severityOverride.override.reason)})`}`
+        `- ${finding.id} (${finding.severity}) \u2014 Layer: ${finding.layer}${finding.basisDetails?.kind === "judged" && finding.basisDetails.confidence !== void 0 ? ` \xB7 Confidence: ${finding.basisDetails.confidence}` : ""} \u2014 ${text2(finding.flow)} / ${text2(finding.state)} / ${text2(finding.viewport)}${finding.colorScheme === void 0 ? "" : ` / ${finding.colorScheme}`}${finding.combination === void 0 ? "" : ` [${text2(finding.combination)}]`} \u2014 ${text2(basisDescription(finding))} \u2014 ${text2(finding.explanation)}${severityOverride === void 0 ? "" : ` \u2014 Severity override: ${severityOverride.original} -> ${severityOverride.effective} by rule ${text2(severityOverride.override.id)} (${text2(severityOverride.override.reason)})`}`
       );
       if (finding.evidence.designDrift)
         lines2.push(
           "",
-          `Fix: ${text(finding.fix ?? "")}`,
+          `Fix: ${text2(finding.fix ?? "")}`,
           "",
           ...(finding.evidence.designDrift.crops ?? []).map(
             (crop) => `[${crop.label}](${crop.path})`
@@ -49387,12 +51784,12 @@ function renderReport(options) {
   );
   for (const coverage of options.captureCoverage ?? []) {
     lines2.push(
-      axisAware ? `| \u2014 | \u2014 | \u2014 | ${coverage.check} | ${coverage.status} | ${text(paintedCoverageText(coverage))} |` : `| \u2014 | \u2014 | ${coverage.check} | ${coverage.status} | ${text(paintedCoverageText(coverage))} |`
+      axisAware ? `| \u2014 | \u2014 | \u2014 | ${coverage.check} | ${coverage.status} | ${text2(paintedCoverageText(coverage))} |` : `| \u2014 | \u2014 | ${coverage.check} | ${coverage.status} | ${text2(paintedCoverageText(coverage))} |`
     );
   }
   for (const entry of options.coverage) {
     lines2.push(
-      axisAware ? `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.tuple.colorScheme ?? "light"} | ${entry.coverage.check} | ${entry.coverage.status} | ${text(paintedCoverageText(entry.coverage))} |` : `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.coverage.check} | ${entry.coverage.status} | ${text(paintedCoverageText(entry.coverage))} |`
+      axisAware ? `| ${text2(entry.tuple.state)} | ${text2(entry.tuple.viewport)} | ${entry.tuple.colorScheme ?? "light"} | ${entry.coverage.check} | ${entry.coverage.status} | ${text2(paintedCoverageText(entry.coverage))} |` : `| ${text2(entry.tuple.state)} | ${text2(entry.tuple.viewport)} | ${entry.coverage.check} | ${entry.coverage.status} | ${text2(paintedCoverageText(entry.coverage))} |`
     );
   }
   lines2.push("");
@@ -49413,8 +51810,8 @@ async function writeReport(runDirectory, report) {
 }
 function driftLine(drift) {
   if (drift.region)
-    return `Region ${drift.region.id} \xB7 covers: ${drift.region.elements.length ? drift.region.elements.map((selector) => `\`${text(selector)}\``).join(", ") : "no single element"} \xB7 offset ${drift.region.offset}px`;
-  return `Match: ${text(drift.method)} \xB7 Property: ${text(drift.property)}`;
+    return `Region ${drift.region.id} \xB7 covers: ${drift.region.elements.length ? drift.region.elements.map((selector) => `\`${text2(selector)}\``).join(", ") : "no single element"} \xB7 offset ${drift.region.offset}px`;
+  return `Match: ${text2(drift.method)} \xB7 Property: ${text2(drift.property)}`;
 }
 function designSourceTitle(descriptor) {
   return descriptor.resolved?.kind === "image" ? "Design image" : descriptor.resolved?.kind === "site" ? "Reference site" : "Design source";
@@ -49423,7 +51820,7 @@ function designDriftMarkdown(drift) {
   const lines2 = [];
   if (drift.designLayerPath)
     lines2.push(
-      `Figma layer: ${drift.designLink ? `[${text(drift.designLayerPath)}](${drift.designLink})` : text(drift.designLayerPath)}${drift.designVariable ? ` \xB7 variable ${text(drift.designVariable)}` : ""}`,
+      `Figma layer: ${drift.designLink ? `[${text2(drift.designLayerPath)}](${drift.designLink})` : text2(drift.designLayerPath)}${drift.designVariable ? ` \xB7 variable ${text2(drift.designVariable)}` : ""}`,
       ""
     );
   const decision = drift.designDecision;
@@ -49432,13 +51829,13 @@ function designDriftMarkdown(drift) {
       "| Reference | Value | Matches build |",
       "| --- | --- | --- |",
       ...decision.references.map(
-        (reference3) => `| ${reference3.link ? `[${text(reference3.name)}](${reference3.link})` : text(reference3.name)} | ${text(JSON.stringify(reference3.value))} | ${reference3.matchesBuild ? "yes" : "no"} |`
+        (reference3) => `| ${reference3.link ? `[${text2(reference3.name)}](${reference3.link})` : text2(reference3.name)} | ${text2(JSON.stringify(reference3.value))} | ${reference3.matchesBuild ? "yes" : "no"} |`
       ),
-      `| App (build) | ${text(JSON.stringify(decision.appValue))} | \u2014 |`,
+      `| App (build) | ${text2(JSON.stringify(decision.appValue))} | \u2014 |`,
       ""
     );
   if (drift.chosenReference)
-    lines2.push(`Chosen reference: ${text(drift.chosenReference)}`, "");
+    lines2.push(`Chosen reference: ${text2(drift.chosenReference)}`, "");
   return lines2;
 }
 var init_report = __esm({
@@ -49446,6 +51843,7 @@ var init_report = __esm({
     "use strict";
     init_painted();
     init_evidence();
+    init_presentation();
     init_coverage();
     init_groups();
   }
@@ -49463,11 +51861,11 @@ function findingCard(finding, severityOverrides, page, screenshots) {
   const verification = finding.verification.kind === "deterministic-check" ? `Re-run ${finding.verification.check ?? finding.category}.` : finding.verification.kind === "recapture-visual" ? "Recapture this state and visually compare the cited surface." : "Manual confirmation is required.";
   return `<article class="finding">
     <h4>${escapeHtml(finding.id)}: ${escapeHtml(finding.category)}</h4>
-    <div class="summary">${badge(finding.severity, finding.severity)} ${badge(finding.layer)}${finding.layer === "model" ? ` ${badge(`confidence ${finding.confidence}`)}` : ""}</div>
+    <div class="summary">${badge(finding.severity, finding.severity)} ${badge(finding.layer)}${finding.basisDetails?.kind === "judged" && finding.basisDetails.confidence !== void 0 ? ` ${badge(`confidence ${finding.basisDetails.confidence}`)}` : ""}</div>
     ${severityOverride === void 0 ? "" : `<p><strong>Severity override:</strong> ${escapeHtml(severityOverride.original)} \u2192 ${escapeHtml(severityOverride.effective)} by rule ${escapeHtml(severityOverride.override.id)} (${escapeHtml(severityOverride.override.reason)})</p>`}
     ${finding.rule === void 0 ? "" : `<p><strong>Guidance:</strong> ${escapeHtml(finding.rule)}</p>`}
     ${(finding.evidence.references?.length ?? 0) === 0 ? "" : `<p><strong>References:</strong> ${(finding.evidence.references ?? []).map((label4) => escapeHtml(label4)).join(" \xB7 ")}</p>`}
-    <p>${escapeHtml(finding.explanation)}</p>
+    <p><strong>Basis:</strong> ${escapeHtml(basisDescription(finding))}</p><p><strong>Machine condition:</strong> ${escapeHtml(acceptanceDescription(finding.acceptance))}</p><p>${escapeHtml(finding.explanation)}</p>
     ${finding.evidence.filmstrip?.sheet ? `<figure style="overflow-x:auto"><figcaption>Filmstrip (${escapeHtml(finding.evidence.filmstrip.status)})</figcaption><img style="max-width:none" src="${escapeHtmlAttribute(screenshots?.get(finding.evidence.filmstrip.sheet) ?? reportRelativeHref(finding.evidence.filmstrip.sheet))}" alt="Temporal frames for ${escapeHtmlAttribute(finding.id)}">${evidenceLink(finding.evidence.filmstrip.sheet, "Open filmstrip")}</figure>` : ""}
     ${finding.evidence.designDrift ? `<p>${driftHtml(finding.evidence.designDrift)}</p>${designDriftHtml(finding.evidence.designDrift)}<div class="comparison-pair">${(finding.evidence.designDrift.crops ?? []).map((crop) => `<figure><figcaption>${escapeHtml(crop.label)}</figcaption>${screenshots?.get(crop.path) ? `<img src="${escapeHtmlAttribute(screenshots.get(crop.path))}" alt="${escapeHtmlAttribute(crop.label)}">` : ""}${evidenceLink(crop.path, crop.label)}</figure>`).join("")}</div>` : ""}
     ${pageEvidence.section === void 0 ? "" : `<p><strong>Section:</strong> ${escapeHtml(pageEvidence.section)}</p>`}
@@ -49478,7 +51876,7 @@ function findingCard(finding, severityOverrides, page, screenshots) {
     ${(finding.evidence.axeNodes?.length ?? 0) === 0 ? "" : preformatted("Accessibility evidence", JSON.stringify(finding.evidence.axeNodes, null, 2))}
     ${extras.length === 0 ? "" : `<p><strong>Local evidence:</strong> ${extras.map((path) => evidenceLink(path)).join(" \xB7 ")}</p>`}
     <h5>Acceptance criteria</h5>
-    <ul>${finding.acceptance.map((criterion) => `<li>${escapeHtml(criterion)}</li>`).join("")}</ul>
+    <ul>${acceptanceText(finding).map((criterion) => `<li>${escapeHtml(criterion)}</li>`).join("")}</ul>
     <p><strong>Verification:</strong> ${escapeHtml(verification)}</p>
   </article>`;
 }
@@ -49494,7 +51892,7 @@ function repeatedSection(options) {
 function suppressedSection(items) {
   const content = items.length === 0 ? "<p>None.</p>" : items.map(({ finding, ...suppressed }) => {
     const basis = "decision" in suppressed ? `Decision: ${suppressed.decision.decision} (${suppressed.decision.scope}) on ${suppressed.decisionFindingId ?? finding.id} \u2014 ${suppressed.decision.reason ?? "standing rule-scope rejection"}` : `Rule: ${suppressed.override.id} \u2014 ${suppressed.override.reason}`;
-    return `<article class="panel"><h3>${escapeHtml(finding.id)}: ${escapeHtml(finding.category)} \u2014 ${escapeHtml(finding.state)}/${escapeHtml(finding.viewport)}${finding.colorScheme === void 0 ? "" : `/${escapeHtml(finding.colorScheme)}`}${finding.combination === void 0 ? "" : ` [${escapeHtml(finding.combination)}]`}</h3><p class="meta">${escapeHtml(finding.layer)} \xB7 ${escapeHtml(finding.fingerprint)}</p><p>${escapeHtml(finding.explanation)}</p><p>${escapeHtml(basis)}</p></article>`;
+    return `<article class="panel"><h3>${escapeHtml(finding.id)}: ${escapeHtml(finding.category)} \u2014 ${escapeHtml(finding.state)}/${escapeHtml(finding.viewport)}${finding.colorScheme === void 0 ? "" : `/${escapeHtml(finding.colorScheme)}`}${finding.combination === void 0 ? "" : ` [${escapeHtml(finding.combination)}]`}</h3><p class="meta">${escapeHtml(finding.layer)} \xB7 ${escapeHtml(finding.fingerprint)}</p><p><strong>Basis:</strong> ${escapeHtml(basisDescription(finding))}</p><p><strong>Machine condition:</strong> ${escapeHtml(acceptanceDescription(finding.acceptance))}</p><p>${escapeHtml(finding.explanation)}</p><p>${escapeHtml(basis)}</p></article>`;
   }).join("");
   return `<section><h2>Suppressed findings</h2><p>Suppressed by prior decision or project rule.</p>${content}</section>`;
 }
@@ -49575,7 +51973,11 @@ function advisorySection(review) {
       const crop = finding.evidence.screenshots.find(
         (path) => path.includes("/crops/")
       ) ?? finding.evidence.screenshots[0];
-      return `<article class="finding"><h4>${escapeHtml(finding.id)}: ${escapeHtml(aspect)}</h4><div class="summary">${badge(finding.severity, finding.severity)} ${badge("advisory")}</div><p><strong>Section:</strong> ${escapeHtml(section2)}${sectionHeading === void 0 ? "" : ` (${escapeHtml(sectionHeading)})`} \xB7 ${escapeHtml(finding.state)}/${escapeHtml(finding.viewport)}${finding.colorScheme === void 0 ? "" : `/${escapeHtml(finding.colorScheme)}`}</p><p>${escapeHtml(finding.explanation)}</p>${finding.fix === void 0 ? "" : `<p><strong>Fix:</strong> ${escapeHtml(finding.fix)}</p>`}<ul>${finding.acceptance.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>${crop === void 0 ? "" : `<img class="screenshot" src="${escapeHtmlAttribute(reportRelativeHref(crop))}" alt="${escapeHtmlAttribute(`Advisory crop for ${finding.id}`)}">`}</article>`;
+      return `<article class="finding"><h4>${escapeHtml(finding.id)}: ${escapeHtml(aspect)}</h4><div class="summary">${badge(finding.severity, finding.severity)} ${badge("advisory")}</div><p><strong>Section:</strong> ${escapeHtml(section2)}${sectionHeading === void 0 ? "" : ` (${escapeHtml(sectionHeading)})`} \xB7 ${escapeHtml(finding.state)}/${escapeHtml(finding.viewport)}${finding.colorScheme === void 0 ? "" : `/${escapeHtml(finding.colorScheme)}`}</p><p><strong>Basis:</strong> ${escapeHtml(basisDescription(finding))}</p><p><strong>Machine condition:</strong> ${escapeHtml(acceptanceDescription(finding.acceptance))}</p><p>${escapeHtml(finding.explanation)}</p>${finding.fix === void 0 ? "" : `<p><strong>Fix:</strong> ${escapeHtml(finding.fix)}</p>`}<ul>${acceptanceText(
+        finding
+      ).map((line) => `<li>${escapeHtml(line)}</li>`).join(
+        ""
+      )}</ul>${crop === void 0 ? "" : `<img class="screenshot" src="${escapeHtmlAttribute(reportRelativeHref(crop))}" alt="${escapeHtmlAttribute(`Advisory crop for ${finding.id}`)}">`}</article>`;
     }).join("")}</article>`
   ).join("")}</section>`;
 }
@@ -49614,7 +52016,7 @@ function renderReviewHtmlReport(options) {
         options.page,
         options.screenshots
       );
-    return `<li><strong>${escapeHtml(finding.id)}</strong> (${escapeHtml(finding.severity)}, ${escapeHtml(finding.layer)}) \u2014 ${escapeHtml(finding.flow)} / ${escapeHtml(finding.state)} / ${escapeHtml(finding.viewport)}${finding.colorScheme === void 0 ? "" : ` / ${escapeHtml(finding.colorScheme)}`}${finding.combination === void 0 ? "" : ` [${escapeHtml(finding.combination)}]`} \u2014 ${escapeHtml(finding.explanation)}${severityOverride === void 0 ? "" : ` \u2014 Severity override: ${escapeHtml(severityOverride.original)} \u2192 ${escapeHtml(severityOverride.effective)} by rule ${escapeHtml(severityOverride.override.id)} (${escapeHtml(severityOverride.override.reason)})`}</li>`;
+    return `<li><strong>${escapeHtml(finding.id)}</strong> (${escapeHtml(finding.severity)}, ${escapeHtml(finding.layer)}) \u2014 ${escapeHtml(finding.flow)} / ${escapeHtml(finding.state)} / ${escapeHtml(finding.viewport)}${finding.colorScheme === void 0 ? "" : ` / ${escapeHtml(finding.colorScheme)}`}${finding.combination === void 0 ? "" : ` [${escapeHtml(finding.combination)}]`} \u2014 ${escapeHtml(basisDescription(finding))} \u2014 ${escapeHtml(finding.explanation)}${severityOverride === void 0 ? "" : ` \u2014 Severity override: ${escapeHtml(severityOverride.original)} \u2192 ${escapeHtml(severityOverride.effective)} by rule ${escapeHtml(severityOverride.override.id)} (${escapeHtml(severityOverride.override.reason)})`}</li>`;
   }).join("")}</ul>`}</section>`;
   const quickLimits = options.outcome.kind !== "quick" ? "" : `<section><h2>Quick-review limits</h2><p>Only the supplied public URL${options.outcome.targets.length === 1 ? " was" : "s were"} visited; Idiom did not crawl links, and form submission and non-GET requests were blocked while probing.</p><ul>${options.outcome.targets.map((target2) => `<li>${escapeHtml(target2)}</li>`).join("")}</ul><p>The following were not judged because quick review has no declared states, fixtures, credentials, product document, or design document:</p><ul><li>fixture-dependent error and empty states</li><li>authenticated surfaces</li><li>destinations behind forms or other interactions</li><li>product-specific intent and design-law judgments</li><li>reference alignment and design-token judgments</li></ul><p>To judge those surfaces, run <code>idiom init</code>, define a flow manifest, then run <code>idiom review &lt;flow&gt;</code>.</p></section>`;
   const pageScope = options.page === void 0 ? "" : `<section><h2>Page-review scope</h2><ul><li>Page: ${escapeHtml(options.page.url)}</li><li>Brief: ${escapeHtml(options.page.brief ?? "not supplied")}</li><li>Art direction: ${escapeHtml(options.page.direction ?? "not supplied")}</li><li>Focus areas: ${escapeHtml(options.page.focus.length === 0 ? "none" : options.page.focus.join(", "))}</li></ul><p>Only the brief is the source of truth for the offer and every statistic; claims were not fact-checked against the web.</p></section>`;
@@ -49659,6 +52061,7 @@ var init_html_report = __esm({
     "use strict";
     init_painted();
     init_evidence();
+    init_presentation();
     init_coverage();
     init_html();
     init_groups();
@@ -49746,8 +52149,8 @@ function scoreGroup(group, counts, context2) {
   };
   let base = 1;
   let primaryAction = false;
-  for (const coordinate5 of new Set(group.coordinates)) {
-    const tuple = context2?.get(coordinate5);
+  for (const coordinate6 of new Set(group.coordinates)) {
+    const tuple = context2?.get(coordinate6);
     const target2 = group.selector === void 0 ? void 0 : tuple?.elements.get(group.selector);
     primaryAction ||= target2?.signals?.paint?.primaryAction === true;
     if (!tuple || !target2?.visible) continue;
@@ -49779,7 +52182,7 @@ function scoreGroup(group, counts, context2) {
       base = candidate2;
       explanation = {
         selector: group.selector,
-        coordinate: coordinate5,
+        coordinate: coordinate6,
         areaRatio,
         aboveFold,
         primaryRegion,
@@ -50096,6 +52499,8 @@ async function runReview(options) {
   const deterministicDrafts = nameFindingDrafts(
     naming,
     buildDeterministicDrafts({
+      config: checksConfig,
+      tuples: loaded.tuples,
       runId: loaded.runId,
       entries: reviewed.candidates,
       legacyColorScheme: validated.project.capture.colorScheme
@@ -50370,7 +52775,16 @@ async function runReview(options) {
       project: validated.project,
       tuples: loaded.tuples,
       commit: loaded.commit,
-      allFlows: surfaceFlows.length === 0 ? [record2.flow] : surfaceFlows.map(({ flow }) => flow)
+      allFlows: surfaceFlows.length === 0 ? [record2.flow] : surfaceFlows.map(({ flow }) => flow),
+      stateCoverage: computeFlowStateCoverage({
+        project: validated.project,
+        flow: record2.flow,
+        runId: loaded.runId,
+        commit: loaded.commit,
+        record: loaded.record,
+        tuples: loaded.tuples,
+        collapsedTupleKeys: loaded.collapsedTupleKeys
+      })
     }),
     findings,
     unruledDecisions,
@@ -50498,6 +52912,7 @@ var init_run2 = __esm({
     init_project_config();
     init_registry();
     init_scale_conformance();
+    init_states();
     init_anthropic();
     init_claude_code();
     init_context();
@@ -50777,6 +53192,9 @@ function summarizeFinding(finding, result2, base) {
   const screenshot2 = finding.evidence.screenshots.find((path) => path.includes("/crops/")) ?? finding.evidence.screenshots[0];
   return {
     id: finding.id,
+    basis: finding.basis,
+    basisDetails: finding.basisDetails,
+    acceptance: finding.acceptance,
     severity: finding.severity,
     category: finding.category,
     ...finding.rule === void 0 ? {} : { rule: finding.rule },
@@ -50784,7 +53202,7 @@ function summarizeFinding(finding, result2, base) {
     where: `${finding.state}/${finding.viewport}${finding.colorScheme === void 0 ? "" : `/${finding.colorScheme}`}`,
     ...selector === void 0 ? {} : { selector },
     problem: finding.explanation,
-    fix: finding.acceptance,
+    fix: acceptanceText(finding),
     ...finding.evidence.filmstrip?.sheet ? {
       filmstrip: displayPath(
         base,
@@ -50855,6 +53273,7 @@ var init_summary = __esm({
   "src/baseline/summary.ts"() {
     "use strict";
     init_errors();
+    init_presentation();
     init_validation();
     init_compare2();
     init_coordinate();
@@ -50907,6 +53326,11 @@ function collapseIssues(groups, primary, context2) {
     ];
     return {
       id: example.id,
+      ...example.basis === void 0 ? {} : {
+        basis: example.basis,
+        basisDetails: example.basisDetails,
+        acceptance: example.acceptance
+      },
       severity: bucket2.reduce(
         (worst, group) => severityOrder3[group.severity] < severityOrder3[worst] ? group.severity : worst,
         example.severity
@@ -50965,7 +53389,7 @@ var init_issues = __esm({
 });
 
 // src/tickets/cluster.ts
-import { createHash as createHash17 } from "crypto";
+import { createHash as createHash18 } from "crypto";
 import { readFile as readFile34 } from "fs/promises";
 import { dirname as dirname15, resolve as resolve28 } from "path";
 function findingSelector(record2) {
@@ -51054,7 +53478,7 @@ function groupFindings(members) {
   }));
 }
 function clusterTicketId(cluster) {
-  return `idiom-cluster-${createHash17("sha256").update("idiom-cluster-v1\0").update(JSON.stringify(cluster.members.map((m) => m.id).sort())).digest("hex")}`;
+  return `idiom-cluster-${createHash18("sha256").update("idiom-cluster-v1\0").update(JSON.stringify(cluster.members.map((m) => m.id).sort())).digest("hex")}`;
 }
 function observationLoader() {
   const cache = /* @__PURE__ */ new Map();
@@ -51117,7 +53541,7 @@ var init_cluster = __esm({
 });
 
 // src/review/root-causes.ts
-import { createHash as createHash18 } from "crypto";
+import { createHash as createHash19 } from "crypto";
 function symptomTargets(findings, group) {
   const targets = /* @__PURE__ */ new Map();
   const add = (selector, properties) => {
@@ -51157,8 +53581,8 @@ function symptomTargets(findings, group) {
 function resolveTargets(group, targets, context2) {
   const resolved = [];
   for (const target2 of targets)
-    for (const coordinate5 of group.coordinates) {
-      const tuple = context2.get(coordinate5);
+    for (const coordinate6 of group.coordinates) {
+      const tuple = context2.get(coordinate6);
       const element = tuple?.elements.get(target2.selector);
       if (tuple === void 0 || element === void 0) continue;
       resolved.push({ target: target2, element, tuple });
@@ -51221,9 +53645,9 @@ function regionKey(resolved) {
   for (const selector of element.ancestorSelectors) {
     const ancestor = tuple.elements.get(selector);
     if (ancestor === void 0 || ancestor.tag === void 0) continue;
-    const observed = asObserved(ancestor);
-    if (isComponentShell(observed)) return void 0;
-    if (isComponentBoundary(observed)) return selector;
+    const observed3 = asObserved(ancestor);
+    if (isComponentShell(observed3)) return void 0;
+    if (isComponentBoundary(observed3)) return selector;
   }
   return void 0;
 }
@@ -51361,8 +53785,8 @@ function sheetSelector(key4) {
   const [sheet = "", selector = ""] = key4.split("\0");
   return { sheet, selector };
 }
-function firstSentence(text3) {
-  const sentence2 = /^.*?[.!?](?=\s|$)/.exec(text3.trim())?.[0] ?? text3.trim();
+function firstSentence(text4) {
+  const sentence2 = /^.*?[.!?](?=\s|$)/.exec(text4.trim())?.[0] ?? text4.trim();
   return sentence2.length > 160 ? `${sentence2.slice(0, 159)}\u2026` : sentence2;
 }
 function ruleLabel(group) {
@@ -51543,7 +53967,7 @@ function rootCauseIssue(assignment, context2) {
     ...assignment.symptoms.filter((symptom) => symptom.group !== example)
   ].filter((symptom) => symptom !== void 0);
   const rootCause = {
-    id: `cause-${createHash18("sha256").update(`${candidate2.kind}\0${candidate2.key}`).digest("hex").slice(0, 12)}`,
+    id: `cause-${createHash19("sha256").update(`${candidate2.kind}\0${candidate2.key}`).digest("hex").slice(0, 12)}`,
     kind: candidate2.kind,
     key: candidate2.key,
     confidence: candidate2.confidence,
@@ -51558,6 +53982,9 @@ function rootCauseIssue(assignment, context2) {
         const finding = findings.find(({ id: id2 }) => id2 === member.id);
         return {
           id: member.id,
+          basis: finding?.basis,
+          basisDetails: finding?.basisDetails,
+          acceptance: finding?.acceptance,
           fingerprint: finding?.fingerprint ?? "",
           status: finding?.status ?? "open",
           ...member.deferred === true ? { deferred: true } : {}
@@ -51669,6 +54096,9 @@ function projectIssueSummary(options) {
     );
     return {
       id: group.id,
+      basis: representative.basis,
+      basisDetails: representative.basisDetails,
+      acceptance: representative.acceptance,
       severity: group.severity,
       category: representative.category,
       ...group.rule === void 0 ? {} : { rule: group.rule },
@@ -51681,6 +54111,9 @@ function projectIssueSummary(options) {
       ...group.members.every((member) => member.deferred === true) ? { deferred: true } : {},
       members: group.members.map((member) => ({
         id: member.id,
+        basis: summaries.get(member.id)?.basis,
+        basisDetails: summaries.get(member.id)?.basisDetails,
+        acceptance: summaries.get(member.id)?.acceptance,
         severity: member.severity,
         where: summaries.get(member.id)?.where ?? member.state,
         ...member.deferred === true ? { deferred: true } : {},
@@ -51973,7 +54406,7 @@ function renderInstruction(presentation) {
     "",
     "## Done when",
     "",
-    ...finding.acceptance.map((criterion) => `- ${criterion}`),
+    ...acceptanceText(finding).map((criterion) => `- ${criterion}`),
     "",
     "## Out of scope",
     "",
@@ -51987,11 +54420,12 @@ var init_render3 = __esm({
   "src/instructions/render.ts"() {
     "use strict";
     init_presentation();
+    init_presentation2();
   }
 });
 
 // src/tickets/sweep-evidence.ts
-import { createHash as createHash19 } from "crypto";
+import { createHash as createHash20 } from "crypto";
 import { mkdir as mkdir14, readFile as readFile37, writeFile as writeFile22 } from "fs/promises";
 import { join as join38, relative as relative20, resolve as resolve30, sep as sep13 } from "path";
 async function sweepTicketEvidence(options) {
@@ -52052,7 +54486,7 @@ async function sweepTicketEvidence(options) {
     "",
     "## Verify",
     "",
-    "Run every partition below. Model findings retain manual/unverifiable limitations.",
+    "Run every partition below. Machine acceptance and finding verdicts are reported separately; judged or historical criteria can be not-recheckable while visual or legacy verification fixes the finding.",
     ""
   );
   for (const [key4, records] of [...partitions].sort(
@@ -52060,7 +54494,7 @@ async function sweepTicketEvidence(options) {
   )) {
     const path = join38(
       sideDirectory,
-      `${createHash19("sha256").update(key4).digest("hex")}.md`
+      `${createHash20("sha256").update(key4).digest("hex")}.md`
     );
     const first = records[0];
     if (first === void 0) continue;
@@ -52085,7 +54519,8 @@ ${fence}
       await writeFile22(path, content, { encoding: "utf8", flag: "wx" });
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
-      if (await readFile37(path, "utf8") !== content)
+      const existing = await readFile37(path, "utf8");
+      if (existing !== content && stable(parseFindingBlocks(existing)) !== stable(parseFindingBlocks(content)))
         throw new IdiomError(
           `incompatible verification sidecar; preserving existing bytes: ${path}`
         );
@@ -52115,8 +54550,10 @@ var init_sweep_evidence = __esm({
   "src/tickets/sweep-evidence.ts"() {
     "use strict";
     init_errors();
+    init_settings();
     init_render3();
     init_artifacts2();
+    init_spec();
     init_target();
     shellQuote = (s) => `'${s.replaceAll("'", "'\\''")}'`;
     link = (from, to) => relative20(from, to).split(sep13).map(encodeURIComponent).join("/");
@@ -52353,7 +54790,7 @@ var init_emit = __esm({
     "use strict";
     init_log();
     init_errors();
-    init_presentation();
+    init_presentation2();
     init_artifacts2();
     init_catalog2();
     init_lifecycle();
@@ -52469,9 +54906,7 @@ async function checkWithReview(options) {
       );
     }
   }
-  const findings = JSON.parse(
-    await readFile38(result2.findingsPath, "utf8")
-  );
+  const findings = findingSchema.array().parse(JSON.parse(await readFile38(result2.findingsPath, "utf8")));
   let summary;
   if (recordedMode) {
     summary = {
@@ -52522,7 +54957,9 @@ async function checkWithReview(options) {
       ),
       groups,
       issues: issues5,
-      blocking: live.filter((finding) => finding.severity !== "minor").length,
+      blocking: live.filter(
+        (finding) => finding.severity !== "minor" && finding.basis !== "judged"
+      ).length,
       ...known === void 0 ? {} : { preExisting: open3.length - live.length }
     };
   }
@@ -52557,7 +54994,10 @@ async function checkWithReview(options) {
             where: `${finding.state}/${finding.viewport}${finding.colorScheme === void 0 ? "" : `/${finding.colorScheme}`}`,
             section: section2,
             problem: finding.explanation,
-            fix: finding.acceptance,
+            basis: finding.basis,
+            basisDetails: finding.basisDetails,
+            acceptance: finding.acceptance,
+            fix: acceptanceText(finding),
             ...evidence === void 0 ? {} : {
               evidence: displayPath(
                 base,
@@ -52626,8 +55066,20 @@ function renderCheckSummary(summary, options = {}) {
   );
   const notice = summary.baselineRecorded === void 0 ? "" : `Automatically recorded baseline at ${summary.baselineRecorded.commit.slice(0, 12)} \u2192 ${summary.baselineRecorded.path}. Commit this file${summary.baselineRecorded.pixelCount > 0 ? ` and ${summary.baselineRecorded.pixelDirectory}` : ""}. Use idiom baseline accept ${summary.flow} after intentional changes.
 `;
-  return notice + (summary.tickets === void 0 ? output : `${output}${renderClusterTicketsResult(summary.tickets)}
+  const covered2 = withStateCoverage(output, summary.coverage?.stateCoverage);
+  return notice + (summary.tickets === void 0 ? covered2 : `${covered2}${renderClusterTicketsResult(summary.tickets)}
 `);
+}
+function withStateCoverage(output, coverage) {
+  if (coverage === void 0) return output;
+  const line = stateCoverageLine(coverage);
+  const lines2 = output.replace(/\n$/, "").split("\n");
+  const last = lines2.at(-1) ?? "";
+  if (last.startsWith("Full report: "))
+    return `${[...lines2.slice(0, -1), line, last].join("\n")}
+`;
+  return `${[...lines2, line].join("\n")}
+`;
 }
 function withDesignSystemQuestions(output, questions) {
   if (questions === void 0 || questions.length === 0) return output;
@@ -52667,6 +55119,7 @@ function withAdvisory(output, advisory) {
     for (const finding of pattern.findings) {
       block.push(
         `A${index}. [advisory \xB7 ${finding.aspect}] ${pattern.id} \u2014 ${finding.section} (${finding.severity}, ${finding.where})`,
+        `   Basis: ${basisDescription(finding)}`,
         `   Problem: ${finding.problem}`,
         ...finding.fix.map((line) => `   Done when: ${line}`),
         ...finding.evidence === void 0 ? [] : [`   Evidence: ${finding.evidence}`],
@@ -52711,6 +55164,7 @@ Full report: ${summary.reportPath}
   for (const [index, finding] of summary.findings.entries()) {
     lines2.push(
       `${index + 1}. [${finding.severity}] ${finding.category} \u2014 ${finding.where}${finding.selector === void 0 ? "" : ` \u2014 ${finding.selector}`}`,
+      `   Basis: ${basisDescription(finding)}`,
       `   Problem: ${finding.problem}`,
       ...finding.fix.map((line) => `   Done when: ${line}`),
       ...finding.screenshot === void 0 ? [] : [`   Evidence: ${finding.screenshot}`],
@@ -52748,6 +55202,7 @@ function renderGroupItem(group, index, extra = []) {
   return [
     `${index + 1}. [${group.severity}] ${group.category} \u2014 ${group.where}${group.selector === void 0 ? "" : ` \u2014 ${group.selector}`}`,
     ...extra,
+    `   Basis: ${basisDescription(group)}`,
     `   Problem: ${group.problem}`,
     ...group.fix.map((line) => `   Done when: ${line}`),
     ...repeated ? [
@@ -52783,7 +55238,7 @@ function renderCheckIssues(summary, groups, issues5, options) {
       ...cause.fix === void 0 ? [] : [`   Suggested fix: ${cause.fix}`],
       `   Symptoms (${cause.counts.symptoms}; ${cause.counts.findings} findings):`,
       ...cause.symptoms.map(
-        (symptom) => `   - ${symptom.category} ${symptom.rule ?? "unspecified"} \u2014 ${symptom.selector ?? "document"} \u2014 ${symptom.measurement} (${symptom.group})`
+        (symptom) => `   - ${symptom.category} ${symptom.rule ?? "unspecified"} \u2014 ${symptom.selector ?? "document"} \u2014 ${basisDescription(byId.get(symptom.group) ?? {})} \u2014 ${symptom.measurement} (${symptom.group})`
       ),
       "   Done when: every symptom above clears on recheck.",
       `   Decide symptoms individually: idiom decide --group|--finding \u2026 (idiom check ${summary.flow} --all lists each)`,
@@ -52857,12 +55312,15 @@ var init_check = __esm({
     init_render();
     init_summary();
     init_project_config();
+    init_states();
     init_errors();
+    init_presentation();
     init_artifacts2();
     init_groups();
     init_issues();
     init_summary2();
     init_run2();
+    init_finding();
     init_emit();
     init_validation();
     init_evaluate();
@@ -53297,10 +55755,10 @@ async function buildImportGraph(routes, globals) {
   const globalUncertainties = /* @__PURE__ */ new Set();
   const uncertainModules = /* @__PURE__ */ new Map();
   const uncertain = (file, message) => {
-    const text3 = `${file}: ${message}`;
-    uncertainties.add(text3);
+    const text4 = `${file}: ${message}`;
+    uncertainties.add(text4);
     const list5 = uncertainModules.get(file) ?? [];
-    if (!list5.includes(text3)) list5.push(text3);
+    if (!list5.includes(text4)) list5.push(text4);
     uncertainModules.set(file, list5);
   };
   const edges2 = /* @__PURE__ */ new Map();
@@ -53858,7 +56316,7 @@ var init_check_changed = __esm({
 // src/verify/attachments.ts
 import { access as access7, readFile as readFile40, writeFile as writeFile24 } from "fs/promises";
 import { isAbsolute as isAbsolute14, join as join42, relative as relative23, resolve as resolve35 } from "path";
-import { z as z27 } from "zod";
+import { z as z28 } from "zod";
 function canonicalAttachmentKind(ordinal) {
   return `idiom-before-after-${ordinal.toString().padStart(3, "0")}`;
 }
@@ -53968,41 +56426,41 @@ var init_attachments = __esm({
   "src/verify/attachments.ts"() {
     "use strict";
     init_errors();
-    relativePath = z27.string().min(1).refine(
+    relativePath = z28.string().min(1).refine(
       (path) => !isAbsolute14(path) && !/^[A-Za-z]:/.test(path) && !path.includes("\\") && !path.split("/").includes(".."),
       "must remain beneath the verify output"
     );
-    attachmentManifestSchema = z27.object({
-      version: z27.literal(1),
-      report: z27.object({
-        kind: z27.literal("idiom-verify-report"),
-        path: z27.literal("before-after.md")
+    attachmentManifestSchema = z28.object({
+      version: z28.literal(1),
+      report: z28.object({
+        kind: z28.literal("idiom-verify-report"),
+        path: z28.literal("before-after.md")
       }).strict(),
-      filmstrips: z27.array(
-        z27.object({
-          ordinal: z27.number().int().positive(),
-          kind: z27.string().min(1),
-          finding: z27.string().min(1),
-          state: z27.string().min(1),
-          viewport: z27.string().min(1),
-          colorScheme: z27.enum(["light", "dark"]).optional(),
+      filmstrips: z28.array(
+        z28.object({
+          ordinal: z28.number().int().positive(),
+          kind: z28.string().min(1),
+          finding: z28.string().min(1),
+          state: z28.string().min(1),
+          viewport: z28.string().min(1),
+          colorScheme: z28.enum(["light", "dark"]).optional(),
           before: relativePath.optional(),
           after: relativePath.optional(),
-          beforeUnavailable: z27.string().min(1).optional(),
-          afterUnavailable: z27.string().min(1).optional(),
-          frames: z27.array(relativePath).optional()
+          beforeUnavailable: z28.string().min(1).optional(),
+          afterUnavailable: z28.string().min(1).optional(),
+          frames: z28.array(relativePath).optional()
         }).strict().refine(
           (a) => !!a.before !== !!a.beforeUnavailable && !!a.after !== !!a.afterUnavailable,
           "each side requires a path or an unavailable reason"
         )
       ).optional(),
-      composites: z27.array(
-        z27.object({
-          ordinal: z27.number().int().positive(),
-          kind: z27.string(),
-          state: z27.string().min(1),
-          viewport: z27.string().min(1),
-          colorScheme: z27.enum(["light", "dark"]).optional(),
+      composites: z28.array(
+        z28.object({
+          ordinal: z28.number().int().positive(),
+          kind: z28.string(),
+          state: z28.string().min(1),
+          viewport: z28.string().min(1),
+          colorScheme: z28.enum(["light", "dark"]).optional(),
           path: relativePath
         }).strict()
       )
@@ -54250,7 +56708,7 @@ function collectAcceptedWork(catalog, decisions, lifecycles, flow) {
       category: finding.category,
       surface: `${finding.flow}/${finding.state}/${finding.viewport}${finding.colorScheme === void 0 ? "" : `/${finding.colorScheme}`}`,
       explanation: finding.explanation,
-      acceptance: finding.acceptance,
+      acceptance: acceptanceText(finding),
       tracker: trackerLabel(lifecycle),
       verification: lifecycle?.verification ?? "none"
     });
@@ -54563,6 +57021,8 @@ function renderDesignBrief(brief) {
     "# Design brief",
     "",
     `Scope: ${brief.flow === void 0 ? "project-wide" : `flow ${brief.flow}`}`,
+    "",
+    "Findings are measured (a deterministic rule with its measurement), observed (an action or probe with its timing and result), or judged (model critique with stated confidence when supplied). Treat judged findings as suggestions: severity gates count measured and observed findings by default; --fail-on-judged opts judged suggestions in.",
     ""
   ];
   let used = linesCost(header);
@@ -54612,6 +57072,7 @@ var init_brief = __esm({
     init_prohibitions();
     init_read();
     init_errors();
+    init_presentation();
     init_roots();
     init_catalog2();
     init_lifecycle();
@@ -54657,6 +57118,38 @@ async function coverageCommand(options) {
     excluded
   };
 }
+async function stateCoverageCommand(options) {
+  const validated = await validateProject(options);
+  const flows = [];
+  for (const { flow } of validated.flows) {
+    const directory = await findNewestCapture({
+      projectDirectory: validated.projectDirectory,
+      flow: flow.id
+    });
+    if (directory === void 0) {
+      flows.push(uncapturedFlowCoverage(flow));
+      continue;
+    }
+    try {
+      const loaded = await loadRunTuples(validated, flow, directory);
+      flows.push(
+        computeFlowStateCoverage({
+          project: validated.project,
+          flow,
+          runId: loaded.runId,
+          commit: loaded.commit,
+          record: loaded.record,
+          tuples: loaded.tuples,
+          collapsedTupleKeys: loaded.collapsedTupleKeys
+        })
+      );
+    } catch (error) {
+      if (!(error instanceof IdiomError)) throw error;
+      flows.push(uncapturedFlowCoverage(flow, error.message));
+    }
+  }
+  return { flows };
+}
 function renderCoverage(summary) {
   const uncaptured = summary.routes.filter(
     (route) => route.capturedBy.length === 0
@@ -54687,7 +57180,9 @@ var init_coverage2 = __esm({
   "src/commands/coverage.ts"() {
     "use strict";
     init_routes();
+    init_states();
     init_errors();
+    init_artifacts2();
     init_validation();
   }
 });
@@ -54709,7 +57204,7 @@ ${finding.id} \u2014 ${finding.category} (${finding.severity})`,
     finding.explanation,
     `Surface: ${finding.flow} / ${finding.state} / ${finding.viewport}${finding.colorScheme === void 0 ? "" : ` / ${finding.colorScheme}`}`,
     "Acceptance:",
-    ...finding.acceptance.map((criterion) => `- ${criterion}`)
+    ...acceptanceText(finding).map((criterion) => `- ${criterion}`)
   ].join("\n");
 }
 function designChoiceFor(finding, reference3) {
@@ -54942,6 +57437,7 @@ var init_decide2 = __esm({
     "use strict";
     init_log();
     init_errors();
+    init_presentation();
     init_catalog2();
     init_groups();
     init_lifecycle();
@@ -55300,7 +57796,9 @@ function renderVerificationHtmlReport(options) {
   const failedDiagnostic = evaluation === void 0;
   const outcome = failedDiagnostic ? "failed \u2014 verification was not safely decidable" : evaluation.passed ? "passed" : "failed";
   const verdicts = evaluation === void 0 ? `<section><h2>Diagnostic</h2><p>${escapeHtml(options.diagnostic ?? "unknown comparison failure")}</p><p>No finding was marked fixed.</p></section>` : `<section><h2>Finding verdicts</h2>${evaluation.findings.map(
-    (verdict) => `<article class="finding"><h3>${escapeHtml(verdict.finding.id)}</h3><div class="summary">${badge(verdict.status, verdict.status === "fixed" ? "good" : verdict.status)}</div><p class="meta">${escapeHtml(verdict.finding.state)} / ${escapeHtml(verdict.finding.viewport)}${verdict.finding.colorScheme === void 0 ? "" : ` / ${escapeHtml(verdict.finding.colorScheme)}`} \xB7 ${escapeHtml(verdict.locus?.source ?? verdict.finding.verification.kind)}${verdict.locus?.target === void 0 ? "" : ` \xB7 ${escapeHtml(verdict.locus.target)}`}</p><p>${escapeHtml(verdict.reason)}</p></article>`
+    (verdict) => `<article class="finding"><h3>${escapeHtml(verdict.finding.id)}</h3><div class="summary">${badge(verdict.status, verdict.status === "fixed" ? "good" : verdict.status)}</div><p class="meta">${escapeHtml(verdict.finding.state)} / ${escapeHtml(verdict.finding.viewport)}${verdict.finding.colorScheme === void 0 ? "" : ` / ${escapeHtml(verdict.finding.colorScheme)}`} \xB7 ${escapeHtml(verdict.locus?.source ?? verdict.finding.verification.kind)}${verdict.locus?.target === void 0 ? "" : ` \xB7 ${escapeHtml(verdict.locus.target)}`}</p><p>${escapeHtml(verdict.reason)}</p><p><strong>Basis:</strong> ${escapeHtml(basisDescription(verdict.finding))}</p><p><strong>Acceptance: ${escapeHtml(verdict.acceptance.status)}</strong> \u2014 ${escapeHtml(verdict.acceptance.reason)}</p><p>${escapeHtml(acceptanceDescription(verdict.acceptance.contract))}</p><ul>${acceptanceText(
+      verdict.finding
+    ).map((text4) => `<li>Done when: ${escapeHtml(text4)}</li>`).join("")}</ul></article>`
   ).join(
     ""
   )}</section><section><h2>New deterministic blockers</h2>${evaluation.newBlockers.length === 0 ? "<p>None.</p>" : `<ul>${evaluation.newBlockers.map((blocker) => `<li>${escapeHtml(blocker)}</li>`).join("")}</ul>`}</section>${evaluation.newFindings === void 0 ? "" : `<section><h2>New deterministic findings (all severities)</h2>${evaluation.newFindings.length ? `<ul>${evaluation.newFindings.map((finding) => `<li>${escapeHtml(`${finding.severity}: ${finding.category} ${finding.rule ?? ""} at ${finding.key} (${finding.selector ?? "document"})`)}</li>`).join("")}</ul>` : "<p>None.</p>"}</section>`}`;
@@ -55318,6 +57816,7 @@ function renderVerificationHtmlReport(options) {
 var init_html_report2 = __esm({
   "src/verify/html-report.ts"() {
     "use strict";
+    init_presentation();
     init_coverage();
     init_html();
   }
@@ -55326,7 +57825,7 @@ var init_html_report2 = __esm({
 // src/verify/report.ts
 import { writeFile as writeFile33 } from "fs/promises";
 import { join as join59 } from "path";
-function cell2(value) {
+function cell3(value) {
   return value.replaceAll("|", "\\|").replace(/\r?\n/g, "<br>");
 }
 function reductionText(evaluation) {
@@ -55410,19 +57909,32 @@ function renderVerificationReport(options) {
     "",
     "## Finding verdicts",
     "",
-    "| Finding | Tuple | Verdict | Basis | Target | Reason |",
-    "| --- | --- | --- | --- | --- | --- |",
+    "| Finding | Tuple | Verdict | Finding basis | Evidence | Target | Reason | Acceptance | Acceptance reason |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ...evaluation.findings.map(
       (verdict) => [
         verdict.finding.id,
         `${verdict.finding.state}/${verdict.finding.viewport}${verdict.finding.colorScheme === void 0 ? "" : `/${verdict.finding.colorScheme}`}`,
         verdict.status,
+        basisDescription(verdict.finding),
         verdict.locus?.source ?? verdict.finding.verification.kind,
         verdict.locus?.target ?? "n/a",
-        verdict.reason
-      ].map(cell2).join(" | ").replace(/^/, "| ").replace(/$/, " |")
+        verdict.reason,
+        verdict.acceptance.status,
+        verdict.acceptance.reason
+      ].map(cell3).join(" | ").replace(/^/, "| ").replace(/$/, " |")
     ),
     "",
+    ...evaluation.findings.flatMap((verdict) => [
+      `### ${cell3(verdict.finding.id)} acceptance`,
+      "",
+      cell3(acceptanceDescription(verdict.acceptance.contract)),
+      "",
+      ...acceptanceText(verdict.finding).map(
+        (criterion) => `- Done when: ${cell3(criterion)}`
+      ),
+      ""
+    ]),
     "## New deterministic blockers",
     "",
     ...evaluation.newBlockers.length === 0 ? ["None."] : evaluation.newBlockers.map((blocker) => `- ${blocker}`),
@@ -55468,6 +57980,7 @@ function filmstripMarkdown(manifest) {
 var init_report2 = __esm({
   "src/verify/report.ts"() {
     "use strict";
+    init_presentation();
     init_coverage();
   }
 });
@@ -55650,17 +58163,19 @@ async function runVerify(options) {
         legacyColorScheme: validated.project.capture.colorScheme
       })
     ]);
+    annotateDeclaredExpectations(loadedA.tuples, flow);
+    annotateDeclaredExpectations(loadedB.tuples, flow);
     if (runA.counts.failed > 0 || runB.counts.failed > 0) {
-      const coordinate5 = (tuple) => `${tuple.state}/${tuple.viewport}${tuple.colorSchemeAxis ? `/${tuple.colorScheme ?? validated.project.capture.colorScheme}` : ""}`;
+      const coordinate6 = (tuple) => `${tuple.state}/${tuple.viewport}${tuple.colorSchemeAxis ? `/${tuple.colorScheme ?? validated.project.capture.colorScheme}` : ""}`;
       const failures = [
         ...loadedA.tuples.flatMap(
           (tuple) => tuple.failure === void 0 ? [] : [
-            `A ${coordinate5(tuple)} ${tuple.failure.stage}: ${tuple.failure.message}`
+            `A ${coordinate6(tuple)} ${tuple.failure.stage}: ${tuple.failure.message}`
           ]
         ),
         ...loadedB.tuples.flatMap(
           (tuple) => tuple.failure === void 0 ? [] : [
-            `B ${coordinate5(tuple)} ${tuple.failure.stage}: ${tuple.failure.message}`
+            `B ${coordinate6(tuple)} ${tuple.failure.stage}: ${tuple.failure.message}`
           ]
         )
       ];
@@ -55781,6 +58296,20 @@ async function runVerify(options) {
     } catch (error) {
       checkCancelled();
       diagnostic = error instanceof Error ? error.message : String(error);
+      evaluation = {
+        passed: false,
+        calibrations: [],
+        newBlockers: [],
+        findings: findings.map((finding) => ({
+          finding,
+          status: "unverifiable",
+          reason: diagnostic,
+          acceptance: unavailableAcceptance(
+            finding.acceptance,
+            `Safe evaluation prevented: ${diagnostic}`
+          )
+        }))
+      };
     }
     const currentCommit = loadedA.commit === loadedB.commit ? loadedB.commit : `unavailable (calibration commits disagree: ${loadedA.commit} / ${loadedB.commit})`;
     const reportCoverage = buildVerificationCoverage({
@@ -55859,10 +58388,12 @@ var init_run3 = __esm({
     init_run();
     init_project_config();
     init_errors();
+    init_settings();
     init_coverage();
     init_html();
     init_artifacts2();
     init_validation();
+    init_acceptance2();
     init_attachments();
     init_baseline();
     init_compare();
@@ -56080,7 +58611,10 @@ async function repairPrompt(snapshot3, selected2, eligible) {
           verification: finding.verification,
           rule: finding.rule,
           category: finding.category,
+          basis: finding.basis,
+          basisDetails: finding.basisDetails,
           acceptance: finding.acceptance,
+          doneWhen: acceptanceText(finding),
           coordinate: tupleCoordinateKey(finding),
           cropPaths: (crops.length ? crops : screenshots).map(
             (path) => resolve51(record2.runDirectory, path)
@@ -56119,8 +58653,9 @@ var init_prompt2 = __esm({
   "src/fix/prompt.ts"() {
     "use strict";
     init_coordinate();
-    init_render3();
     init_presentation();
+    init_render3();
+    init_presentation2();
     init_check2();
   }
 });
@@ -56692,9 +59227,9 @@ async function openFlowBrowser(project, options = {}) {
         if (xml === void 0) throw new Error("too many sitemap redirects");
         context2 = await browser.newContext();
         const page = await context2.newPage();
-        return await page.evaluate((text3) => {
+        return await page.evaluate((text4) => {
           const document2 = new DOMParser().parseFromString(
-            text3,
+            text4,
             "application/xml"
           );
           if (document2.querySelector("parsererror"))
@@ -56808,7 +59343,7 @@ async function discoverFlowRoutes(options) {
     records.set(entry.route, record2);
   }
   const warnings = [];
-  const observed = /* @__PURE__ */ new Map();
+  const observed3 = /* @__PURE__ */ new Map();
   const inspected = /* @__PURE__ */ new Map();
   const excludedTemplates = raw.filter(
     (entry) => entry.route.includes("[") && excludeRoutes(
@@ -56847,9 +59382,9 @@ async function discoverFlowRoutes(options) {
     };
     const admit = (path, source) => {
       if (!allowed(path)) return;
-      const sources = observed.get(path) ?? /* @__PURE__ */ new Set();
+      const sources = observed3.get(path) ?? /* @__PURE__ */ new Set();
       sources.add(source);
-      observed.set(path, sources);
+      observed3.set(path, sources);
     };
     const documents = [new URL("/sitemap.xml", origin).href];
     const seen = /* @__PURE__ */ new Set();
@@ -56929,7 +59464,7 @@ async function discoverFlowRoutes(options) {
       );
     for (const path of [
       .../* @__PURE__ */ new Set([
-        ...observed.keys(),
+        ...observed3.keys(),
         ...[...records.values()].flatMap((r) => r.path ? [r.path] : [])
       ])
     ].sort()) {
@@ -56966,7 +59501,7 @@ async function discoverFlowRoutes(options) {
   });
   const fallbackExamples = /* @__PURE__ */ new Map();
   const failedExamples = /* @__PURE__ */ new Map();
-  for (const [path, sources] of [...observed].sort(
+  for (const [path, sources] of [...observed3].sort(
     ([a], [b]) => a.localeCompare(b)
   )) {
     const result2 = inspected.get(path);
@@ -57036,7 +59571,7 @@ var init_discover2 = __esm({
 });
 
 // src/flows/generate.ts
-import { createHash as createHash21 } from "crypto";
+import { createHash as createHash22 } from "crypto";
 function constructSiteFlow(project, discovery, surface) {
   const origin = new URL(project.server.readyUrl).origin;
   const display = (value) => value.replaceAll(origin, "");
@@ -57071,7 +59606,7 @@ function constructSiteFlow(project, discovery, surface) {
       return [];
     }
     const base = routeStateId(route.route);
-    const id2 = (counts.get(base) ?? 0) > 1 ? `${base}-${createHash21("sha256").update(route.route).digest("hex").slice(0, 10)}` : base;
+    const id2 = (counts.get(base) ?? 0) > 1 ? `${base}-${createHash22("sha256").update(route.route).digest("hex").slice(0, 10)}` : base;
     if (route.setup)
       setup.push(
         `TODO: requires setup for ${route.route}: redirected to ${route.setup}. Add your authentication/seed command to this flow's setup array before capture.`
@@ -57713,7 +60248,7 @@ function compareValueDrift(input, normalize2) {
       for (const fact of input.facts.filter(
         (f) => f.kind === kind && f.coordinate === context2.coordinate
       )) {
-        const observed = fact.value === "full" ? "full" : normalize2([
+        const observed3 = fact.value === "full" ? "full" : normalize2([
           {
             value: fact.value,
             kind,
@@ -57721,7 +60256,7 @@ function compareValueDrift(input, normalize2) {
             rootFontSize: context2.rootFontSize
           }
         ])[0]?.value;
-        if (!observed) {
+        if (!observed3) {
           result2.unresolved.push(
             `${kind} ${fact.value}: unsupported observed value`
           );
@@ -57729,7 +60264,7 @@ function compareValueDrift(input, normalize2) {
         }
         let covered2 = false;
         applicable.forEach(({ t, i }, j) => {
-          if (values[j] && match(observed, values[j], t.base ?? false)) {
+          if (values[j] && match(observed3, values[j], t.base ?? false)) {
             used.add(i);
             covered2 = true;
           }
@@ -58202,10 +60737,10 @@ function visibleText(element) {
     return false;
   if (isObservedElementV2(element) && Number.parseFloat(element.styles.opacity) <= 0)
     return false;
-  const text3 = isObservedElementV2(element) ? element.directText : element.text;
-  return text3.trim() !== "";
+  const text4 = isObservedElementV2(element) ? element.directText : element.text;
+  return text4.trim() !== "";
 }
-function coordinate4(tuple) {
+function coordinate5(tuple) {
   return {
     flow: tuple.flow,
     state: tuple.state,
@@ -58236,7 +60771,7 @@ function aggregateObservedTuples(capture) {
     (tuple) => tuple.observations?.version === 2
   );
   for (const tuple of capture.tuples) {
-    const point = coordinate4(tuple);
+    const point = coordinate5(tuple);
     for (const element of tuple.observations?.elements ?? []) {
       if (!element.visible || element.rect.width <= 0 || element.rect.height <= 0)
         continue;
@@ -59847,14 +62382,14 @@ async function captureLiteralOwned(options, owner2) {
     );
     const probeLedger = createProbeLedger();
     const probed = selectedTuples.filter(
-      (selected2) => probeKeys.has(captureTupleKey(coordinate(selected2)))
+      (selected2) => probeKeys.has(captureTupleKey(coordinate2(selected2)))
     ).map((selected2) => ({
-      ...coordinate(selected2),
+      ...coordinate2(selected2),
       url: selected2.state.url
     }));
     for (const selected2 of selectedTuples) {
       owner2.coordinate(selected2, "tuple capture");
-      const probe = options.probe !== void 0 && probeKeys.has(captureTupleKey(coordinate(selected2)));
+      const probe = options.probe !== void 0 && probeKeys.has(captureTupleKey(coordinate2(selected2)));
       const url = selected2.state.url;
       const result2 = await browser.capture({
         signal: owner2.signal,
@@ -60070,6 +62605,8 @@ async function runQuick(options) {
   try {
     options.dependencies?.signal?.throwIfAborted();
     const drafts = buildDeterministicDrafts({
+      config: checksConfigFrom(configuration.project.checks),
+      tuples: loaded.tuples,
       runId: loaded.runId,
       entries: reviewed.candidates,
       legacyColorScheme: configuration.project.capture.colorScheme
@@ -60451,7 +62988,7 @@ function renderProductSweep(s) {
     `Coverage: ${s.flows.filter((f) => f.status === "reviewed").length} reviewed; ${s.flows.filter((f) => f.status === "failed").length} failed. ${s.outcome.kind === "degraded" ? s.outcome.reason : s.outcome.kind}.`,
     `Tickets: ${s.selectedCount} selected, ${s.omittedCount} additional new proposal(s) omitted by budget.`,
     ...s.proposals.map(
-      (p, i) => `${i + 1}. [${p.severity}] score ${p.score.toFixed(2)} \u2014 ${p.cluster.cause?.cause ?? p.cluster.component} (${p.findingIds.join(", ")})`
+      (p, i) => `${i + 1}. [${p.severity}] score ${p.score.toFixed(2)} \u2014 ${p.cluster.cause?.cause ?? p.cluster.component} (${p.findingIds.join(", ")}) \u2014 ${p.cluster.members.map((m) => basisDescription(m.record.finding)).join("; ")}`
     ),
     ...s.tickets === void 0 ? [] : [renderClusterTicketsResult(s.tickets)],
     `Polish report: ${s.reportPath}`,
@@ -60464,37 +63001,37 @@ function polishMarkdown(s) {
   return [
     "# Whole-product polish",
     "",
-    text2(renderProductSweep(s)),
+    text3(renderProductSweep(s)),
     "",
     `Severity counts (all findings): ${JSON.stringify(s.severityCounts)}`,
-    `Rule counts (all findings): ${text2(JSON.stringify(s.ruleCounts))}`,
+    `Rule counts (all findings): ${text3(JSON.stringify(s.ruleCounts))}`,
     "",
     "## Ranked cleanup tickets",
     "",
     ...s.proposals.flatMap((p, i) => [
-      `### ${i + 1}. ${text2(p.cluster.cause?.cause ?? p.cluster.component)}`,
+      `### ${i + 1}. ${text3(p.cluster.cause?.cause ?? p.cluster.component)}`,
       "",
-      `Salience ${p.salience}; prominence ${p.prominence}; score ${p.score}. ${text2(JSON.stringify(p.explanation))}`,
+      `Salience ${p.salience}; prominence ${p.prominence}; score ${p.score}. ${text3(JSON.stringify(p.explanation))}`,
       "",
       ...p.cluster.members.map(
-        (m) => `- ${text2(m.id)}: ${text2(m.record.finding.explanation)} ([source report](${href(s, `${m.record.runDirectory}/report.md`)}))`
+        (m) => `- ${text3(m.id)}: ${text3(basisDescription(m.record.finding))} \u2014 ${text3(m.record.finding.explanation)} ([source report](${href(s, `${m.record.runDirectory}/report.md`)}))`
       ),
       ""
     ]),
     ...(s.tickets?.outcomes ?? []).map(
-      (o) => o.kind === "created" || o.kind === "already-emitted" ? `- ${o.kind}: [ticket](${href(s, o.path)})` : `- ${text2(JSON.stringify(o))}`
+      (o) => o.kind === "created" || o.kind === "already-emitted" ? `- ${o.kind}: [ticket](${href(s, o.path)})` : `- ${text3(JSON.stringify(o))}`
     ),
     "",
     "## Flows and coverage",
     "",
     ...s.flows.flatMap(
-      (f) => f.status === "failed" ? [`### ${text2(f.flow)}`, `Failed/unreviewed: ${text2(f.reason)}`, ""] : [
-        `### ${text2(f.flow)}`,
+      (f) => f.status === "failed" ? [`### ${text3(f.flow)}`, `Failed/unreviewed: ${text3(f.reason)}`, ""] : [
+        `### ${text3(f.flow)}`,
         "",
         `[Markdown report](${href(s, f.summary.reportPath)}) \xB7 [HTML report](${href(s, f.summary.htmlReportPath)})`,
         "",
         f.coverage.reportCoverage === void 0 ? "Coverage unavailable." : renderCoverageMarkdown(f.coverage.reportCoverage),
-        `Model: ${text2(JSON.stringify({ outcome: f.summary.outcome, surfaces: f.summary.surfaces }))}`,
+        `Model: ${text3(JSON.stringify({ outcome: f.summary.outcome, surfaces: f.summary.surfaces }))}`,
         "",
         "Probe coordinates, controls, reuse and limitations (reused controls are not additional clicks):",
         "",
@@ -60543,15 +63080,16 @@ async function writePolishReports(s) {
     await rename27(`${path}.tmp`, path);
   }
 }
-var href, text2;
+var href, text3;
 var init_report3 = __esm({
   "src/sweep/report.ts"() {
     "use strict";
+    init_presentation();
     init_coverage();
     init_html();
     init_emit();
     href = (s, path) => relative37(s.runDirectory, path).split(sep23).map(encodeURIComponent).join("/");
-    text2 = (s) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/([\\`*_[\]])/g, "\\$1");
+    text3 = (s) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/([\\`*_[\]])/g, "\\$1");
   }
 });
 
@@ -60838,9 +63376,7 @@ async function sweepWithReview(options) {
       }
     }
   });
-  const findings = JSON.parse(
-    await readFile72(result2.findingsPath, "utf8")
-  );
+  const findings = findingSchema.array().parse(JSON.parse(await readFile72(result2.findingsPath, "utf8")));
   const ranked = rankSweepFindings(
     findings.filter(
       (finding) => finding.status === "open" || finding.status === "approved"
@@ -60866,7 +63402,9 @@ async function sweepWithReview(options) {
       ...summarizeFinding(finding, result2, base),
       layer: finding.layer
     })),
-    blocking: ranked.filter((finding) => finding.severity !== "minor").length
+    blocking: ranked.filter(
+      (finding) => finding.severity !== "minor" && finding.basis !== "judged"
+    ).length
   };
   const records = ranked.map((finding) => ({
     finding,
@@ -60902,7 +63440,8 @@ function renderSweepSummary(summary) {
   ];
   for (const [index, finding] of summary.findings.entries()) {
     lines2.push(
-      `${index + 1}. [${finding.severity}] [${finding.layer === "model" ? "model" : "measured"}] ${finding.category} \u2014 ${finding.where}${finding.selector === void 0 ? "" : ` \u2014 ${finding.selector}`}`,
+      `${index + 1}. [${finding.severity}] [${finding.basis ?? (finding.layer === "model" ? "judged" : "measured")}] ${finding.category} \u2014 ${finding.where}${finding.selector === void 0 ? "" : ` \u2014 ${finding.selector}`}`,
+      `   Basis: ${basisDescription(finding)}`,
       `   Problem: ${finding.problem}`,
       ...finding.fix.map((line) => `   Done when: ${line}`),
       ...finding.screenshot === void 0 ? [] : [`   Evidence: ${finding.screenshot}`],
@@ -60923,7 +63462,9 @@ var init_sweep = __esm({
     init_summary();
     init_artifacts3();
     init_errors();
+    init_presentation();
     init_run2();
+    init_finding();
     init_group();
     init_report3();
     init_run6();
@@ -61054,9 +63595,9 @@ import {
   resolve as resolve60,
   sep as sep24
 } from "path";
-function result(text3, data) {
+function result(text4, data) {
   return {
-    content: [{ type: "text", text: text3 }],
+    content: [{ type: "text", text: text4 }],
     structuredContent: JSON.parse(JSON.stringify(data))
   };
 }
@@ -61097,6 +63638,9 @@ function findingDetail(record2, qualify2 = (id2) => id2) {
     flow: finding.flow,
     verificationReference: { id: qualify2(finding.id), runId: record2.runId },
     finding,
+    basis: finding.basis,
+    basisDetails: finding.basisDetails,
+    acceptance: finding.acceptance,
     selector: finding.verification.params?.selector,
     measurement: {
       explanation: finding.explanation,
@@ -61426,7 +63970,7 @@ var init_evidence2 = __esm({
 import { mkdtemp as mkdtemp9, readdir as readdir23, readFile as readFile74, rm as rm20, writeFile as writeFile44 } from "fs/promises";
 import { tmpdir as tmpdir5 } from "os";
 import { basename as basename18, isAbsolute as isAbsolute26, join as join79, resolve as resolve61 } from "path";
-import { z as z30 } from "zod";
+import { z as z31 } from "zod";
 function registerIdiomTools(server, root2, queue, dependencies) {
   const evidence = new EvidenceStore(root2);
   const configured = { project: root2 };
@@ -61475,15 +64019,15 @@ function registerIdiomTools(server, root2, queue, dependencies) {
   register(
     "idiom_quick",
     "Review a public page at an absolute HTTP(S) URL with zero configuration and no model. Returns ranked Top 5 issues, complete evidence IDs and absolute report paths; writes local reports, captures desktop/mobile in light/dark and safely probes controls once per page (first viewport, light; only GET/HEAD/OPTIONS requests leave the browser; destructive-looking controls are skipped). For configured flows or intended designs use idiom_check. For requested repairs use idiom_fix_plan, then idiom_verify.",
-    z30.strictObject({
-      url: z30.url().refine((value) => /^https?:\/\//i.test(value), "URL must use HTTP(S)").describe("Absolute URL to review"),
-      viewports: list4(z30.enum(["desktop", "mobile"])).optional().describe(
+    z31.strictObject({
+      url: z31.url().refine((value) => /^https?:\/\//i.test(value), "URL must use HTTP(S)").describe("Absolute URL to review"),
+      viewports: list4(z31.enum(["desktop", "mobile"])).optional().describe(
         "Preset viewports; defaults to both desktop (1440x900) and mobile (390x844)"
       ),
-      probe: z30.boolean().optional().describe(
+      probe: z31.boolean().optional().describe(
         "Run the safe interaction probe once per page at the first viewport in light; default true"
       ),
-      probeBudgetMs: z30.number().int().positive().max(6e5).optional().describe(
+      probeBudgetMs: z31.number().int().positive().max(6e5).optional().describe(
         "Per-page probe budget in ms, default 45000 (CLI --probe-budget)"
       )
     }),
@@ -61682,16 +64226,16 @@ function registerIdiomTools(server, root2, queue, dependencies) {
   register(
     "idiom_check",
     "Capture a configured flow, run deterministic UI checks and compare declared intended designs (HTML, Figma, images or live sites). Returns ranked Top 5 issues with selectors, measurements, fix instructions, crops, counts and baseline new/fixed/pre-existing comparison. all=true reviews every live finding without recording/comparing a baseline. Attach references with idiom_design_add; a human chooses between conflicting references with idiom_choose. For requested repairs use idiom_fix_plan, then idiom_verify.",
-    z30.strictObject({
+    z31.strictObject({
       flow: identifier2.optional().describe("Configured flow manifest ID; optional with changed"),
-      changed: z30.union([z30.literal(true), z30.string().trim().min(1)]).optional().describe(
+      changed: z31.union([z31.literal(true), z31.string().trim().min(1)]).optional().describe(
         "Select states affected by Git changes; true uses the default merge base, a string names a base"
       ),
       states: list4(selection).optional().describe("Exact configured state IDs; omitted means every state"),
       viewports: list4(selection).optional().describe(
         "Exact configured viewport names; omitted means every flow viewport"
       ),
-      all: z30.boolean().default(false).describe(
+      all: z31.boolean().default(false).describe(
         "Return full live findings and bypass baseline bootstrap/comparison"
       )
     }),
@@ -61756,7 +64300,7 @@ function registerIdiomTools(server, root2, queue, dependencies) {
   register(
     "idiom_issue",
     "Read full original evidence for a returned finding, group or issue ID. Includes members and sibling groups, selectors, measurements, repair instructions and the representative PNG crop as image content; performs no capture.",
-    z30.strictObject({
+    z31.strictObject({
       id: identifier2.describe(
         "Opaque finding/group/issue ID from a tool or project catalog"
       )
@@ -61767,9 +64311,9 @@ function registerIdiomTools(server, root2, queue, dependencies) {
   register(
     "idiom_fix_plan",
     "Capture a full flow and hand the calling agent the exact idiom fix repair prompt and selected original finding records. Excludes rejected work; never launches a repair agent or records a decision. Edit source yourself, then call idiom_verify with the returned arguments.",
-    z30.strictObject({
+    z31.strictObject({
       flow: identifier2.describe("Configured flow ID"),
-      top: z30.number().int().positive().default(5).describe("Maximum finding assignments, in idiom fix order")
+      top: z31.number().int().positive().default(5).describe("Maximum finding assignments, in idiom fix order")
     }),
     false,
     async ({ flow, top }, execution) => {
@@ -61811,11 +64355,11 @@ function registerIdiomTools(server, root2, queue, dependencies) {
   register(
     "idiom_verify",
     "Prove original findings fixed using two calibrated full-flow captures pinned to their source run. Reports each fixed/reproduced/unverifiable verdict and all introduced deterministic findings, including minor regressions outside the target state. Requires complete successful original coverage; quick evidence is unsupported.",
-    z30.strictObject({
+    z31.strictObject({
       flow: identifier2.describe(
         "Same configured flow as the original evidence"
       ),
-      findings: z30.array(reference2).min(1).refine(
+      findings: z31.array(reference2).min(1).refine(
         (refs) => new Set(refs.map((ref) => `${ref.runId}:${ref.id}`)).size === refs.length,
         "Duplicate verification references"
       ).describe(
@@ -61847,7 +64391,7 @@ ${JSON.stringify(finding)}
         const regressionFree = output.newFindings === void 0 ? null : output.newFindings.length === 0;
         const success = output.passed && regressionFree === true;
         return result(
-          `Verification ${success ? "passed" : "failed"}: ${output.verdicts?.filter((verdict) => verdict.status === "fixed").length ?? 0}/${findings.length} fixed; ${output.newFindings?.length ?? "unknown"} introduced findings. Report: ${output.reportPath}`,
+          `Verification ${success ? "passed" : "failed"}: ${output.verdicts?.filter((verdict) => verdict.status === "fixed").length ?? 0}/${findings.length} fixed; ${output.newFindings?.length ?? "unknown"} introduced findings. ${(output.verdicts ?? []).map((v) => `${v.finding.id}: acceptance ${v.acceptance.status} \u2014 ${v.acceptance.reason}`).join("; ")} Report: ${output.reportPath}`,
           { ...output, sourceRun: source.runId, regressionFree, success }
         );
       } finally {
@@ -61858,7 +64402,7 @@ ${JSON.stringify(finding)}
   register(
     "idiom_context",
     "Read the bounded project design brief before building UI: tokens, scales, rules/design law, craft checks, prohibitions and accepted work. Read-only; no browser or model.",
-    z30.strictObject({}),
+    z31.strictObject({}),
     true,
     async () => {
       const brief = await contextCommand(configured);
@@ -61868,7 +64412,7 @@ ${JSON.stringify(finding)}
   register(
     "idiom_flows",
     "List validated configured flows with their titles, ordered states, viewports and color schemes. If no manifests exist, suggests idiom_init with flows:true. Every configured tool validates first; validation errors return as tool errors. Read-only; no browser or model.",
-    z30.strictObject({}),
+    z31.strictObject({}),
     true,
     async () => {
       const context2 = await loadProjectContext(configured);
@@ -61906,14 +64450,14 @@ ${JSON.stringify(finding)}
   register(
     "idiom_decide",
     "Record an explicit human accept/reject judgment with a reason for one canonical finding or exactly one durable group's members. Writes the project decision log with instance scope; never accepts siblings implicitly, changes Git or repairs source. Quick-only evidence cannot receive project decisions. For a design system question (a ruling-N id from idiom_check), add-step records the value as a token step for its context in the design file (token optional, defaults to the suggestion) and drift keeps reporting it as one grouped issue; skip by not answering.",
-    z30.strictObject({
+    z31.strictObject({
       id: identifier2.describe(
         "Canonical finding or group ID, or a design system question's ruling-N"
       ),
-      decision: z30.enum(["accept", "reject", "add-step", "drift"]).describe(
+      decision: z31.enum(["accept", "reject", "add-step", "drift"]).describe(
         "Explicit human judgment: accept/reject a finding, add-step/drift a design system question"
       ),
-      token: z30.string().trim().min(1).optional().describe("add-step only: token name; defaults to the suggestion"),
+      token: z31.string().trim().min(1).optional().describe("add-step only: token name; defaults to the suggestion"),
       reason: humanReason
     }),
     false,
@@ -61969,8 +64513,8 @@ ${JSON.stringify(finding)}
   register(
     "idiom_init",
     "Scaffold PRODUCT.md, DESIGN.md and .idiom in the bound project root without data loss, non-interactively (never overwrites changed files, never wires Autobuild). flows:true also generates a site flow from filesystem and running local routes. Returns files created/replaced/unchanged/preserved and next steps.",
-    z30.strictObject({
-      flows: z30.boolean().default(false).describe(
+    z31.strictObject({
+      flows: z31.boolean().default(false).describe(
         "Generate .idiom/flows/site.json from filesystem and running local routes"
       ),
       surface: identifier2.optional().describe("Project surface for the generated site flow")
@@ -62024,9 +64568,9 @@ ${JSON.stringify(finding)}
   register(
     "idiom_design_add",
     "Attach an intended design to an authored state in a flow manifest: a local HTML file/directory or PNG/JPEG/WebP image inside the bound root, a prototype URL, or a Figma frame URL. Writes only the flow manifest. Figma frames need FIGMA_TOKEN in the MCP server's environment; no argument accepts credentials.",
-    z30.strictObject({
+    z31.strictObject({
       state: identifier2.describe("Authored state ID"),
-      source: z30.string().trim().min(1).describe(
+      source: z31.string().trim().min(1).describe(
         "HTTP(S) URL, Figma frame URL with node-id, or a path relative to the bound root"
       ),
       flow: identifier2.optional().describe("Disambiguate the state across flow manifests"),
@@ -62062,11 +64606,11 @@ ${JSON.stringify(finding)}
   register(
     "idiom_choose",
     "Record a human's choice between disagreeing intended-design references for one idiom:design-decision finding. A human must name the intended reference and supply the reason; the tool records exactly that reference, never infers one, and preserves the reason verbatim. Writes the project decision log.",
-    z30.strictObject({
+    z31.strictObject({
       id: identifier2.describe(
         "Canonical idiom:design-decision finding ID (not a group)"
       ),
-      reference: z30.string().trim().min(1).describe("Reference name the human chose, as listed in the finding"),
+      reference: z31.string().trim().min(1).describe("Reference name the human chose, as listed in the finding"),
       reason: humanReason
     }),
     false,
@@ -62094,7 +64638,7 @@ ${JSON.stringify(finding)}
   register(
     "idiom_tickets",
     "Emit accepted findings as clustered ticket proposals (grouped by component and category) into a file-tracker triage directory inside the bound project. Only human-accepted findings become tickets; tickets land in triage, never ready, and are promoted by a human. Returns absolute ticket paths.",
-    z30.strictObject({
+    z31.strictObject({
       findings: list4(identifier2).optional().describe("Accepted finding IDs; omitted means every accepted finding"),
       out: relativePath2.optional().describe(
         "Ticket directory relative to the bound root; defaults to the file tracker's triage"
@@ -62120,15 +64664,15 @@ ${JSON.stringify(finding)}
   register(
     "idiom_sweep",
     "Capture a configured flow, run every deterministic check, then a per-surface model critique with crops and measured geometry. Returns every ranked finding and report paths; optionally emits clustered proposals into triage. Model credentials come only from the server's environment; a degraded critique is a completed result. Use all:true for a whole-product cleanup set; deterministicOnly runs without model credentials. maxTickets caps new tickets after grouping and deduplication.",
-    z30.strictObject({
+    z31.strictObject({
       flow: identifier2.optional().describe(
         "Configured flow manifest ID; exactly one of flow or all is required"
       ),
-      all: z30.boolean().default(false),
-      deterministicOnly: z30.boolean().default(false),
-      maxTickets: z30.number().int().positive().max(Number.MAX_SAFE_INTEGER).default(10),
+      all: z31.boolean().default(false),
+      deterministicOnly: z31.boolean().default(false),
+      maxTickets: z31.number().int().positive().max(Number.MAX_SAFE_INTEGER).default(10),
       from: identifier2.optional().describe("Sweep this existing immutable capture run ID"),
-      latest: z30.boolean().default(false).describe(
+      latest: z31.boolean().default(false).describe(
         "Sweep the newest fully passing capture of this flow at HEAD"
       ),
       emitTickets: relativePath2.optional().describe(
@@ -62236,30 +64780,50 @@ ${"scope" in summary ? "Sweep incomplete" : "Model critique degraded"}: ${summar
   );
   register(
     "idiom_coverage",
-    "List the app's routes and which configured flows capture them, so routes no flow captures are visible (silence about an uncaptured route is not approval). Discovers app/ and pages/ routes, or crawls same-origin links from a running page. Read-only; no capture or model.",
-    z30.strictObject({
-      crawl: httpUrl.optional().describe("Discover routes from the links on this running page")
+    "List the app's routes and which configured flows capture them, so routes no flow captures are visible (silence about an uncaptured route is not approval). Discovers app/ and pages/ routes, or crawls same-origin links from a running page. Also returns state coverage: per flow and state, which viewports, colour schemes, reduced-motion modes, network replays, interactions, and data states the latest capture observed, with the change that covers each missing one (coverage of what was reviewed, not a quality measure). Read-only; no capture or model.",
+    z31.strictObject({
+      crawl: httpUrl.optional().describe("Discover routes from the links on this running page"),
+      states: z31.boolean().default(false).describe(
+        "Return only state coverage (skips route discovery, so projects without filesystem routes work)"
+      )
     }),
     true,
-    async ({ crawl }) => {
+    async ({ crawl, states }) => {
+      const stateCoverage = await stateCoverageCommand({
+        project: root2,
+        cwd: root2
+      });
+      if (states)
+        return result(renderStateCoverage(stateCoverage).trimEnd(), {
+          states: stateCoverage
+        });
       const summary = await coverageCommand({
         project: root2,
         cwd: root2,
         crawl
       });
-      return result(renderCoverage(summary).trimEnd(), summary);
+      return result(
+        [
+          renderCoverage(summary).trimEnd(),
+          "",
+          ...stateCoverage.flows.map(
+            (flow) => `${flow.flow}: ${stateCoverageLine(flow)}`
+          )
+        ].join("\n"),
+        { ...summary, states: stateCoverage }
+      );
     }
   );
   register(
     "idiom_baseline",
     "Show or record a flow's compact deterministic finding baseline. show reads recorded commits and which record applies at HEAD; record captures (or reuses from/latest) a clean committed HEAD and writes the baseline file. Commit that file deliberately, only after intentional changes. Never changes Git.",
-    z30.strictObject({
-      action: z30.enum(["show", "record"]).describe("show reads the baseline; record writes a new record"),
+    z31.strictObject({
+      action: z31.enum(["show", "record"]).describe("show reads the baseline; record writes a new record"),
       flow: identifier2.optional().describe(
         "Configured flow ID; optional when exactly one flow exists"
       ),
       from: identifier2.optional().describe("record only: use this existing immutable capture run ID"),
-      latest: z30.boolean().default(false).describe(
+      latest: z31.boolean().default(false).describe(
         "record only: use the newest fully passing capture at HEAD"
       )
     }).refine(
@@ -62352,6 +64916,7 @@ var init_tools = __esm({
     init_ruling2();
     init_sweep();
     init_verify();
+    init_states();
     init_client();
     init_source();
     init_errors();
@@ -62366,23 +64931,23 @@ var init_tools = __esm({
     init_target();
     init_validation();
     init_evidence2();
-    identifier2 = z30.string().trim().min(1).refine(safeIdentifier, "Use an identifier without path separators, . or ..");
-    selection = z30.string().trim().min(1).refine(
+    identifier2 = z31.string().trim().min(1).refine(safeIdentifier, "Use an identifier without path separators, . or ..");
+    selection = z31.string().trim().min(1).refine(
       (value) => !value.includes(","),
       "Supply exact names as separate array items"
     );
-    list4 = (item) => z30.array(item).min(1).refine(
+    list4 = (item) => z31.array(item).min(1).refine(
       (values) => new Set(values).size === values.length,
       "Lists must not contain duplicates"
     );
-    relativePath2 = z30.string().trim().min(1).refine(
+    relativePath2 = z31.string().trim().min(1).refine(
       (value) => !isAbsolute26(value) && !value.includes("\0"),
       "Use a path relative to the bound project root"
     );
-    humanReason = z30.string().refine((value) => value.trim().length > 0, "Reason must not be blank").describe("Human-supplied reason, preserved verbatim");
-    httpUrl = z30.url().refine((value) => /^https?:\/\//i.test(value), "URL must use HTTP(S)");
+    humanReason = z31.string().refine((value) => value.trim().length > 0, "Reason must not be blank").describe("Human-supplied reason, preserved verbatim");
+    httpUrl = z31.url().refine((value) => /^https?:\/\//i.test(value), "URL must use HTTP(S)");
     commitGuidance = "Commit the baseline file deliberately; record only after intentional changes, on clean committed HEAD.";
-    reference2 = z30.strictObject({
+    reference2 = z31.strictObject({
       id: identifier2.describe(
         "Original finding ID returned by check, issue or fix-plan"
       ),
@@ -62535,7 +65100,7 @@ import { mkdir as mkdir17, mkdtemp as mkdtemp3, readFile as readFile42, rm as rm
 import { basename as basename7, dirname as dirname21, join as join44, resolve as resolve36 } from "path";
 
 // src/compare/report.ts
-function cell(value) {
+function cell2(value) {
   return value.replaceAll("|", "\\|").replaceAll("\n", " ");
 }
 function tupleLabel2(tuple) {
@@ -62551,7 +65116,7 @@ function findingsTable(findings) {
     "| Severity | Category | Rule | Tuple | Selector |",
     "| --- | --- | --- | --- | --- |",
     ...findings.map(
-      (finding) => `| ${finding.severity} | ${finding.category} | ${cell(finding.rule)} | ${cell(finding.key)} | \`${cell(finding.selector)}\` |`
+      (finding) => `| ${finding.severity} | ${finding.category} | ${cell2(finding.rule)} | ${cell2(finding.key)} | \`${cell2(finding.selector)}\` |`
     )
   ];
 }
@@ -62581,7 +65146,7 @@ function renderCompareReport(input) {
       "| Kind | State | Viewport | Scheme | Pixels changed | Composite |",
       "| --- | --- | --- | --- | --- | --- |",
       ...input.changed.map(
-        (tuple) => `| \`${tuple.kind}\` | ${cell(tuple.state)} | ${cell(tuple.viewport)} | ${tuple.colorScheme ?? "\u2014"} | ${tuple.differentPixels} of ${tuple.totalPixels} (${(tuple.differentPixels / Math.max(1, tuple.totalPixels) * 100).toFixed(2)}%) | [before / after](${tuple.path}) |`
+        (tuple) => `| \`${tuple.kind}\` | ${cell2(tuple.state)} | ${cell2(tuple.viewport)} | ${tuple.colorScheme ?? "\u2014"} | ${tuple.differentPixels} of ${tuple.totalPixels} (${(tuple.differentPixels / Math.max(1, tuple.totalPixels) * 100).toFixed(2)}%) | [before / after](${tuple.path}) |`
       ),
       ""
     ],
@@ -62614,9 +65179,9 @@ function defaultOutput(projectDirectory, now) {
     `compare-${now.toISOString().replaceAll(":", "-").replaceAll(".", "-")}`
   );
 }
-function compositePath(coordinate5) {
-  const combination = coordinate5.combination === void 0 ? "" : `-${coordinate5.combination.replace(/[^A-Za-z0-9._-]+/g, "-")}`;
-  return `before-after-${coordinate5.state}-${coordinate5.viewport}${coordinate5.colorScheme === void 0 ? "" : `-${coordinate5.colorScheme}`}${combination}.png`;
+function compositePath(coordinate6) {
+  const combination = coordinate6.combination === void 0 ? "" : `-${coordinate6.combination.replace(/[^A-Za-z0-9._-]+/g, "-")}`;
+  return `before-after-${coordinate6.state}-${coordinate6.viewport}${coordinate6.colorScheme === void 0 ? "" : `-${coordinate6.colorScheme}`}${combination}.png`;
 }
 function notComparableReason(side, tuple) {
   if (tuple.failure !== void 0)
@@ -62696,16 +65261,16 @@ async function runCompare(options) {
     const notComparable = [];
     const onlyAfter = [];
     for (const afterTuple of after.tuples) {
-      const coordinate5 = tupleCoordinate2(afterTuple);
-      const key4 = tupleCoordinateKey(coordinate5);
+      const coordinate6 = tupleCoordinate2(afterTuple);
+      const key4 = tupleCoordinateKey(coordinate6);
       const beforeTuple = beforeByKey.get(key4);
       if (beforeTuple === void 0) {
-        onlyAfter.push({ ...coordinate5, key: key4 });
+        onlyAfter.push({ ...coordinate6, key: key4 });
         continue;
       }
       const reason = notComparableReason("before", beforeTuple) ?? notComparableReason("after", afterTuple);
       if (reason !== void 0) {
-        notComparable.push({ ...coordinate5, key: key4, reason });
+        notComparable.push({ ...coordinate6, key: key4, reason });
         continue;
       }
       const beforeSource = await readFile42(
@@ -62716,11 +65281,11 @@ async function runCompare(options) {
       );
       const diff = diffImages(beforeSource, afterSource);
       if (diff.differentPixels === 0) {
-        unchanged.push({ ...coordinate5, key: key4 });
+        unchanged.push({ ...coordinate6, key: key4 });
         continue;
       }
       const ordinal = changed.length + 1;
-      const path = compositePath(coordinate5);
+      const path = compositePath(coordinate6);
       await writeBeforeAfterComposite({
         beforePath: beforeTuple.screenshotPath,
         afterPath: afterTuple.screenshotPath,
@@ -62728,13 +65293,13 @@ async function runCompare(options) {
         afterSource,
         outputPath: join44(staging, path),
         labels: {
-          title: `${coordinate5.state} / ${coordinate5.viewport}${coordinate5.colorScheme === void 0 ? "" : ` / ${coordinate5.colorScheme}`}`,
+          title: `${coordinate6.state} / ${coordinate6.viewport}${coordinate6.colorScheme === void 0 ? "" : ` / ${coordinate6.colorScheme}`}`,
           before: `BEFORE ${(beforeTuple.commit || before.commit).slice(0, 7)}`,
           after: `AFTER ${(afterTuple.commit || after.commit).slice(0, 7)}`
         }
       });
       changed.push({
-        ...coordinate5,
+        ...coordinate6,
         key: key4,
         ordinal,
         kind: canonicalAttachmentKind(ordinal),
@@ -62744,8 +65309,8 @@ async function runCompare(options) {
       });
     }
     const onlyBefore = before.tuples.map((tuple) => {
-      const coordinate5 = tupleCoordinate2(tuple);
-      return { ...coordinate5, key: tupleCoordinateKey(coordinate5) };
+      const coordinate6 = tupleCoordinate2(tuple);
+      return { ...coordinate6, key: tupleCoordinateKey(coordinate6) };
     }).filter(({ key: key4 }) => !afterKeys.has(key4));
     const config = await projectChecksConfig(validated);
     const records = (loaded) => deterministicCandidateRecords({
@@ -62990,7 +65555,7 @@ init_law();
 init_lookup();
 init_exploration();
 init_validation();
-import { createHash as createHash20 } from "crypto";
+import { createHash as createHash21 } from "crypto";
 import { readFile as readFile48 } from "fs/promises";
 import { join as join50 } from "path";
 async function required(path, label4) {
@@ -63003,7 +65568,7 @@ async function required(path, label4) {
   }
 }
 function explorationQuestionFingerprint(question) {
-  return createHash20("sha256").update(
+  return createHash21("sha256").update(
     question.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase()
   ).digest("hex");
 }
@@ -63043,7 +65608,7 @@ async function loadExplorationContext(options) {
     );
   const question = decision?.question ?? steering.data.question.trim();
   const viewports = selectViewports(context2.project, record2.flow);
-  const schemes = selectColorSchemes(context2.project, record2.flow);
+  const schemes2 = selectColorSchemes(context2.project, record2.flow);
   return {
     projectDirectory: context2.projectDirectory,
     project: context2.project,
@@ -63059,7 +65624,7 @@ async function loadExplorationContext(options) {
     rulings: parsedLaw.resolutions,
     references: await loadReferenceContext(context2.projectDirectory),
     tuples: viewports.flatMap(
-      (viewport) => schemes.map((colorScheme) => ({
+      (viewport) => schemes2.map((colorScheme) => ({
         state: state.id,
         viewport: viewport.name,
         colorScheme
@@ -63077,7 +65642,7 @@ import { resolve as resolve41 } from "path";
 
 // src/explore/schema.ts
 init_exploration();
-import { z as z28 } from "zod";
+import { z as z29 } from "zod";
 var category = {
   type: "string",
   enum: [
@@ -63222,7 +65787,7 @@ function canonicalizeReferences(values, permittedLabels, locations) {
   return output;
 }
 function parseCandidateOutput(value, permittedLabels) {
-  const envelope = z28.object({ candidates: z28.unknown() }).strict().safeParse(value);
+  const envelope = z29.object({ candidates: z29.unknown() }).strict().safeParse(value);
   if (!envelope.success)
     throw new MalformedExplorationError(issues3(envelope.error));
   const parsed = explorationCandidatesSchema.safeParse(
@@ -63237,7 +65802,7 @@ function parseCandidateOutput(value, permittedLabels) {
   );
 }
 function parseRefinementOutput(value, permittedLabels) {
-  const envelope = z28.object({ refinement: z28.unknown() }).strict().safeParse(value);
+  const envelope = z29.object({ refinement: z29.unknown() }).strict().safeParse(value);
   if (!envelope.success)
     throw new MalformedExplorationError(issues3(envelope.error));
   const parsed = explorationRefinementSchema.safeParse(
@@ -63448,11 +66013,11 @@ function blocks(response) {
 }
 function jsonOutput(response) {
   const content = blocks(response);
-  const text3 = content.filter((block) => block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
-  if (text3.trim() === "")
+  const text4 = content.filter((block) => block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
+  if (text4.trim() === "")
     throw new IdiomError("Anthropic returned no structured exploration output");
   try {
-    return JSON.parse(text3);
+    return JSON.parse(text4);
   } catch (error) {
     throw new IdiomError(
       `Anthropic returned malformed exploration JSON: ${sanitizeCritiqueDiagnostic(error)}`
@@ -63625,8 +66190,8 @@ var AnthropicExplorationAdapter = class {
               );
               if (source.byteLength > MAX_FILE_BYTES) continue;
               totalBytes += source.byteLength;
-              const text3 = source.toString("utf8");
-              if (text3.includes(input.query)) matches.push(item);
+              const text4 = source.toString("utf8");
+              if (text4.includes(input.query)) matches.push(item);
             }
             result2 = JSON.stringify(matches);
           } else
@@ -64029,7 +66594,7 @@ import { join as join54 } from "path";
 // src/commands/tickets.ts
 init_log();
 init_errors();
-init_presentation();
+init_presentation2();
 init_catalog2();
 init_lifecycle();
 init_render2();
@@ -64155,7 +66720,22 @@ function compatibleTicketBodies(catalog, lineage, ticketDirectory) {
   );
 }
 function ticketBytesAreKnown(source, canonical2, legacy) {
-  return source === canonical2 || legacy.includes(source);
+  const normalized = (body) => body.replace(
+    /(`{3,})idiom:finding\r?\n([\s\S]*?)\r?\n\1/g,
+    (_block, fence, json5) => {
+      const sort = (value) => Array.isArray(value) ? value.map(sort) : value && typeof value === "object" ? Object.fromEntries(
+        Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, sort(v)])
+      ) : value;
+      return `${fence}idiom:finding
+${JSON.stringify(sort(parseFindingBlocks(`${fence}idiom:finding
+${json5}
+${fence}`)[0]))}
+${fence}`;
+    }
+  );
+  return [canonical2, ...legacy].some(
+    (body) => normalized(source) === normalized(body)
+  );
 }
 async function ticketsCommand(options) {
   const catalog = await loadReviewCatalog(options);
@@ -64429,10 +67009,19 @@ async function publishExplorationRepairs(options) {
       },
       explanation: `The current ${baseline.state}/${baseline.viewport}${baseline.colorSchemeAxis ? `/${baseline.colorScheme}` : ""} rendering does not yet embody the newly recorded rule. ${options.candidate.repair}`,
       suggestedArea: `${baseline.flow}/${baseline.state}`,
-      acceptance: [
-        options.candidate.repair,
-        `Recapture only ${baseline.state} at ${baseline.viewport}${baseline.colorSchemeAxis ? ` in ${baseline.colorScheme}` : ""} and match the chosen exploration direction without applying its temporary code verbatim.`
-      ],
+      basis: "judged",
+      basisDetails: {
+        kind: "judged",
+        summary: "Exploration critique; no model-stated confidence recorded."
+      },
+      acceptance: {
+        version: 1,
+        kind: "manual",
+        doneWhen: [
+          options.candidate.repair,
+          `Recapture only ${baseline.state} at ${baseline.viewport}${baseline.colorSchemeAxis ? ` in ${baseline.colorScheme}` : ""} and match the chosen exploration direction without applying its temporary code verbatim.`
+        ]
+      },
       verification: { kind: "recapture-visual" },
       status: "open"
     });
@@ -66322,7 +68911,7 @@ init_init();
 init_log();
 init_errors();
 init_render3();
-init_presentation();
+init_presentation2();
 init_catalog2();
 init_lifecycle();
 async function instructionCommand(options) {
@@ -66379,10 +68968,10 @@ async function capturedFlow(tuple) {
 async function tupleDirectory(viewportDirectory, colorScheme) {
   if (await exists8(join68(viewportDirectory, "dom.html")))
     return viewportDirectory;
-  const schemes = await directories(viewportDirectory);
+  const schemes2 = await directories(viewportDirectory);
   for (const scheme of [
     colorScheme,
-    ...schemes.filter((s) => s !== colorScheme)
+    ...schemes2.filter((s) => s !== colorScheme)
   ])
     if (await exists8(join68(viewportDirectory, scheme, "dom.html")))
       return join68(viewportDirectory, scheme);
@@ -66429,7 +69018,7 @@ import { join as join69, relative as relative36 } from "path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "util";
 
 // src/schemas/learned.ts
-import { z as z29 } from "zod";
+import { z as z30 } from "zod";
 var learnedKinds = [
   "component",
   "invariant",
@@ -66437,26 +69026,26 @@ var learnedKinds = [
   "mirrored",
   "ruling"
 ];
-var learnedEntrySchema = z29.object({
-  version: z29.literal(1),
-  id: z29.string().regex(/^learned-[1-9]\d*$/),
-  recordedAt: z29.string().datetime({ offset: true }),
-  flow: z29.string().trim().min(1),
-  state: z29.string().trim().min(1),
-  observation: z29.string().trim().min(1),
-  kind: z29.enum(learnedKinds),
-  target: z29.object({
-    file: z29.string().trim().min(1),
-    selector: z29.string().trim().min(1).optional(),
-    rulingId: z29.string().regex(/^ruling-[1-9]\d*$/).optional()
+var learnedEntrySchema = z30.object({
+  version: z30.literal(1),
+  id: z30.string().regex(/^learned-[1-9]\d*$/),
+  recordedAt: z30.string().datetime({ offset: true }),
+  flow: z30.string().trim().min(1),
+  state: z30.string().trim().min(1),
+  observation: z30.string().trim().min(1),
+  kind: z30.enum(learnedKinds),
+  target: z30.object({
+    file: z30.string().trim().min(1),
+    selector: z30.string().trim().min(1).optional(),
+    rulingId: z30.string().regex(/^ruling-[1-9]\d*$/).optional()
   }).strict(),
-  entry: z29.unknown(),
-  capture: z29.object({
-    runId: z29.string().trim().min(1),
-    viewport: z29.string().trim().min(1),
-    screenshot: z29.string().trim().min(1).optional()
+  entry: z30.unknown(),
+  capture: z30.object({
+    runId: z30.string().trim().min(1),
+    viewport: z30.string().trim().min(1),
+    screenshot: z30.string().trim().min(1).optional()
   }).strict().optional(),
-  screenshot: z29.string().trim().min(1).optional()
+  screenshot: z30.string().trim().min(1).optional()
 }).strict();
 
 // src/learn/draft.ts
@@ -66480,8 +69069,8 @@ var glossaryPatterns = [
 ];
 var mirroredPattern = /^(?:the\s+)?(.+?)\s+and\s+(?:the\s+)?(.+?)\s+should\s+(?:mirror|match|be\s+mirrored)(?:\s+each\s+other)?(?:\s+(horizontally|vertically))?\.?$/i;
 var stopWords = /* @__PURE__ */ new Set(["the", "a", "an", "this", "that", "these", "those"]);
-function interpretObservation(text3) {
-  const observation = text3.trim().replace(/\s+/g, " ");
+function interpretObservation(text4) {
+  const observation = text4.trim().replace(/\s+/g, " ");
   const invariant = invariantPattern.exec(observation);
   if (invariant?.[1] !== void 0 && invariant[2] !== void 0) {
     const value = Number(invariant[2]);
@@ -67500,6 +70089,8 @@ async function runPageReview(options) {
   const maxFindings = options.maxFindings ?? DEFAULT_MAX_FINDINGS;
   const legacyColorScheme = configuration.project.capture.colorScheme;
   const deterministicDrafts = buildDeterministicDrafts({
+    config: checks,
+    tuples: loaded.tuples,
     runId: loaded.runId,
     entries: reviewed.candidates,
     legacyColorScheme
@@ -67658,6 +70249,7 @@ async function runPageReview(options) {
 
 // src/commands/review.ts
 init_run2();
+init_finding();
 init_flow();
 init_validation();
 function publishedBudgetViolations(findings) {
@@ -67683,9 +70275,7 @@ async function reviewCommand(options) {
   })).flows.some(({ flow }) => isPublishedFlow(flow));
   let material;
   const readMaterial = async () => {
-    material ??= JSON.parse(
-      await readFile71(result2.findingsPath, "utf8")
-    );
+    material ??= findingSchema.array().parse(JSON.parse(await readFile71(result2.findingsPath, "utf8")));
     return material;
   };
   const publishedBudget = published ? {
@@ -67699,6 +70289,9 @@ async function reviewCommand(options) {
   const findings = await readMaterial();
   const comparison2 = {
     ...await summarizeBaselineComparison(options, result2, findings),
+    currentJudged: [...findings, ...result2.deferredFindings].filter(
+      (f) => f.basis === "judged" && (f.status === "open" || f.status === "approved")
+    ).map((f) => summarizeFinding(f, result2, options.cwd ?? process.cwd())),
     unclassified: [...findings, ...result2.deferredFindings].filter(
       (finding) => finding.layer !== "deterministic"
     ).length
@@ -67735,12 +70328,12 @@ init_normalize();
 function scriptJson(value) {
   return JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
 }
-function coordinateLabel(point) {
+function coordinateLabel2(point) {
   return `${point.flow} / ${point.state} / ${point.viewport} / ${point.colorScheme}`;
 }
 function provenance(value) {
   return `<ul class="coordinates">${value.coordinates.map(
-    (point) => `<li><code>${escapeHtml(coordinateLabel(point))}</code></li>`
+    (point) => `<li><code>${escapeHtml(coordinateLabel2(point))}</code></li>`
   ).join("")}</ul>`;
 }
 function tokenSection(model) {
@@ -67770,8 +70363,8 @@ function observedList(title, values, color = false) {
 function observedSection(model) {
   if (model.observed.status === "unavailable")
     return `<section id="observed"><h2>Observed palette and typography</h2><div class="empty-state"><p>${escapeHtml(model.observed.reason)} Observed values cannot be inferred without a complete capture.</p></div></section>`;
-  const observed = model.observed;
-  return `<section id="observed"><h2>Observed palette and typography</h2><p class="section-intro">Rendered evidence from capture <code>${escapeHtml(observed.runId)}</code>, selected at ${escapeHtml(observed.capturedAt)}. Each value names at least one flow / state / viewport / scheme coordinate.</p>${observedList("Palette", observed.colors, true)}<div class="type-columns">${observed.typographyAvailable ? `${observedList("Font families", observed.fontFamilies)}${observedList("Font sizes", observed.fontSizes)}${observedList("Font weights", observed.fontWeights)}` : '<section class="observed-group"><h3>Typography</h3><div class="empty-state"><p>Typography is unavailable because this capture uses legacy observations without computed type facts.</p></div></section>'}</div></section>`;
+  const observed3 = model.observed;
+  return `<section id="observed"><h2>Observed palette and typography</h2><p class="section-intro">Rendered evidence from capture <code>${escapeHtml(observed3.runId)}</code>, selected at ${escapeHtml(observed3.capturedAt)}. Each value names at least one flow / state / viewport / scheme coordinate.</p>${observedList("Palette", observed3.colors, true)}<div class="type-columns">${observed3.typographyAvailable ? `${observedList("Font families", observed3.fontFamilies)}${observedList("Font sizes", observed3.fontSizes)}${observedList("Font weights", observed3.fontWeights)}` : '<section class="observed-group"><h3>Typography</h3><div class="empty-state"><p>Typography is unavailable because this capture uses legacy observations without computed type facts.</p></div></section>'}</div></section>`;
 }
 function lawSection(model) {
   return `<section id="design-law"><h2>Design law</h2>${model.designLaw.trim() === "" ? "<p>No human-authored design law is recorded.</p>" : `<pre class="law">${escapeHtml(model.designLaw)}</pre>`}</section>`;
@@ -67989,7 +70582,19 @@ async function validateCommand(options) {
 
 // src/cli.ts
 init_verify();
+init_states();
 init_errors();
+
+// src/findings/gate.ts
+function severityGateEligible(finding, failOn, failOnJudged = false) {
+  if (failOn === "never") return false;
+  if ((finding.basis ?? (finding.layer === "model" ? "judged" : "measured")) === "judged" && !failOnJudged)
+    return false;
+  const rank = { blocker: 0, major: 1, minor: 2 };
+  return (rank[finding.severity] ?? 3) <= (rank[failOn] ?? -1);
+}
+
+// src/cli.ts
 init_interaction();
 init_advisory();
 init_finding();
@@ -68256,7 +70861,11 @@ function createProgram(dependencies = {}) {
   ).option(
     "--since-baseline",
     "compare with the newest recorded baseline reachable from HEAD; gate new deterministic findings only"
-  ).option("--json", "print machine-readable review results").addOption(
+  ).option("--json", "print machine-readable review results").option(
+    "--fail-on-judged",
+    "include judged suggestions in severity gates",
+    false
+  ).addOption(
     new Option(
       "--fail-on <severity>",
       "with --since-baseline, fail on new findings at least this severe"
@@ -68310,7 +70919,7 @@ function createProgram(dependencies = {}) {
             throw new IdiomError(
               `${flag} reviews a stored flow capture and cannot be combined with --page`
             );
-        if (command.getOptionValueSource("failOn") === "cli")
+        if (command.getOptionValueSource("failOn") === "cli" || options.failOnJudged)
           throw new IdiomError(
             "--fail-on gates new findings against a flow baseline and cannot be combined with --page"
           );
@@ -68382,9 +70991,15 @@ function createProgram(dependencies = {}) {
           const warning = baselineStaleWarning(result2.comparison.baseline);
           if (warning !== void 0) writeErr(warning);
         }
-        const rank = { blocker: 0, major: 1, minor: 2 };
-        const failing = options.failOn === "never" ? [] : result2.comparison.findings.filter(
-          (finding) => rank[finding.severity] <= rank[options.failOn]
+        const failing = options.failOn === "never" ? [] : [
+          ...result2.comparison.findings,
+          ...options.failOnJudged ? result2.comparison.currentJudged ?? [] : []
+        ].filter(
+          (finding) => severityGateEligible(
+            finding,
+            options.failOn,
+            options.failOnJudged
+          )
         );
         if (failing.length > 0)
           throw new IdiomError(
@@ -68484,6 +71099,10 @@ function createProgram(dependencies = {}) {
   ).option("--all", "report and gate all open findings, expanding every issue").option("--json", "print machine-readable findings").option(
     "--ungrouped",
     "list every finding separately instead of one entry per element and rule"
+  ).option(
+    "--fail-on-judged",
+    "include judged suggestions in severity gates",
+    false
   ).addOption(
     new Option(
       "--fail-on <severity>",
@@ -68539,9 +71158,13 @@ function createProgram(dependencies = {}) {
         );
         for (const entry of checked)
           writeErr(renderTimings(entry.summary.timings));
-        const rank2 = { blocker: 0, major: 1, minor: 2 };
-        const threshold = options.failOn === "never" ? -1 : rank2[options.failOn];
-        const failing2 = checked.flatMap((entry) => entry.summary.findings).filter((finding) => rank2[finding.severity] <= threshold);
+        const failing2 = checked.flatMap((entry) => entry.summary.findings).filter(
+          (finding) => severityGateEligible(
+            finding,
+            options.failOn,
+            options.failOnJudged
+          )
+        );
         if (failing2.length)
           throw new IdiomError(
             `check failed: ${failing2.length} new/open finding(s) at or above ${options.failOn}`
@@ -68586,9 +71209,12 @@ function createProgram(dependencies = {}) {
         const warning = baselineStaleWarning(summary.baseline);
         if (warning !== void 0) writeErr(warning);
       }
-      const rank = { blocker: 0, major: 1, minor: 2 };
       const failing = options.failOn === "never" ? [] : summary.findings.filter(
-        (finding) => rank[finding.severity] <= rank[options.failOn]
+        (finding) => severityGateEligible(
+          finding,
+          options.failOn,
+          options.failOnJudged
+        )
       );
       if (failing.length > 0)
         throw new IdiomError(
@@ -68616,7 +71242,11 @@ function createProgram(dependencies = {}) {
   ).option(
     "--emit-tickets <dir>",
     "emit clustered proposals into a file tracker triage directory"
-  ).option("--json", "print machine-readable findings").addOption(
+  ).option("--json", "print machine-readable findings").option(
+    "--fail-on-judged",
+    "include judged suggestions in severity gates",
+    false
+  ).addOption(
     new Option(
       "--fail-on <severity>",
       "exit non-zero when an open finding is at least this severe"
@@ -68645,9 +71275,12 @@ function createProgram(dependencies = {}) {
         writeErr(
           `Warning: ${"scope" in summary ? "Sweep incomplete" : "Model critique degraded"}: ${summary.outcome.reason}`
         );
-      const rank = { blocker: 0, major: 1, minor: 2 };
       const failing = options.failOn === "never" ? [] : summary.findings.filter(
-        (finding) => rank[finding.severity] <= rank[options.failOn]
+        (finding) => severityGateEligible(
+          finding,
+          options.failOn,
+          options.failOnJudged
+        )
       );
       if (failing.length > 0)
         throw new IdiomError(
@@ -68655,9 +71288,23 @@ function createProgram(dependencies = {}) {
         );
     }
   );
-  program.command("coverage").description("list the app's routes that no flow captures").option("--crawl <url>", "discover routes from the links on a running page").option("--json", "print machine-readable coverage").action(
+  program.command("coverage").description(
+    "list the app's routes that no flow captures, or (--states) which states each flow's latest capture observed"
+  ).option("--crawl <url>", "discover routes from the links on a running page").option("--states", "show which states each flow's latest capture observed").option("--json", "print machine-readable coverage").action(
     async (options, command) => {
       const shared = command.optsWithGlobals();
+      if (options.states === true) {
+        if (options.crawl !== void 0)
+          throw new IdiomError("--states cannot be combined with --crawl");
+        const states = await stateCoverageCommand({
+          project: shared.project,
+          cwd: dependencies.cwd
+        });
+        writeOut(
+          options.json === true ? JSON.stringify(states, null, 2) : renderStateCoverage(states).trimEnd()
+        );
+        return;
+      }
       const summary = await coverageCommand({
         project: shared.project,
         cwd: dependencies.cwd,
@@ -68760,6 +71407,10 @@ function createProgram(dependencies = {}) {
       writeOut(
         `Verified ${flow}: ${result2.outcome} (${result2.findingCount} finding(s)) \u2014 ${result2.reportPath}`
       );
+      for (const verdict of result2.verdicts ?? [])
+        writeOut(
+          `${verdict.finding.id}: ${verdict.status}; acceptance ${verdict.acceptance.status} \u2014 ${verdict.acceptance.reason}`
+        );
       if (!result2.passed)
         throw new IdiomError(
           `verification failed: ${result2.causes.join("; ")}; see ${result2.reportPath}`

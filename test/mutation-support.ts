@@ -563,16 +563,18 @@ export async function runMutationBench(options: {
               : {}),
           };
           const key = `${page}:${JSON.stringify(profile)}`;
-          let clean = cleanCache.get(key);
-          if (!clean) {
-            clean = await capturePage(browser, html, page, profile);
-            cleanCache.set(key, clean);
-          }
+          // Control and mutant own fresh contexts. Their replay waits can
+          // overlap without sharing page state, keeping the CI selection's
+          // combined browser/launcher budget as temporal coverage grows.
+          const [clean, mutant] = await Promise.all([
+            cleanCache.get(key) ?? capturePage(browser, html, page, profile),
+            capturePage(browser, html, page, profile, {
+              operator,
+              apply: true,
+            }),
+          ]);
+          cleanCache.set(key, clean);
           const identity = expected;
-          const mutant = await capturePage(browser, html, page, profile, {
-            operator,
-            apply: true,
-          });
           if (
             mutant.audits.some(
               (entry) =>

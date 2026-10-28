@@ -281,6 +281,7 @@ test("verify: converted findings reproduce until the app matches the chosen refe
       runId: "test",
       drafts: buildDeterministicDrafts({
         runId: "test",
+        config: checksConfig,
         entries: run(baseline, checksConfig).map((candidate) => ({
           tuple: baseline,
           candidate,

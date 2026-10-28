@@ -481,6 +481,8 @@ export async function runQuick(options: {
   try {
     options.dependencies?.signal?.throwIfAborted();
     const drafts = buildDeterministicDrafts({
+      config: checksConfigFrom(configuration.project.checks),
+      tuples: loaded.tuples,
       runId: loaded.runId,
       entries: reviewed.candidates,
       legacyColorScheme: configuration.project.capture.colorScheme,

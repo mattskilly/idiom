@@ -706,6 +706,24 @@ describe("loading feedback while requests are held", () => {
     expect(rules(await review("loading-state/after.html"))).toEqual([]);
   }, 90_000);
 
+  test.each([
+    ["loading-carousel", "a marked carousel"],
+    ["loading-ticker", "a markerless regular ticker"],
+  ])(
+    "%s: %s rotating on its own is not feedback; aria-busy and a label fix it",
+    async (name) => {
+      expect(rules(await review(`${name}/before.html`))).toEqual([
+        expect.objectContaining({
+          rule: "idiom:loading-state-missing",
+          selector: "#load",
+          problem: expect.stringMatching(/GET \/api\/items/),
+        }),
+      ]);
+      expect(rules(await review(`${name}/after.html`))).toEqual([]);
+    },
+    90_000,
+  );
+
   test("an enabled submit sends a duplicate POST, which is blocked; disabling it fixes both", async () => {
     const before = rules(await review("double-submit/before.html"));
     expect(before.map(({ rule }) => rule).sort()).toEqual([
@@ -736,6 +754,7 @@ describe("loading feedback while requests are held", () => {
     "disabled-trigger",
     "safe-only",
     "carousel",
+    "carousel-slow",
   ])(
     "exclusion %s reports neither rule",
     async (name) => {
@@ -952,6 +971,92 @@ test("interaction shift: results arriving 700ms after the click are a late shift
   expect(shifts(after)).toEqual([]);
 }, 60_000);
 
+test("interaction shift: a slow beacon, keepalive fetch and analytics request nothing awaits do not extend the click's window", async () => {
+  // Non-GET beacons are blocked by the probe policy; the GETs are what would
+  // otherwise hold the late-content window open.
+  const routes = async (page: import("playwright").Page) => {
+    await page.route(/\/(?:collect|_vercel\/insights)/, async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await route.fulfill({ status: 204 }).catch(() => undefined);
+    });
+  };
+  const { findings, tuples } = await reviewStates(
+    browser,
+    [
+      {
+        state: "editor",
+        html: await fixture("interaction-shift-exclusions/beacon.html"),
+      },
+    ],
+    { probe: true, routes },
+  );
+  expect(shifts(findings)).toEqual([]);
+  const click = tuples
+    .flatMap((tuple) => tuple.timelines?.actions ?? [])
+    .find((action) => action.source === "probe-click");
+  expect(click?.requests.length).toBeGreaterThan(0);
+  expect(click?.durationMs).toBeLessThan(150 + 300);
+}, 60_000);
+
+test("interaction shift: headless scroll locks are non-defects; real scrollbars are attributed once", async () => {
+  // Headless capture has no layout scrollbars, so neither lock can move content.
+  for (const version of ["before", "after"]) {
+    expect(
+      shifts(
+        await reviewFixture(
+          browser,
+          await fixture(`interaction-shift-scrollbar/${version}.html`),
+          { probe: true },
+        ),
+      ),
+    ).toEqual([]);
+  }
+  // A browser with layout scrollbars: the shift is measured, and what moved
+  // is attributed to the scrollbar rather than the dialog inserted beside it.
+  const scrolling = await chromium.launch({
+    headless: true,
+    ignoreDefaultArgs: ["--hide-scrollbars"],
+  });
+  try {
+    // macOS draws zero-width overlay scrollbars unless the system setting says
+    // otherwise; a styled scrollbar takes layout width on every platform.
+    const classic = "<head><style>::-webkit-scrollbar { width: 15px; }</style>";
+    const found = shifts(
+      await reviewFixture(
+        scrolling,
+        (await fixture("interaction-shift-scrollbar/before.html")).replace(
+          "<head>",
+          classic,
+        ),
+        { probe: true },
+      ),
+    );
+    expect(found).toHaveLength(1);
+    const [hit] = found;
+    expect(hit).toMatchObject({
+      severity: "major",
+      selectorHint: "html",
+      fingerprintHint: "interaction-shift:scrollbar",
+    });
+    expect(hit?.explanation).toContain("the page scrollbar was removed");
+    expect(hit?.explanation).toContain("body overflow: hidden");
+    expect(hit?.explanation).toContain("15px");
+    expect(hit?.fix).toContain("scrollbar-gutter: stable");
+    expect(hit?.explanation).toContain("(8px)");
+    expect(
+      shifts(
+        await reviewFixture(
+          scrolling,
+          await fixture("interaction-shift-scrollbar/after.html"),
+          { probe: true },
+        ),
+      ),
+    ).toEqual([]);
+  } finally {
+    await scrolling.close();
+  }
+}, 120_000);
+
 test("interaction shift: staggered late batches report separate jumps; reserved space is clean", async () => {
   const routes = async (page: import("playwright").Page) => {
     await page.route("http://idiom.test/batch/*", async (route) => {
@@ -1041,6 +1146,8 @@ test("interaction shift: scrolling, the effect region, sorting, filtering, overl
     "filter",
     "overlay",
     "offscreen",
+    "scroll-lock-compensated",
+    "scroll-lock-short",
   ]) {
     const findings = await reviewFixture(
       browser,
@@ -1121,8 +1228,25 @@ describe("design-system questions: repeated off-scale spacing in one context", (
         ],
         { checks: { scales } },
       );
-      expect(asked.findings.map(({ candidate }) => candidate)).toEqual(
-        today.findings.map(({ candidate }) => candidate),
+      // Provenance includes capture timings; compare the unchanged detector outcomes.
+      const withoutElapsed = (value: unknown): unknown =>
+        Array.isArray(value)
+          ? value.map(withoutElapsed)
+          : value && typeof value === "object"
+            ? Object.fromEntries(
+                Object.entries(value).map(([key, value]) => [
+                  key,
+                  key === "elapsedMs" && typeof value === "number"
+                    ? 0
+                    : withoutElapsed(value),
+                ]),
+              )
+            : value;
+      const detectorResult = ({
+        candidate: { observation: _observation, ...candidate },
+      }: (typeof asked.findings)[number]) => withoutElapsed(candidate);
+      expect(asked.findings.map(detectorResult)).toEqual(
+        today.findings.map(detectorResult),
       );
       const [finding] = spacing(today.findings);
       expect(

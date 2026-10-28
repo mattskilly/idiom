@@ -1,34 +1,50 @@
 #!/usr/bin/env node
-// Field test: run the built CLI against public sites and one OSS repo, then
-// score agent/human labels into docs/field-test.md.
+// Field test: run the built CLI against public sites, one OSS repo and the
+// local field app, then score agent/human labels into docs/field-test.md.
 //
 //   bun run build
 //   node scripts/field-test.mjs run [--only a,b] [--out <scratch dir>]
+//       [--targets <candidates.json> --results <screen.json>]  (screening)
 //   node scripts/field-test.mjs labels-template
+//   node scripts/field-test.mjs feel
 //   node scripts/field-test.mjs score
 //
 // Ranked data comes from the MCP `idiom_quick` tool (same runQuick as CLI
 // `quick`, but it returns every ranked issue); a CLI `quick` smoke per target
-// keeps the literal command under test. Repo targets run init --flows + check.
+// keeps the literal command under test. Repo and local targets run
+// init --flows + check.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { cpus, tmpdir, totalmem } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import {
   classifyFailure,
   countProbeTimeouts,
+  FEEL_RULES,
+  feelPrecision,
   mergeLabelTemplate,
   probeTupleOverheadMs,
   renderGenerated,
   replaceGeneratedSection,
+  sumHeldReplays,
   summarizeCheckResult,
+  summarizeHeldReplays,
   summarizeProbeSafety,
   summarizeQuickResult,
   sumProbeSafety,
+  uniqueFeelKeys,
   validateTargets,
 } from "./field-test-lib.mjs";
 
@@ -39,6 +55,7 @@ const paths = {
   results: join(root, "docs", "field-test", "results.json"),
   labels: join(root, "docs", "field-test", "labels.json"),
   doc: join(root, "docs", "field-test.md"),
+  rules: join(root, "docs", "field-test"),
 };
 // The static quick limit plus quick review's default per-page probe budget.
 const QUICK_PROBE_BUDGET_MS = 45_000;
@@ -128,11 +145,7 @@ function killGroup(child) {
   } catch {}
 }
 
-async function observations(directory) {
-  return (await tupleDocuments(directory)).map((item) => item.observations);
-}
-
-/** Each tuple's observations.json with its metadata.json. */
+/** Each tuple's observations.json with its metadata.json and timelines.json. */
 async function tupleDocuments(directory) {
   const found = [];
   const walk = async (path) => {
@@ -143,6 +156,9 @@ async function tupleDocuments(directory) {
           () => undefined,
         ),
         metadata: await readJson(join(path, "metadata.json")).catch(
+          () => undefined,
+        ),
+        timelines: await readJson(join(path, "timelines.json")).catch(
           () => undefined,
         ),
       });
@@ -214,6 +230,10 @@ async function quickTarget(target, scratch, previous) {
             ...summary,
             probe: countProbeTimeouts(documents),
             probeSafety,
+            heldReplay: summarizeHeldReplays(
+              documents,
+              tuples.map((item) => item.timelines),
+            ),
             probeTupleOverheadMs: probeTupleOverheadMs(
               tuples.map((item) => item.metadata),
               documents,
@@ -254,7 +274,9 @@ async function quickTarget(target, scratch, previous) {
       findings: record.runs.reduce((sum, item) => sum + item.findings, 0),
       issues: record.runs.reduce((sum, item) => sum + item.issues, 0),
       topIssues: first.topIssues,
+      feelIssues: record.runs.flatMap((item) => item.feelIssues ?? []),
       probe: sumProbe(record.runs.map((item) => item.probe)),
+      heldReplay: sumHeldReplays(record.runs.map((item) => item.heldReplay)),
       probeSafety: sumProbeSafety(record.runs.map((item) => item.probeSafety)),
       probeTupleOverheadMs: record.runs.reduce(
         (sum, item) => sum + (item.probeTupleOverheadMs ?? 0),
@@ -273,7 +295,10 @@ async function quickTarget(target, scratch, previous) {
       record.staticBaselineMs = staticBaselineMs;
       record.probeOverheadMs = Math.round(record.elapsedMs - staticBaselineMs);
     }
-    for (const item of record.runs) delete item.topIssues;
+    for (const item of record.runs) {
+      delete item.topIssues;
+      delete item.feelIssues;
+    }
   }
   const smokeProject = await mkdtemp(join(scratch, `${target.id}-cli-`));
   const smoke = await run(
@@ -320,13 +345,74 @@ function sumProbe(items) {
 
 const shellQuote = (value) => `'${String(value).replaceAll("'", `'\\''`)}'`;
 
+/** Clones and installs a pinned OSS repo, then checks it. */
 async function repoTarget(target, scratch) {
   const repo = target.repo;
   const record = { mode: "repo", failures: [], steps: [] };
   const directory = join(scratch, target.id);
-  const idiom = (args) =>
-    `${shellQuote(process.execPath)} ${shellQuote(cli)} --project ${shellQuote(directory)} ${args}`;
-  const step = async (name, command, options = {}) => {
+  const step = stepRunner(record, directory);
+  try {
+    await mkdir(directory, { recursive: true });
+    await step(
+      "clone",
+      `git init -q && git remote add origin ${shellQuote(repo.url)} && git fetch -q --depth 1 origin ${repo.commit} && git checkout -q FETCH_HEAD`,
+    );
+    for (const command of repo.install) await step("install", command);
+    await checkTarget(target, directory, record, {
+      server: repo.server,
+      dev: repo.dev,
+      states: (flow) => flow.states.slice(0, SPEED_STATES),
+    });
+  } catch (error) {
+    if (!record.failures.length)
+      record.failures.push(
+        classifyFailure({ stage: "repo", message: String(error) }),
+      );
+  }
+  return record;
+}
+
+/**
+ * Copies a fixture app from this repo into scratch (so .idiom/ never lands
+ * in the repo), commits it, and checks every state, one check per state:
+ * a single flow run shares its probe time by check-candidate weight, which
+ * starves form-only states of their held and failure replays.
+ */
+async function localTarget(target, scratch) {
+  const local = target.local;
+  const record = { mode: "local", failures: [], steps: [] };
+  const source = resolve(root, local.path);
+  const directory = join(scratch, target.id);
+  const step = stepRunner(record, directory);
+  try {
+    if (!source.startsWith(`${root}/`))
+      throw new Error(`${local.path} escapes the repo`);
+    await rm(directory, { recursive: true, force: true });
+    await cp(source, directory, {
+      recursive: true,
+      filter: (path) => !path.includes("/.idiom"),
+    });
+    await step(
+      "git init",
+      "git init -q && git add -A && git -c user.name=field-test -c user.email=field-test@localhost commit -q -m fixture",
+    );
+    await checkTarget(target, directory, record, {
+      server: local.server,
+      dev: local.dev,
+      states: (flow) => flow.states,
+      perState: true,
+    });
+  } catch (error) {
+    if (!record.failures.length)
+      record.failures.push(
+        classifyFailure({ stage: "local", message: String(error) }),
+      );
+  }
+  return record;
+}
+
+function stepRunner(record, directory) {
+  return async (name, command, options = {}) => {
     const result = await run(command, { cwd: directory, ...options });
     record.steps.push({
       name,
@@ -339,24 +425,25 @@ async function repoTarget(target, scratch) {
     }
     return result;
   };
+}
+
+/** init, server merge, init --flows and check: shared by repo and local targets. */
+async function checkTarget(target, directory, record, options) {
+  const idiom = (args) =>
+    `${shellQuote(process.execPath)} ${shellQuote(cli)} --project ${shellQuote(directory)} ${args}`;
+  const step = stepRunner(record, directory);
   let server;
   try {
-    await mkdir(directory, { recursive: true });
-    await step(
-      "clone",
-      `git init -q && git remote add origin ${shellQuote(repo.url)} && git fetch -q --depth 1 origin ${repo.commit} && git checkout -q FETCH_HEAD`,
-    );
-    for (const command of repo.install) await step("install", command);
     await step("init --yes", idiom("init --yes"));
     const configPath = join(directory, ".idiom", "project.json");
     const config = await readJson(configPath);
-    config.server = { ...config.server, ...repo.server };
+    config.server = { ...config.server, ...options.server };
     await writeJson(configPath, config);
-    const [serverCommand, ...setup] = [...repo.dev].reverse();
+    const [serverCommand, ...setup] = [...options.dev].reverse();
     for (const command of setup.reverse()) await step("dev setup", command);
     server = await startServer(serverCommand, {
       cwd: directory,
-      url: repo.server.readyUrl,
+      url: options.server.readyUrl,
     });
     const flows = await step("init --flows", idiom("init --yes --flows"));
     killGroup(server);
@@ -373,33 +460,94 @@ async function repoTarget(target, scratch) {
       setupRequired: counts ? Number(counts[3]) : null,
       stateIds: flow.states.map((state) => state.id),
     };
-    const states = flow.states.slice(0, SPEED_STATES).map((state) => state.id);
-    const check = await step(
-      "check",
-      idiom(
-        `check site --all --fail-on never --json --states ${shellQuote(states.join(","))}`,
-      ),
-    );
-    const json = JSON.parse(check.stdout);
-    const runRecord = await readJson(join(json.runDirectory, "run.json"));
-    const summary = summarizeCheckResult(json, runRecord, {
-      elapsedMs: check.elapsedMs,
-      target: target.id,
-    });
-    Object.assign(record, summary, {
+    const states = options.states(flow).map((state) => state.id);
+    const batches = options.perState ? states.map((id) => [id]) : [states];
+    const checks = [];
+    for (const batch of batches) {
+      const check = await step(
+        "check",
+        idiom(
+          `check site --all --fail-on never --json --states ${shellQuote(batch.join(","))}`,
+        ),
+      );
+      const json = JSON.parse(check.stdout);
+      const runRecord = await readJson(join(json.runDirectory, "run.json"));
+      const tuples = await tupleDocuments(json.runDirectory);
+      const documents = tuples.map((item) => item.observations);
+      checks.push({
+        states: batch,
+        elapsedMs: check.elapsedMs,
+        summary: summarizeCheckResult(json, runRecord, {
+          elapsedMs: check.elapsedMs,
+          target: target.id,
+        }),
+        probe: countProbeTimeouts(documents),
+        probeSafety: summarizeProbeSafety(documents),
+        heldReplay: summarizeHeldReplays(
+          documents,
+          tuples.map((item) => item.timelines),
+        ),
+        ledger: documents.some((document) => document?.probe?.safety),
+        runDirectory: json.runDirectory,
+      });
+    }
+    const [single] = checks;
+    const merged =
+      checks.length === 1 && single
+        ? single.summary
+        : {
+            elapsedMs: checks.reduce((sum, item) => sum + item.elapsedMs, 0),
+            tuples: checks.reduce((sum, item) => sum + item.summary.tuples, 0),
+            captures: null,
+            findings: checks.reduce(
+              (sum, item) => sum + item.summary.findings,
+              0,
+            ),
+            issues: checks.reduce((sum, item) => sum + item.summary.issues, 0),
+            groups: checks.reduce((sum, item) => sum + item.summary.groups, 0),
+            // A per-state run has no flow-wide ranking; findings are rated, not ranked.
+            topIssues: [],
+            feelIssues: uniqueFeelKeys(
+              checks.flatMap((item) => item.summary.feelIssues),
+            ),
+            timings: null,
+            probeCoverage: null,
+          };
+    const probeSafety = sumProbeSafety(checks.map((item) => item.probeSafety));
+    Object.assign(record, merged, {
       checkedStates: states,
-      probe: countProbeTimeouts(await observations(json.runDirectory)),
-      runDirectory: json.runDirectory,
+      probe: sumProbe(checks.map((item) => item.probe)),
+      probeSafety,
+      // Configured flows keep no probe.safety ledger under the app policy:
+      // the probe guard aborts every non-safe request instead, which the
+      // field app's browser test proves against its own request counter.
+      probeSafetyLedger: checks.every((item) => item.ledger)
+        ? "ledger"
+        : "none (app policy: non-safe requests are aborted by the probe guard)",
+      heldReplay: sumHeldReplays(checks.map((item) => item.heldReplay)),
+      ...(checks.length > 1
+        ? {
+            perState: checks.map((item) => ({
+              states: item.states,
+              elapsedMs: item.elapsedMs,
+              findings: item.summary.findings,
+              issues: item.summary.issues,
+              heldReplay: item.heldReplay,
+              runDirectory: item.runDirectory,
+            })),
+          }
+        : { runDirectory: single?.runDirectory }),
     });
-  } catch (error) {
-    if (!record.failures.length)
+    if (probeSafety.nonSafeSent > 0)
       record.failures.push(
-        classifyFailure({ stage: "repo", message: String(error) }),
+        classifyFailure({
+          stage: "probe safety",
+          message: `probe sent ${probeSafety.nonSafeSent} non-safe request(s): ${JSON.stringify(probeSafety.sent)}`,
+        }),
       );
   } finally {
     if (server) killGroup(server);
   }
-  return record;
 }
 
 async function runCommand(args) {
@@ -407,7 +555,13 @@ async function runCommand(args) {
     log("dist/cli.js is missing: run bun run build first");
     process.exit(1);
   }
-  const targets = validateTargets(await readJson(paths.targets));
+  // --targets/--results let a screening run use candidate targets without
+  // touching the committed manifest or results.
+  const targetsPath = option(args, "--targets") ?? paths.targets;
+  const resultsPath = option(args, "--results") ?? paths.results;
+  const targets = option(args, "--targets")
+    ? await readJson(targetsPath)
+    : validateTargets(await readJson(targetsPath));
   const only = option(args, "--only")?.split(",");
   const scratch =
     option(args, "--out") ??
@@ -418,8 +572,8 @@ async function runCommand(args) {
     );
   await mkdir(scratch, { recursive: true });
   log(`scratch: ${scratch}`);
-  const previous = existsSync(paths.results)
-    ? await readJson(paths.results)
+  const previous = existsSync(resultsPath)
+    ? await readJson(resultsPath)
     : undefined;
   const commit = await run("git rev-parse HEAD", { cwd: root });
   const results = {
@@ -440,19 +594,23 @@ async function runCommand(args) {
       if (kept) results.targets.push(kept);
       continue;
     }
-    log(`${target.id}: ${target.repo ? "repo" : "quick"}`);
+    const mode = target.local ? "local" : target.repo ? "repo" : "quick";
+    log(`${target.id}: ${mode}`);
     const startedAt = new Date().toISOString();
     const started = performance.now();
-    const outcome = target.repo
-      ? await repoTarget(target, scratch)
-      : await quickTarget(
-          target,
-          scratch,
-          previous?.targets?.find((item) => item.id === target.id),
-        );
+    const outcome = target.local
+      ? await localTarget(target, scratch)
+      : target.repo
+        ? await repoTarget(target, scratch)
+        : await quickTarget(
+            target,
+            scratch,
+            previous?.targets?.find((item) => item.id === target.id),
+          );
     results.targets.push({
       id: target.id,
       kind: target.kind,
+      ...(target.stack ? { stack: target.stack } : {}),
       aiBuilt: target.aiBuilt,
       urls: target.urls,
       startedAt,
@@ -462,10 +620,10 @@ async function runCommand(args) {
     log(
       `${target.id}: ${outcome.issues ?? 0} issues, ${outcome.failures.length} failure(s)`,
     );
-    await mkdir(dirname(paths.results), { recursive: true });
-    await writeJson(paths.results, scrub(results, scratch));
+    await mkdir(dirname(resultsPath), { recursive: true });
+    await writeJson(resultsPath, scrub(results, scratch));
   }
-  log(`wrote ${paths.results}`);
+  log(`wrote ${resultsPath}`);
 }
 
 /** Scratch paths never reach committed results. */
@@ -489,6 +647,52 @@ async function labelsTemplate() {
   log(`${merged.added} label slot(s) added to ${paths.labels}`);
 }
 
+/**
+ * Writes each feel rule's precision into docs/field-test/<rule>.json: the
+ * previous block moves to history[], every other key is kept.
+ */
+async function feel() {
+  const results = await readJson(paths.results);
+  const labels = existsSync(paths.labels)
+    ? await readJson(paths.labels)
+    : { version: 1, labels: {} };
+  const rows = feelPrecision(results, labels);
+  const measuredAt = results.startedAt;
+  for (const row of rows) {
+    const path = join(paths.rules, `${row.rule.replace(/^idiom:/, "")}.json`);
+    const current = existsSync(path)
+      ? await readJson(path)
+      : { rule: row.rule };
+    const history = [...(current.history ?? [])];
+    if (current.precision !== undefined) history.push(current.precision);
+    const { history: _history, ...rest } = current;
+    await writeJson(path, {
+      ...rest,
+      precision: {
+        source: "node scripts/field-test.mjs feel",
+        measuredAt,
+        idiomCommit: results.idiomCommit,
+        threshold: 0.8,
+        minN: 5,
+        public: row.public,
+        fieldApp: row.fieldApp,
+        combined: row.combined,
+        met: row.met,
+      },
+      history,
+    });
+  }
+  const show = (counts) =>
+    counts.n === 0
+      ? "n=0"
+      : `${counts.agree}/${counts.n} = ${(counts.precision * 100).toFixed(0)}%`;
+  for (const row of rows)
+    log(
+      `${row.rule}: public ${show(row.public)}; field app ${show(row.fieldApp)}; combined ${show(row.combined)}${row.met ? "" : " (gate not met)"}`,
+    );
+  log(`wrote ${FEEL_RULES.length} rule file(s) under ${paths.rules}`);
+}
+
 async function score() {
   const results = await readJson(paths.results);
   const labels = existsSync(paths.labels)
@@ -505,10 +709,11 @@ async function score() {
 const [command, ...rest] = process.argv.slice(2);
 if (command === "run") await runCommand(rest);
 else if (command === "labels-template") await labelsTemplate();
+else if (command === "feel") await feel();
 else if (command === "score") await score();
 else {
   log(
-    "usage: field-test.mjs run [--only ids] [--out dir] | labels-template | score",
+    "usage: field-test.mjs run [--only ids] [--out dir] [--targets file --results file] | labels-template | feel | score",
   );
   process.exit(2);
 }

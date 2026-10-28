@@ -1,3 +1,4 @@
+import { observed } from "../findings/observation.js";
 import { ran, unavailable, verify } from "./shared.js";
 import type { DeterministicCheck, FindingCandidate } from "./types.js";
 
@@ -65,6 +66,18 @@ export const touchReachabilityCheck: DeterministicCheck = {
       )
         continue;
       candidates.push({
+        observation: observed(
+          {
+            source: "touch-trial",
+            kind: "hover/focus",
+            selector: entry.selector,
+            name: entry.name,
+          },
+          entry,
+          entry.elapsedMs === undefined
+            ? undefined
+            : { elapsedMs: entry.elapsedMs },
+        ),
         category: this.id,
         severity: "major",
         rule: "idiom:touch-hover-only",

@@ -1,3 +1,4 @@
+import { observed } from "../findings/observation.js";
 import { verify } from "./shared.js";
 import type {
   CollectionAction,
@@ -119,6 +120,23 @@ export const collectionActionsCheck: DeterministicCheck = {
             );
         const first = evidence.items[0] as (typeof evidence.items)[number];
         candidates.push({
+          ...(probed === undefined
+            ? {}
+            : {
+                observation: observed(
+                  {
+                    source: "collection-probe",
+                    kind: "menu/contextmenu",
+                    selector,
+                    name: verb,
+                  },
+                  probed,
+                  probed.elapsedMs === undefined
+                    ? undefined
+                    : { elapsedMs: probed.elapsedMs },
+                ),
+              }),
+          documentScope: true,
           category: this.id,
           severity: "minor",
           rule: "idiom:collection-actions",

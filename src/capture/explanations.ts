@@ -88,6 +88,7 @@ export class ExplanationCollector {
     finish(reason?: string): Promise<void>;
     dispose(): Promise<void>;
   }> {
+    const actionStarted = Date.now();
     const token = `${Date.now()}:${Math.random()}`;
     let finished = false;
     try {
@@ -316,7 +317,13 @@ export class ExplanationCollector {
             },
             { token, reason },
           );
-          if (records) this.records.push(...records);
+          if (records)
+            this.records.push(
+              ...records.map((record) => ({
+                ...record,
+                elapsedMs: Date.now() - actionStarted,
+              })),
+            );
           else
             this.reasons.push(
               "explanation window unavailable after navigation",

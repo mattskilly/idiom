@@ -1,0 +1,21 @@
+<!doctype html><html lang="en"><head><title>Items</title><style>body{font:16px sans-serif;margin:24px}.slide{padding:12px;background:#eef}</style></head><body>
+<main id="items-panel"><h1>Items</h1>
+<section aria-roledescription="carousel" aria-label="Offers"><div class="slide" aria-live="polite">Offer 1 of 4</div></section>
+<button id="load" type="button">Load items</button><ul id="list"></ul></main>
+<script>
+let slide = 1;
+setInterval(() => { slide = (slide % 4) + 1; document.querySelector(".slide").textContent = "Offer " + slide + " of 4"; }, 800);
+const button = document.querySelector("#load");
+button.addEventListener("click", async () => {
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Loading…";
+  try {
+    const response = await fetch("/api/items");
+    const items = await response.json();
+    document.querySelector("#list").innerHTML = items.map((item) => `<li>${item}</li>`).join("");
+  } finally {
+    button.removeAttribute("aria-busy");
+    button.textContent = "Load items";
+  }
+});
+</script></body></html>

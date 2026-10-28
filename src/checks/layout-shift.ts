@@ -1,3 +1,4 @@
+import { observed } from "../findings/observation.js";
 import { defaultChecksSettings } from "../schemas/project.js";
 import {
   attributeShift,
@@ -130,6 +131,8 @@ const causeVerb = {
   insert: "was inserted",
   remove: "was removed",
   resize: "resized",
+  // Load timelines never carry the scrollbar cause; complete for the type.
+  scrollbar: "gave up its scrollbar",
 } as const;
 
 export const layoutShiftCheck: DeterministicCheck = {
@@ -169,6 +172,13 @@ export const layoutShiftCheck: DeterministicCheck = {
       : 0;
     return ran(this.id, [
       {
+        observation: observed(
+          { source: "load-sample", kind: "load", name: "page load" },
+          shift,
+          shift.elapsedMs === undefined
+            ? undefined
+            : { elapsedMs: shift.elapsedMs },
+        ),
         category: this.id,
         severity: "major",
         rule: "idiom:layout-shift",

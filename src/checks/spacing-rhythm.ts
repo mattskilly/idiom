@@ -480,6 +480,7 @@ function candidateFor(outlier: QualifiedOutlier): FindingCandidate {
   const { placement, prevailing, support, exemplar } = outlier;
   const direction = placement.side === "boundary-above" ? "above" : "below";
   return {
+    targetSelectors: [placement.element.selector],
     category: "spacing-rhythm",
     severity: "minor",
     rule: "idiom:spacing-rhythm-outlier",

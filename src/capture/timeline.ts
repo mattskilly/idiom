@@ -51,6 +51,7 @@ type RawTimeline = Pick<
   | "fromUrl"
   | "reducedMotion"
   | "visibleChanges"
+  | "rootScroll"
 > & { truncated: Truncation[]; notes: string[] };
 type RecorderConfig = {
   token: string;
@@ -318,6 +319,109 @@ function timelineRecorder(config: RecorderConfig): void {
   const inserted = new WeakSet<Node>();
   const pendingJoins: Element[] = [];
   let started = false;
+
+  // Whether the page itself scrolls, sampled at the baseline and whenever it
+  // changes: a scroll lock removes the scrollbar, which on systems with
+  // classic scrollbars widens the page under all content.
+  type RootSample = NonNullable<RawTimeline["rootScroll"]>[number];
+  const rootScroll: RootSample[] = [];
+  const rightSide = [
+    "padding-right",
+    "margin-right",
+    "padding-inline-end",
+    "margin-inline-end",
+  ];
+  const rootFacts = () => {
+    const html = document.documentElement;
+    const body = document.body;
+    const htmlStyle = getComputedStyle(html);
+    const bodyStyle = body ? getComputedStyle(body) : null;
+    // The viewport takes html's overflow, or body's when html's is visible.
+    const fromBody = htmlStyle.overflowY === "visible" && bodyStyle !== null;
+    const overflowY = fromBody
+      ? (bodyStyle?.overflowY ?? "visible")
+      : htmlStyle.overflowY;
+    const scroller = document.scrollingElement ?? html;
+    const hidden = overflowY === "hidden" || overflowY === "clip";
+    const fixed = bodyStyle?.position === "fixed";
+    const lockedBy = hidden
+      ? `${fromBody ? "body" : "html"} overflow: ${overflowY}`
+      : fixed
+        ? "body position: fixed"
+        : undefined;
+    return {
+      gutter: Math.max(0, Math.round(window.innerWidth - html.clientWidth)),
+      scrollable:
+        overflowY === "scroll" ||
+        (!hidden && !fixed && scroller.scrollHeight > scroller.clientHeight),
+      stableGutter: /stable/.test(
+        htmlStyle.getPropertyValue("scrollbar-gutter"),
+      ),
+      ...(lockedBy ? { lockedBy } : {}),
+    };
+  };
+  /**
+   * Right-side space a scroll-lock library gives back: an inline right
+   * padding or margin on html or body (even 0px: in a capture without
+   * layout scrollbars the measured gap is 0), or a class- or
+   * attribute-qualified rule setting one that matches them now.
+   */
+  const compensated = () => {
+    const roots = [document.documentElement, document.body].filter(
+      (element): element is HTMLElement => element instanceof HTMLElement,
+    );
+    if (
+      roots.some((element) =>
+        rightSide.some((name) => element.style.getPropertyValue(name) !== ""),
+      )
+    )
+      return true;
+    let budget = 3000;
+    const visit = (rules: CSSRuleList): boolean => {
+      for (const rule of rules) {
+        if (--budget < 0) return false;
+        if (rule instanceof CSSStyleRule) {
+          if (
+            /[.[]/.test(rule.selectorText) &&
+            rightSide.some((name) => rule.style.getPropertyValue(name) !== "")
+          )
+            try {
+              if (roots.some((element) => element.matches(rule.selectorText)))
+                return true;
+            } catch {
+              // Selectors with pseudo-elements never match an element.
+            }
+        } else if ("cssRules" in rule && visit(rule.cssRules as CSSRuleList))
+          return true;
+      }
+      return false;
+    };
+    for (const sheet of document.styleSheets) {
+      let rules: CSSRuleList;
+      try {
+        rules = sheet.cssRules;
+      } catch {
+        continue;
+      }
+      if (visit(rules)) return true;
+    }
+    return false;
+  };
+  const sampleRoot = () => {
+    if (config.load || !document.body) return;
+    const facts = rootFacts();
+    const last = rootScroll.at(-1);
+    if (
+      last &&
+      last.gutter === facts.gutter &&
+      last.scrollable === facts.scrollable &&
+      last.stableGutter === facts.stableGutter &&
+      last.lockedBy === facts.lockedBy
+    )
+      return;
+    if (rootScroll.length >= 8) return;
+    rootScroll.push({ time: now(), ...facts, compensation: compensated() });
+  };
   let dirty = true;
   let stopped = false;
   let frame = 0;
@@ -537,6 +641,7 @@ function timelineRecorder(config: RecorderConfig): void {
    */
   const sample = (final: boolean) => {
     if (!started) return;
+    sampleRoot();
     const full = frames.length >= limits.frames - (final ? 0 : 1);
     if (full && final) return;
     const time = now();
@@ -1176,6 +1281,22 @@ function timelineRecorder(config: RecorderConfig): void {
       "data",
       "output",
     ]);
+    const paintsBox = (element: Element) => {
+      const style = getComputedStyle(element);
+      const opaque = (color: string) =>
+        !/^(?:transparent|rgba\([^)]*,\s*0\))$/.test(color.trim());
+      return (
+        opaque(style.backgroundColor) ||
+        style.backgroundImage !== "none" ||
+        style.boxShadow !== "none" ||
+        (["Top", "Right", "Bottom", "Left"] as const).some(
+          (side) =>
+            Number.parseFloat(style[`border${side}Width`]) > 0 &&
+            style[`border${side}Style`] !== "none" &&
+            opaque(style[`border${side}Color`]),
+        )
+      );
+    };
     const textOnlyOf = (root: Root & { kind: Kind }) => {
       const element = root.element;
       if (root.kind === "route") return false;
@@ -1190,6 +1311,18 @@ function timelineRecorder(config: RecorderConfig): void {
           ? /^(?:inline|contents)$/.test(getComputedStyle(leaf).display)
           : inline.has(leaf.tagName.toLowerCase());
       if (inlineLevel(element)) return true;
+      // A leaf already in the document that only gained or lost its own
+      // text, painting no box of its own, shows nothing but glyphs (an
+      // inline form status line filled in place). Inserted leaves and
+      // painted boxes, such as toasts, still count.
+      if (
+        element.isConnected &&
+        textTargets.has(element) &&
+        !inserted.has(element) &&
+        !lineage(element).some((ancestor) => inserted.has(ancestor)) &&
+        !paintsBox(element)
+      )
+        return true;
       if (element.isConnected) return false;
       // A detached leaf swapped for an inline twin (a re-rendered counter).
       return presence.some(
@@ -1308,6 +1441,7 @@ function timelineRecorder(config: RecorderConfig): void {
       elements: [...entries.values()].map(sampleOf),
     };
     frames.push(first);
+    sampleRoot();
     mutationObserver.observe(document, { childList: true, subtree: true });
     snapshotStart();
     dirty = false;
@@ -1455,6 +1589,7 @@ function timelineRecorder(config: RecorderConfig): void {
           ? { fromUrl: start.fromUrl, reducedMotion: start.reducedMotion }
           : {}),
         ...(changes ? { visibleChanges: changes } : {}),
+        ...(rootScroll.length ? { rootScroll } : {}),
         clockOrigin: performance.timeOrigin + startMark,
         truncated: [...truncated],
         notes: [...notes],

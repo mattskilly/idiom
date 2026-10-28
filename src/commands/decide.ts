@@ -6,6 +6,7 @@ import {
   readDecisionLog,
 } from "../decisions/log.js";
 import { IdiomError } from "../errors.js";
+import { acceptanceText } from "../findings/presentation.js";
 import {
   type CatalogFinding,
   findCatalogFinding,
@@ -62,7 +63,7 @@ export function promptHeader(record: CatalogFinding): string {
     finding.explanation,
     `Surface: ${finding.flow} / ${finding.state} / ${finding.viewport}${finding.colorScheme === undefined ? "" : ` / ${finding.colorScheme}`}`,
     "Acceptance:",
-    ...finding.acceptance.map((criterion) => `- ${criterion}`),
+    ...acceptanceText(finding).map((criterion) => `- ${criterion}`),
   ].join("\n");
 }
 

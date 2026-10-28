@@ -247,6 +247,7 @@ export async function sweepFocusVisible(
         reason = "focus sweep time budget exhausted";
         break;
       }
+      const trialStarted = now();
       await page.keyboard.press("Tab");
       const result = (await page.evaluate(() =>
         (
@@ -254,7 +255,8 @@ export async function sweepFocusVisible(
         ).__idiomFocusSweep.step(),
       )) as Stop;
       if (result.kind === "end") break;
-      if (result.kind === "record") records.push(result.record);
+      if (result.kind === "record")
+        records.push({ ...result.record, elapsedMs: now() - trialStarted });
     }
   } finally {
     await page

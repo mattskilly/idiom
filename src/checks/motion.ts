@@ -1,10 +1,15 @@
+import { observed } from "../findings/observation.js";
 import {
   animatedKeys,
   isSnapCandidate,
   snapCandidateKeys,
 } from "./motion-snap.js";
 import { timelineEvidence, unavailable, verify } from "./shared.js";
-import { linkRecording, recordingKey } from "./temporal-evidence.js";
+import {
+  actionIdentity,
+  linkRecording,
+  recordingKey,
+} from "./temporal-evidence.js";
 import type {
   ActionTimeline,
   ChecksConfig,
@@ -89,6 +94,21 @@ export const motionCheck: DeterministicCheck = {
           candidates.push(
             linkRecording(
               {
+                observation: observed(
+                  {
+                    source: action.source,
+                    kind: action.source === "probe-hover" ? "hover" : "click",
+                    selector: action.selector,
+                    name: action.name,
+                    ...(action.stepIndex === undefined
+                      ? {}
+                      : { stepIndex: action.stepIndex }),
+                  },
+                  { change },
+                  action.elapsedMs === undefined
+                    ? undefined
+                    : { elapsedMs: action.elapsedMs },
+                ),
                 category: "motion",
                 ...(action.timelineId ? { timeline: action.timelineId } : {}),
                 severity: major ? "major" : "minor",
@@ -354,6 +374,11 @@ export function contentSnaps(
       category: "motion",
       severity: "major",
       rule: "idiom:motion-snap",
+      observation: observed(
+        actionIdentity(evidence),
+        { changes: evidence.visibleChanges ?? [] },
+        { elapsedMs: evidence.durationMs },
+      ),
       selectorHint: target?.selector ?? change.container,
       fingerprintHint: `motion-snap|${change.kind}|${change.container}`,
       ...(evidence.id ? { timeline: evidence.id } : {}),

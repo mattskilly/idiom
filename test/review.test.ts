@@ -657,6 +657,15 @@ async function reviewPass(run: string) {
 test("review output is schema-valid and byte-identical on full replay", async () => {
   const run = await successfulRun();
   const first = await reviewPass(run);
+  expect(first.report).toContain("Basis: measured:");
+  for (const finding of first.findings) {
+    expect(finding.basis).toBe(
+      finding.layer === "model" ? "judged" : "measured",
+    );
+    expect(finding.acceptance.kind).toBe(
+      finding.layer === "model" ? "manual" : "rule",
+    );
+  }
   expect(first.report).toContain(
     "![ready at phone](ready/phone/screenshot.png)",
   );
@@ -1266,6 +1275,9 @@ test("full stored review evaluates the model after six deterministic findings an
     firstFindings.filter(({ layer }) => layer === "deterministic"),
   ).toHaveLength(4);
   expect(firstReport).toContain("## Evaluated but not selected");
+  expect(firstReport).toContain("Basis: judged:");
+  expect(firstHtmlReport).toContain("judged:");
+  expect(firstHtmlReport).toContain("stated confidence");
   for (const finding of contexts[0]?.deterministicFindings ?? [])
     expect(firstReport).toContain(finding.id);
   expect(firstReport).not.toContain("IDM-");

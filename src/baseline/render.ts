@@ -1,3 +1,4 @@
+import { basisDescription } from "../findings/presentation.js";
 import type { BaselineComparisonSummary, SummaryFinding } from "./summary.js";
 
 export function baselineStaleWarning(
@@ -10,6 +11,7 @@ export function baselineStaleWarning(
 export function renderFindingDetails(findings: SummaryFinding[]): string[] {
   return findings.flatMap((finding, index) => [
     `${index + 1}. [${finding.severity}] ${finding.category} — ${finding.where}${finding.selector === undefined ? "" : ` — ${finding.selector}`}`,
+    `   Basis: ${basisDescription(finding)}`,
     `   Problem: ${finding.problem}`,
     ...finding.fix.map((line) => `   Done when: ${line}`),
     ...(finding.screenshot === undefined

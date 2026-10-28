@@ -214,6 +214,51 @@ test("horizontal cut survives the font-space exemption", async () => {
   });
 });
 
+test.each(["p", "section"])(
+  "self-clipping %s ignores peer layout panels outside its clip",
+  async (tag) => {
+    const { observation, result, evidence } = await inspect(`<!doctype html>
+      <style>body{margin:40px;font:20px/30px Arial;display:flex;gap:20px}
+      aside{width:300px;height:180px}#text{width:65px;overflow:hidden;white-space:nowrap}</style>
+      <aside><h2>Layers</h2><${tag} id="text">Layer keyboard shortcuts</${tag}><p>Other panel content</p></aside>
+      <aside><h2>Details</h2><p>A similarly sized unrelated layout panel</p></aside>`);
+    expect(evidence.rects[0]?.right).toBeGreaterThan(40 + 65);
+    expect(observation.clippedText).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          selector: "#text",
+          owner: "#text",
+          axis: "x",
+        }),
+      ]),
+    );
+    expect(result.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rule: "idiom:text-clipped",
+          selectorHint: "#text",
+        }),
+      ]),
+    );
+  },
+);
+
+test("ancestor-owned clipping retains a real peer-card carousel peek exemption", async () => {
+  const { observation, result, evidence } = await inspect(`<!doctype html>
+    <style>body{margin:40px;font:20px/30px Arial}#strip{width:200px;overflow:hidden}
+    #track{display:flex;width:max-content;gap:20px;transform:translateX(-80px)}.card{width:180px;flex:none}
+    #text{white-space:nowrap}</style>
+    <div id="strip"><div id="track"><article class="card"><h2>First</h2><p>Complete card</p></article>
+    <article class="card"><h2>Next</h2><p id="text">Layer keyboard shortcuts</p><p>Next card content</p></article></div></div>`);
+  // Shift so a readable part of the second card crosses the ancestor clip.
+  // The existing horizontal ancestor regression above retains non-carousel clips.
+  expect(evidence.rects[0]?.right).toBeGreaterThan(evidence.strip.right);
+  expect(observation.clippedText?.some((c) => c.selector === "#text")).toBe(
+    false,
+  );
+  expect(result.candidates.some((c) => c.selectorHint === "#text")).toBe(false);
+});
+
 test.each([
   [
     "inline complete copies",

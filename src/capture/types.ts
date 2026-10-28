@@ -156,6 +156,8 @@ export type BrowserTuple = CaptureHooks & {
    */
   failureReplays?: string[] | undefined;
   probeLedger?: import("./probe-ledger.js").ProbeLedger | undefined;
+  /** Flow-scoped held replays of web steps: each is replayed once per flow. */
+  replayLedger?: import("./replay-ledger.js").ReplayLedger | undefined;
   /**
    * `third-party`: arbitrary URLs (quick review). Only safe-method requests,
    * no cross-origin top-level navigation, no submission or permission

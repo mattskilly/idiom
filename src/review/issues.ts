@@ -23,6 +23,9 @@ export function siblingPattern(selector: string): string {
 }
 
 export type CheckIssue = {
+  basis?: Finding["basis"] | undefined;
+  basisDetails?: Finding["basisDetails"] | undefined;
+  acceptance?: Finding["acceptance"] | undefined;
   salience: number;
   prominence: number;
   score: number;
@@ -44,6 +47,9 @@ export type CheckIssue = {
 };
 
 type IssueGroup = {
+  basis?: Finding["basis"] | undefined;
+  basisDetails?: Finding["basisDetails"] | undefined;
+  acceptance?: Finding["acceptance"] | undefined;
   id: string;
   severity: Finding["severity"];
   category: string;
@@ -106,6 +112,13 @@ export function collapseIssues<G extends IssueGroup>(
       ];
       return {
         id: example.id,
+        ...(example.basis === undefined
+          ? {}
+          : {
+              basis: example.basis,
+              basisDetails: example.basisDetails,
+              acceptance: example.acceptance,
+            }),
         severity: bucket.reduce(
           (worst, group) =>
             severityOrder[group.severity] < severityOrder[worst]

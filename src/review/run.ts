@@ -15,6 +15,7 @@ import {
 import { projectChecksConfig } from "../checks/project-config.js";
 import { runDeterministicChecks } from "../checks/registry.js";
 import { scaleQuestions } from "../checks/scale-conformance.js";
+import { computeFlowStateCoverage } from "../coverage/states.js";
 import { AnthropicCritiqueAdapter } from "../critique/anthropic.js";
 import {
   ClaudeCodeCritiqueAdapter,
@@ -476,6 +477,8 @@ export async function runReview(options: {
   const deterministicDrafts = nameFindingDrafts(
     naming,
     buildDeterministicDrafts({
+      config: checksConfig,
+      tuples: loaded.tuples,
       runId: loaded.runId,
       entries: reviewed.candidates,
       legacyColorScheme: validated.project.capture.colorScheme,
@@ -793,6 +796,15 @@ export async function runReview(options: {
         surfaceFlows.length === 0
           ? [record.flow]
           : surfaceFlows.map(({ flow }) => flow),
+      stateCoverage: computeFlowStateCoverage({
+        project: validated.project,
+        flow: record.flow,
+        runId: loaded.runId,
+        commit: loaded.commit,
+        record: loaded.record,
+        tuples: loaded.tuples,
+        collapsedTupleKeys: loaded.collapsedTupleKeys,
+      }),
     }),
     findings,
     unruledDecisions,

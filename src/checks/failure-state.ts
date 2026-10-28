@@ -1,10 +1,15 @@
+import { observed } from "../findings/observation.js";
 import {
   timelineEvidence,
   unavailable,
   v2Observations,
   verify,
 } from "./shared.js";
-import { linkRecording, recordingKey } from "./temporal-evidence.js";
+import {
+  actionIdentity,
+  linkRecording,
+  recordingKey,
+} from "./temporal-evidence.js";
 import type {
   ActionTimeline,
   DeterministicCheck,
@@ -180,6 +185,15 @@ function checkFor(
         candidates.push(
           linkRecording(
             {
+              observation: observed(
+                actionIdentity(action),
+                {
+                  durationMs: action.durationMs,
+                  ...(action.held ? { held: action.held } : {}),
+                  ...(action.failure ? { failure: action.failure } : {}),
+                },
+                { elapsedMs: action.durationMs },
+              ),
               category: id,
               rule: `idiom:${id}`,
               severity: "major",

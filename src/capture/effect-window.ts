@@ -1,5 +1,5 @@
 import type { Page, Request } from "playwright";
-import { ignoredRequest } from "./request-policy.js";
+import { analyticsRequest, ignoredRequest } from "./request-policy.js";
 
 /**
  * How long a probe click may wait for content its own requests bring: long
@@ -14,6 +14,9 @@ type QuietWindow = {
     url: string;
     observer: MutationObserver;
     activity(): void;
+    /** keepalive fetches the page started, and whether anything awaited one. */
+    keepalive: Array<{ url: string; waited: boolean }>;
+    fetch: typeof fetch;
   };
 };
 
@@ -22,8 +25,8 @@ type QuietWindow = {
  * With `pendingMs`, a window that reaches its bound while requests it saw
  * start are still in flight keeps waiting for them (and 150ms of quiet), up
  * to `pendingMs` in total, so late content lands inside the window.
- * Ignored requests, navigations and streams (EventSource, WebSocket) never
- * extend it.
+ * Ignored requests, navigations, streams (EventSource, WebSocket), analytics
+ * and beacon requests, and keepalive fetches nothing awaits never extend it.
  */
 export async function beginEffectWindow(
   page: Page,
@@ -39,6 +42,7 @@ export async function beginEffectWindow(
     networkAt = performance.now();
     if (
       !ignoredRequest(value) &&
+      !analyticsRequest(value) &&
       !["document", "eventsource", "websocket"].includes(value.resourceType())
     )
       awaited.add(value);
@@ -58,6 +62,7 @@ export async function beginEffectWindow(
         const state = scope.__idiomQuiet;
         if (!state || state.token !== token) return;
         state.observer.disconnect();
+        if (window.fetch !== state.fetch) window.fetch = state.fetch;
         document.removeEventListener("focusin", state.activity, true);
         document.removeEventListener("focusout", state.activity, true);
         delete scope.__idiomQuiet;
@@ -77,7 +82,50 @@ export async function beginEffectWindow(
         activity: () => {
           state.last = performance.now();
         },
+        keepalive: [] as Array<{ url: string; waited: boolean }>,
+        fetch: window.fetch,
       };
+      // A keepalive fetch whose result nothing reads is a beacon. Awaiting
+      // it or passing a fulfilment handler to then() counts as reading it;
+      // catch() alone does not.
+      const original = state.fetch;
+      window.fetch = function (
+        this: unknown,
+        ...args: Parameters<typeof fetch>
+      ) {
+        const promise = original.apply(this, args);
+        const [input, init] = args;
+        const keepalive =
+          init?.keepalive ?? (input instanceof Request && input.keepalive);
+        if (!keepalive) return promise;
+        let url: string;
+        try {
+          url = new URL(
+            input instanceof Request ? input.url : String(input),
+            location.href,
+          ).href;
+        } catch {
+          return promise;
+        }
+        const entry = { url, waited: false };
+        if (state.keepalive.length < 50) state.keepalive.push(entry);
+        const then = promise.then;
+        Object.defineProperties(promise, {
+          // biome-ignore lint/suspicious/noThenProperty: observes who reads this one keepalive fetch; delegates to the native then().
+          then: {
+            configurable: true,
+            writable: true,
+            value(this: Promise<Response>, ...handlers: unknown[]) {
+              if (typeof handlers[0] === "function") entry.waited = true;
+              return Reflect.apply(then, this, handlers);
+            },
+          },
+          // `await` adopts a native promise without reading then(); an
+          // instance constructor makes it resolve through the method above.
+          constructor: { configurable: true, writable: true, value: undefined },
+        });
+        return promise;
+      } as typeof fetch;
       state.observer = new MutationObserver(state.activity);
       state.observer.observe(document, {
         subtree: true,
@@ -108,14 +156,31 @@ export async function beginEffectWindow(
         .catch(() => undefined);
       const pendingMs = Math.max(maximumMs, options.pendingMs ?? maximumMs);
       let extended = false;
-      const open = () => {
+      let beacons = false;
+      const open = async () => {
         const elapsed = performance.now() - begun;
         if (elapsed < maximumMs) return true;
-        // At the bound, only requests this window saw start extend it.
+        // At the bound, only requests this window saw start extend it, and
+        // not keepalive fetches nothing awaits.
+        if (!beacons && awaited.size > 0) {
+          beacons = true;
+          const unread = await page
+            .evaluate((token) => {
+              const state = (window as QuietWindow).__idiomQuiet;
+              return state?.token === token
+                ? state.keepalive
+                    .filter((entry) => !entry.waited)
+                    .map((entry) => entry.url)
+                : [];
+            }, token)
+            .catch(() => [] as string[]);
+          for (const value of [...awaited])
+            if (unread.includes(value.url())) awaited.delete(value);
+        }
         if (!extended) extended = awaited.size > 0;
         return extended && elapsed < pendingMs;
       };
-      while (open()) {
+      while (await open()) {
         const quiet = await page
           .evaluate((token) => {
             const state = (window as QuietWindow).__idiomQuiet;

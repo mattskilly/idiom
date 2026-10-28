@@ -15,7 +15,8 @@ import { repairPrompt } from "../src/fix/prompt.js";
 import { type FixDependencies, runFix } from "../src/fix/run.js";
 import type { CatalogFinding, FindingLineage } from "../src/review/catalog.js";
 import { loadFindingNames } from "../src/review/names.js";
-import type { Finding } from "../src/schemas/finding.js";
+import { type Finding, findingSchema } from "../src/schemas/finding.js";
+import { unavailableAcceptance } from "../src/verify/acceptance.js";
 import type { VerifyRunResult } from "../src/verify/run.js";
 import { parseFindingBlocks } from "../src/verify/spec.js";
 
@@ -34,7 +35,7 @@ async function fixture() {
   return path;
 }
 function finding(id: number): Finding {
-  return {
+  return findingSchema.parse({
     id: `finding-${id}`,
     fingerprint: `fp-${id}`,
     createdAt: "2026-10-25T00:00:00.000Z",
@@ -56,7 +57,7 @@ function finding(id: number): Finding {
       params: { selector: `#target${id}`, minimum: 24 },
     },
     status: "open",
-  };
+  });
 }
 function occurrence(id: number, extra: Partial<Occurrence> = {}): Occurrence {
   return {
@@ -181,6 +182,7 @@ function verified(
       ? ("fixed" as const)
       : ("reproduced" as const),
     reason: "measured",
+    acceptance: unavailableAcceptance(finding.acceptance),
   }));
   return {
     reportPath: "/verify/before-after.md",
@@ -350,6 +352,7 @@ for (const mode of [
           verdicts: [
             {
               finding: finding(1),
+              acceptance: unavailableAcceptance(finding(1).acceptance),
               status: "unverifiable",
               reason: "locus changed",
             },

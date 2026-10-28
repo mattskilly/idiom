@@ -2,9 +2,11 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { IdiomError } from "../errors.js";
+import { stable } from "../findings/settings.js";
 import { renderInstruction } from "../instructions/render.js";
 import { assertEvidencePaths } from "../review/artifacts.js";
 import type { CatalogFinding } from "../review/catalog.js";
+import { parseFindingBlocks } from "../verify/spec.js";
 import type { FindingCluster } from "./cluster.js";
 import { physicalPath } from "./target.js";
 
@@ -79,7 +81,7 @@ export async function sweepTicketEvidence(options: {
     "",
     "## Verify",
     "",
-    "Run every partition below. Model findings retain manual/unverifiable limitations.",
+    "Run every partition below. Machine acceptance and finding verdicts are reported separately; judged or historical criteria can be not-recheckable while visual or legacy verification fixes the finding.",
     "",
   );
   for (const [key, records] of [...partitions].sort(([a], [b]) =>
@@ -112,7 +114,12 @@ export async function sweepTicketEvidence(options: {
       await writeFile(path, content, { encoding: "utf8", flag: "wx" });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if ((await readFile(path, "utf8")) !== content)
+      const existing = await readFile(path, "utf8");
+      if (
+        existing !== content &&
+        stable(parseFindingBlocks(existing)) !==
+          stable(parseFindingBlocks(content))
+      )
         throw new IdiomError(
           `incompatible verification sidecar; preserving existing bytes: ${path}`,
         );

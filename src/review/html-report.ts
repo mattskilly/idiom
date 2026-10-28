@@ -3,6 +3,11 @@ import { paintedCoverageText } from "../checks/painted.js";
 import type { CheckCoverage, CheckTuple } from "../checks/types.js";
 import { tupleDesigns } from "../design/evidence.js";
 import type { LoadedDesign } from "../design/types.js";
+import {
+  acceptanceDescription,
+  acceptanceText,
+  basisDescription,
+} from "../findings/presentation.js";
 import { type ReportCoverage, renderCoverageHtml } from "../report/coverage.js";
 import {
   badge,
@@ -77,11 +82,11 @@ function findingCard(
         : "Manual confirmation is required.";
   return `<article class="finding">
     <h4>${escapeHtml(finding.id)}: ${escapeHtml(finding.category)}</h4>
-    <div class="summary">${badge(finding.severity, finding.severity)} ${badge(finding.layer)}${finding.layer === "model" ? ` ${badge(`confidence ${finding.confidence}`)}` : ""}</div>
+    <div class="summary">${badge(finding.severity, finding.severity)} ${badge(finding.layer)}${finding.basisDetails?.kind === "judged" && finding.basisDetails.confidence !== undefined ? ` ${badge(`confidence ${finding.basisDetails.confidence}`)}` : ""}</div>
     ${severityOverride === undefined ? "" : `<p><strong>Severity override:</strong> ${escapeHtml(severityOverride.original)} → ${escapeHtml(severityOverride.effective)} by rule ${escapeHtml(severityOverride.override.id)} (${escapeHtml(severityOverride.override.reason)})</p>`}
     ${finding.rule === undefined ? "" : `<p><strong>Guidance:</strong> ${escapeHtml(finding.rule)}</p>`}
     ${(finding.evidence.references?.length ?? 0) === 0 ? "" : `<p><strong>References:</strong> ${(finding.evidence.references ?? []).map((label) => escapeHtml(label)).join(" · ")}</p>`}
-    <p>${escapeHtml(finding.explanation)}</p>
+    <p><strong>Basis:</strong> ${escapeHtml(basisDescription(finding))}</p><p><strong>Machine condition:</strong> ${escapeHtml(acceptanceDescription(finding.acceptance))}</p><p>${escapeHtml(finding.explanation)}</p>
     ${finding.evidence.filmstrip?.sheet ? `<figure style="overflow-x:auto"><figcaption>Filmstrip (${escapeHtml(finding.evidence.filmstrip.status)})</figcaption><img style="max-width:none" src="${escapeHtmlAttribute(screenshots?.get(finding.evidence.filmstrip.sheet) ?? reportRelativeHref(finding.evidence.filmstrip.sheet))}" alt="Temporal frames for ${escapeHtmlAttribute(finding.id)}">${evidenceLink(finding.evidence.filmstrip.sheet, "Open filmstrip")}</figure>` : ""}
     ${finding.evidence.designDrift ? `<p>${driftHtml(finding.evidence.designDrift)}</p>${designDriftHtml(finding.evidence.designDrift)}<div class="comparison-pair">${(finding.evidence.designDrift.crops ?? []).map((crop) => `<figure><figcaption>${escapeHtml(crop.label)}</figcaption>${screenshots?.get(crop.path) ? `<img src="${escapeHtmlAttribute(screenshots.get(crop.path) as string)}" alt="${escapeHtmlAttribute(crop.label)}">` : ""}${evidenceLink(crop.path, crop.label)}</figure>`).join("")}</div>` : ""}
     ${pageEvidence.section === undefined ? "" : `<p><strong>Section:</strong> ${escapeHtml(pageEvidence.section)}</p>`}
@@ -92,7 +97,9 @@ function findingCard(
     ${(finding.evidence.axeNodes?.length ?? 0) === 0 ? "" : preformatted("Accessibility evidence", JSON.stringify(finding.evidence.axeNodes, null, 2))}
     ${extras.length === 0 ? "" : `<p><strong>Local evidence:</strong> ${extras.map((path) => evidenceLink(path)).join(" · ")}</p>`}
     <h5>Acceptance criteria</h5>
-    <ul>${finding.acceptance.map((criterion) => `<li>${escapeHtml(criterion)}</li>`).join("")}</ul>
+    <ul>${acceptanceText(finding)
+      .map((criterion) => `<li>${escapeHtml(criterion)}</li>`)
+      .join("")}</ul>
     <p><strong>Verification:</strong> ${escapeHtml(verification)}</p>
   </article>`;
 }
@@ -119,7 +126,7 @@ function suppressedSection(items: SuppressedFinding[]): string {
               "decision" in suppressed
                 ? `Decision: ${suppressed.decision.decision} (${suppressed.decision.scope}) on ${suppressed.decisionFindingId ?? finding.id} — ${suppressed.decision.reason ?? "standing rule-scope rejection"}`
                 : `Rule: ${suppressed.override.id} — ${suppressed.override.reason}`;
-            return `<article class="panel"><h3>${escapeHtml(finding.id)}: ${escapeHtml(finding.category)} — ${escapeHtml(finding.state)}/${escapeHtml(finding.viewport)}${finding.colorScheme === undefined ? "" : `/${escapeHtml(finding.colorScheme)}`}${finding.combination === undefined ? "" : ` [${escapeHtml(finding.combination)}]`}</h3><p class="meta">${escapeHtml(finding.layer)} · ${escapeHtml(finding.fingerprint)}</p><p>${escapeHtml(finding.explanation)}</p><p>${escapeHtml(basis)}</p></article>`;
+            return `<article class="panel"><h3>${escapeHtml(finding.id)}: ${escapeHtml(finding.category)} — ${escapeHtml(finding.state)}/${escapeHtml(finding.viewport)}${finding.colorScheme === undefined ? "" : `/${escapeHtml(finding.colorScheme)}`}${finding.combination === undefined ? "" : ` [${escapeHtml(finding.combination)}]`}</h3><p class="meta">${escapeHtml(finding.layer)} · ${escapeHtml(finding.fingerprint)}</p><p><strong>Basis:</strong> ${escapeHtml(basisDescription(finding))}</p><p><strong>Machine condition:</strong> ${escapeHtml(acceptanceDescription(finding.acceptance))}</p><p>${escapeHtml(finding.explanation)}</p><p>${escapeHtml(basis)}</p></article>`;
           })
           .join("");
   return `<section><h2>Suppressed findings</h2><p>Suppressed by prior decision or project rule.</p>${content}</section>`;
@@ -247,7 +254,13 @@ function advisorySection(review: AdvisoryReview | undefined): string {
                     finding.evidence.screenshots.find((path) =>
                       path.includes("/crops/"),
                     ) ?? finding.evidence.screenshots[0];
-                  return `<article class="finding"><h4>${escapeHtml(finding.id)}: ${escapeHtml(aspect)}</h4><div class="summary">${badge(finding.severity, finding.severity)} ${badge("advisory")}</div><p><strong>Section:</strong> ${escapeHtml(section)}${sectionHeading === undefined ? "" : ` (${escapeHtml(sectionHeading)})`} · ${escapeHtml(finding.state)}/${escapeHtml(finding.viewport)}${finding.colorScheme === undefined ? "" : `/${escapeHtml(finding.colorScheme)}`}</p><p>${escapeHtml(finding.explanation)}</p>${finding.fix === undefined ? "" : `<p><strong>Fix:</strong> ${escapeHtml(finding.fix)}</p>`}<ul>${finding.acceptance.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>${crop === undefined ? "" : `<img class="screenshot" src="${escapeHtmlAttribute(reportRelativeHref(crop))}" alt="${escapeHtmlAttribute(`Advisory crop for ${finding.id}`)}">`}</article>`;
+                  return `<article class="finding"><h4>${escapeHtml(finding.id)}: ${escapeHtml(aspect)}</h4><div class="summary">${badge(finding.severity, finding.severity)} ${badge("advisory")}</div><p><strong>Section:</strong> ${escapeHtml(section)}${sectionHeading === undefined ? "" : ` (${escapeHtml(sectionHeading)})`} · ${escapeHtml(finding.state)}/${escapeHtml(finding.viewport)}${finding.colorScheme === undefined ? "" : `/${escapeHtml(finding.colorScheme)}`}</p><p><strong>Basis:</strong> ${escapeHtml(basisDescription(finding))}</p><p><strong>Machine condition:</strong> ${escapeHtml(acceptanceDescription(finding.acceptance))}</p><p>${escapeHtml(finding.explanation)}</p>${finding.fix === undefined ? "" : `<p><strong>Fix:</strong> ${escapeHtml(finding.fix)}</p>`}<ul>${acceptanceText(
+                    finding,
+                  )
+                    .map((line) => `<li>${escapeHtml(line)}</li>`)
+                    .join(
+                      "",
+                    )}</ul>${crop === undefined ? "" : `<img class="screenshot" src="${escapeHtmlAttribute(reportRelativeHref(crop))}" alt="${escapeHtmlAttribute(`Advisory crop for ${finding.id}`)}">`}</article>`;
                 })
                 .join("")
         }</article>`,
@@ -320,7 +333,7 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
                 options.page,
                 options.screenshots,
               );
-            return `<li><strong>${escapeHtml(finding.id)}</strong> (${escapeHtml(finding.severity)}, ${escapeHtml(finding.layer)}) — ${escapeHtml(finding.flow)} / ${escapeHtml(finding.state)} / ${escapeHtml(finding.viewport)}${finding.colorScheme === undefined ? "" : ` / ${escapeHtml(finding.colorScheme)}`}${finding.combination === undefined ? "" : ` [${escapeHtml(finding.combination)}]`} — ${escapeHtml(finding.explanation)}${severityOverride === undefined ? "" : ` — Severity override: ${escapeHtml(severityOverride.original)} → ${escapeHtml(severityOverride.effective)} by rule ${escapeHtml(severityOverride.override.id)} (${escapeHtml(severityOverride.override.reason)})`}</li>`;
+            return `<li><strong>${escapeHtml(finding.id)}</strong> (${escapeHtml(finding.severity)}, ${escapeHtml(finding.layer)}) — ${escapeHtml(finding.flow)} / ${escapeHtml(finding.state)} / ${escapeHtml(finding.viewport)}${finding.colorScheme === undefined ? "" : ` / ${escapeHtml(finding.colorScheme)}`}${finding.combination === undefined ? "" : ` [${escapeHtml(finding.combination)}]`} — ${escapeHtml(basisDescription(finding))} — ${escapeHtml(finding.explanation)}${severityOverride === undefined ? "" : ` — Severity override: ${escapeHtml(severityOverride.original)} → ${escapeHtml(severityOverride.effective)} by rule ${escapeHtml(severityOverride.override.id)} (${escapeHtml(severityOverride.override.reason)})`}</li>`;
           })
           .join("")}</ul>`
   }</section>`;

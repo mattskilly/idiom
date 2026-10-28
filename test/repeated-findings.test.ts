@@ -178,7 +178,7 @@ test("--json keeps every member coordinate and --ungrouped restores one entry pe
     from: "run",
   });
   const ungrouped = renderCheckSummary(summary, { ungrouped: true });
-  expect(ungrouped.match(/target-size/g)).toHaveLength(4);
+  expect(ungrouped.match(/^\d+\. .*target-size/gm)).toHaveLength(4);
   expect(ungrouped).not.toContain("--group");
   expect(ungrouped).toContain("Full report: ");
 }, 30_000);

@@ -5,7 +5,12 @@ import { designIdentity } from "../design/identity.js";
 import { IdiomError } from "../errors.js";
 import { findingFingerprintIdentity } from "../review/fingerprint.js";
 import { compareOccurrences } from "../review/occurrences.js";
-import type { Finding } from "../schemas/finding.js";
+import { type Finding, findingSchema } from "../schemas/finding.js";
+import {
+  type AcceptanceResult,
+  evaluateRuleAcceptance,
+  unavailableAcceptance,
+} from "./acceptance.js";
 import { compareFindingLocus, type LocusComparison } from "./locus.js";
 import {
   assertMaskAgreement,
@@ -29,6 +34,7 @@ export type CalibrationResult = {
 
 export type FindingVerdict = {
   finding: Finding;
+  acceptance: AcceptanceResult;
   status: "fixed" | "reproduced" | "unverifiable";
   reason: string;
   locus?: LocusComparison | undefined;
@@ -381,7 +387,25 @@ export function evaluateVerification(options: {
     options.expectedTupleKeys,
     options.checksConfig,
   );
-  const findings = options.findings.map((finding): FindingVerdict => {
+  const checkedCaptures = options.findings.some(
+    (f) => !Array.isArray(f.acceptance) && f.acceptance.kind === "rule",
+  )
+    ? [options.currentA, options.currentB].map((tuples) =>
+        runDeterministicChecks(
+          tuples,
+          options.expectedTupleKeys,
+          options.checksConfig,
+        ),
+      )
+    : undefined;
+  const findings = options.findings.map((input): FindingVerdict => {
+    const finding = findingSchema.parse(input);
+    const acceptance = unavailableAcceptance(
+      finding.acceptance,
+      finding.verification.kind === "manual"
+        ? "Manual findings cannot be proven fixed by offline verification."
+        : undefined,
+    );
     if (finding.verification.kind === "deterministic-check") {
       const coordinate = `${finding.state}\0${finding.viewport}\0${finding.colorScheme ?? legacyColorScheme}`;
       if (finding.category === "design-drift") {
@@ -404,10 +428,35 @@ export function evaluateVerification(options: {
         )
           return {
             finding,
+            acceptance: unavailableAcceptance(
+              finding.acceptance,
+              "Design comparison requires usable, unchanged intended reference evidence in baseline and both current captures.",
+            ),
             status: "unverifiable",
             reason:
               "Design comparison requires usable, unchanged intended reference evidence in baseline and both current captures.",
           };
+      }
+      if (finding.acceptance.kind === "rule") {
+        const evaluated = evaluateRuleAcceptance({
+          contract: finding.acceptance,
+          checkedCaptures,
+          currentA: options.currentA,
+          currentB: options.currentB,
+          config: options.checksConfig,
+          expectedTupleKeys: options.expectedTupleKeys,
+        });
+        return {
+          finding,
+          acceptance: evaluated,
+          status:
+            evaluated.status === "passed"
+              ? "fixed"
+              : evaluated.status === "failed"
+                ? "reproduced"
+                : "unverifiable",
+          reason: evaluated.reason,
+        };
       }
       const reproduced = [...currentCandidates.entries()].some(
         ([key, candidate]) =>
@@ -416,15 +465,17 @@ export function evaluateVerification(options: {
       );
       return {
         finding,
+        acceptance,
         status: reproduced ? "reproduced" : "fixed",
         reason: reproduced
-          ? `declared deterministic fingerprint ${finding.fingerprint} still emits`
-          : `declared deterministic fingerprint ${finding.fingerprint} no longer emits`,
+          ? `legacy fingerprint evaluation: declared deterministic fingerprint ${finding.fingerprint} still emits`
+          : `legacy fingerprint evaluation: declared deterministic fingerprint ${finding.fingerprint} no longer emits`,
       };
     }
     if (finding.verification.kind === "manual")
       return {
         finding,
+        acceptance,
         status: "unverifiable",
         reason:
           "manual findings cannot be proven fixed by offline verification",
@@ -442,6 +493,7 @@ export function evaluateVerification(options: {
     });
     return {
       finding,
+      acceptance,
       status: locus.changed ? "fixed" : "reproduced",
       reason: locus.changed
         ? `negotiated ${calibration.negotiated} evidence changed within ${locus.source}`

@@ -744,6 +744,34 @@ describe("visible changes for motion snaps", () => {
       true,
     );
   });
+  test("text filled into an existing unpainted leaf is text-only; a painted or inserted box is not", async () => {
+    // An empty flex item has no width until its text arrives.
+    const status = `<form id="f" style="display:flex;gap:16px"><button id="go" type="button">Save profile</button><p id="s" aria-live="polite" style="min-height:24px;margin:0;color:#1d6b3a"></p></form>`;
+    const filled = await changesOf(
+      `${status}<script>go.onclick=()=>{s.textContent='Profile saved.';s.className='ok'}</script>`,
+      "#go",
+    );
+    expect(filled.visibleChanges?.length).toBeGreaterThan(0);
+    expect(filled.visibleChanges?.every((change) => change.textOnly)).toBe(
+      true,
+    );
+    const toast = await changesOf(
+      `<div style="display:flex"><button id="go">Save</button><div id="t" role="status" style="min-height:48px;background:#1c2430;color:white"></div></div>
+      <script>go.onclick=()=>{t.textContent='Saved'}</script>`,
+      "#go",
+    );
+    expect(toast.visibleChanges).toEqual([
+      expect.objectContaining({ kind: "status", textOnly: false }),
+    ]);
+    const inserted = await changesOf(
+      `<button id="go">Save</button><div id="host"></div>
+      <script>go.onclick=()=>{const p=document.createElement('p');p.setAttribute('role','status');p.style.cssText='height:48px;margin:0';p.textContent='Saved';host.append(p)}</script>`,
+      "#go",
+    );
+    expect(inserted.visibleChanges).toEqual([
+      expect.objectContaining({ kind: "status", textOnly: false }),
+    ]);
+  });
   test("floating layers, swapped controls, offscreen and earlier entrances are not the action's changes", async () => {
     const dropdown = await changesOf(
       `<div style="position:relative"><button id="go">Theme</button><ul id="m" hidden style="position:absolute;top:40px;height:120px;width:160px"><li>Light</li><li>Dark</li></ul></div>

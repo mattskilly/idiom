@@ -1,3 +1,4 @@
+import { acceptanceText } from "../findings/presentation.js";
 import {
   type RepairPresentation,
   repairScopeBoundary,
@@ -35,7 +36,7 @@ export function renderInstruction(presentation: RepairPresentation): string {
     "",
     "## Done when",
     "",
-    ...finding.acceptance.map((criterion) => `- ${criterion}`),
+    ...acceptanceText(finding).map((criterion) => `- ${criterion}`),
     "",
     "## Out of scope",
     "",

@@ -43,8 +43,8 @@ export function actionIdentity(action: ActionTimeline): FilmstripIdentity {
   };
 }
 export function sameAction(
-  a: FilmstripIdentity,
-  b: FilmstripIdentity,
+  a: import("../schemas/acceptance.js").AcceptanceAction,
+  b: import("../schemas/acceptance.js").AcceptanceAction,
 ): boolean {
   return (
     a.source === b.source &&
@@ -61,6 +61,9 @@ export function temporalAction(
   tuple: CheckTuple,
   candidate: {
     timeline?: string | undefined;
+    observation?:
+      | { action: import("../schemas/acceptance.js").AcceptanceAction }
+      | undefined;
     category: string;
     verification: { params?: Record<string, unknown> | undefined };
   },
@@ -99,6 +102,11 @@ export function temporalAction(
             a.name === p.action &&
             a.selector === p.actionSelector &&
             a.stepIndex === p.stepIndex,
+    );
+  } else if (candidate.observation) {
+    const identity = candidate.observation.action;
+    matches = actions.filter((action) =>
+      sameAction(identity, actionIdentity(action)),
     );
   } else return undefined;
   return matches.length === 1 ? matches[0] : undefined;

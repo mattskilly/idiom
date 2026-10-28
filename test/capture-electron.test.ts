@@ -256,6 +256,24 @@ async function artifactTree(
             tuple.probe.ms = 0;
           }
           tree[key] = JSON.stringify(artifact);
+        } else if (entry.name === "observations.json") {
+          // Elapsed evidence is recorded, but does not change semantic capture parity.
+          const withoutElapsed = (value: unknown): unknown =>
+            Array.isArray(value)
+              ? value.map(withoutElapsed)
+              : value && typeof value === "object"
+                ? Object.fromEntries(
+                    Object.entries(value).map(([key, value]) => [
+                      key,
+                      key === "elapsedMs" && typeof value === "number"
+                        ? 0
+                        : withoutElapsed(value),
+                    ]),
+                  )
+                : value;
+          tree[key] = JSON.stringify(
+            withoutElapsed(JSON.parse(contents.toString("utf8"))),
+          );
         } else if (
           entry.name === "metadata.json" ||
           entry.name === "axe.json"

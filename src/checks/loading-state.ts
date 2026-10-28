@@ -1,9 +1,11 @@
+import { observed } from "../findings/observation.js";
 import {
   timelineEvidence,
   unavailable,
   v2Observations,
   verify,
 } from "./shared.js";
+import { actionIdentity } from "./temporal-evidence.js";
 import type {
   ActionTimeline,
   CheckResult,
@@ -17,6 +19,8 @@ import type {
 type SlowAction = ActionTimeline & { held: HeldReplay };
 type HeldRequest = HeldReplay["requests"][number];
 
+/** The browser shows its own progress for a document navigation. */
+const NAVIGATION_NOTE = "main-frame document navigation";
 /** A visible result must begin this soon after a response to be gated on it. */
 export const RELEASE_ADJACENCY_MS = 400;
 const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -53,10 +57,29 @@ function slowActions(
   check: DeterministicCheckId,
   tuple: CheckTuple,
 ): { actions: SlowAction[]; reason?: string | undefined } | CheckResult {
-  const evidence = timelineEvidence(tuple);
+  // A navigation-only action's timeline reason ("document navigated during
+  // the action…") is replaced by its one short note in each rule.
+  const evidence = timelineEvidence(
+    tuple.timelines === undefined
+      ? tuple
+      : {
+          ...tuple,
+          timelines: {
+            ...tuple.timelines,
+            actions: tuple.timelines.actions.filter(
+              (action) =>
+                !(
+                  action.source === "slow-replay" &&
+                  action.held !== undefined &&
+                  navigationOnly(action as SlowAction)
+                ),
+            ),
+          },
+        },
+  );
   if (evidence.status === "unavailable")
     return unavailable(check, evidence.reason);
-  const all = evidence.timelines.actions.filter(
+  const all = (tuple.timelines?.actions ?? []).filter(
     (action): action is SlowAction =>
       action.source === "slow-replay" && action.held !== undefined,
   );
@@ -190,7 +213,7 @@ export function judgeLoading(
       fires: false,
       judged: true,
       note: held.requests.some((request) => request.navigation)
-        ? "main-frame document navigation (the browser shows its own progress)"
+        ? NAVIGATION_NOTE
         : "no same-site fetch/XHR request was held",
     };
   if (
@@ -315,6 +338,15 @@ export const loadingStateMissingCheck: DeterministicCheck = {
         ? `Navigating to ${verdict.route.to} left the main content ${held.mainEmpty ? "empty" : "unchanged"} for ${verdict.silentMs}ms with no pending indicator while ${requests} was pending; it changed only after the response.${late} Idiom held the response for ${held.delayMs}ms to see what users on a slow network see.`
         : `${verb(action)} ${trigger} showed nothing for ${verdict.silentMs}ms while ${requests} was pending; the page changed only after the response.${late} Idiom held the response for ${held.delayMs}ms to see what users on a slow network see.`;
       candidates.push({
+        observation: observed(
+          actionIdentity(action),
+          {
+            durationMs: action.durationMs,
+            ...(action.held ? { held: action.held } : {}),
+            ...(action.failure ? { failure: action.failure } : {}),
+          },
+          { elapsedMs: action.durationMs },
+        ),
         category: this.id,
         severity: "major",
         rule: "idiom:loading-state-missing",
@@ -362,7 +394,7 @@ export function judgeDoubleSubmit(
     return {
       fires: false,
       judged: true,
-      note: "main-frame document navigation",
+      note: NAVIGATION_NOTE,
     };
   if (action.kind !== "click" && action.kind !== "press")
     return { fires: false, judged: true, note: `${action.kind} action` };
@@ -423,6 +455,15 @@ export const doubleSubmitCheck: DeterministicCheck = {
       const trigger = action.selector ?? action.name;
       const request = describe(verdict.request);
       candidates.push({
+        observation: observed(
+          actionIdentity(action),
+          {
+            durationMs: action.durationMs,
+            ...(action.held ? { held: action.held } : {}),
+            ...(action.failure ? { failure: action.failure } : {}),
+          },
+          { elapsedMs: action.durationMs },
+        ),
         category: this.id,
         severity: "major",
         rule: "idiom:double-submit",

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Article</title>
+<style>body { margin: 0; font: 16px/1.5 system-ui, sans-serif; } main { max-width: 720px; margin: 0 auto; padding: 24px; }</style>
+</head>
+<body>
+<main>
+  <h1>Article</h1>
+  <p>Some article text.</p>
+  <button id="like" type="button">Like</button>
+  <p class="note">Readers like this article.</p>
+</main>
+<script>
+  // Analytics only: nothing waits on either request and nothing is inserted.
+  document.getElementById("like").addEventListener("click", () => {
+    navigator.sendBeacon("/collect", "like");
+    fetch("/collect?event=like", { keepalive: true }).catch(() => {});
+    fetch("/_vercel/insights/view").catch(() => {});
+  });
+</script>
+</body>
+</html>

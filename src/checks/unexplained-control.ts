@@ -1,3 +1,4 @@
+import { observed as observedAction } from "../findings/observation.js";
 import {
   isVisuallyHidden,
   ran,
@@ -106,6 +107,27 @@ export const unexplainedControlCheck: DeterministicCheck = {
             ? "idiom:unexplained-control"
             : "idiom:unavailable-control-without-reason",
           selectorHint: element.selector,
+          ...(records.length
+            ? {
+                observation: observedAction(
+                  {
+                    source: "explanation-trial",
+                    kind: "hover/focus",
+                    selector: element.selector,
+                    name: "explanation",
+                  },
+                  { records },
+                  records.every((r) => r.elapsedMs !== undefined) &&
+                    records.length
+                    ? {
+                        windowMs: Math.max(
+                          ...records.map((r) => r.elapsedMs ?? 0),
+                        ),
+                      }
+                    : undefined,
+                ),
+              }
+            : {}),
           explanation: `${element.selector} shows ${label}${enabled ? "" : " disabled"}, with no visible label, visible description, or tooltip observed on both hover and focus. An accessible name or native title alone does not supply a visible explanation.`,
           acceptance: [
             `${element.selector} has a meaningful visible label, visible aria-describedby text, or a tooltip that appears on both hover and focus${enabled ? "." : " and explains why it is unavailable."}`,
@@ -170,6 +192,27 @@ export const unexplainedControlCheck: DeterministicCheck = {
           severity: "minor" as const,
           rule: "idiom:unexplained-control",
           selectorHint: element.selector,
+          ...(records.length
+            ? {
+                observation: observedAction(
+                  {
+                    source: "explanation-trial",
+                    kind: "hover/focus",
+                    selector: element.selector,
+                    name: "explanation",
+                  },
+                  { records },
+                  records.every((r) => r.elapsedMs !== undefined) &&
+                    records.length
+                    ? {
+                        windowMs: Math.max(
+                          ...records.map((r) => r.elapsedMs ?? 0),
+                        ),
+                      }
+                    : undefined,
+                ),
+              }
+            : {}),
           explanation: `${element.selector} shows "${glyph}" with no painted label and no tooltip observed on hover or focus; its accessible name ${JSON.stringify(signals.name)}${signals.title === undefined ? " is" : " and native title are"} not visible.`,
           acceptance: [
             `${element.selector} has a visible label, painted aria-describedby text, or a tooltip that appears on hover and focus.`,

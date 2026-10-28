@@ -1,3 +1,4 @@
+import { observed } from "../findings/observation.js";
 import { unavailable, verify } from "./shared.js";
 import type { DeterministicCheck, FindingCandidate } from "./types.js";
 
@@ -51,6 +52,17 @@ export const progressAffordanceCheck: DeterministicCheck = {
           ? ""
           : `; the step settled after ${step.settledMs}ms`;
       candidates.push({
+        observation: observed(
+          {
+            source: "progress",
+            kind: step.action,
+            selector: step.selector,
+            name: "longRunning",
+            stepIndex: step.stepIndex,
+          },
+          step,
+          { windowMs: step.observedMs },
+        ),
         category: this.id,
         severity: "major",
         rule: "idiom:progress-affordance",

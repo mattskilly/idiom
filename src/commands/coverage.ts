@@ -5,7 +5,13 @@ import {
   excludeRoutes,
   routeCoverage,
 } from "../coverage/routes.js";
+import {
+  computeFlowStateCoverage,
+  type StateCoverageSummary,
+  uncapturedFlowCoverage,
+} from "../coverage/states.js";
 import { IdiomError } from "../errors.js";
+import { findNewestCapture, loadRunTuples } from "../review/artifacts.js";
 import { validateProject } from "../validation.js";
 
 export type CoverageSummary = ReturnType<typeof routeCoverage> & {
@@ -46,6 +52,47 @@ export async function coverageCommand(options: {
     discoveredFrom: options.crawl ?? "filesystem routes (app/, pages/)",
     excluded,
   };
+}
+
+/**
+ * Which states, viewports, schemes, motion modes, network conditions,
+ * interactions, and data states each flow's newest stored capture observed.
+ * Coverage of what was reviewed, not a measure of quality.
+ */
+export async function stateCoverageCommand(options: {
+  project?: string | undefined;
+  cwd?: string | undefined;
+}): Promise<StateCoverageSummary> {
+  const validated = await validateProject(options);
+  const flows = [];
+  for (const { flow } of validated.flows) {
+    const directory = await findNewestCapture({
+      projectDirectory: validated.projectDirectory,
+      flow: flow.id,
+    });
+    if (directory === undefined) {
+      flows.push(uncapturedFlowCoverage(flow));
+      continue;
+    }
+    try {
+      const loaded = await loadRunTuples(validated, flow, directory);
+      flows.push(
+        computeFlowStateCoverage({
+          project: validated.project,
+          flow,
+          runId: loaded.runId,
+          commit: loaded.commit,
+          record: loaded.record,
+          tuples: loaded.tuples,
+          collapsedTupleKeys: loaded.collapsedTupleKeys,
+        }),
+      );
+    } catch (error) {
+      if (!(error instanceof IdiomError)) throw error;
+      flows.push(uncapturedFlowCoverage(flow, error.message));
+    }
+  }
+  return { flows };
 }
 
 export function renderCoverage(summary: CoverageSummary): string {

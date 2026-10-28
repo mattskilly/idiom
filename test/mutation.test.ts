@@ -145,7 +145,7 @@ describe("seed identity, ranking and measurement", () => {
     expect(pages).toEqual([...pages].sort());
   });
 
-  test("full artifact covers every operator and retains real evidence for full-script-only rules", async () => {
+  test("full artifact catches all 35 identities and retains replay evidence", async () => {
     const full = JSON.parse(
       await readFile(join(root, "docs/field-test/recall.json"), "utf8"),
     ) as MutationReport;
@@ -153,6 +153,30 @@ describe("seed identity, ranking and measurement", () => {
       scope: "full-catalog",
       status: "complete",
       catalogErrors: [],
+      overall: { attempted: 35, caught: 35, missed: 0, errors: 0, recall: 1 },
+      misses: [],
+    });
+    for (const measurement of Object.values(full.perRule)) {
+      expect(measurement.recall).toBe(1);
+      expect(measurement.errors).toBe(0);
+    }
+    for (const id of [
+      "clipped-copy::test/fixtures/benchmark/after.html",
+      "missing-pending::test/fixtures/mutations/clean/loading.html",
+    ]) {
+      expect(full.cases.find((item) => item.id === id)).toMatchObject({
+        caught: true,
+        status: "evaluated",
+      });
+      expect(baseline.caseIds).toContain(id);
+    }
+    expect(full.perRule["idiom:text-clipped"]).toMatchObject({
+      attempted: 3,
+      caught: 3,
+    });
+    expect(full.perRule["idiom:loading-state-missing"]).toMatchObject({
+      attempted: 1,
+      caught: 1,
     });
     expect(
       [...new Set(full.cases.map((item) => item.operator))].sort(),
@@ -518,54 +542,114 @@ describe("seed identity, ranking and measurement", () => {
   });
 });
 
-test("fixed browser subset, isolation and Node launcher finish within one 30-second budget", async () => {
+async function launcherSmoke(scratch: string) {
+  const out = join(scratch, "smoke.json");
+  await execute(
+    process.execPath,
+    [
+      join(root, "scripts/mutation-bench.mjs"),
+      "--case",
+      "retired-copy::test/fixtures/mutations/clean/static.html",
+      "--out",
+      out,
+    ],
+    { cwd: root, timeout: 10_000 },
+  );
+  expect(JSON.parse(await readFile(out, "utf8"))).toMatchObject({
+    version: 1,
+    status: "complete",
+    scope: "selection",
+    overall: { attempted: 1, caught: 1 },
+  });
+  const incomplete = join(scratch, "incomplete.json");
+  await expect(
+    execute(
+      process.execPath,
+      [
+        join(root, "scripts/mutation-bench.mjs"),
+        "--case",
+        "retired-copy::test/fixtures/mutations/clean/missing.html",
+        "--out",
+        incomplete,
+      ],
+      { cwd: root, timeout: 10_000 },
+    ),
+  ).rejects.toThrow(/unknown or inapplicable/);
+  expect(JSON.parse(await readFile(incomplete, "utf8"))).toMatchObject({
+    status: "incomplete",
+    overall: { attempted: 0, errors: 1, recall: null },
+    cases: [{ status: "error" }],
+  });
+  await expect(
+    execute(
+      process.execPath,
+      [
+        join(root, "scripts/mutation-bench.mjs"),
+        "--case",
+        baseline.caseIds[0] as string,
+      ],
+      { cwd: root },
+    ),
+  ).rejects.toThrow(/Filtered runs require/);
+}
+
+test("fourteen-case browser subset, isolation and Node launcher finish within one 30-second budget", async () => {
   const started = performance.now();
   const originalBaseline = await readFile(
     join(root, "test/fixtures/mutations/baseline.json"),
     "utf8",
   );
-  const report = await runMutationBench({
-    root,
-    caseIds: baseline.caseIds,
-    verifyIsolation: true,
-  });
-  expect(
-    report.status,
-    JSON.stringify(report.cases.filter((item) => item.status === "error")),
-  ).toBe("complete");
-  assertBaseline(report.cases, baseline);
-  expect(report.isolation).toMatchObject({ noOp: true, freshControl: true });
-  expect(
-    report.cases.every(
-      (item) =>
-        item.mutation?.pure &&
-        (item.mutation.changed || item.operator === "dead-button"),
-    ),
-  ).toBe(true);
-  const load = report.cases.find((item) => item.operator === "unreserved-load");
-  expect(
-    load?.evidence?.some((evidence) =>
-      evidence.actions.some(
-        (action) => action.source === "load" && action.shifts.length > 0,
-      ),
-    ),
-  ).toBe(true);
-  const motion = report.cases.find(
-    (item) => item.operator === "snapping-content",
-  );
-  expect(motion?.mutation?.applications).toBeGreaterThan(1);
-  expect(
-    motion?.evidence?.some((evidence) =>
-      evidence.actions.some(
-        (action) =>
-          action.confirmation &&
-          action.reducedMotion === false &&
-          action.visibleChanges?.length,
-      ),
-    ),
-  ).toBe(true);
   const scratch = await mkdtemp(join(tmpdir(), "idiom-mutation-"));
   try {
+    const [report] = await Promise.all([
+      runMutationBench({
+        root,
+        caseIds: baseline.caseIds,
+        verifyIsolation: true,
+      }),
+      launcherSmoke(scratch),
+    ]);
+    expect(
+      report.status,
+      JSON.stringify(report.cases.filter((item) => item.status === "error")),
+    ).toBe("complete");
+    assertBaseline(report.cases, baseline);
+    expect(report.cases).toHaveLength(14);
+    expect(
+      report.cases.find((item) => item.operator === "missing-pending"),
+    ).toMatchObject({ caught: true, rule: "idiom:loading-state-missing" });
+    expect(report.isolation).toMatchObject({ noOp: true, freshControl: true });
+    expect(
+      report.cases.every(
+        (item) =>
+          item.mutation?.pure &&
+          (item.mutation.changed || item.operator === "dead-button"),
+      ),
+    ).toBe(true);
+    const load = report.cases.find(
+      (item) => item.operator === "unreserved-load",
+    );
+    expect(
+      load?.evidence?.some((evidence) =>
+        evidence.actions.some(
+          (action) => action.source === "load" && action.shifts.length > 0,
+        ),
+      ),
+    ).toBe(true);
+    const motion = report.cases.find(
+      (item) => item.operator === "snapping-content",
+    );
+    expect(motion?.mutation?.applications).toBeGreaterThan(1);
+    expect(
+      motion?.evidence?.some((evidence) =>
+        evidence.actions.some(
+          (action) =>
+            action.confirmation &&
+            action.reducedMotion === false &&
+            action.visibleChanges?.length,
+        ),
+      ),
+    ).toBe(true);
     const browser = await chromium.launch({ headless: true });
     try {
       const context = await browser.newContext();
@@ -613,54 +697,6 @@ test("fixed browser subset, isolation and Node launcher finish within one 30-sec
     } finally {
       await browser.close();
     }
-    const out = join(scratch, "smoke.json");
-    await execute(
-      process.execPath,
-      [
-        join(root, "scripts/mutation-bench.mjs"),
-        "--case",
-        "retired-copy::test/fixtures/mutations/clean/static.html",
-        "--out",
-        out,
-      ],
-      { cwd: root, timeout: 10_000 },
-    );
-    expect(JSON.parse(await readFile(out, "utf8"))).toMatchObject({
-      version: 1,
-      status: "complete",
-      scope: "selection",
-      overall: { attempted: 1, caught: 1 },
-    });
-    const incomplete = join(scratch, "incomplete.json");
-    await expect(
-      execute(
-        process.execPath,
-        [
-          join(root, "scripts/mutation-bench.mjs"),
-          "--case",
-          "retired-copy::test/fixtures/mutations/clean/missing.html",
-          "--out",
-          incomplete,
-        ],
-        { cwd: root, timeout: 10_000 },
-      ),
-    ).rejects.toThrow(/unknown or inapplicable/);
-    expect(JSON.parse(await readFile(incomplete, "utf8"))).toMatchObject({
-      status: "incomplete",
-      overall: { attempted: 0, errors: 1, recall: null },
-      cases: [{ status: "error" }],
-    });
-    await expect(
-      execute(
-        process.execPath,
-        [
-          join(root, "scripts/mutation-bench.mjs"),
-          "--case",
-          baseline.caseIds[0] as string,
-        ],
-        { cwd: root },
-      ),
-    ).rejects.toThrow(/Filtered runs require/);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

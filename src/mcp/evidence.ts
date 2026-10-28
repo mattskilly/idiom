@@ -100,6 +100,9 @@ export function findingDetail(
     flow: finding.flow,
     verificationReference: { id: qualify(finding.id), runId: record.runId },
     finding,
+    basis: finding.basis,
+    basisDetails: finding.basisDetails,
+    acceptance: finding.acceptance,
     selector: finding.verification.params?.selector,
     measurement: {
       explanation: finding.explanation,

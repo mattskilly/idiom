@@ -1,5 +1,6 @@
 import { relative } from "node:path";
 import { IdiomError } from "../errors.js";
+import { acceptanceText } from "../findings/presentation.js";
 import type { ReviewRunResult } from "../review/run.js";
 import type { Finding } from "../schemas/finding.js";
 import { validateProject } from "../validation.js";
@@ -7,6 +8,9 @@ import { compareRunToBaseline } from "./compare.js";
 import { tupleCoordinateKey } from "./coordinate.js";
 
 export type SummaryFinding = {
+  basis?: Finding["basis"] | undefined;
+  basisDetails?: Finding["basisDetails"] | undefined;
+  acceptance?: Finding["acceptance"] | undefined;
   id: string;
   severity: Finding["severity"];
   category: Finding["category"];
@@ -42,6 +46,9 @@ export function summarizeFinding(
     finding.evidence.screenshots[0];
   return {
     id: finding.id,
+    basis: finding.basis,
+    basisDetails: finding.basisDetails,
+    acceptance: finding.acceptance,
     severity: finding.severity,
     category: finding.category,
     ...(finding.rule === undefined ? {} : { rule: finding.rule }),
@@ -49,7 +56,7 @@ export function summarizeFinding(
     where: `${finding.state}/${finding.viewport}${finding.colorScheme === undefined ? "" : `/${finding.colorScheme}`}`,
     ...(selector === undefined ? {} : { selector }),
     problem: finding.explanation,
-    fix: finding.acceptance,
+    fix: acceptanceText(finding),
     ...(finding.evidence.filmstrip?.sheet
       ? {
           filmstrip: displayPath(

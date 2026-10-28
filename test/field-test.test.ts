@@ -5,8 +5,12 @@ import { describe, expect, test } from "vitest";
 import * as lib from "../scripts/field-test-lib.mjs";
 
 const {
+  ALLOWED_KINDS,
   countProbeTimeouts,
   classifyFailure,
+  FEEL_RULES,
+  feelIssues,
+  feelPrecision,
   GENERATED_END,
   GENERATED_START,
   mergeLabelTemplate,
@@ -14,10 +18,13 @@ const {
   replaceGeneratedSection,
   renderGenerated,
   summarizeCheckResult,
+  summarizeHeldReplays,
+  sumHeldReplays,
   probeTupleOverheadMs,
   summarizeProbeSafety,
   summarizeQuickResult,
   sumProbeSafety,
+  uniqueFeelKeys,
   validateTargets,
 } = lib;
 
@@ -31,6 +38,8 @@ type Target = {
   aiBuilt: boolean;
   urls: string[];
   repo?: unknown;
+  local?: unknown;
+  stack?: unknown;
 };
 type Row = { rule: string; disagree: number };
 const target = (id: string, kind: string, extra: object = {}): Target => ({
@@ -84,8 +93,54 @@ describe("validateTargets", () => {
   });
   test("rejects a missing repo target and a wrong count", () => {
     const targets = validTargets().map(({ repo: _repo, ...rest }) => rest);
-    expect(() => validateTargets(targets)).toThrow(/repo target/);
-    expect(() => validateTargets(validTargets().slice(0, 7))).toThrow(/8–10/);
+    expect(() => validateTargets(targets)).toThrow(/repo or local target/);
+    expect(() => validateTargets(validTargets().slice(0, 7))).toThrow(/8–20/);
+  });
+  const local = {
+    path: "test/fixtures/field-app",
+    dev: ["node server.mjs --port 4410"],
+    server: { readyUrl: "http://127.0.0.1:4410/" },
+  };
+  test("accepts up to 20 targets, the extra kinds and an optional stack", () => {
+    const targets = validTargets();
+    for (let index = 0; targets.length < 20; index += 1)
+      targets.push(
+        target(`spa-${index}`, "interactive-spa", { stack: "SvelteKit" }),
+      );
+    expect(validateTargets(targets)).toHaveLength(20);
+    expect(ALLOWED_KINDS).toEqual(
+      expect.arrayContaining(["interactive-spa", "field-app"]),
+    );
+    targets.push(target("spa-extra", "interactive-spa"));
+    expect(() => validateTargets(targets)).toThrow(/8–20/);
+    const typed = validTargets();
+    typed.push(target("spa", "interactive-spa", { stack: 3 }));
+    expect(() => validateTargets(typed)).toThrow(/stack/);
+    const unknown = validTargets();
+    unknown.push(target("odd", "kiosk"));
+    expect(() => validateTargets(unknown)).toThrow(/unknown kind/);
+  });
+  test("a local target counts as the repo-backed target", () => {
+    const targets = validTargets().map(({ repo: _repo, ...rest }) => rest);
+    targets.push(target("field-app", "field-app", { local }));
+    expect(validateTargets(targets)).toHaveLength(10);
+  });
+  test("local needs exactly one of repo and local, and a path inside the repo", () => {
+    const both = validTargets();
+    both[2] = { ...(both[2] as Target), local };
+    expect(() => validateTargets(both)).toThrow(/exactly one/);
+    for (const path of ["/tmp/app", "../outside", "test/../../outside"]) {
+      const targets = validTargets();
+      targets.push(
+        target("field-app", "field-app", { local: { ...local, path } }),
+      );
+      expect(() => validateTargets(targets), path).toThrow(/inside the repo/);
+    }
+    const noDev = validTargets();
+    noDev.push(
+      target("field-app", "field-app", { local: { ...local, dev: [] } }),
+    );
+    expect(() => validateTargets(noDev)).toThrow(/dev/);
   });
   test("the committed targets file satisfies the acceptance mix", async () => {
     const committed = JSON.parse(
@@ -266,6 +321,282 @@ describe("precisionByRule", () => {
       disagree: 0,
       source: "mixed",
     });
+  });
+});
+
+describe("feel issues", () => {
+  const quickIssue = (index: number, rule: string, extra: object = {}) => ({
+    id: `quick:run-1:group-${index}`,
+    severity: "major",
+    category: rule.replace("idiom:", ""),
+    rule,
+    rules: [rule],
+    score: 20 - index,
+    representative: {
+      selector: `#c${index}`,
+      cropPath: `/runs/x/page-1/desktop/light/crops/c${index}.png`,
+      finding: {
+        state: "page-1",
+        viewport: "desktop",
+        explanation: `finding ${index}`,
+        evidence: {
+          timeline: { id: `slow-probe-${index}`, artifact: "t.json" },
+          filmstrip: {
+            sheet: `page-1/desktop/light/crops/f${index}-filmstrip.png`,
+          },
+        },
+      },
+      ...extra,
+    },
+  });
+  test("quick: keeps feel issues at every rank with Top-10 keys and evidence", () => {
+    const issues = Array.from({ length: 14 }, (_, index) =>
+      quickIssue(
+        index,
+        index === 2 || index === 12
+          ? "idiom:double-submit"
+          : "idiom:orphan-word",
+      ),
+    );
+    const content = { runDirectory: "/runs/x", issues, counts: {} };
+    const summary = summarizeQuickResult(content, {
+      elapsedMs: 1,
+      target: "site",
+    });
+    expect(
+      summary.feelIssues.map((item: { rank: number }) => item.rank),
+    ).toEqual([3, 13]);
+    const [top, below] = summary.feelIssues;
+    expect(top.key).toBe(summary.topIssues[2].key);
+    expect(below).toMatchObject({
+      key: "site:group-12",
+      rules: ["idiom:double-submit"],
+      timeline: "slow-probe-12",
+      evidence: "page-1/desktop/light/crops/f12-filmstrip.png",
+      state: "page-1",
+      viewport: "desktop",
+    });
+  });
+  test("per-state runs: a colliding group id gets the state as a suffix", () => {
+    const keys = uniqueFeelKeys([
+      { key: "app:group-1", state: "route-a" },
+      { key: "app:group-2", state: "route-a" },
+      { key: "app:group-1", state: "route-b" },
+      { key: "app:group-1", state: "route-b" },
+    ]).map((item: { key: string }) => item.key);
+    expect(keys).toEqual([
+      "app:group-1",
+      "app:group-2",
+      "app:group-1@route-b",
+      "app:group-1@2",
+    ]);
+  });
+  test("check: resolves the group's member finding for the timeline", () => {
+    const issues = [
+      {
+        id: "group-a",
+        severity: "major",
+        rules: ["idiom:loading-state-missing"],
+        groups: ["group-a"],
+        explanation: { selector: "#save" },
+      },
+      {
+        id: "group-b",
+        severity: "minor",
+        rules: ["idiom:orphan-word"],
+        groups: ["group-b"],
+      },
+    ];
+    const feel = feelIssues(issues, {
+      target: "app",
+      mode: "check",
+      groups: [
+        {
+          id: "group-a",
+          where: "route-settings/desktop",
+          problem: "Clicking #save showed nothing",
+          filmstrip:
+            "/x/.idiom/reports/run-1/route-settings/desktop/crops/f-filmstrip.png",
+          members: [{ id: "finding-9" }],
+        },
+      ],
+      findings: [{ id: "finding-9", timeline: { id: "slow-probe-2" } }],
+    });
+    expect(feel).toEqual([
+      expect.objectContaining({
+        key: "app:group-a",
+        rank: 1,
+        state: "route-settings",
+        viewport: "desktop",
+        selector: "#save",
+        timeline: "slow-probe-2",
+        evidence: "route-settings/desktop/crops/f-filmstrip.png",
+      }),
+    ]);
+  });
+  test("summarizeHeldReplays counts queued and run replays and slow-replay tuples", () => {
+    const documents = [
+      {
+        probe: {
+          heldReplay: { queued: 3, ran: 2 },
+          failureReplay: { queued: 1, ran: 1 },
+        },
+      },
+      { probe: { heldReplay: { queued: 0, ran: 0 } } },
+      {},
+    ];
+    const timelines = [
+      { actions: [{ source: "probe" }, { source: "slow-replay" }] },
+      { actions: [{ source: "probe" }] },
+      undefined,
+    ];
+    const summary = summarizeHeldReplays(documents, timelines);
+    expect(summary).toEqual({
+      heldQueued: 3,
+      heldRan: 2,
+      failureQueued: 1,
+      failureRan: 1,
+      tuplesWithSlowReplay: 1,
+    });
+    expect(sumHeldReplays([summary, summary]).heldQueued).toBe(6);
+  });
+  test("mergeLabelTemplate adds feel slots once and never overwrites", () => {
+    const results = {
+      targets: [
+        {
+          id: "t",
+          topIssues: [issue("t:a", ["idiom:double-submit"])],
+          feelIssues: [
+            issue("t:a", ["idiom:double-submit"]),
+            issue("t:z", ["idiom:motion-snap"]),
+          ],
+        },
+      ],
+    };
+    const existing = { version: 1, labels: { "t:z": rate("agree") } };
+    const { labels, added } = mergeLabelTemplate(results, existing);
+    expect(added).toBe(1);
+    expect(labels.labels["t:z"]).toEqual(rate("agree"));
+    expect(labels.labels["t:a"]).toMatchObject({ agent: null, human: null });
+  });
+  test("feelPrecision: null at n=0, public/field-app split and the gate", () => {
+    const feel = (prefix: string, count: number, rule: string) =>
+      Array.from({ length: count }, (_, index) =>
+        issue(`${prefix}:${rule}:${index}`, [rule]),
+      );
+    const results = {
+      targets: [
+        {
+          id: "spa",
+          kind: "interactive-spa",
+          feelIssues: feel("spa", 2, "idiom:loading-state-missing"),
+        },
+        {
+          id: "app",
+          kind: "field-app",
+          feelIssues: [
+            ...feel("app", 4, "idiom:loading-state-missing"),
+            ...feel("app", 4, "idiom:double-submit"),
+          ],
+        },
+      ],
+    };
+    const labels = { labels: {} as Record<string, unknown> };
+    for (const target of results.targets)
+      for (const item of target.feelIssues)
+        labels.labels[item.key] = rate("agree");
+    labels.labels["app:idiom:loading-state-missing:0"] = rate("disagree");
+    labels.labels["app:idiom:double-submit:0"] = rate("unsure");
+    const rows = feelPrecision(results, labels);
+    expect(rows.map((row: { rule: string }) => row.rule)).toEqual(FEEL_RULES);
+    const loading = rows.find(
+      (row: { rule: string }) => row.rule === "idiom:loading-state-missing",
+    );
+    expect(loading.public).toMatchObject({
+      agree: 2,
+      disagree: 0,
+      n: 2,
+      precision: 1,
+    });
+    expect(loading.fieldApp).toMatchObject({
+      agree: 3,
+      disagree: 1,
+      n: 4,
+      precision: 0.75,
+    });
+    expect(loading.combined).toMatchObject({ agree: 5, disagree: 1, n: 6 });
+    expect(loading.met).toBe(true);
+    const double = rows.find(
+      (row: { rule: string }) => row.rule === "idiom:double-submit",
+    );
+    expect(double.combined).toMatchObject({
+      agree: 3,
+      unsure: 1,
+      n: 3,
+      precision: 1,
+    });
+    expect(double.met).toBe(false);
+    const shift = rows.find(
+      (row: { rule: string }) => row.rule === "idiom:interaction-shift",
+    );
+    expect(shift.combined).toMatchObject({ n: 0, precision: null });
+    expect(shift.met).toBe(false);
+  });
+  test("feelPrecision: exactly 80% at n=5 meets the gate; 4 of 5 below n does not", () => {
+    const rule = "idiom:motion-snap";
+    const issues = Array.from({ length: 5 }, (_, index) =>
+      issue(`a:${index}`, [rule]),
+    );
+    const labels = {
+      labels: Object.fromEntries(
+        issues.map((item, index) => [
+          item.key,
+          rate(index === 0 ? "disagree" : "agree"),
+        ]),
+      ),
+    };
+    const row = (results: object) =>
+      feelPrecision(results, labels).find(
+        (item: { rule: string }) => item.rule === rule,
+      );
+    expect(
+      row({ targets: [{ id: "a", kind: "field-app", feelIssues: issues }] })
+        .met,
+    ).toBe(true);
+    expect(
+      row({
+        targets: [
+          { id: "a", kind: "field-app", feelIssues: issues.slice(0, 4) },
+        ],
+      }).met,
+    ).toBe(false);
+  });
+  test("renders the feel table with unmeasured rules", () => {
+    const markdown = renderGenerated(
+      {
+        targets: [
+          {
+            id: "app",
+            kind: "field-app",
+            aiBuilt: false,
+            mode: "local",
+            topIssues: [],
+            feelIssues: [issue("app:a", ["idiom:double-submit"])],
+            failures: [],
+          },
+        ],
+      },
+      { labels: { "app:a": rate("agree") } },
+    );
+    expect(markdown).toContain(
+      "### Feel rules (all findings, not just Top 10)",
+    );
+    expect(markdown).toContain(
+      "| `idiom:double-submit` | n=0 (unmeasured) | n=1 / 100% | n=1 / 100% | no |",
+    );
+    expect(markdown).toContain(
+      "| `idiom:retry-blocked` | n=0 (unmeasured) | n=0 (unmeasured) | n=0 (unmeasured) | no |",
+    );
   });
 });
 

@@ -3991,7 +3991,7 @@ export async function observePage(
         // An overflowing icon/label row alone is not evidence of a peek.
         let peeking = false;
         for (
-          let current = element.parentElement;
+          let current = element === ownerFor ? null : element.parentElement;
           current !== null && current !== ownerFor && !peeking;
           current = current.parentElement
         ) {
@@ -6884,6 +6884,7 @@ export async function observePage(
             const unique = [...new Set(collected)];
             return {
               status: "ran" as const,
+              elapsedMs: performance.now(),
               score: 0,
               entries: unique.slice(0, 150).map((entry) => ({
                 value: entry.value,
@@ -8184,6 +8185,7 @@ export async function observePage(
     >;
     artifact.layoutShift = {
       status: "ran",
+      elapsedMs: artifact.layoutShift.elapsedMs,
       score: layoutShiftScore(entries),
       entries: entries
         .filter((entry) => entry.hadRecentInput !== true)

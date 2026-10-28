@@ -32,7 +32,10 @@ function finding(
   viewport: string,
   fingerprint = "shared-fingerprint",
   overrides: Partial<
-    Pick<Finding, "flow" | "state" | "acceptance" | "colorScheme">
+    Pick<
+      import("../src/schemas/finding.js").FindingInput,
+      "flow" | "state" | "acceptance" | "colorScheme"
+    >
   > = {},
 ) {
   return findingSchema.parse({
@@ -140,38 +143,7 @@ test("ticket rendering retains the complete legacy/default tuple format", () => 
       "- [Screenshot 1](../../../.idiom/reports/2026-08-14T12-00-00-000Z/ready/phone/screenshot.png)",
       "",
       "```idiom:finding",
-      "{",
-      '  "id": "finding-1",',
-      '  "fingerprint": "golden-fingerprint",',
-      '  "createdAt": "2026-08-14T12:00:00.000Z",',
-      '  "commit": "abc123",',
-      '  "flow": "booking",',
-      '  "state": "ready",',
-      '  "viewport": "phone",',
-      '  "layer": "deterministic",',
-      '  "category": "target-size",',
-      '  "severity": "major",',
-      '  "confidence": 1,',
-      '  "rule": "idiom:target-size",',
-      '  "evidence": {',
-      '    "screenshots": [',
-      '      "ready/phone/screenshot.png"',
-      "    ]",
-      "  },",
-      '  "explanation": "The phone action is hard to activate.",',
-      '  "suggestedArea": "apps/web/src/button.tsx",',
-      '  "acceptance": [',
-      '    "The [data-route=\\"/book/example\\"] action is at least 44 by 44 CSS pixels at phone."',
-      "  ],",
-      '  "verification": {',
-      '    "kind": "deterministic-check",',
-      '    "check": "target-size"',
-      "  },",
-      '  "status": "open",',
-      '  "idAliases": [',
-      '    "IDM-golden-0001"',
-      "  ]",
-      "}",
+      ...JSON.stringify(item, null, 2).split("\n"),
       "```",
       "",
       "",
@@ -236,39 +208,7 @@ test("ticket rendering retains sibling and colour-scheme presentation", () => {
       "- [Screenshot 1](../../../.idiom/reports/2026-08-14T12-00-00-000Z/ready/desktop/screenshot.png)",
       "",
       "```idiom:finding",
-      "{",
-      '  "id": "finding-2",',
-      '  "fingerprint": "scheme-fingerprint",',
-      '  "createdAt": "2026-08-14T12:00:00.000Z",',
-      '  "commit": "abc123",',
-      '  "flow": "booking",',
-      '  "state": "ready",',
-      '  "viewport": "desktop",',
-      '  "colorScheme": "dark",',
-      '  "layer": "deterministic",',
-      '  "category": "target-size",',
-      '  "severity": "major",',
-      '  "confidence": 1,',
-      '  "rule": "idiom:target-size",',
-      '  "evidence": {',
-      '    "screenshots": [',
-      '      "ready/desktop/screenshot.png"',
-      "    ]",
-      "  },",
-      '  "explanation": "The desktop action is hard to activate.",',
-      '  "suggestedArea": "apps/web/src/button.tsx",',
-      '  "acceptance": [',
-      '    "The action remains usable in ready and confirmed states on desktop."',
-      "  ],",
-      '  "verification": {',
-      '    "kind": "deterministic-check",',
-      '    "check": "target-size"',
-      "  },",
-      '  "status": "open",',
-      '  "idAliases": [',
-      '    "IDM-golden-0002"',
-      "  ]",
-      "}",
+      ...JSON.stringify(item, null, 2).split("\n"),
       "```",
       "",
       "",
@@ -307,7 +247,9 @@ test("accepted findings emit distinct complete spec-standard canonical tickets",
       "## Evidence",
     ])
       expect(source).toContain(heading);
-    expect(source).toContain(`- [ ] ${findings[index]?.acceptance[0]}`);
+    expect(source).toContain(
+      `- [ ] ${findings[index]?.acceptance.doneWhen[0]}`,
+    );
     const criteria = source
       .split("## Acceptance criteria\n\n")[1]
       ?.split("\n## Out of scope")[0];
@@ -369,7 +311,7 @@ test("emitted scope follows explicit acceptance coverage beyond the finding tupl
     const source = sources.get(`finding-${index + 1}`) ?? "";
     const outOfScope =
       source.split("## Out of scope\n\n")[1]?.split("\n## Evidence")[0] ?? "";
-    expect(source).toContain(`- [ ] ${item.acceptance[0]}`);
+    expect(source).toContain(`- [ ] ${item.acceptance.doneWhen[0]}`);
     expect(outOfScope).toContain(
       `The default scope is flow ${item.flow}, state ${item.state}, and viewport ${item.viewport}.`,
     );

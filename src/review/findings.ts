@@ -2,12 +2,17 @@ import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tupleCoordinateKey } from "../baseline/coordinate.js";
 import { temporalAction } from "../checks/temporal-evidence.js";
-import type { CheckTuple, FindingCandidate } from "../checks/types.js";
+import type {
+  ChecksConfig,
+  CheckTuple,
+  FindingCandidate,
+} from "../checks/types.js";
 import type {
   ModelFindingCandidate,
   ScreenshotRef,
 } from "../critique/types.js";
 import type { DecisionViews } from "../decisions/log.js";
+import { buildRuleContract } from "../findings/contract.js";
 import { evaluateRules } from "../rules/index.js";
 import type { Decision } from "../schemas/decision.js";
 import { type Finding, findingSchema } from "../schemas/finding.js";
@@ -95,6 +100,8 @@ export function dedupeSuppressedFindings(
 
 function deterministicFinding(options: {
   runId: string;
+  config?: ChecksConfig | undefined;
+  tuples?: CheckTuple[] | undefined;
   tuple: CheckTuple;
   candidate: FindingCandidate;
   stableOrder: number;
@@ -178,7 +185,7 @@ function deterministicFinding(options: {
       },
       ...(candidate.fix === undefined ? {} : { fix: candidate.fix }),
       explanation: candidate.explanation,
-      acceptance: candidate.acceptance,
+      ...buildRuleContract(tuple, candidate, options.config, options.tuples),
       verification: {
         kind: "deterministic-check",
         check: candidate.verification.check,
@@ -203,6 +210,8 @@ function timelineReference(tuple: CheckTuple, candidate: FindingCandidate) {
 }
 
 export function buildDeterministicDrafts(options: {
+  config?: ChecksConfig | undefined;
+  tuples?: CheckTuple[] | undefined;
   runId: string;
   entries: Array<{
     tuple: CheckTuple;
@@ -231,6 +240,8 @@ export function buildDeterministicDrafts(options: {
   return sorted.map(({ tuple, candidate }, stableOrder) =>
     deterministicFinding({
       runId: options.runId,
+      config: options.config,
+      tuples: options.tuples,
       tuple,
       candidate,
       stableOrder,
@@ -323,7 +334,17 @@ export function buildModelDrafts(options: {
         suggestedArea: candidate.suggestedArea,
         ...(candidate.fix === undefined ? {} : { fix: candidate.fix }),
         ...(candidate.focus === undefined ? {} : { focus: candidate.focus }),
-        acceptance: candidate.acceptance,
+        basis: "judged",
+        basisDetails: {
+          kind: "judged",
+          summary: "Model critique",
+          confidence: candidate.confidence,
+        },
+        acceptance: {
+          version: 1,
+          kind: "manual",
+          doneWhen: candidate.acceptance,
+        },
         verification: {
           kind: "recapture-visual",
           ...(locus === undefined ? {} : { locus }),

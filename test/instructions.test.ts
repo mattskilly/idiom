@@ -170,7 +170,7 @@ test("renders one deterministic human-facing instruction through canonical and l
     "- Suggested starting area: booking action styles (a starting point only; it does not expand the scope below)",
   );
   expect(canonical).toContain("the recorded rule design:minimum-target");
-  for (const criterion of target.acceptance)
+  for (const criterion of target.acceptance.doneWhen)
     expect(canonical).toContain(`- ${criterion}`);
   expect(canonical).toContain(
     "  - finding-2: target-size on ready/phone/light",

@@ -202,6 +202,8 @@ export async function runPageReview(options: {
   const maxFindings = options.maxFindings ?? DEFAULT_MAX_FINDINGS;
   const legacyColorScheme = configuration.project.capture.colorScheme;
   const deterministicDrafts = buildDeterministicDrafts({
+    config: checks,
+    tuples: loaded.tuples,
     runId: loaded.runId,
     entries: reviewed.candidates,
     legacyColorScheme,

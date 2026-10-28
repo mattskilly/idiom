@@ -36,6 +36,7 @@ import type {
   FindingCandidate,
   ObservationArtifact,
 } from "../src/checks/types.js";
+import { buildDeterministicDrafts } from "../src/review/findings.js";
 import {
   effectiveInvariants,
   type InvariantInput,
@@ -379,11 +380,19 @@ export async function reviewStates(
     config.page = { ...config.page, brief: { text: options.brief } };
   if (options.scaleQuestions !== undefined)
     config.scaleQuestions = options.scaleQuestions;
-  const findings = runDeterministicChecks(
-    tuples,
-    undefined,
+  const checked = runDeterministicChecks(tuples, undefined, config);
+  for (const draft of buildDeterministicDrafts({
+    runId: "benchmark-contract",
+    entries: checked.candidates,
     config,
-  ).candidates.map(({ candidate, tuple }) => ({
+    tuples,
+  })) {
+    if (draft.finding.acceptance.kind !== "rule")
+      throw new Error(
+        "Deterministic benchmark candidate lacks executable acceptance",
+      );
+  }
+  const findings = checked.candidates.map(({ candidate, tuple }) => ({
     candidate,
     state: tuple.state,
   }));

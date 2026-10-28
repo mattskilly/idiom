@@ -262,9 +262,17 @@ Many screens are one interaction away from a state you already capture. A web st
 ]
 ```
 
-Exactly one of `url`, `urlFrom` and `from` is required. Chains may be several hops long (`named` from `versions` from `empty`) and may be declared in any order; an unknown id or a cycle fails `idiom validate` at `states[i].from`. A chained state inherits the root's URL source, every ancestor's `steps` (root first) and their `health.allow` rules; it does not inherit `expect`, `mask`, `settleMs`, `viewports`, `focus`, `probe`, `fresh` or `invariants`, so each state is judged on its own declaration. Every tuple still starts from a fresh browser context, and the probe's restoration replays the whole chain. A failing step names the state that declared it and the chain, for example `Step 1 (click) of "empty" reaching versions from empty: …`; steps of states without `from` keep the plain `Step 1 (click): …` form. Report coverage and `idiom coverage` show chained states as `versions from empty`, and capture metadata records `state.from` (the ancestors, nearest first). Toggles and `toggleStates` accept chained states as bases.
+Exactly one of `url`, `urlFrom` and `from` is required. Chains may be several hops long (`named` from `versions` from `empty`) and may be declared in any order; an unknown id or a cycle fails `idiom validate` at `states[i].from`. A chained state inherits the root's URL source, every ancestor's `steps` (root first) and their `health.allow` rules; it does not inherit `expect`, `mask`, `settleMs`, `viewports`, `focus`, `probe`, `fresh`, `data` or `invariants`, so each state is judged on its own declaration. Every tuple still starts from a fresh browser context, and the probe's restoration replays the whole chain. A failing step names the state that declared it and the chain, for example `Step 1 (click) of "empty" reaching versions from empty: …`; steps of states without `from` keep the plain `Step 1 (click): …` form. Report coverage and `idiom coverage` show chained states as `versions from empty`, and capture metadata records `state.from` (the ancestors, nearest first). Toggles and `toggleStates` accept chained states as bases.
 
 States that should share persistent chrome, such as the panels behind each rail button, can declare siblings for `sibling-chrome`. `siblingGroup: "<name>"` groups states across the whole run, including other flows; `group: "<label>"` groups states within the same flow. A state declares one or the other, not both (`idiom validate` reports `states[i].group`); Electron states accept both fields too. Toggle combinations inherit their base's declaration, while a state reached with `from` keeps only its own. Declarations are recorded in capture metadata (`state.siblingGroup` / `state.group`), so recapture after adding them. Groups are never inferred.
+
+### Declare data states
+
+A state may label the data condition it shows with `"data": "empty" | "one" | "many" | "error"`. The label changes nothing about capture; it lets [`idiom coverage --states`](commands.md#coverage) report which of the four conditions the flow's latest capture saw. Once any state in a flow declares `data`, the kinds no state declares are reported missing, with the remedy to add a state seeded by a `setup` command; a flow with no `data` labels reports data states as not applicable. Toggle combinations carry their base state's `data`; a state reached with `from` does not inherit it.
+
+```json
+{ "id": "empty", "description": "No leads yet", "url": "/leads?fixture=empty", "data": "empty", "expect": {} }
+```
 
 ### Force empty, error and loading states
 

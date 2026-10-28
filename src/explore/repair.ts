@@ -89,10 +89,19 @@ export async function publishExplorationRepairs(options: {
       },
       explanation: `The current ${baseline.state}/${baseline.viewport}${baseline.colorSchemeAxis ? `/${baseline.colorScheme}` : ""} rendering does not yet embody the newly recorded rule. ${options.candidate.repair}`,
       suggestedArea: `${baseline.flow}/${baseline.state}`,
-      acceptance: [
-        options.candidate.repair,
-        `Recapture only ${baseline.state} at ${baseline.viewport}${baseline.colorSchemeAxis ? ` in ${baseline.colorScheme}` : ""} and match the chosen exploration direction without applying its temporary code verbatim.`,
-      ],
+      basis: "judged",
+      basisDetails: {
+        kind: "judged",
+        summary: "Exploration critique; no model-stated confidence recorded.",
+      },
+      acceptance: {
+        version: 1,
+        kind: "manual",
+        doneWhen: [
+          options.candidate.repair,
+          `Recapture only ${baseline.state} at ${baseline.viewport}${baseline.colorSchemeAxis ? ` in ${baseline.colorScheme}` : ""} and match the chosen exploration direction without applying its temporary code verbatim.`,
+        ],
+      },
       verification: { kind: "recapture-visual" },
       status: "open",
     });

@@ -2,9 +2,11 @@
   "version": 1,
   "scope": "fixed-ci-selection",
   "caseIds": [
+    "clipped-copy::test/fixtures/benchmark/after.html",
     "clipped-copy::test/fixtures/mutations/clean/static.html",
     "dead-button::test/fixtures/mutations/clean/static.html",
     "low-contrast::test/fixtures/mutations/clean/static.html",
+    "missing-pending::test/fixtures/mutations/clean/loading.html",
     "off-centre-label::test/fixtures/mutations/clean/static.html",
     "off-scale-radius::test/fixtures/mutations/clean/static.html",
     "off-scale-spacing::test/fixtures/mutations/clean/static.html",
@@ -16,9 +18,11 @@
     "unreserved-load::test/fixtures/mutations/clean/load.html"
   ],
   "membership": {
+    "clipped-copy::test/fixtures/benchmark/after.html": "idiom:text-clipped",
     "clipped-copy::test/fixtures/mutations/clean/static.html": "idiom:text-clipped",
     "dead-button::test/fixtures/mutations/clean/static.html": "idiom:control-does-nothing",
     "low-contrast::test/fixtures/mutations/clean/static.html": "axe:color-contrast",
+    "missing-pending::test/fixtures/mutations/clean/loading.html": "idiom:loading-state-missing",
     "off-centre-label::test/fixtures/mutations/clean/static.html": "idiom:label-off-centre",
     "off-scale-radius::test/fixtures/mutations/clean/static.html": "idiom:off-scale-radius",
     "off-scale-spacing::test/fixtures/mutations/clean/static.html": "idiom:off-scale-spacing",
@@ -30,9 +34,11 @@
     "unreserved-load::test/fixtures/mutations/clean/load.html": "idiom:layout-shift"
   },
   "caughtCaseIds": [
+    "clipped-copy::test/fixtures/benchmark/after.html",
     "clipped-copy::test/fixtures/mutations/clean/static.html",
     "dead-button::test/fixtures/mutations/clean/static.html",
     "low-contrast::test/fixtures/mutations/clean/static.html",
+    "missing-pending::test/fixtures/mutations/clean/loading.html",
     "off-centre-label::test/fixtures/mutations/clean/static.html",
     "off-scale-radius::test/fixtures/mutations/clean/static.html",
     "off-scale-spacing::test/fixtures/mutations/clean/static.html",
@@ -44,14 +50,14 @@
     "unreserved-load::test/fixtures/mutations/clean/load.html"
   ],
   "overall": {
-    "attempted": 12,
-    "caught": 12,
+    "attempted": 14,
+    "caught": 14,
     "missed": 0,
     "errors": 0,
     "recall": 1,
     "medianRank": 1,
-    "top3": 12,
-    "top10": 12
+    "top3": 14,
+    "top10": 14
   },
   "perRule": {
     "axe:color-contrast": {
@@ -101,6 +107,16 @@
       "errors": 0,
       "recall": 1,
       "medianRank": 2,
+      "top3": 1,
+      "top10": 1
+    },
+    "idiom:loading-state-missing": {
+      "attempted": 1,
+      "caught": 1,
+      "missed": 0,
+      "errors": 0,
+      "recall": 1,
+      "medianRank": 3,
       "top3": 1,
       "top10": 1
     },
@@ -155,14 +171,14 @@
       "top10": 1
     },
     "idiom:text-clipped": {
-      "attempted": 1,
-      "caught": 1,
+      "attempted": 2,
+      "caught": 2,
       "missed": 0,
       "errors": 0,
       "recall": 1,
       "medianRank": 2,
-      "top3": 1,
-      "top10": 1
+      "top3": 2,
+      "top10": 2
     },
     "idiom:unexplained-control": {
       "attempted": 1,
