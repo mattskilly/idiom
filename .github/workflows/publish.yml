@@ -1,0 +1,96 @@
+# Publishes @mattskilly/idiom to npm with trusted publishing (OIDC): no npm
+# token or local 2FA prompt. Runs only in the public repository, when a GitHub
+# Release is published or by hand for an existing release tag.
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v0.15.0
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'mattskilly/idiom'
+    runs-on: ubuntu-latest
+    environment: npm
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11
+
+      - name: Check the tag, package and committed bundle agree
+        id: release
+        run: |
+          set -eu
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          test "$TAG" = "v${version}" || {
+            echo "::error::Tag $TAG does not match package.json version $version"
+            exit 1
+          }
+          test -s dist/cli.js
+          grep -q "\"version\": \"${version}\"" server.json
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Choose the dist-tag
+        id: dist
+        env:
+          NAME: ${{ steps.release.outputs.name }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -eu
+          if npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "${NAME}@${VERSION} is already on npm; nothing to publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          latest="$(npm view "$NAME" dist-tags.latest 2>/dev/null || true)"
+          newest="$(printf '%s\n%s\n' "$latest" "$VERSION" | sed '/^$/d' | sort -V | tail -1)"
+          # An older version published after a newer one must not move latest.
+          if test "$newest" = "$VERSION"; then tag=latest; else tag=backport; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Publishing ${NAME}@${VERSION} as '$tag' (current latest: ${latest:-none})."
+
+      # npm generates provenance automatically for trusted publishing.
+      - if: steps.dist.outputs.skip != 'true'
+        run: npm publish --access public --tag "${{ steps.dist.outputs.tag }}"
+
+      - if: steps.dist.outputs.skip != 'true'
+        env:
+          NAME: ${{ steps.release.outputs.name }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if test "$(npm view "${NAME}@${VERSION}" version 2>/dev/null)" = "$VERSION"; then
+              echo "Published ${NAME}@${VERSION}."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::${NAME}@${VERSION} is not visible on npm yet"
+          exit 1
