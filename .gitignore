@@ -9,3 +9,5 @@ dist/
 .autobuild/
 .vercel
 .env*
+
+hosted-dist/

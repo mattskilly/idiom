@@ -264,11 +264,23 @@ test("input zero excludes Playwright auto-wait time", async () => {
     const png = decodeFrame(
       await readFile(join(directory, frame?.path as string)),
     );
-    const x = Math.round(100 - (action?.region.x ?? 0));
     const y = Math.round(120 - (action?.region.y ?? 0));
-    // At 100ms after actual dispatch, the red panel is still in transit.
-    expect(png.data[(y * png.width + x) * 4]).toBe(255);
-    expect(png.data[(y * png.width + x) * 4 + 1]).toBe(0);
+    // At 100ms after actual dispatch, the red panel is still in transit:
+    // past its 0px start and short of its 300px end. A single fixed pixel
+    // sits on an edge of the panel, which the transition's variable start
+    // lag moves either way.
+    let redX = -1;
+    for (let x = 0; x < png.width; x++) {
+      const i = (y * png.width + x) * 4;
+      if (png.data[i] === 255 && png.data[i + 1] === 0) {
+        redX = x;
+        break;
+      }
+    }
+    expect(redX).toBeGreaterThanOrEqual(0);
+    const left = redX + (action?.region.x ?? 0);
+    expect(left).toBeGreaterThan(0);
+    expect(left).toBeLessThan(300);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

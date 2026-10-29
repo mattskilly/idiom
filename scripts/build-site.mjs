@@ -1,19 +1,29 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { build as bundle } from "esbuild";
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const siteDirectory = join(repositoryRoot, "site");
 const sourcePath = join(siteDirectory, "index.html");
-const guideSourcePath = join(siteDirectory, "guide.html");
+const documents = [
+  { path: "guide.html", canonical: "https://idiom.build/guide" },
+  {
+    path: "design-qa-for-claude-code.html",
+    canonical: "https://idiom.build/design-qa-for-claude-code",
+  },
+  {
+    path: "testing-loading-empty-error-states.html",
+    canonical: "https://idiom.build/testing-loading-empty-error-states",
+  },
+];
 const imagePath = join(siteDirectory, "social-preview.png");
-const outputDirectory = join(siteDirectory, "dist");
+const outputDirectory =
+  process.env.IDIOM_SITE_OUTPUT ?? join(siteDirectory, "dist");
 const outputPath = join(outputDirectory, "index.html");
-const guideOutputPath = join(outputDirectory, "guide.html");
 const outputImagePath = join(outputDirectory, "social-preview.png");
 
 const canonicalUrl = "https://idiom.build/";
-const guideCanonicalUrl = "https://idiom.build/guide";
 const imageUrl = "https://idiom.build/social-preview.png";
 
 function fail(message) {
@@ -110,7 +120,7 @@ function escapeAttribute(value) {
 
 function splitSource(source) {
   if (/<\s*(?:!doctype|html|head|body)\b/i.test(source)) {
-    fail("site/index.html must remain a wrapper-free fragment");
+    fail("site sources must remain wrapper-free fragments");
   }
   if (countMatches(source, /<title\b/gi) !== 1) {
     fail("expected exactly one title element");
@@ -181,8 +191,8 @@ async function atomicWrite(path, content) {
   }
 }
 
-async function buildGuide() {
-  const source = await readFile(guideSourcePath, "utf8");
+async function buildDocument({ path, canonical }) {
+  const source = await readFile(join(siteDirectory, path), "utf8");
   const { head, body } = splitSource(source);
   const wordmark = normalizedText(
     elementWithClass(source, "wordmark", "guide .wordmark copy hook"),
@@ -201,8 +211,8 @@ async function buildGuide() {
   }
 
   const title = `${wordmark} · ${headerMeta}`;
-  const output = `<!doctype html>\n<html lang="en">\n<head>\n${metadataMarkup({ title, description, canonical: guideCanonicalUrl })}\n${head}\n</head>\n<body>${body}</body>\n</html>\n`;
-  await atomicWrite(guideOutputPath, output);
+  const output = `<!doctype html>\n<html lang="en">\n<head>\n${metadataMarkup({ title, description, canonical })}\n${head}\n</head>\n<body>${body}</body>\n</html>\n`;
+  await atomicWrite(join(outputDirectory, path), output);
 }
 
 async function build() {
@@ -212,7 +222,39 @@ async function build() {
   ]);
   assertSocialImage(image);
 
-  const { head, body } = splitSource(source);
+  let { head, body } = splitSource(source);
+  if (process.env.IDIOM_HOSTED_REVIEW === "on") {
+    const form = await readFile(
+      join(siteDirectory, "hosted-form.html"),
+      "utf8",
+    );
+    body = body.replace('<section id="how">', `${form}\n<section id="how">`);
+    head +=
+      '\n<link rel="stylesheet" href="/hosted/form.css">\n<script src="/hosted/client.js" defer></script>';
+    await mkdir(join(outputDirectory, "hosted"), { recursive: true });
+    await writeFile(
+      join(outputDirectory, "hosted/form.css"),
+      await readFile(join(siteDirectory, "hosted.css")),
+    );
+    await bundle({
+      entryPoints: [join(siteDirectory, "hosted-client.ts")],
+      outfile: join(outputDirectory, "hosted/client.js"),
+      bundle: true,
+      platform: "browser",
+      target: "es2022",
+    });
+  } else {
+    await rm(join(outputDirectory, "hosted/client.js"), { force: true });
+    await rm(join(outputDirectory, "hosted/form.css"), { force: true });
+  }
+  // Retained report creator controls still work after admissions are disabled.
+  await bundle({
+    entryPoints: [join(siteDirectory, "hosted-report.ts")],
+    outfile: join(outputDirectory, "hosted/report.js"),
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+  });
   const masthead = elementWithClass(source, "masthead", ".masthead element");
   const wordmark = normalizedText(
     elementWithClass(source, "wordmark", ".wordmark copy hook"),
@@ -254,4 +296,4 @@ async function build() {
 }
 
 await build();
-await buildGuide();
+for (const document of documents) await buildDocument(document);

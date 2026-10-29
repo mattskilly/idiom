@@ -51,7 +51,7 @@ const inputs = {
 };
 const fixture = join(import.meta.dirname, "fixtures/github-action");
 const cli = [process.execPath, resolve("dist/cli.js")];
-async function graph() {
+async function graph(temporal = false) {
   const { project, configPath } = await baselineProject();
   directories.push(project);
   const temporary = await mkdtemp(join(tmpdir(), "idiom-action-test-"));
@@ -64,7 +64,12 @@ async function graph() {
     readyUrl: "http://127.0.0.1:3123",
     env: {},
   };
-  config.capture = { settleMs: 0 };
+  config.capture = {
+    settleMs: 0,
+    ...(temporal
+      ? { reducedMotion: false, filmstrips: { actions: ["#show"] } }
+      : {}),
+  };
   config.checks = { probe: { enabled: false } };
   config.baselines = { directory: join(temporary, "shared-baselines") };
   await writeFile(configPath, JSON.stringify(config));
@@ -72,15 +77,22 @@ async function graph() {
     await readFile(join(project, ".idiom/flows/studio.json"), "utf8"),
   );
   flow.states[0].expect = { status: 200 };
+  if (temporal) flow.states[0].steps = [{ action: "click", selector: "#show" }];
   await writeFile(
     join(project, ".idiom/flows/studio.json"),
     JSON.stringify(flow),
   );
   await copyFile(join(fixture, "server.mjs"), join(project, "server.mjs"));
-  await copyFile(join(fixture, "before.html"), join(project, "index.html"));
+  await copyFile(
+    join(fixture, temporal ? "temporal-base.html" : "before.html"),
+    join(project, "index.html"),
+  );
   const baseline = await commit(project, "common ancestor");
   await git(project, "checkout", "-qb", "feature");
-  await copyFile(join(fixture, "after.html"), join(project, "index.html"));
+  await copyFile(
+    join(fixture, temporal ? "temporal-regression.html" : "after.html"),
+    join(project, "index.html"),
+  );
   const head = await commit(project, "add regression");
   // Commit a nearer accepted baseline on head that would hide the new finding.
   await storedBaselineRun(project, "accepted-head", head, [
@@ -535,5 +547,171 @@ test("final executable gate preserves upload/publication outcomes even with neve
     const failed = await gateRun({ ...env, [key]: "failure" });
     expect(failed.code).toBe(1);
     expect(failed.stderr).toContain(key);
+  }
+});
+
+test("a real synchronize fix updates the same comment, stages temporal before/after, and preserves surviving and pre-existing findings", async () => {
+  const context = await graph(true);
+  const options = {
+    inputs: { ...inputs, failOn: "major" },
+    cwd: context.project,
+    temporary: context.temporary,
+    cli,
+  };
+  const failed = await runAction({ ...options, event: context.event });
+  expect(failed.result.operationalErrors).toEqual([]);
+  expect(() => gate(failed.result)).toThrow();
+  const temporal = failed.result.summary.findings.find(
+    (finding: { timeline?: unknown }) => finding.timeline,
+  );
+  expect(temporal).toBeDefined();
+  expect(temporal.fingerprint).toBeTruthy();
+  const firstIndex = await readFile(
+    join(failed.evidence, "index.html"),
+    "utf8",
+  );
+  expect(firstIndex).toContain('src="filmstrips/current/');
+  expect(renderComment(failed.result, artifact)).toContain(
+    "filmstrips/current/",
+  );
+  expect(renderComment(failed.result, artifact)).not.toContain("![");
+  let managed: ReturnType<typeof bot> | undefined;
+  const writes: Array<{ method: string; url: string; body: string }> = [];
+  const fetch = async (
+    url: string,
+    options: { method: string; body?: string },
+  ) => {
+    if (options.method === "GET") return response(managed ? [managed] : []);
+    const body = JSON.parse(options.body ?? "").body;
+    managed = bot(321, body);
+    writes.push({ method: options.method, url, body });
+    return response(managed, options.method === "POST" ? 201 : 200);
+  };
+  await publishResult({
+    resultFile: failed.resultFile,
+    artifactUrl: artifact,
+    uploadOutcome: "success",
+    token: "t",
+    repository: "owner/repo",
+    event: context.event,
+    fetch,
+  });
+  await git(context.project, "checkout", "-q", "feature");
+  await copyFile(
+    join(fixture, "temporal-fixed.html"),
+    join(context.project, "index.html"),
+  );
+  const fixedHead = await commit(
+    context.project,
+    "resolve temporal regression, keep small target",
+  );
+  await git(context.project, "checkout", "-q", "main");
+  const beforeStatus = await git(context.project, "status", "--porcelain");
+  const event = {
+    ...context.event,
+    action: "synchronize",
+    before: context.head,
+    after: fixedHead,
+    pull_request: {
+      ...context.event.pull_request,
+      head: { ...context.event.pull_request.head, sha: fixedHead },
+    },
+  };
+  const fixed = await runAction({ ...options, event });
+  expect(fixed.result.operationalErrors).toEqual([]);
+  expect(fixed.result.resolutionNotices).toEqual([]);
+  expect(() => gate(fixed.result)).not.toThrow();
+  expect(
+    fixed.result.summary.findings.some(
+      (finding: { selector: string }) => finding.selector === "#regression",
+    ),
+  ).toBe(true);
+  expect(
+    fixed.result.summary.preExistingFindings.some(
+      (finding: { selector: string }) => finding.selector === "#existing",
+    ),
+  ).toBe(true);
+  const resolved = fixed.result.resolved.find(
+    (entry: { fingerprint: string }) =>
+      entry.fingerprint === temporal.fingerprint,
+  );
+  expect(resolved).toBeDefined();
+  expect(resolved.origin).toBe("previous-push");
+  expect(resolved.beforeCommit).toBe(context.head);
+  expect(resolved.afterCommit).toBe(fixedHead);
+  expect(resolved.before.images[0].label).toBe("Filmstrip contact sheet");
+  expect(resolved.after.images[0].label).toBe("Settled tuple screenshot");
+  expect(resolved.after.reasons.join()).toContain("not a filmstrip");
+  expect(
+    fixed.result.resolved.every(
+      (entry: { fingerprint: string }) =>
+        entry.fingerprint !== fixed.result.summary.findings[0].fingerprint,
+    ),
+  ).toBe(true);
+  const index = await readFile(join(fixed.evidence, "index.html"), "utf8");
+  for (const match of index.matchAll(/src="([^"]+)"/g))
+    expect(
+      PNG.sync.read(await readFile(join(fixed.evidence, match[1] ?? ""))).width,
+    ).toBeGreaterThan(0);
+  await publishResult({
+    resultFile: fixed.resultFile,
+    artifactUrl: artifact,
+    uploadOutcome: "success",
+    token: "t",
+    repository: "owner/repo",
+    event,
+    fetch,
+  });
+  expect(writes.map((write) => write.method)).toEqual(["POST", "PATCH"]);
+  expect(writes[1]?.url).toContain("/issues/comments/321");
+  expect(writes[0]?.body).not.toContain("### Blocks merge (0)");
+  expect(writes[1]?.body).toContain("### Blocks merge (0)");
+  expect(writes[1]?.body).toContain("### Should fix (1)");
+  expect(writes[1]?.body).toContain("since previous push");
+  expect(writes[1]?.body).toContain(context.head);
+  expect(await git(context.project, "status", "--porcelain")).toBe(
+    beforeStatus,
+  );
+  expect(
+    await git(context.project, "worktree", "list", "--porcelain"),
+  ).not.toContain("scratch");
+  expect(await readdir(dirname(fixed.evidence))).toEqual(["evidence"]);
+}, 90_000);
+
+test("read-only fork publication retains tiered job summary, artifact result and gate with a warning", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-fork-summary-"));
+  directories.push(directory);
+  const resultFile = join(directory, "result.json"),
+    summaryPath = join(directory, "summary.md");
+  await writeFile(resultFile, JSON.stringify({ ...report, fork: true }));
+  const { vi } = await import("vitest");
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const result = await publishResult({
+      resultFile,
+      artifactUrl: artifact,
+      uploadOutcome: "success",
+      token: "read-only",
+      repository: "owner/repo",
+      event: {
+        pull_request: {
+          number: 42,
+          base: { sha: report.baseline },
+          head: { sha: report.head },
+        },
+      },
+      summaryPath,
+      fetch: async () => response({}, 403),
+    });
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining("read-only token"),
+    );
+    expect(result.operationalErrors).toEqual([]);
+    expect(() => gate(result)).toThrow("1 new finding");
+    const summary = await readFile(summaryPath, "utf8");
+    expect(summary).toContain("### Blocks merge (1)");
+    expect(summary).toContain(artifact);
+  } finally {
+    warning.mockRestore();
   }
 });

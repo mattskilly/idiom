@@ -169,7 +169,7 @@ footer a:hover { color:var(--redline-ink); }
 
 <div class="wrap">
 
-  <header class="top"><a class="wordmark" href="https://idiom.build/">idiom</a><span class="meta">Field guide · v0.14.0</span><nav aria-label="Site"><a href="https://idiom.build/">Overview</a><a href="https://github.com/mattskilly/idiom">GitHub</a></nav><button class="theme-toggle" type="button" aria-label="Switch to dark theme" title="Switch to dark theme"><svg class="moon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13.5 9.6A5.6 5.6 0 0 1 6.4 2.5a5.6 5.6 0 1 0 7.1 7.1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><svg class="sun" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button></header>
+  <header class="top"><a class="wordmark" href="https://idiom.build/">idiom</a><span class="meta">Field guide · v0.15.0</span><nav aria-label="Site"><a href="https://idiom.build/">Overview</a><a href="https://github.com/mattskilly/idiom">GitHub</a></nav><button class="theme-toggle" type="button" aria-label="Switch to dark theme" title="Switch to dark theme"><svg class="moon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13.5 9.6A5.6 5.6 0 0 1 6.4 2.5a5.6 5.6 0 1 0 7.1 7.1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><svg class="sun" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button></header>
 
   <section>
     <h2 class="rail">In one breath</h2>
@@ -227,7 +227,7 @@ footer a:hover { color:var(--redline-ink); }
       </tbody>
       <tbody class="group-head"><tr><td colspan="2">The loop</td></tr></tbody>
       <tbody>
-        <tr><td>idiom check &lt;flow&gt;</td><td>Capture and run every measured check in one step, top issues first. With <code>--baseline</code> it fails only on new problems, for CI and agent loops. <code>--changed</code> checks only the states your Git changes affect and says which it skipped.</td></tr>
+        <tr><td>idiom check &lt;flow&gt;</td><td>Capture and run every measured check in one step, top issues first. With <code>--baseline</code> it fails only on new problems, for CI and agent loops. <code>--changed</code> checks only the states your Git changes affect and says which it skipped. In the GitHub Action, one pull-request comment sorts new findings into Blocks merge, Should fix and Opportunities.</td></tr>
         <tr><td>idiom capture &lt;flow&gt;</td><td>Drive the real app, a web page or an Electron desktop window, through every declared state and store screenshots, DOM, console, and accessibility data, tied to the commit.</td></tr>
         <tr><td>idiom review &lt;flow&gt;</td><td>Judge a capture: deterministic checks + model critique against your design law, references, and past decisions.</td></tr>
         <tr><td>idiom report [run]</td><td>Open the self-contained HTML report. It is printable, sendable, and states its own coverage and limits. Every finding says whether it was measured, observed or judged, and how its fix will be checked.</td></tr>
@@ -274,6 +274,7 @@ footer a:hover { color:var(--redline-ink); }
     </ul>
   </section>
 
+<section id="how-to"><h2 class="rail">How to</h2><div class="col"><h2>Put the loop to work.</h2><div class="col"><p><a href="/design-qa-for-claude-code">Design QA for Claude Code</a> — install the CLI, connect MCP or the local plugin, and follow check–fix–verify.</p><p><a href="/testing-loading-empty-error-states">Testing loading, empty and error states</a> — arrange fixtures, configure replays and inspect recovery evidence.</p></div></div></section>
   <footer><span>Every state, not every page. Build in your idiom.</span><nav aria-label="More"><a href="https://idiom.build/">idiom.build</a><a href="https://github.com/mattskilly/idiom">GitHub</a><a href="https://www.npmjs.com/package/@mattskilly/idiom">npm</a></nav></footer>
 
 </div>

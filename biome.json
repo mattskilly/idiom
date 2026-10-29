@@ -9,10 +9,14 @@
     "includes": [
       "src/**",
       "test/**",
+      "api/**",
       "!test/fixtures/**/*.html",
+      "!test/fixtures/mcp-registry/server.schema.json",
       "scripts/**",
       "hooks/**",
-      "*.json"
+      "*.json",
+      "site/*.ts",
+      "site/hosted.css"
     ]
   },
   "formatter": {

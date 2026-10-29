@@ -167,6 +167,47 @@ test("minimal packed payload excludes repository-development inputs", async () =
   );
 });
 
+test("packed runtime dependencies exclude hosted SDKs and retain deployment inputs", async () => {
+  const metadata = JSON.parse(
+    await readFile(join(runtimeRoot, "package.json"), "utf8"),
+  ) as {
+    dependencies: Record<string, string>;
+    devDependencies: Record<string, string>;
+  };
+  for (const name of Object.keys(metadata.dependencies)) {
+    expect(name.startsWith("@vercel/"), name).toBe(false);
+    expect(name).not.toBe("botid");
+  }
+  expect(metadata.devDependencies).toMatchObject({
+    "@vercel/blob": "2.8.2",
+    "@vercel/functions": "3.10.4",
+    "@vercel/sandbox": "3.9.0",
+    botid: "1.5.11",
+  });
+});
+
+test("packed discovery manifest and portable skill match their tracked sources", async () => {
+  for (const file of [
+    "server.json",
+    "skills/idiom/SKILL.md",
+    "skills/idiom/references/init.md",
+  ]) {
+    expect(packedFiles).toContain(file);
+    expect(await readFile(join(runtimeRoot, file), "utf8")).toBe(
+      await readFile(join(repositoryRoot, file), "utf8"),
+    );
+  }
+  const manifest = JSON.parse(
+    await readFile(join(runtimeRoot, "server.json"), "utf8"),
+  );
+  const metadata = JSON.parse(
+    await readFile(join(runtimeRoot, "package.json"), "utf8"),
+  );
+  expect(manifest.version).toBe(originalVersion);
+  expect(manifest.packages[0].version).toBe(originalVersion);
+  expect(metadata.mcpName).toBe(manifest.name);
+});
+
 test("built CLI runs directly and through an installer-shaped link", async () => {
   const directVersion = await invoke(runtimeEntry, ["--version"]);
   expect(directVersion).toEqual({
@@ -184,6 +225,10 @@ test("built CLI runs directly and through an installer-shaped link", async () =>
   expect(linkedHelp.code).toBe(0);
   expect(linkedHelp.stdout).toContain("Usage: idiom init");
   expect(linkedHelp.stderr).toBe("");
+  const quickHelp = await invoke(linkedEntry, ["quick", "--help"]);
+  expect(quickHelp.code).toBe(0);
+  expect(quickHelp.stdout).toContain("Usage: idiom quick");
+  expect(quickHelp.stderr).toBe("");
 }, 60_000);
 
 test("built CLI reads version from its colocated package metadata", async () => {

@@ -2,6 +2,8 @@ import type { Request } from "playwright";
 import type { ProbeSafetyPolicy } from "../checks/types.js";
 
 const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
+export const safeRequestMethod = (method: string): boolean =>
+  safeMethods.has(method);
 
 /** Dev-server and asset chatter that is never an effect of an action. */
 export const ignoredRequest = (request: Pick<Request, "url">) =>

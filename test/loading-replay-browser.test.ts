@@ -382,3 +382,329 @@ test("a held web step that submits by document navigation notes it once, briefly
   const step = slow.find((action) => action.stepIndex === 1);
   expect(step?.held?.notes).toEqual(["main-frame document navigation"]);
 }, 60_000);
+
+/** Fresh held replay: the mandatory noise sample is its only pre-click wait. */
+async function directHeld(options: {
+  path: string;
+  setup?: (page: Page) => Promise<void>;
+  repeat?: boolean;
+  deadlineMs?: number;
+}) {
+  const { installNoiseRecorder, replayHeld } = await import(
+    "../src/capture/loading.js"
+  );
+  const { TimelineCollector } = await import("../src/capture/timeline.js");
+  const { Deadline, deadlinePage } = await import("../src/capture/deadline.js");
+  const page = await browser.newPage();
+  const deadline = new Deadline(
+    "control",
+    options.deadlineMs ?? 15000,
+    () => "held classification",
+  );
+  const bound = deadlinePage(page, deadline);
+  try {
+    await page.clock.install({ time: new Date(0) });
+    await page.clock.pauseAt(new Date(100));
+    await page.addInitScript(installNoiseRecorder);
+    await page.route("**/*", (route) =>
+      ["GET", "HEAD", "OPTIONS"].includes(route.request().method())
+        ? route.fallback()
+        : route.abort(),
+    );
+    await page.goto(`${server.origin}/${options.path}`);
+    await options.setup?.(page);
+    const loadedAt = await page.evaluate(() => performance.now());
+    const timeline = new TimelineCollector(page);
+    let dispatch: number | undefined;
+    let dispatchNode = 0;
+    let done = false;
+    let failure: unknown;
+    const replay = replayHeld({
+      page: bound.page,
+      routePage: page,
+      timeline,
+      item: {
+        of: "probe-click",
+        kind: "click",
+        selector: "#load",
+        name: "Load items",
+        ...(options.repeat
+          ? {
+              repeat: async (active: Page) => {
+                await active.locator("#load").click();
+              },
+            }
+          : {}),
+        perform: async (active) => {
+          // Advance the sampled idle time explicitly; machine load cannot
+          // rotate the paused fixture before this first activation.
+          await active.clock.runFor(250);
+          await active.evaluate(() =>
+            document.querySelector("#load")?.addEventListener(
+              "click",
+              () => {
+                (window as Window & { dispatchTime?: number }).dispatchTime =
+                  performance.now();
+              },
+              { capture: true, once: true },
+            ),
+          );
+          await active.locator("#load").click();
+          dispatch = await active.evaluate(
+            () => (window as Window & { dispatchTime?: number }).dispatchTime,
+          );
+          dispatchNode = performance.now();
+        },
+      },
+      delayMs: 1500,
+      withinMs: 1000,
+      waitMs: 150,
+      policy: "third-party",
+      clock: () => performance.now(),
+    }).then(
+      () => {
+        done = true;
+      },
+      (error) => {
+        failure = error;
+        done = true;
+      },
+    );
+    try {
+      // The HTTP hold uses Node time. Advance page time in awaited turns
+      // alongside it, allowing real requests and MutationObservers to run.
+      while (!done) {
+        if (dispatch !== undefined) {
+          const target = dispatch + performance.now() - dispatchNode;
+          const now = await page.evaluate(() => performance.now());
+          await page.clock.runFor(Math.max(0, Math.floor(target - now)));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      await replay;
+    } finally {
+      await replay;
+    }
+    expect(
+      dispatch,
+      "held click must dispatch before the first 700ms rotation",
+    ).toBeDefined();
+    expect((dispatch ?? Infinity) - loadedAt).toBeLessThan(700);
+    const action = timeline.lastAction();
+    if (!action) throw new Error("missing held action");
+    const timelines = actionTimelineArtifactSchema.parse(
+      JSON.parse(JSON.stringify(timeline.evidence())),
+    );
+    const held = heldOf(timelines.actions);
+    const recorder = await page.evaluate(() => {
+      const scope = window as Window & {
+        __idiomPending?: unknown;
+        __idiomQuiet?: unknown;
+        __idiomNoiseLog?: {
+          provisional(): Array<{ root: Element; deadline: number }>;
+        };
+      };
+      return {
+        pending: !!scope.__idiomPending,
+        quiet: !!scope.__idiomQuiet,
+        now: performance.now(),
+        provisional:
+          scope.__idiomNoiseLog
+            ?.provisional()
+            .map(({ root, deadline }) => ({ selector: root.id, deadline })) ??
+          [],
+      };
+    });
+
+    return { held, timelines, dispatch, failure, recorder };
+  } finally {
+    bound.dispose();
+    deadline.dispose();
+    await page.close();
+  }
+}
+
+async function earlyTicker(twin: "before" | "after") {
+  const { held, timelines, dispatch, failure } = await directHeld({
+    path: `loading-ticker/${twin}.html`,
+  });
+  expect(failure).toBeUndefined();
+  expect(timelines.actions[0]?.status).toBe("ran");
+  expect(held.dispatched).toBe(true);
+  expect(held.requests).toEqual([
+    expect.objectContaining({
+      method: "GET",
+      path: "/api/items",
+      forwarded: true,
+    }),
+  ]);
+  expect(held.releasedAt).not.toBeNull();
+  expect(held.firstMainChange?.time).toBeGreaterThanOrEqual(
+    held.releasedAt ?? Infinity,
+  );
+  expect(held.mainChangeAfterReleaseAt).toBe(held.firstMainChange?.time);
+  expect(
+    (held.mainChangeAfterReleaseAt ?? Infinity) - (held.releasedAt ?? 0),
+  ).toBeLessThan(200);
+  const tuple = {
+    ...tupleFor(emptyObservation),
+    timelines,
+    observations: {
+      ...emptyObservation,
+      probe: {
+        status: "ran" as const,
+        results: [],
+        heldReplay: { delayMs: 1500, queued: 1, ran: 1, notes: [] },
+      },
+    },
+  };
+  const result = loadingStateMissingCheck.run({
+    tuple,
+    tuples: [tuple],
+    narrowViewport: false,
+    config: checksConfigFrom(checksConfigSchema.parse({})),
+  });
+  return { held, result, dispatch };
+}
+
+test("an immediate first ticker click still finds missing loading feedback", async () => {
+  const { held, result } = await earlyTicker("before");
+  expect(held.indicators).toEqual([]);
+  expect(held.firstChange?.time).toBeGreaterThanOrEqual(
+    held.releasedAt ?? Infinity,
+  );
+  expect(result.candidates).toEqual([
+    expect.objectContaining({
+      rule: "idiom:loading-state-missing",
+      selectorHint: "#load",
+    }),
+  ]);
+});
+test("an immediate first ticker click keeps genuine busy/text feedback clean", async () => {
+  const { held, result } = await earlyTicker("after");
+  expect(held.indicators.map((i) => i.kind)).toEqual(
+    expect.arrayContaining(["trigger-busy", "control-text"]),
+  );
+  expect(held.indicator?.time).toBeLessThan(200);
+  expect(result.candidates).toEqual([]);
+});
+
+async function customTicker(
+  page: Page,
+  kind: "optimistic" | "nested" | "second" | "cap" | "unrelated",
+) {
+  await page.evaluate((kind) => {
+    document.body.innerHTML =
+      '<main><button id="load">Load items</button><div id="news"><span id="headline">Initial</span><div id="result"></div></div><p id="other">Ready</p></main>';
+    if (kind === "unrelated")
+      document.querySelector("#headline")?.setAttribute("hidden", "");
+    for (const at of kind === "cap" || kind === "unrelated"
+      ? [550, 1950]
+      : [600, 1300, 2000])
+      setTimeout(() => {
+        const element = document.querySelector("#headline");
+        if (element) element.textContent = String(at);
+      }, at);
+    let clicks = 0;
+    document.querySelector("#load")?.addEventListener("click", async () => {
+      clicks++;
+      if (kind === "optimistic") {
+        const other = document.querySelector("#other");
+        if (other) other.textContent = "Optimistic content";
+      }
+      if (kind === "second" && clicks === 2) {
+        const other = document.querySelector("#other");
+        if (other) {
+          other.setAttribute("role", "status");
+          other.textContent = "Loading second activation";
+        }
+      }
+      const response = await fetch(
+        kind === "second" ? "/api/save" : "/api/items",
+        { method: kind === "second" ? "POST" : "GET" },
+      ).catch(() => null);
+      if (!response || kind === "cap" || kind === "unrelated") return;
+      await response.json();
+      const result = document.querySelector("#result");
+      if (result) result.textContent = "Nested independent result";
+    });
+  }, kind);
+}
+
+test.each(["optimistic", "nested"] as const)(
+  "%s feedback survives a nearby independent ticker",
+  async (kind) => {
+    const { held, failure } = await directHeld({
+      path: "loading-state/before.html",
+      setup: (page) => customTicker(page, kind),
+    });
+    expect(failure).toBeUndefined();
+    expect(held.firstChange?.selector).toBe(
+      kind === "optimistic" ? "#other" : "#result",
+    );
+    if (kind === "optimistic")
+      expect(held.firstChange?.time).toBeLessThan(held.releasedAt ?? 0);
+    else
+      expect(held.firstChange?.time).toBeGreaterThanOrEqual(
+        held.releasedAt ?? Infinity,
+      );
+    expect(held.mainChangedAfterRelease).toBe(true);
+  },
+);
+
+test("late classification re-filters first-activation candidates without importing second-activation feedback", async () => {
+  const { held, failure } = await directHeld({
+    path: "loading-state/before.html",
+    setup: (page) => customTicker(page, "second"),
+    repeat: true,
+  });
+  expect(failure).toBeUndefined();
+  expect(held.secondActivation.attempted).toBe(true);
+  expect(held.secondActivation.duplicates).toHaveLength(1);
+  expect(held.indicators).toEqual([]);
+  expect(held.firstChange).toBeNull();
+  expect(held.firstMainChange).toBeNull();
+});
+
+test("unresolved classification stops at the original post-release observation cap", async () => {
+  const { held, failure, recorder } = await directHeld({
+    path: "loading-state/before.html",
+    setup: (page) => customTicker(page, "cap"),
+  });
+  expect(failure).toBeUndefined();
+  // The two long-gap samples still have a future classification opportunity.
+  // Finishing here proves that this opportunity did not extend the effect cap.
+  expect(recorder.provisional).toEqual([
+    { selector: "headline", deadline: expect.any(Number) },
+  ]);
+  expect(recorder.provisional[0]?.deadline).toBeGreaterThan(recorder.now);
+  expect(held.firstChange?.selector).toBe("#headline");
+  expect(recorder.pending).toBe(false);
+  expect(recorder.quiet).toBe(false);
+});
+
+test("an enclosing deadline interrupts classification and cleans up the page observers", async () => {
+  const { DeadlineExpired } = await import("../src/capture/deadline.js");
+  const { failure, recorder } = await directHeld({
+    path: "loading-state/before.html",
+    setup: (page) => customTicker(page, "cap"),
+    deadlineMs: 2400,
+  });
+  expect(failure).toBeInstanceOf(DeadlineExpired);
+  expect(recorder.pending).toBe(false);
+  expect(recorder.quiet).toBe(false);
+});
+
+test("unrelated hidden activity does not add a classification wait", async () => {
+  const { held, failure, recorder } = await directHeld({
+    path: "loading-state/before.html",
+    setup: (page) => customTicker(page, "unrelated"),
+  });
+  expect(failure).toBeUndefined();
+  expect(held.firstChange).toBeNull();
+  expect(held.indicators).toEqual([]);
+  expect(recorder.provisional).toEqual([
+    { selector: "headline", deadline: expect.any(Number) },
+  ]);
+  expect(recorder.provisional[0]?.deadline).toBeGreaterThan(recorder.now);
+});

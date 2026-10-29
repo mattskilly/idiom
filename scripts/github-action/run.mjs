@@ -9,19 +9,29 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   beneath,
   evidencePath,
   execute,
   gate,
-  html,
   readJson,
   validateEvent,
   validateInputs,
   validateSummary,
 } from "./common.mjs";
+
+import { stageComparison, stageCurrent } from "./evidence.mjs";
+import { renderIndex } from "./report.mjs";
+import {
+  previousHead,
+  resolvedFindings,
+  stageResolved,
+  tupleImages,
+} from "./resolution.mjs";
+
+export { renderIndex } from "./report.mjs";
 
 export function environmentInputs(env = process.env) {
   return {
@@ -31,73 +41,6 @@ export function environmentInputs(env = process.env) {
     failOn: env.IDIOM_ACTION_FAIL_ON ?? "major",
     setup: env.IDIOM_ACTION_SETUP ?? "npm ci",
   };
-}
-
-async function stageCrops(result, afterRun, evidence) {
-  await mkdir(join(evidence, "crops"), { recursive: true });
-  await mkdir(join(evidence, "compare"), { recursive: true });
-  for (const [index, finding] of result.summary.findings.entries()) {
-    if (!finding.screenshot) {
-      result.unavailable.push(`No screenshot for finding ${finding.id}`);
-      continue;
-    }
-    try {
-      const source = await evidencePath(
-        afterRun,
-        resolve(result.headProject, finding.screenshot),
-      );
-      const path = `crops/${index + 1}-${basename(source)}`;
-      await copyFile(source, join(evidence, path));
-      result.crops.push({
-        finding: index,
-        path,
-        label: source.includes("/crops/")
-          ? "Element crop"
-          : "Full screenshot (element crop unavailable)",
-      });
-    } catch (error) {
-      result.unavailable.push(`Finding ${finding.id}: ${error.message}`);
-    }
-  }
-}
-
-async function stageComparison(result, compareDirectory, evidence) {
-  for (const tuple of result.comparison.changed) {
-    try {
-      const source = await evidencePath(compareDirectory, tuple.path);
-      const path = `compare/${basename(source)}`;
-      await copyFile(source, join(evidence, path));
-      result.composites.push({ key: tuple.key, path });
-    } catch (error) {
-      result.unavailable.push(`Composite ${tuple.key}: ${error.message}`);
-    }
-  }
-  for (const name of ["before-after.md", "attachments.json"]) {
-    await copyFile(
-      await evidencePath(compareDirectory, name),
-      join(evidence, "compare", name),
-    );
-  }
-}
-
-export function renderIndex(result) {
-  const image = (entry) =>
-    `<p>${html(entry.label ?? entry.key)}: <a href="${html(entry.path)}">${html(entry.path)}</a></p><img style="max-width:100%" src="${html(entry.path)}" alt="${html(entry.label ?? entry.key)}">`;
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>Idiom regression evidence</title><body><h1>Idiom: ${html(result.flow)}</h1><p>Merge base ${html(result.baseline ?? "unavailable")} → ${html(result.head ?? "unavailable")}</p><p><a href="summary.json">Check JSON</a> · <a href="comparison.json">Compare JSON</a> · <a href="result.json">Action result</a> · <a href="diagnostics.log">Diagnostics</a></p>${result.operationalErrors.map((error) => `<p>${html(error)}</p>`).join("")}<h2>New findings</h2>${(
-    result.summary?.findings ?? []
-  )
-    .map(
-      (finding, index) =>
-        `<article><h3>${html(finding.severity)}: ${html(finding.problem)}</h3><p>${html(finding.where)}</p><ul>${finding.fix.map((fix) => `<li>${html(fix)}</li>`).join("")}</ul>${(
-          result.crops ?? []
-        )
-          .filter((crop) => crop.finding === index)
-          .map(image)
-          .join("")}</article>`,
-    )
-    .join(
-      "",
-    )}<h2>Before / after</h2>${(result.composites ?? []).map(image).join("")}<p>Unchanged: ${result.comparison?.unchanged.length ?? 0}; only before: ${result.comparison?.onlyBefore.length ?? 0}; only after: ${result.comparison?.onlyAfter.length ?? 0}</p><ul>${(result.comparison?.notComparable ?? []).map((tuple) => `<li>${html(tuple.key)}: ${html(tuple.reason)}</li>`).join("")}${(result.unavailable ?? []).map((reason) => `<li>${html(reason)}</li>`).join("")}</ul></body></html>\n`;
 }
 
 /** The executable seam uses the built npm CLI in offline integration tests. */
@@ -121,6 +64,8 @@ export async function runAction({
     crops: [],
     composites: [],
     unavailable: [],
+    resolved: [],
+    resolutionNotices: [],
   };
   const resultFile = join(evidence, "result.json");
   const log = join(evidence, "diagnostics.log");
@@ -183,10 +128,7 @@ export async function runAction({
     const idiom = (args, directory) =>
       run(cli[0], [...cli.slice(1), ...args], directory);
     const paths = {};
-    for (const [side, sha] of [
-      ["before", result.baseline],
-      ["after", result.head],
-    ]) {
+    const capture = async (side, sha) => {
       const tree = join(scratch, side);
       await git(["worktree", "add", "--detach", tree, sha]);
       ownedWorktrees.push(tree);
@@ -196,7 +138,6 @@ export async function runAction({
         tree,
       );
       const project = await evidencePath(tree, beneath(tree, inputs.project));
-      // Require this exact project's config, rather than discovering an ancestor.
       await readFile(join(project, ".idiom/project.json"));
       await readFile(
         beneath(join(project, ".idiom/flows"), `${inputs.flow}.json`),
@@ -206,115 +147,250 @@ export async function runAction({
         ["capture", inputs.flow, "--project", project, "--out", runDirectory],
         project,
       );
-      paths[side] = { project, runDirectory };
-      if (side === "before") {
-        const recorded = JSON.parse(
-          await idiom(
-            [
-              "baseline",
-              "record",
-              inputs.flow,
-              "--project",
-              project,
-              "--from",
-              "action-before",
-              "--out",
-              join(scratch, "baselines"),
-              "--json",
-            ],
-            project,
-          ),
-        );
-        const file = await readJson(
-          await evidencePath(join(scratch, "baselines"), recorded.path),
-        );
-        const record = file.records?.find(
-          (record) => record.commit === result.baseline,
-        );
-        if (
-          recorded.commit !== result.baseline ||
-          !record ||
-          file.flow !== inputs.flow ||
-          file.version !== 1
-        )
-          throw new Error("Base baseline does not describe the merge base");
-        paths.baselineFile = join(scratch, "merge-base.json");
-        await writeFile(
-          paths.baselineFile,
-          JSON.stringify({ version: 1, flow: inputs.flow, records: [record] }),
-        );
-        await copyFile(paths.baselineFile, join(evidence, "merge-base.json"));
-      }
-    }
-    result.headProject = paths.after.project;
-    result.summary = validateSummary(
-      JSON.parse(
+      return { project, runDirectory, from: `action-${side}` };
+    };
+    const record = async (capture, sha, name) => {
+      const output = join(scratch, `${name}-baselines`);
+      const recorded = JSON.parse(
         await idiom(
           [
-            "check",
+            "baseline",
+            "record",
+            inputs.flow,
+            "--project",
+            capture.project,
+            "--from",
+            capture.from,
+            "--out",
+            output,
+            "--json",
+          ],
+          capture.project,
+        ),
+      );
+      const file = await readJson(await evidencePath(output, recorded.path));
+      const selected = file.records?.find((record) => record.commit === sha);
+      if (
+        recorded.commit !== sha ||
+        !selected ||
+        file.flow !== inputs.flow ||
+        file.version !== 1
+      )
+        throw new Error(
+          `${name} baseline does not describe the expected commit`,
+        );
+      const path = join(scratch, `${name}.json`);
+      await writeFile(
+        path,
+        JSON.stringify({ version: 1, flow: inputs.flow, records: [selected] }),
+      );
+      await copyFile(path, beneath(evidence, `${name}.json`));
+      return path;
+    };
+    const check = async (capture, baselineFile, sha) =>
+      validateSummary(
+        JSON.parse(
+          await idiom(
+            [
+              "check",
+              inputs.flow,
+              "--project",
+              capture.project,
+              "--from",
+              capture.from,
+              "--baseline-file",
+              baselineFile,
+              "--json",
+              "--fail-on",
+              "never",
+            ],
+            capture.project,
+          ),
+        ),
+        inputs.flow,
+        sha,
+      );
+    const compare = async (before, sha, name) => {
+      await cp(
+        await evidencePath(before.project, before.runDirectory),
+        beneath(paths.after.project, `.idiom/reports/${before.from}`),
+        { recursive: true, errorOnExist: true, force: false },
+      );
+      const directory = join(scratch, `comparison-${name}`);
+      const comparison = JSON.parse(
+        await idiom(
+          [
+            "compare",
             inputs.flow,
             "--project",
             paths.after.project,
             "--from",
-            "action-after",
-            "--baseline-file",
-            paths.baselineFile,
+            paths.after.from,
+            "--against",
+            before.from,
+            "--out",
+            directory,
             "--json",
-            "--fail-on",
-            "never",
           ],
           paths.after.project,
         ),
-      ),
-      inputs.flow,
+      );
+      if (
+        comparison.before?.commit !== sha ||
+        comparison.after?.commit !== result.head ||
+        ![
+          "changed",
+          "unchanged",
+          "onlyBefore",
+          "onlyAfter",
+          "notComparable",
+        ].every((key) => Array.isArray(comparison[key]))
+      )
+        throw new Error("invalid compare JSON or capture provenance");
+      await writeFile(
+        beneath(
+          evidence,
+          name === "merge-base" ? "comparison.json" : "history-comparison.json",
+        ),
+        `${JSON.stringify(comparison, null, 2)}\n`,
+      );
+      await stageComparison(result, comparison, directory, evidence, name);
+      return comparison;
+    };
+    paths.before = await capture("before", result.baseline);
+    paths.baselineFile = await record(
+      paths.before,
+      result.baseline,
+      "merge-base",
+    );
+    paths.after = await capture("after", result.head);
+    result.summary = await check(
+      paths.after,
+      paths.baselineFile,
       result.baseline,
     );
     await writeFile(
       join(evidence, "summary.json"),
       `${JSON.stringify(result.summary, null, 2)}\n`,
     );
-    await stageCrops(result, paths.after.runDirectory, evidence);
-    await cp(
-      paths.before.runDirectory,
-      join(paths.after.project, ".idiom/reports/action-before"),
-      { recursive: true, errorOnExist: true, force: false },
+    await stageCurrent(result, paths.after, evidence);
+    result.comparison = await compare(
+      paths.before,
+      result.baseline,
+      "merge-base",
     );
-    const comparisonDirectory = join(scratch, "comparison");
-    result.comparison = JSON.parse(
-      await idiom(
-        [
-          "compare",
+    // Historical evidence failures never replace the primary check or its gate.
+    try {
+      const afterTuples = await tupleImages(
+        paths.after,
+        inputs.flow,
+        result.head,
+      );
+      const beforeTuples = await tupleImages(
+        paths.before,
+        inputs.flow,
+        result.baseline,
+      );
+      const baseFixed = resolvedFindings(
+        { findings: result.summary.fixed },
+        result.summary,
+        result.comparison,
+        beforeTuples,
+        afterTuples,
+      );
+      result.resolutionNotices.push(...baseFixed.notices);
+      await stageResolved({
+        result,
+        findings: baseFixed.findings,
+        before: paths.before,
+        after: paths.after,
+        beforeTuples,
+        afterTuples,
+        evidence,
+        origin: "merge-base",
+        beforeCommit: result.baseline,
+      });
+      const previous = previousHead(event);
+      if (previous) {
+        result.previousHead = previous;
+        try {
+          await git(["cat-file", "-e", `${previous}^{commit}`]);
+        } catch {
+          throw new Error(
+            `Previous commit ${previous} unavailable locally; resolution evidence unavailable.`,
+          );
+        }
+        try {
+          await git(["merge-base", "--is-ancestor", previous, result.head]);
+        } catch {
+          throw new Error(
+            "Previous head is not an ancestor of current head (force push); resolution evidence unavailable.",
+          );
+        }
+        try {
+          await git(["merge-base", "--is-ancestor", result.baseline, previous]);
+        } catch {
+          throw new Error(
+            "Previous head does not descend from the current merge base; resolution evidence unavailable.",
+          );
+        }
+        const historical = await capture("previous", previous);
+        const previousSummary = await check(
+          historical,
+          paths.baselineFile,
+          result.baseline,
+        );
+        const previousBaseline = await record(
+          historical,
+          previous,
+          "previous-head",
+        );
+        const secondary = await check(paths.after, previousBaseline, previous);
+        await writeFile(
+          join(evidence, "previous-summary.json"),
+          `${JSON.stringify(previousSummary, null, 2)}\n`,
+        );
+        await writeFile(
+          join(evidence, "resolution-summary.json"),
+          `${JSON.stringify(secondary, null, 2)}\n`,
+        );
+        result.historyComparison = await compare(
+          historical,
+          previous,
+          "previous-push",
+        );
+        const previousTuples = await tupleImages(
+          historical,
           inputs.flow,
-          "--project",
-          paths.after.project,
-          "--from",
-          "action-after",
-          "--against",
-          "action-before",
-          "--out",
-          comparisonDirectory,
-          "--json",
-        ],
-        paths.after.project,
-      ),
-    );
-    if (
-      result.comparison.before?.commit !== result.baseline ||
-      result.comparison.after?.commit !== result.head ||
-      ![
-        "changed",
-        "unchanged",
-        "onlyBefore",
-        "onlyAfter",
-        "notComparable",
-      ].every((key) => Array.isArray(result.comparison[key]))
-    )
-      throw new Error("invalid compare JSON or capture provenance");
-    await writeFile(
-      join(evidence, "comparison.json"),
-      `${JSON.stringify(result.comparison, null, 2)}\n`,
-    );
-    await stageComparison(result, comparisonDirectory, evidence);
+          previous,
+        );
+        const resolved = resolvedFindings(
+          previousSummary,
+          secondary,
+          result.historyComparison,
+          previousTuples,
+          afterTuples,
+        );
+        result.resolutionNotices.push(...resolved.notices);
+        await stageResolved({
+          result,
+          findings: resolved.findings,
+          before: historical,
+          after: paths.after,
+          beforeTuples: previousTuples,
+          afterTuples,
+          evidence,
+          origin: "previous-push",
+          beforeCommit: previous,
+        });
+      }
+    } catch (error) {
+      result.resolutionNotices.push(error.message);
+      await appendFile(
+        log,
+        `Resolution evidence unavailable: ${error.stack ?? error}\n`,
+      );
+    }
   } catch (error) {
     result.operationalErrors.push(error.message);
     await appendFile(log, `${error.stack ?? error}\n`);

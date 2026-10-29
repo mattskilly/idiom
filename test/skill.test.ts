@@ -1,4 +1,17 @@
+import { execFile } from "node:child_process";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { expect, test } from "vitest";
+import { parse } from "yaml";
 import { createProgram } from "../src/cli.js";
 import {
   readIdiomSkillFile,
@@ -10,7 +23,7 @@ const guide = await readIdiomSkillFile("init.md");
 test("the distributed Idiom skill has valid manual-invocation front matter", async () => {
   const skill = await readIdiomSkillTemplate();
   const lines = skill.split("\n");
-  expect(lines.length).toBeLessThanOrEqual(115);
+  expect(lines.length).toBeLessThanOrEqual(120);
   expect(lines[0]).toBe("---");
   expect(skill).toMatch(/^---\nname: idiom\n/);
   expect(skill).toMatch(/\ndescription: \S[^\n]+\n/);
@@ -28,6 +41,93 @@ test("the distributed Idiom skill has valid manual-invocation front matter", asy
   }
   expect(skill).toContain("disable-model-invocation: true");
   expect(skill.indexOf("\n---\n", 4)).toBeGreaterThan(0);
+});
+
+test("portable skill has standard discovery metadata and stays generated from the canonical source", async () => {
+  const root = join(import.meta.dirname, "..");
+  const portable = await readFile(join(root, "skills/idiom/SKILL.md"), "utf8");
+  const canonical = await readIdiomSkillTemplate();
+  const frontmatter = parse(portable.split("---\n")[1] ?? "");
+  expect(Object.keys(frontmatter).sort()).toEqual(["description", "name"]);
+  expect(frontmatter.name).toBe("idiom");
+  expect(frontmatter.name).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+  expect(frontmatter.name.length).toBeLessThanOrEqual(64);
+  expect(frontmatter.description.length).toBeGreaterThan(0);
+  expect(frontmatter.description.length).toBeLessThanOrEqual(1024);
+  for (const trigger of [
+    "UI is created or changed",
+    "before declaring a UI task complete",
+    "before a PR with UI changes",
+  ])
+    expect(frontmatter.description).toContain(trigger);
+  expect(portable).toBe(
+    canonical
+      .replace("\ndisable-model-invocation: true", "")
+      .replace(
+        "`init.md` beside this file",
+        "`references/init.md` relative to this file",
+      ),
+  );
+  expect(
+    await readFile(join(root, "skills/idiom/references/init.md"), "utf8"),
+  ).toBe(guide);
+  await promisify(execFile)(
+    process.execPath,
+    ["scripts/generate-skill.mjs", "--check"],
+    { cwd: root },
+  );
+});
+
+test("automatic invocation withholds completion for blockers without expanding repair authority", async () => {
+  const skill = await readIdiomSkillTemplate();
+  for (const policy of [
+    "blocking measured or observed findings remain",
+    "applicable configured gates",
+    "human explicitly waives",
+    "outstanding findings and the human waiver",
+    "missing capture or verification evidence is not a clean pass",
+    "not that findings were fixed",
+    "Suggestions alone are not blockers",
+    "grants no new repair or decision authority",
+    "automatic or natural-language invocation",
+    "not a required host variable",
+    "stop; do not enter the conversational review loop",
+    "Never edit product code",
+    "Do not repair anything yourself",
+    "explicit reason for decisions",
+  ])
+    expect(skill).toContain(policy);
+});
+
+test("check-only skill generation detects drift without repairing it", async () => {
+  const root = join(import.meta.dirname, "..");
+  const directory = await mkdtemp(join(tmpdir(), "idiom-skill-sync-"));
+  const exec = promisify(execFile);
+  try {
+    await mkdir(join(directory, "scripts"), { recursive: true });
+    await mkdir(join(directory, "templates/idiom"), { recursive: true });
+    for (const file of [
+      "scripts/generate-skill.mjs",
+      "templates/idiom/SKILL.md",
+      "templates/idiom/init.md",
+    ])
+      await copyFile(join(root, file), join(directory, file));
+    const script = join(directory, "scripts/generate-skill.mjs");
+    await exec(process.execPath, [script]);
+    const path = join(directory, "skills/idiom/references/init.md");
+    await writeFile(path, "stale reference\n");
+    await expect(
+      exec(process.execPath, [script, "--check"]),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        "Portable skill drift: skills/idiom/references/init.md",
+      ),
+    });
+    expect(await readFile(path, "utf8")).toBe("stale reference\n");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("the skill resolves exploration from stored evidence", async () => {

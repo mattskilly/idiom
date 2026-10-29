@@ -399,6 +399,8 @@ export function quickDesignReference(
 export async function runQuick(options: {
   urls: string[];
   design?: string | undefined;
+  /** Explicit design location for adapters that must bypass URL wrapper discovery. */
+  designLocation?: DesignLocation | undefined;
   viewports?: Array<"desktop" | "mobile"> | undefined;
   /** Run the safe interaction probe; default true. */
   probe?: boolean | undefined;
@@ -422,11 +424,12 @@ export async function runQuick(options: {
     );
   }
   let design: DesignLocation | undefined;
-  if (options.design !== undefined) {
+  if (options.design !== undefined || options.designLocation !== undefined) {
     if (options.urls.length !== 1)
       throw new IdiomError("--design compares one page; pass a single URL");
     const parsed = designLocationSchema.safeParse(
-      quickDesignReference(options.design, directory),
+      options.designLocation ??
+        quickDesignReference(options.design as string, directory),
     );
     if (!parsed.success)
       throw new IdiomError(

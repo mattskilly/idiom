@@ -20,7 +20,11 @@ import { ExplanationCollector } from "./explanations.js";
 import { replayRequests } from "./failure-identity.js";
 import { FilmstripBudget, FilmstripCapture } from "./filmstrips.js";
 import { sweepFocusVisible } from "./focus.js";
-import { createLinkChecker, type LinkChecker } from "./links.js";
+import {
+  createLinkChecker,
+  type LinkChecker,
+  type LinkRequester,
+} from "./links.js";
 import { heldStepIndexes, replayKey } from "./loading.js";
 import { MotionCollector } from "./motion.js";
 import { collectPageEvidence } from "./page.js";
@@ -57,6 +61,12 @@ export type BrowserRuntime = {
   };
   now: () => Date;
   monotonicNow?: (() => number) | undefined;
+  /** Hosted-only hooks run before a page exists, in every capture/replay context. */
+  contextOptions?: import("playwright").BrowserContextOptions | undefined;
+  prepareContext?:
+    | ((context: BrowserContext, tuple: BrowserTuple) => Promise<void>)
+    | undefined;
+  createLinkRequester?: (() => Promise<LinkRequester>) | undefined;
 };
 
 function reachContext(state: FlowState): ReachContext {
@@ -611,6 +621,9 @@ export function createBrowserLauncher(
         ((page) => new AxeBuilder({ page }) as { analyze(): Promise<unknown> }),
       now: overrides.now ?? (() => new Date()),
       monotonicNow: overrides.monotonicNow,
+      contextOptions: overrides.contextOptions,
+      prepareContext: overrides.prepareContext,
+      createLinkRequester: overrides.createLinkRequester,
     };
     const browser = await runtime.launch();
     if (options?.signal?.aborted) {
@@ -634,8 +647,9 @@ export function createBrowserLauncher(
           concurrency: settings.concurrency,
           ignore: settings.ignore,
           monotonicNow: runtime.monotonicNow,
-          request: () =>
-            playwrightRequest.newContext({ ignoreHTTPSErrors: false }),
+          request:
+            runtime.createLinkRequester ??
+            (() => playwrightRequest.newContext({ ignoreHTTPSErrors: false })),
         });
         return links;
       };
@@ -643,6 +657,7 @@ export function createBrowserLauncher(
     const newContext = async (tuple: BrowserTuple) => {
       tuple.signal?.throwIfAborted();
       const context = await browser.newContext({
+        ...runtime.contextOptions,
         ...deterministicContextOptions(
           tuple.project,
           tuple.viewport,
@@ -651,6 +666,12 @@ export function createBrowserLauncher(
         // A service worker's fetches bypass context routing.
         ...(tuple.probe ? { serviceWorkers: "block" as const } : {}),
       });
+      try {
+        await runtime.prepareContext?.(context, tuple);
+      } catch (error) {
+        await context.close().catch(() => undefined);
+        throw error;
+      }
       if (tuple.signal?.aborted) {
         void context.close().catch(() => undefined);
         tuple.signal.throwIfAborted();

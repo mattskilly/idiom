@@ -1,0 +1,96 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mattskilly/idiom",
+  "title": "Idiom",
+  "description": "Design acceptance for UI: capture flows, inspect findings, plan repairs and verify fixes.",
+  "version": "0.15.0",
+  "websiteUrl": "https://idiom.build",
+  "repository": {
+    "url": "https://github.com/mattskilly/idiom",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@mattskilly/idiom",
+      "version": "0.15.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "tools": [
+        {
+          "name": "idiom_quick",
+          "description": "Review a public URL with deterministic checks and bounded safe interaction probes."
+        },
+        {
+          "name": "idiom_check",
+          "description": "Capture configured flows, check UI and intended designs, and return ranked evidence."
+        },
+        {
+          "name": "idiom_issue",
+          "description": "Read original finding or group evidence, including available screenshot crops."
+        },
+        {
+          "name": "idiom_fix_plan",
+          "description": "Capture a full flow and return a repair prompt and exact verification arguments."
+        },
+        {
+          "name": "idiom_verify",
+          "description": "Recapture twice to verify original findings and report introduced findings."
+        },
+        {
+          "name": "idiom_context",
+          "description": "Read the project design brief, rules, tokens and accepted work."
+        },
+        {
+          "name": "idiom_flows",
+          "description": "List validated flows, states, viewports and color schemes."
+        },
+        {
+          "name": "idiom_decide",
+          "description": "Record an explicit human finding judgment or design-system ruling with a reason."
+        },
+        {
+          "name": "idiom_init",
+          "description": "Scaffold project configuration and design documents without overwriting changed files."
+        },
+        {
+          "name": "idiom_design_add",
+          "description": "Attach an intended design reference to an authored flow state."
+        },
+        {
+          "name": "idiom_choose",
+          "description": "Record the human choice and reason between disagreeing design references."
+        },
+        {
+          "name": "idiom_tickets",
+          "description": "Emit human-accepted findings as clustered triage proposals."
+        },
+        {
+          "name": "idiom_sweep",
+          "description": "Capture and check flows with optional model critique and bounded triage proposals."
+        },
+        {
+          "name": "idiom_coverage",
+          "description": "Read route and captured-state coverage and its limits."
+        },
+        {
+          "name": "idiom_baseline",
+          "description": "Show or record a deterministic flow baseline without changing Git."
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,18 @@
+<section id="hosted-review" hidden aria-labelledby="hosted-title">
+  <p class="kicker">Try a page</p>
+  <h2 id="hosted-title">Drop a URL. See what needs attention.</h2>
+  <p class="lede">Measured design checks and a strict read-only probe. Add a design to check drift.</p>
+  <form id="hosted-form" class="col">
+    <label for="hosted-target">Public page URL</label>
+    <input id="hosted-target" name="target" type="url" required maxlength="2048" placeholder="https://your-site.com" aria-describedby="hosted-target-error">
+    <p id="hosted-target-error" class="hosted-error"></p>
+    <label for="hosted-design-kind">Optional design input</label>
+    <select id="hosted-design-kind"><option value="none">No design input</option><option value="image">Upload an image</option><option value="reference">Reference site URL</option></select>
+    <div id="hosted-image-fields" hidden><label for="hosted-image">Design image · PNG, JPEG or WebP, up to 2 MiB</label><input id="hosted-image" name="image" type="file" accept="image/png,image/jpeg,image/webp" aria-describedby="hosted-image-error" disabled><p id="hosted-image-error" class="hosted-error"></p></div>
+    <div id="hosted-reference-fields" hidden><label for="hosted-reference">Public reference URL</label><input id="hosted-reference" name="reference" type="url" maxlength="2048" aria-describedby="hosted-reference-error" disabled><p id="hosted-reference-error" class="hosted-error"></p></div>
+    <p class="hosted-meta">No account. Three reviews per IP per UTC day. Up to 90 seconds. One page, no crawl. Unlisted reports expire after seven days; you can delete yours sooner. Anyone with the report link can read it.</p>
+    <button id="hosted-submit" type="submit">Review this page</button>
+    <p id="hosted-progress" role="status" aria-live="polite" aria-atomic="true"></p>
+    <p id="hosted-result" hidden><a id="hosted-report-link">Open your report</a> <button type="button" id="hosted-copy-link">Copy share link</button></p>
+  </form>
+</section>

@@ -4,6 +4,8 @@
 
 Install Node 20 or newer and the matching Playwright Chromium browser. After installing Idiom, run `npx playwright install chromium`. The application must be reachable for quick review; configured flows use their normal setup/build/server settings.
 
+The portable Agent Skill installs with `npx skills add mattskilly/idiom --skill idiom` once the public snapshot contains it. See [distribution and registry preparation](distribution.md) for the prepared manifest and publication prerequisites; this does not announce a live registry listing. The [Claude Code how-to](https://idiom.build/design-qa-for-claude-code) walks through setup and the repair loop.
+
 ## Setup
 
 ### Claude Code

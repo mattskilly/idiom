@@ -1,10 +1,14 @@
 ---
 name: idiom
-description: Review public pages with Idiom quick, check configured flows against intended designs, and hand off requested repairs through fix-plan and verify.
+description: Use when UI is created or changed, before declaring a UI task complete, and before a PR with UI changes. Review public pages with Idiom quick, check configured flows against intended designs, and hand off requested repairs through fix-plan and verify.
 disable-model-invocation: true
 ---
 
-# /idiom $ARGUMENTS
+# /idiom
+
+When UI is created or changed, before declaring a UI task complete, and before a PR with UI changes: run the relevant check, inspect its evidence, hand authorized repairs to the caller, and verify. Do not declare UI work complete while blocking measured or observed findings remain under the applicable configured gates, unless the human explicitly waives them. Report outstanding findings and the human waiver. Suggestions alone are not blockers. A successful check proves it ran, not that findings were fixed; missing capture or verification evidence is not a clean pass. This policy withholds completion claims; it grants no new repair or decision authority.
+
+For automatic or natural-language invocation, select applicable configured flow(s) with `idiom_flows` and use `idiom_check` (CLI equivalents if MCP is absent). Inspect returned evidence; use `idiom_fix_plan` and `idiom_verify` for requested repairs within the caller's authorized task. For a suitable unconfigured public page use `idiom_quick`, disclosing authentication, fixture and probe-coverage limits. Errors are errors, not clean results. After reporting the automatic check/repair outcome, stop; do not enter the conversational review loop. Explicit modes below take precedence; `$ARGUMENTS` means the requested mode/flow text when the host supplies it, not a required host variable.
 
 Findings are measured (a deterministic rule with its measurement), observed (an action or probe with its timing and result), or judged (model critique with stated confidence when supplied). Treat judged findings as suggestions: severity gates count measured and observed findings by default; --fail-on-judged opts judged suggestions in.
 

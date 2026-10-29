@@ -2,6 +2,8 @@
 
 Design acceptance for AI-built software: Idiom opens your running app in a real browser, uses it the way a person would, finds the UI and UX defects a careful designer would catch, hands each one to your coding agent as a fix, and keeps them from coming back.
 
+Agents can use the [portable Idiom skill](skills/idiom/SKILL.md): `npx skills add mattskilly/idiom --skill idiom`. [MCP setup](docs/mcp.md) connects the local tools; [distribution.md](docs/distribution.md) explains the prepared registry manifest and publication steps. Learn the workflow in [Design QA for Claude Code](https://idiom.build/design-qa-for-claude-code) and [Testing loading, empty and error states](https://idiom.build/testing-loading-empty-error-states).
+
 ## Who it's for
 
 Anyone building UI with AI coding agents such as Claude Code, Codex or Cursor. Idiom judges what actually renders, across every state, viewport and colour scheme, rather than the source code. It runs on its own from the terminal or CI. If you use Autobuild, it plugs in as a verify step, but it doesn't need Autobuild.
@@ -10,7 +12,7 @@ Anyone building UI with AI coding agents such as Claude Code, Codex or Cursor. I
 
 1. **Check**: `idiom check <flow>` renders every state you declare at each viewport and colour scheme (`idiom quick <url>` does the same for the pages you name, with no setup) and runs more than 60 measured checks: contrast, broken links and images, fonts that fail to load, missing focus styles, controls that do nothing, duplicate entry points, content that jumps when you act, actions with no loading state or that can be submitted twice, failures with no error message or no way to retry, changes that snap with no transition, spacing, alignment, sizes off your design system and more ([docs/rules.md](docs/rules.md)). Top issues come first, ranked by how noticeable each problem is and how prominent the element is ([ranking](docs/ranking.md)); symptoms that share one cause are grouped into one issue. Capture waits for entrance animations to finish, then only what is actually on screen is judged: content in a closed menu or collapsed section, and hidden, fully transparent or clipped-away elements are skipped and counted in the report, not measured.
 2. **Fix**: every finding names the element, the measurement and when it counts as fixed, with a cropped screenshot. It also says how Idiom knows: measured by a rule, observed during an interaction, or judged by the model critique. Measured and observed findings gate by default; judged ones only with `--fail-on-judged`. `idiom verify` reports each finding's acceptance check as passed, failed or not re-checkable. `idiom fix <flow>` hands the top findings to Claude Code or Codex, then recaptures to verify each repair.
-3. **Guard**: `idiom check --changed` checks only the states your Git changes affect, following routes and imports, and lists the states it skipped. The first `idiom check` on a committed HEAD records today's findings as a baseline. After that, checks and the GitHub Action fail only on new findings. Accept and reject decisions are stored in the repo, so a settled finding stays settled.
+3. **Guard**: `idiom check --changed` checks only the states your Git changes affect, following routes and imports, and lists the states it skipped. The first `idiom check` on a committed HEAD records today's findings as a baseline. After that, checks and the GitHub Action fail only on new findings. On a pull request, the Action posts one comment that sorts new findings into Blocks merge, Should fix and Opportunities, each with its fix and how to confirm it, and links the full HTML report. Accept and reject decisions are stored in the repo, so a settled finding stays settled.
 
 To find out whether controls work, Idiom probes them within coverage and time budgets, reuses equivalent results across states, and captures states concurrently. Probes restore the state between interactions. Idiom blocks every request that could change data (anything but GET, HEAD and OPTIONS), except the setup steps you declare. `idiom quick` probes too, more strictly, within 45 seconds per page (`--no-probe` to skip).
 
@@ -79,7 +81,7 @@ npm install -g @mattskilly/idiom
 idiom --version
 ```
 
-The version command prints `<version> (<short source commit>)`, for example `0.14.0 (a85659a)`. To pin a project to an exact release instead, add it as a dev dependency (`bun add -d --exact @mattskilly/idiom@0.14.0`) and run it with `bunx idiom` or `npx idiom`.
+The version command prints `<version> (<short source commit>)`, for example `0.15.0 (a85659a)`. To pin a project to an exact release instead, add it as a dev dependency (`bun add -d --exact @mattskilly/idiom@0.15.0`) and run it with `bunx idiom` or `npx idiom`.
 
 ### Browser setup
 

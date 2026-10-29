@@ -3,82 +3,136 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { markdown, readJson, validateEvent } from "./common.mjs";
 
+import { comparisonDetails, presentation } from "./presentation.mjs";
+
 export const marker = "<!-- idiom-regression-guard -->";
 export function renderComment(result, artifactUrl) {
-  // Artifact URLs are downloads, never inline image hosts.
-  const url = /^https:\/\/[^\s<>()[\]"']+$/.test(artifactUrl ?? "")
-    ? artifactUrl
-    : undefined;
+  let shortened = false;
+  // Escape each complete Unicode codepoint before budgeting, never half an entity,
+  // Markdown escape, or surrogate pair. Full source text remains in index.html.
+  const text = (value, budget = 700) => {
+    let output = "",
+      bytes = 0;
+    for (const point of String(value ?? "unavailable").replace(
+      /[\r\n]+/g,
+      " ",
+    )) {
+      const escaped = markdown(point),
+        length = Buffer.byteLength(escaped, "utf8");
+      if (bytes + length > budget) {
+        shortened = true;
+        return `${output}…`;
+      }
+      output += escaped;
+      bytes += length;
+    }
+    return output;
+  };
+  const validUrl = /^https:\/\/[^\s<>()[\]"']+$/.test(artifactUrl ?? "");
+  const url =
+    validUrl && Buffer.byteLength(artifactUrl, "utf8") <= 2048
+      ? artifactUrl
+      : undefined;
+  if (validUrl && !url) shortened = true;
   const download = url
     ? `[Download evidence](${url})`
     : "Evidence upload unavailable";
-  const file = (path) => `${markdown(path)} (${download})`;
-  const header = [
+  const model = presentation(result);
+  const evidence = (entry) =>
+    text(
+      [
+        ...(entry?.images ?? []).map(
+          (image) => `${image.label}: ${image.path}`,
+        ),
+        ...(entry?.reasons ?? []),
+      ].join("; ") || "Evidence unavailable: no staged image.",
+    );
+  const issue = (
+    entry,
+  ) => `- **${text(entry.severity ?? "Design-system question", 50)}** ${text(entry.where, 180)} · ${text(entry.basis, 40)}
+  - **Problem:** ${text(entry.problem)}
+  - **Fix:** ${text(entry.fix.join("; "))}
+  - **Evidence:** ${evidence(entry.evidence)}
+  - **Done when:** ${text(entry.doneWhen.join("; "))}`;
+  const previousCount = model.resolved.filter(
+    (entry) => entry.origin === "previous-push",
+  ).length;
+  const baselineCount = model.resolved.filter(
+    (entry) => entry.origin === "merge-base",
+  ).length;
+  const parts = [
     marker,
-    `## Idiom regression check: ${markdown(result.flow)}`,
-    "",
-    `Head: ${markdown(result.head ?? "unavailable")} · merge base: ${markdown(result.baseline ?? "unavailable")}`,
-    `New: ${result.summary?.findings.length ?? 0} · Fixed: ${result.summary?.fixed.length ?? 0} · Pre-existing: ${result.summary?.preExistingFindings.length ?? 0} · fail-on: ${markdown(result.failOn)}`,
-    "",
-    `${download}. Open index.html after downloading. GitHub login is required; links expire when the artifact is removed (14-day retention, subject to repository policy).`,
-    "",
-    ...result.operationalErrors.map(
-      (error) => `Operational error: ${markdown(error)}`,
-    ),
+    `## Idiom regression check: ${text(result.flow, 160)}`,
+    `Head: ${text(result.head, 100)} · merge base: ${text(result.baseline, 100)}`,
+    `New: ${result.summary?.findings.length ?? 0} · Pre-existing: ${result.summary?.preExistingFindings.length ?? 0} · fail-on: ${text(result.failOn, 40)}`,
+    `Operational status: ${result.operationalErrors.length ? `${result.operationalErrors.length} error(s)` : "complete"}`,
+    ...result.operationalErrors
+      .slice(0, 3)
+      .map((error) => `Operational error: ${text(error)}`),
     "",
   ];
-  const details = [];
-  for (const [index, finding] of (result.summary?.findings ?? []).entries()) {
-    details.push(
-      `- **${markdown(finding.severity)}** ${markdown(finding.where)}: ${markdown(finding.problem)}`,
-      ...finding.fix.map((fix) => `  - Done when: ${markdown(fix)}`),
-      ...(result.crops ?? [])
-        .filter((crop) => crop.finding === index)
-        .map((crop) => `  - ${markdown(crop.label)}: ${file(crop.path)}`),
+  if (result.operationalErrors.length > 3) shortened = true;
+  const slots = [];
+  for (const tier of model.tiers) {
+    parts.push(
+      `### ${tier.name} (${tier.entries.length})`,
+      "",
+      ...tier.entries.slice(0, 3).map(issue),
     );
-  }
-  if (!result.summary?.findings.length)
-    details.push("No new deterministic findings.");
-  details.push(
-    "",
-    "### Before / after composites",
-    "",
-    ...(result.composites ?? []).map(
-      (composite) => `- ${markdown(composite.key)}: ${file(composite.path)}`,
-    ),
-  );
-  const comparison = result.comparison;
-  if (comparison)
-    details.push(
-      `Unchanged: ${comparison.unchanged.length}; only before: ${comparison.onlyBefore.length}; only after: ${comparison.onlyAfter.length}; not comparable: ${comparison.notComparable.length}.`,
-      ...comparison.onlyBefore.map(
-        (tuple) => `- Only before: ${markdown(tuple.key)}`,
-      ),
-      ...comparison.onlyAfter.map(
-        (tuple) => `- Only after: ${markdown(tuple.key)}`,
-      ),
-      ...comparison.notComparable.map(
-        (tuple) =>
-          `- Not comparable: ${markdown(tuple.key)} — ${markdown(tuple.reason)}`,
-      ),
-    );
-  details.push(
-    ...(result.unavailable ?? []).map(
-      (reason) => `- Evidence unavailable: ${markdown(reason)}`,
-    ),
-  );
-  const suffix = `\n\nComplete findings and images: ${download}; index.html, summary.json, comparison.json.\n`;
-  // Bound only the rendered report; result.summary remains the complete gate input.
-  const budget = 55000 - suffix.length;
-  let body = header.join("\n").slice(0, budget);
-  for (const line of details) {
-    if (body.length + line.length + 1 > budget) {
-      body += "\nFurther details omitted; see the complete artifact.";
-      break;
+    if (tier.entries.length > 3) {
+      parts.push(
+        `\n<details><summary>${tier.entries.length - 3} more in ${tier.name}</summary>\n`,
+      );
+      slots.push({
+        position: parts.length,
+        entries: tier.entries.slice(3).map((entry) => () => issue(entry)),
+      });
+      parts.push("", "\n</details>\n");
     }
-    body += `\n${line}`;
   }
-  return body + suffix;
+  parts.push(
+    `\n<details><summary>Resolved (${model.resolved.length}): ${previousCount} since previous push; ${baselineCount} since merge base</summary>\n`,
+    "Previous-push evidence reproduces the preceding revision, rather than retaining an earlier run's pixels.",
+  );
+  slots.push({
+    position: parts.length,
+    entries: model.resolved.map(
+      (entry) => () =>
+        `- ${text(entry.problem)} · ${text(entry.where, 180)} (${text(entry.origin, 40)})\n  - Before ${text(entry.beforeCommit, 100)}: ${evidence(entry.before)}\n  - After ${text(entry.afterCommit, 100)}: ${evidence(entry.after)}`,
+    ),
+  });
+  parts.push(
+    "",
+    "\n</details>\n",
+    "<details><summary>Comparison and evidence diagnostics</summary>\n",
+  );
+  slots.push({
+    position: parts.length,
+    entries: comparisonDetails(result).map((line) => () => `- ${text(line)}`),
+  });
+  parts.push("", "\n</details>\n");
+  const overflow =
+    "Further details omitted; see the complete artifact's index.html.";
+  const footer = `\nComplete findings and images: ${download}; index.html, summary.json, comparison.json. Open index.html after downloading. GitHub login is required; links expire when the artifact is removed (14-day retention, subject to repository policy).\n`;
+  let remaining =
+    55000 -
+    Buffer.byteLength(parts.join("\n") + overflow + footer, "utf8") -
+    20;
+  for (const slot of slots) {
+    const accepted = [];
+    for (const render of slot.entries) {
+      const entry = render(),
+        size = Buffer.byteLength(entry, "utf8") + 1;
+      if (size > remaining) {
+        shortened = true;
+        break;
+      }
+      remaining -= size;
+      accepted.push(entry);
+    }
+    parts[slot.position] = accepted.join("\n");
+  }
+  return parts.join("\n") + (shortened ? `\n${overflow}\n` : "") + footer;
 }
 
 export async function upsertComment({

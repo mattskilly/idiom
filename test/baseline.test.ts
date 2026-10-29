@@ -176,6 +176,8 @@ test("fixture delta reports exactly one new, one fixed and one pre-existing thro
   expect(summary.fixed).toHaveLength(1);
   expect(summary.preExisting).toBe(1);
   expect(summary.findings[0]?.problem).toContain("#new");
+  expect(summary.findings[0]?.fingerprint).toBeTruthy();
+  expect(summary.preExistingFindings?.[0]?.fingerprint).toBeTruthy();
   expect(summary.fixed?.[0]?.selector).toContain("#old");
   expect(summary.baseline?.stale).toBeUndefined();
   for (const heading of [

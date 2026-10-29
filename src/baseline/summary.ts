@@ -12,6 +12,8 @@ export type SummaryFinding = {
   basisDetails?: Finding["basisDetails"] | undefined;
   acceptance?: Finding["acceptance"] | undefined;
   id: string;
+  /** Stable identity for occurrence-level presentation across pushes. */
+  fingerprint?: string | undefined;
   severity: Finding["severity"];
   category: Finding["category"];
   rule?: string | undefined;
@@ -46,6 +48,7 @@ export function summarizeFinding(
     finding.evidence.screenshots[0];
   return {
     id: finding.id,
+    fingerprint: finding.fingerprint,
     basis: finding.basis,
     basisDetails: finding.basisDetails,
     acceptance: finding.acceptance,

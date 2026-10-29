@@ -31,7 +31,11 @@ type QuietWindow = {
 export async function beginEffectWindow(
   page: Page,
   maximumMs: number,
-  options: { pendingMs?: number | undefined } = {},
+  options: {
+    pendingMs?: number | undefined;
+    /** Real page for cleanup after an enclosing deadline retires its proxy. */
+    cleanupPage?: Page | undefined;
+  } = {},
 ) {
   const token = `${Date.now()}:${Math.random()}`;
   let networkAt = performance.now();
@@ -56,7 +60,7 @@ export async function beginEffectWindow(
     page.off("request", request);
     page.off("requestfinished", finished);
     page.off("requestfailed", finished);
-    await page
+    await (options.cleanupPage ?? page)
       .evaluate((token) => {
         const scope = window as QuietWindow;
         const state = scope.__idiomQuiet;

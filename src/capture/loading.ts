@@ -27,6 +27,7 @@ type Change = { time: number; selector: string };
 /** What the page reports; times are ms since dispatch on the page clock. */
 type PendingFacts = {
   dispatched: boolean;
+  classificationDeadline: number | null;
   elapsed: number | null;
   indicators: Indicator[];
   firstChange: Change | null;
@@ -44,13 +45,17 @@ type PendingWindow = Window & {
     bind(element: Element): void;
     freeze(): void;
     released(): number | null;
-    read(): PendingFacts;
+    retain(): number | null;
+    read(cutoff?: number): PendingFacts;
     dispose(): void;
   };
 };
 
 type NoiseWindow = Window & {
-  __idiomNoiseLog?: { periodic(anchors?: number[]): Element[] };
+  __idiomNoiseLog?: {
+    periodic(anchors?: number[]): Element[];
+    provisional(anchors?: number[]): Array<{ root: Element; deadline: number }>;
+  };
 };
 
 /**
@@ -72,8 +77,10 @@ export function installNoiseRecorder(): void {
   const batches: Batch[] = [];
   const roots = new Set<Element>();
   const inputs: number[] = [];
-  let current: { start: number; last: number; targets: Set<Element> } | null =
-    null;
+  const pending = new Map<
+    Element,
+    { start: number; last: number; targets: Set<Element> }
+  >();
   for (const type of ["pointerdown", "keydown", "input"])
     window.addEventListener(
       type,
@@ -100,33 +107,50 @@ export function installNoiseRecorder(): void {
     }
     return chain[0] ?? null;
   };
-  const flush = () => {
-    const batch = current;
-    current = null;
-    if (batch === null) return;
-    const targets = [...batch.targets].filter((target) => target.isConnected);
-    const root = commonAncestor(targets);
+  const flush = (now: number) => {
+    for (const [root, batch] of pending) {
+      if (now - batch.last <= BATCH_GAP_MS) continue;
+      pending.delete(root);
+      if (!root.isConnected) continue;
+      batches.push({
+        time: batch.start,
+        root,
+        targets: [...batch.targets].filter((target) => target.isConnected),
+      });
+    }
+    // Pending and completed batches share one storage budget.
+    while (batches.length + pending.size > MAX_BATCHES) batches.shift();
+  };
+  const observer = new MutationObserver((records) => {
+    // Initial HTML construction is not a sample of a running mutation stream.
+    if (document.readyState === "loading") return;
+    const now = performance.now();
+    flush(now);
+    const connected = records.flatMap((record) => {
+      const element =
+        record.target instanceof Element
+          ? record.target
+          : record.target.parentElement;
+      return element?.isConnected ? [element] : [];
+    });
+    // Find the delivery's actual root before truncating its retained targets.
+    const root = commonAncestor(connected);
     if (root === null) return;
     if (!roots.has(root)) {
       if (roots.size >= MAX_ROOTS) return;
       roots.add(root);
     }
-    batches.push({ time: batch.start, root, targets });
-    if (batches.length > MAX_BATCHES) batches.shift();
-  };
-  const observer = new MutationObserver((records) => {
-    const now = performance.now();
-    if (current !== null && now - current.last > BATCH_GAP_MS) flush();
-    current ??= { start: now, last: now, targets: new Set() };
-    current.last = now;
-    for (const record of records) {
-      if (current.targets.size >= MAX_TARGETS) break;
-      const element =
-        record.target instanceof Element
-          ? record.target
-          : record.target.parentElement;
-      if (element) current.targets.add(element);
+    let batch = pending.get(root);
+    if (!batch) {
+      batch = { start: now, last: now, targets: new Set() };
+      pending.set(root, batch);
     }
+    batch.last = now;
+    for (const target of connected) {
+      if (batch.targets.size >= MAX_TARGETS) break;
+      batch.targets.add(target);
+    }
+    while (batches.length + pending.size > MAX_BATCHES) batches.shift();
   });
   observer.observe(document, {
     subtree: true,
@@ -168,8 +192,7 @@ export function installNoiseRecorder(): void {
     element.matches("main, [role=main]");
   scope.__idiomNoiseLog = {
     periodic: (extra = []) => {
-      if (current !== null && performance.now() - current.last > BATCH_GAP_MS)
-        flush();
+      flush(performance.now());
       const anchors = [...inputs, ...extra];
       // Each batch belongs to the lowest element containing all its changes;
       // a root's own batches decide, so a ticker inside an app shell never
@@ -190,6 +213,38 @@ export function installNoiseRecorder(): void {
               .filter((target) => !broad(target))
           : [root],
       );
+    },
+    provisional: (extra = []) => {
+      const now = performance.now();
+      flush(now);
+      const anchors = [...inputs, ...extra];
+      return [...roots].flatMap((root) => {
+        if (!root.isConnected || broad(root)) return [];
+        const times = batches
+          .filter((batch) => batch.root === root)
+          .map((batch) => batch.time);
+        const open = pending.get(root);
+        if (open) times.push(open.start);
+        // A completed run is already classified, including action-caused runs.
+        const found = period(times);
+        if (found !== null) {
+          if (!open || caused(times, found.ms, anchors)) return [];
+          // A third sample in an open batch is not yet in periodic(). Keep
+          // observing until that same batch closes, without double counting it.
+          const completed = times.slice(0, -1);
+          return period(completed) === null
+            ? [{ root, deadline: open.last + BATCH_GAP_MS + 1 }]
+            : [];
+        }
+        if (times.length < 2) return [];
+        const last = times[times.length - 1] ?? 0;
+        const gap = last - (times[times.length - 2] ?? 0);
+        if (gap < MIN_PERIOD_MS || caused(times, gap, anchors)) return [];
+        // The next sample can arrive within the existing regularity tolerance;
+        // allow its batch to close. Never renew an expired opportunity.
+        const deadline = last + gap * 1.33 + BATCH_GAP_MS + 1;
+        return deadline > now ? [{ root, deadline }] : [];
+      });
     },
   };
 }
@@ -357,6 +412,7 @@ function pendingWatcher(config: WatcherConfig): void {
   type Seen = Change & { element: Element; main: boolean };
   const early: Seen[] = [];
   const late: Seen[] = [];
+  let retained: { candidates: number; early: number; late: number } | undefined;
   const MAX_CHANGES = 50;
   const keep = (list: Seen[], entry: Seen) => {
     if (
@@ -372,7 +428,9 @@ function pendingWatcher(config: WatcherConfig): void {
     const noise = new Set(
       (window as NoiseWindow).__idiomNoiseLog?.periodic(anchors) ?? [],
     );
-    return (element: Element) => {
+    const provisional =
+      (window as NoiseWindow).__idiomNoiseLog?.provisional(anchors) ?? [];
+    const has = (element: Element) => {
       if (noise.size === 0) return false;
       for (
         let current: Element | null = element;
@@ -382,6 +440,7 @@ function pendingWatcher(config: WatcherConfig): void {
         if (noise.has(current)) return true;
       return false;
     };
+    return { has, provisional };
   };
   let mainEmpty: PendingFacts["mainEmpty"] = null;
 
@@ -571,18 +630,29 @@ function pendingWatcher(config: WatcherConfig): void {
   for (const type of actionEvents)
     window.addEventListener(type, onAction, true);
 
-  const settled = (noise: (element: Element) => boolean) => {
+  const settled = (noise: (element: Element) => boolean, cutoff = Infinity) => {
     const indicators: Indicator[] = [];
     const kinds = new Set<Kind>();
-    for (const { element, indicator } of candidates) {
-      if (kinds.has(indicator.kind) || indicators.length >= 12) continue;
+    for (const { element, indicator } of candidates.slice(
+      0,
+      retained?.candidates,
+    )) {
+      if (
+        indicator.time > cutoff ||
+        kinds.has(indicator.kind) ||
+        indicators.length >= 12
+      )
+        continue;
       if (filterable.has(indicator.kind) && noise(element)) continue;
       kinds.add(indicator.kind);
       indicators.push(indicator);
     }
     const change = (seen: Seen | undefined): Change | null =>
       seen ? { time: seen.time, selector: seen.selector } : null;
-    const quiet = [...early, ...late].filter(({ element }) => !noise(element));
+    const quiet = [
+      ...early.slice(0, retained?.early),
+      ...late.slice(0, retained?.late),
+    ].filter(({ element, time }) => time <= cutoff && !noise(element));
     const after = late.filter(({ element }) => !noise(element));
     return {
       indicators,
@@ -612,14 +682,49 @@ function pendingWatcher(config: WatcherConfig): void {
       releasedAt ??= time;
       return time;
     },
-    read: () => {
+    retain: () => {
+      onMutations(observer.takeRecords());
+      scan();
+      // Counts also distinguish deliveries at the same page-clock timestamp.
+      retained = {
+        candidates: candidates.length,
+        early: early.length,
+        late: late.length,
+      };
+      return startedAt === null ? null : since();
+    },
+    read: (cutoff = Infinity) => {
       onMutations(observer.takeRecords());
       scan();
       const element = trigger;
+      const noise = periodicNoise();
+      const relevant = [
+        ...early.slice(0, retained?.early).filter(({ time }) => time <= cutoff),
+        ...late.slice(0, retained?.late).filter(({ time }) => time <= cutoff),
+        ...candidates
+          .slice(0, retained?.candidates)
+          .filter(
+            ({ indicator }) =>
+              indicator.time <= cutoff && filterable.has(indicator.kind),
+          ),
+      ];
+      const deadlines = noise.provisional
+        .filter(({ root }) =>
+          relevant.some(
+            ({ element }) =>
+              !isNoisy(element) &&
+              !noise.has(element) &&
+              root.contains(element),
+          ),
+        )
+        .map(({ deadline }) => deadline);
       return {
         dispatched: startedAt !== null,
         elapsed: startedAt === null ? null : since(),
-        ...settled(periodicNoise()),
+        ...settled(noise.has, cutoff),
+        classificationDeadline: deadlines.length
+          ? Math.min(...deadlines)
+          : null,
         mainSelector: mainSelectorOf(mainElement),
         mainEmpty: mainEmpty === null ? null : { ...mainEmpty },
         routeChange,
@@ -875,12 +980,17 @@ export async function replayHeld(options: {
   /** The action submitted by main-frame document navigation. */
   const navigated = () =>
     hold?.requests.some((request) => request.navigation) === true;
+  /** Retain the first activation's candidates while allowing later classification. */
+  let candidateCutoff: number | undefined;
   const read = () =>
     page
-      .evaluate((token) => {
-        const active = (window as PendingWindow).__idiomPending;
-        return active?.token === token ? active.read() : null;
-      }, token)
+      .evaluate(
+        ({ token, cutoff }) => {
+          const active = (window as PendingWindow).__idiomPending;
+          return active?.token === token ? active.read(cutoff) : null;
+        },
+        { token, cutoff: candidateCutoff },
+      )
       .catch((error: unknown) => {
         if (contextGone.test(String(error)) && navigated()) return null;
         throw error;
@@ -893,9 +1003,6 @@ export async function replayHeld(options: {
       ? {
           ...latest,
           dispatched: before.dispatched,
-          indicators: before.indicators,
-          firstChange: before.firstChange,
-          firstMainChange: before.firstMainChange,
         }
       : latest;
     held.dispatched = facts.dispatched;
@@ -999,6 +1106,13 @@ export async function replayHeld(options: {
     if (repeatable && hold.pendingNonSafe()) {
       if (facts?.trigger.enabled === true) {
         before = facts;
+        candidateCutoff =
+          (await page.evaluate((token) => {
+            const active = (window as PendingWindow).__idiomPending;
+            return active?.token === token ? active.retain() : null;
+          }, token)) ??
+          facts.elapsed ??
+          undefined;
         held.notes.push(
           "feedback after the second activation is attributed to it, not recorded",
         );
@@ -1036,14 +1150,30 @@ export async function replayHeld(options: {
       .map((request) => request.releasedAt)
       .filter((value): value is number => value !== null);
     held.releasedAt = releases.length ? Math.min(...releases) : null;
-    const effectWindow = await beginEffectWindow(page, Math.max(delayMs, 1000));
+    const observationEnd = clock() + Math.max(delayMs, 1000);
+    const effectWindow = await beginEffectWindow(
+      page,
+      Math.max(0, observationEnd - clock()),
+      { cleanupPage: options.routePage },
+    );
     let settled = false;
     try {
       settled = await effectWindow.wait();
     } finally {
       await effectWindow.dispose();
     }
-    apply(await read());
+    let final = await read();
+    // Finish only relevant provisional histories inside the original effect
+    // budget. The request hold and the enclosing page deadline remain intact.
+    while (
+      final?.classificationDeadline !== null &&
+      final !== null &&
+      clock() < observationEnd
+    ) {
+      await page.waitForTimeout(Math.min(25, observationEnd - clock()));
+      final = await read();
+    }
+    apply(final);
     await handle.finish(undefined, settled);
   } catch (error) {
     held.notes.push(`held replay failed: ${String(error).split("\n")[0]}`);
@@ -1052,7 +1182,7 @@ export async function replayHeld(options: {
     throw error;
   } finally {
     await hold?.dispose();
-    await page
+    await options.routePage
       .evaluate((token) => {
         const active = (window as PendingWindow).__idiomPending;
         if (active?.token === token) active.dispose();

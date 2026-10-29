@@ -1,8 +1,26 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "",
-  "buildCommand": "node scripts/build-site.mjs",
+  "installCommand": "bun install --frozen-lockfile",
+  "buildCommand": "bun run build:hosted-runner && bun run build:site",
   "outputDirectory": "site/dist",
   "cleanUrls": true,
-  "trailingSlash": false
+  "trailingSlash": false,
+  "functions": {
+    "api/hosted-*.ts": {
+      "maxDuration": 120,
+      "includeFiles": "hosted-dist/identity.json"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/r/:id",
+      "destination": "/api/hosted-report?id=:id"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/hosted-cleanup",
+      "schedule": "0 3 * * *"
+    }
+  ]
 }

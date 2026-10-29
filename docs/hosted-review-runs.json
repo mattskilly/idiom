@@ -1,0 +1,290 @@
+{
+  "version": 1,
+  "measuredAt": "2026-10-28T14:04:16.099Z",
+  "method": "Real runQuick deterministic engine + strict probe + hosted numeric-IP proxy against maintained local fixtures; injected resolver/dial only. Node CPU excludes Chromium child CPU. No paid Sandbox or Blob used. USD figures are estimates.",
+  "sourceCommit": "939c6ecf68d0ee52f9d34c4024230bd1dc2007fb",
+  "sourceHash": "40085c4f8f6dddc7a77c983d19d4d24664361019d3667827badd5e17a5876f89",
+  "runtimeHash": "fda8d8d1355b991b88e36c783be19b5eb33c8ffe9f5db7e3f229adb9b3428fb3",
+  "machine": {
+    "platform": "darwin",
+    "release": "25.5.0",
+    "arch": "arm64",
+    "cpu": "Apple M3 Pro",
+    "node": "v24.4.0",
+    "chromium": "151.0.7922.34"
+  },
+  "summary": {
+    "measuredRuns": 10,
+    "meanMs": 6907.008983499999,
+    "p95Ms": 9940.105666999996,
+    "worstMs": 9940.105666999996
+  },
+  "rows": [
+    {
+      "name": "static-a",
+      "fixture": "/static",
+      "status": "success",
+      "elapsedMs": 4707.859667000001,
+      "inputBytes": 1819,
+      "networkBytes": 7276,
+      "outputBytes": 79739,
+      "issues": 3,
+      "evidenceCount": 2,
+      "filmstrips": 0,
+      "design": "none",
+      "estimatedUsd": {
+        "sandbox": 0.00044736878180933343,
+        "storage": 4.279326333333333e-7,
+        "operations": 0.00033600000000000004,
+        "function": 0.00019571462842122222,
+        "view": 0.0000279478
+      },
+      "parentCpuMicros": {
+        "user": 953967,
+        "system": 87978
+      }
+    },
+    {
+      "name": "static-b",
+      "fixture": "/static",
+      "status": "success",
+      "elapsedMs": 4606.182542,
+      "inputBytes": 1819,
+      "networkBytes": 7276,
+      "outputBytes": 79739,
+      "issues": 3,
+      "evidenceCount": 2,
+      "filmstrips": 0,
+      "design": "none",
+      "estimatedUsd": {
+        "sandbox": 0.00043774334730933335,
+        "storage": 4.279326333333333e-7,
+        "operations": 0.00033600000000000004,
+        "function": 0.00019150067646288887,
+        "view": 0.0000279478
+      },
+      "parentCpuMicros": {
+        "user": 650074,
+        "system": 67817
+      }
+    },
+    {
+      "name": "image-heavy-a",
+      "fixture": "/images",
+      "status": "success",
+      "elapsedMs": 4994.965666,
+      "inputBytes": 1819,
+      "networkBytes": 1152988,
+      "outputBytes": 231329,
+      "issues": 4,
+      "evidenceCount": 3,
+      "filmstrips": 0,
+      "design": "none",
+      "estimatedUsd": {
+        "sandbox": 0.0006464049497146667,
+        "storage": 0.0000012414656333333334,
+        "operations": 0.00033600000000000004,
+        "function": 0.00020761357704644445,
+        "view": 0.00005826580000000001
+      },
+      "parentCpuMicros": {
+        "user": 1670795,
+        "system": 125872
+      }
+    },
+    {
+      "name": "image-heavy-b",
+      "fixture": "/images",
+      "status": "success",
+      "elapsedMs": 4772.033208000001,
+      "inputBytes": 1819,
+      "networkBytes": 1152988,
+      "outputBytes": 231335,
+      "issues": 4,
+      "evidenceCount": 3,
+      "filmstrips": 0,
+      "design": "none",
+      "estimatedUsd": {
+        "sandbox": 0.0006253006770240001,
+        "storage": 0.0000012414978333333333,
+        "operations": 0.00033600000000000004,
+        "function": 0.000198374265176,
+        "view": 0.000058267
+      },
+      "parentCpuMicros": {
+        "user": 1431276,
+        "system": 79352
+      }
+    },
+    {
+      "name": "interactive-a",
+      "fixture": "/interactive",
+      "status": "success",
+      "elapsedMs": 6943.439958999999,
+      "inputBytes": 1819,
+      "networkBytes": 10914,
+      "outputBytes": 72870,
+      "issues": 3,
+      "evidenceCount": 1,
+      "filmstrips": 0,
+      "design": "none",
+      "estimatedUsd": {
+        "sandbox": 0.0006595494161186666,
+        "storage": 3.91069e-7,
+        "operations": 0.00033600000000000004,
+        "function": 0.0002883670116341111,
+        "view": 0.000026574
+      },
+      "parentCpuMicros": {
+        "user": 498196,
+        "system": 56204
+      }
+    },
+    {
+      "name": "interactive-b",
+      "fixture": "/interactive",
+      "status": "success",
+      "elapsedMs": 6840.111833999999,
+      "inputBytes": 1819,
+      "networkBytes": 10914,
+      "outputBytes": 72870,
+      "issues": 3,
+      "evidenceCount": 1,
+      "filmstrips": 0,
+      "design": "none",
+      "estimatedUsd": {
+        "sandbox": 0.0006497676869519999,
+        "storage": 3.91069e-7,
+        "operations": 0.00033600000000000004,
+        "function": 0.000284084634898,
+        "view": 0.000026574
+      },
+      "parentCpuMicros": {
+        "user": 433761,
+        "system": 46285
+      }
+    },
+    {
+      "name": "uploaded-png",
+      "fixture": "/static",
+      "status": "success",
+      "elapsedMs": 9940.105666999996,
+      "inputBytes": 25688,
+      "networkBytes": 7276,
+      "outputBytes": 500034,
+      "issues": 4,
+      "evidenceCount": 6,
+      "filmstrips": 0,
+      "design": "compared",
+      "estimatedUsd": {
+        "sandbox": 0.0009426880698093329,
+        "storage": 0.0000026835158,
+        "operations": 0.00033600000000000004,
+        "function": 0.00041256215708788876,
+        "view": 0.0001120068
+      },
+      "parentCpuMicros": {
+        "user": 5329607,
+        "system": 209291
+      }
+    },
+    {
+      "name": "uploaded-jpeg",
+      "fixture": "/static",
+      "status": "success",
+      "elapsedMs": 9705.029083000001,
+      "inputBytes": 22062,
+      "networkBytes": 7276,
+      "outputBytes": 694504,
+      "issues": 4,
+      "evidenceCount": 6,
+      "filmstrips": 0,
+      "design": "compared",
+      "estimatedUsd": {
+        "sandbox": 0.0009204341531906668,
+        "storage": 0.0000037271714666666663,
+        "operations": 0.00033600000000000004,
+        "function": 0.0004028195386621112,
+        "view": 0.00015090079999999998
+      },
+      "parentCpuMicros": {
+        "user": 4861524,
+        "system": 170014
+      }
+    },
+    {
+      "name": "uploaded-webp",
+      "fixture": "/static",
+      "status": "success",
+      "elapsedMs": 9311.170083999998,
+      "inputBytes": 5179,
+      "networkBytes": 7276,
+      "outputBytes": 322052,
+      "issues": 4,
+      "evidenceCount": 6,
+      "filmstrips": 0,
+      "design": "compared",
+      "estimatedUsd": {
+        "sandbox": 0.0008831488346186665,
+        "storage": 0.0000017283457333333333,
+        "operations": 0.00033600000000000004,
+        "function": 0.00038649627125911105,
+        "view": 0.00007641040000000001
+      },
+      "parentCpuMicros": {
+        "user": 4559627,
+        "system": 150337
+      }
+    },
+    {
+      "name": "reference-site",
+      "fixture": "/static",
+      "status": "success",
+      "elapsedMs": 7249.192125000001,
+      "inputBytes": 1819,
+      "networkBytes": 14552,
+      "outputBytes": 221713,
+      "issues": 3,
+      "evidenceCount": 4,
+      "filmstrips": 0,
+      "design": "compared",
+      "estimatedUsd": {
+        "sandbox": 0.0006890396545000002,
+        "storage": 0.0000011898597666666666,
+        "operations": 0.00033600000000000004,
+        "function": 0.0003010387402916667,
+        "view": 0.000056342600000000005
+      },
+      "parentCpuMicros": {
+        "user": 1068799,
+        "system": 85779
+      }
+    },
+    {
+      "name": "timeout-boundary",
+      "fixture": "/timeout",
+      "status": "failure",
+      "elapsedMs": 155.42041700000118,
+      "inputBytes": 1819,
+      "error": "The operation was aborted due to timeout",
+      "outputBytes": 0,
+      "parentCpuMicros": {
+        "user": 12356,
+        "system": 2526
+      }
+    },
+    {
+      "name": "large-output-boundary",
+      "fixture": "/large",
+      "status": "failure",
+      "elapsedMs": 17528.568625,
+      "inputBytes": 1819,
+      "error": "The evidence exceeds the hosted report size limit. Run this review locally.",
+      "outputBytes": 0,
+      "parentCpuMicros": {
+        "user": 4259410,
+        "system": 711732
+      }
+    }
+  ]
+}

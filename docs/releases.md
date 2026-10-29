@@ -9,14 +9,16 @@ Start from a clean `main` checkout with the intended release commit integrated. 
 - The newest dated changelog heading contains the exact candidate version.
 - `package.json` contains the exact version without a `v` prefix.
 - The annotated tag will be `v<version>`.
+- `server.json.version` and its npm package version match `package.json.version` exactly; `package.json.mcpName` equals `server.json.name`. Audit tool catalog parity, publisher metadata size and the marker-bearing npm release prerequisite in [distribution.md](distribution.md).
+- Run `bun run generate:skill` and `bun run generate:skill --check`; commit both portable outputs and inspect them in the public snapshot and npm pack.
 - `playwright` is pinned to an exact version in `package.json` and `bun.lock`.
 - Both browser-install commands in `README.md` use that exact Playwright version.
 - The README's copy-ready install command, printed-version instruction, and update literals name this exact Idiom version.
 - The update-smoke candidate `version` names this exact Idiom version.
 - The update-smoke `previous_version` names the immediately older release heading in the newest-first changelog.
-- `site/index.html` and `site/guide.html` describe exactly this release: the field guide's version label names it, and every user-visible command, rule, default and MCP tool added or changed in its changelog section is reflected, while nothing unreleased is claimed. idiom.build deploys from `main`, so the site changes land in the release PR, never earlier. The README (the public GitHub page, carried by the public snapshot) gets the same pass: what Idiom does, how it works and why it helps, accurate to this release.
+- `site/index.html`, `site/guide.html`, `site/design-qa-for-claude-code.html` and `site/testing-loading-empty-error-states.html` describe exactly this release: the field guide's version label names it, and every user-visible command, rule, default and MCP tool added or changed in its changelog section is reflected, while nothing unreleased is claimed. idiom.build deploys from `main`, so the site changes land in the release PR, never earlier. The README (the public GitHub page, carried by the public snapshot) gets the same pass: what Idiom does, how it works and why it helps, accurate to this release.
 
-The current smoke pair is `previous_version="0.13.0"` and `version="0.14.0"`. When preparing the next release, advance both literals — the candidate becomes `version` and the newest released heading becomes `previous_version` — as part of the source commit. The published `v0.6.0` predates embedded provenance and prints a bare version; `v0.7.0` is the first release that prints `<version> (<short source commit>)`.
+The current smoke pair is `previous_version="0.14.0"` and `version="0.15.0"`. When preparing the next release, advance both literals — the candidate becomes `version` and the newest released heading becomes `previous_version` — as part of the source commit. The published `v0.6.0` predates embedded provenance and prints a bare version; `v0.7.0` is the first release that prints `<version> (<short source commit>)`.
 
 ### Record the source, then commit the distribution
 
@@ -133,7 +135,7 @@ The subshell removes the temporary notes file on success or failure. Inspect the
 
 ## Publish the public snapshot and npm package
 
-The tag and GitHub Release above live in the workshop repository. The public repository receives one commit per release, built from the public file set. `scripts/public-snapshot.mjs` excludes internal documents, agent skills and autobuild configuration, and refuses to copy when any public file names a private product or contains a local path. It is not part of the snapshot.
+The tag and GitHub Release above live in the workshop repository. The public repository receives one commit per release, built from the public file set. `scripts/public-snapshot.mjs` excludes internal documents, `.agents/` skills and autobuild configuration; tracked portable `skills/`, `templates/` and `server.json` remain included. The script refuses to copy when any public file names a private product or contains a local path. It is not part of the snapshot.
 
 ```sh
 (
@@ -156,7 +158,7 @@ The tag and GitHub Release above live in the workshop repository. The public rep
 )
 ```
 
-Set `release_notes` to the extracted changelog body first (the extractor above). The first public release creates the repository with `gh repo create mattskilly/idiom --public` instead of cloning. `npm publish` needs `npm login` on the maintainer's account and publishes exactly the `files` in `package.json` (the committed `dist/` and `templates/`); it does not rebuild, so the embedded build-source commit is the workshop commit recorded above. Confirm with `npm view @mattskilly/idiom version`.
+Set `release_notes` to the extracted changelog body first (the extractor above). The first public release creates the repository with `gh repo create mattskilly/idiom --public` instead of cloning. `npm publish` needs `npm login` on the maintainer's account and publishes exactly the `files` in `package.json` (the committed `dist/`, `templates/`, `skills/`, `server.json`, plugin and hooks); it does not rebuild, so the embedded build-source commit is the workshop commit recorded above. Confirm with `npm view @mattskilly/idiom version`. For registry publication, verify the exact release with `npm view @mattskilly/idiom@<version> version mcpName --json`, then follow [the separate registry and skill-listing handoff](distribution.md).
 
 ## Smoke a first install
 
@@ -250,8 +252,8 @@ Every release after the first must also prove replacement in place. Create anoth
   test "$(bun pm cache)" = "$BUN_INSTALL_CACHE_DIR"
   bun pm cache rm
   cd "$smoke_root/work"
-  previous_version="0.13.0"
-  version="0.14.0"
+  previous_version="0.14.0"
+  version="0.15.0"
   expected_display="$version ($(printf '%s' "$build_source_commit" | cut -c1-7))"
   idiom_bin="$BUN_INSTALL/bin/idiom"
 
@@ -326,14 +328,14 @@ Copy the output and report path to the release record. The subshell trap removes
 
 ## Smoke the public GitHub Action
 
-Release the root `action.yml` and every `scripts/github-action/*.mjs` helper in the same public snapshot, alongside a compatible npm version containing `check --baseline-file` and `baseline record --out`. The snapshot script includes these tracked paths automatically; inspect the staged public snapshot before publishing. The original 0.8.0 CLI cannot run the new Action. Pin the workflow's `version` to the candidate package and `uses` to its public snapshot commit or release tag.
+Release the root `action.yml` and every `scripts/github-action/*.mjs` helper in the same public snapshot, alongside a compatible npm version containing `check --baseline-file`, `baseline record --out` and summary finding fingerprints. The snapshot script includes these tracked paths automatically; inspect the staged public snapshot before publishing. The original 0.8.0 CLI cannot run the new Action. Pin the workflow's `version` to the candidate package and `uses` to its public snapshot commit or release tag.
 
 In a disposable configured application repository, use the `pull_request` workflow in docs/configuration.md with full history, head checkout, `persist-credentials: false`, `contents: read` and `pull-requests: write`. Make the base branch advance independently after branching so its tip differs from the merge base. Open a PR that introduces an intentional deterministic regression and includes a nearer head-accepted baseline. Confirm:
 
 - `baseline-sha` is the actual merge base, and the head record cannot conceal the new finding.
-- One managed comment gives counts, problem/fix text, crop and composite filenames, and the authenticated artifact link. Download it; open `index.html` and verify real PNG crops and before/after composites.
+- One managed comment shows Blocks merge, Should fix and Opportunities with exact counts, three expanded entries per tier (Problem, Fix, evidence and Done when), and tier-local details for the rest. Include a question and more than three findings in a tier. Verify filmstrip contact-sheet filenames for timeline issues, crop/composite filenames otherwise, explicit missing/partial evidence, and the authenticated artifact link. Download it; open `index.html` and verify actual PNG thumbnails/contact sheets and full before/after evidence. The PR comment contains filenames and the download link, not inline GitHub thumbnails. Overflow points to the full HTML and stays within 55,000 UTF-8 bytes.
 - The artifact uploads and the comment/job summary publish before the final severity gate fails.
-- Push a fix to the same PR. The same comment ID updates to clean, and the final gate passes.
+- Push a fix to the same PR for a regression absent from the merge base. Keep a non-gating regression and a pre-existing finding. The same comment ID updates, tier counts change, and the final gate passes. Resolved names the introduced-then-fixed regression with the previous/current SHA labels and real before/after files in the new artifact; surviving and pre-existing findings are not labelled resolved. Verify separate merge-base resolution counts. Synchronize adds at most one previous-head capture and reuses the current capture; missing or stale historical evidence is disclosed.
 - A fork PR with a read-only token warns about unavailable comments, retains artifacts and job summary, and still gates findings. No `pull_request_target` workaround is needed.
 
-Record the public Action ref, npm version, workflow runs, merge-base/head SHAs, comment ID, artifact URL and fail-then-pass results with the release evidence. This credentialed GitHub smoke is a release gate; offline tests exercise the same helpers and real built CLI without publishing or making GitHub writes.
+Record the public Action ref, npm version, workflow runs, merge-base/previous-head/current-head SHAs, tier and resolved counts, comment ID, artifact URL and fail-then-pass results with the release evidence. This credentialed GitHub smoke is a release gate; offline tests exercise the same helpers and real built CLI without publishing or making GitHub writes.

@@ -1,0 +1,58 @@
+#hosted-review[hidden],
+#hosted-review [hidden] {
+  display: none;
+}
+#hosted-form label {
+  display: block;
+  font-family: var(--mono);
+  font-size: var(--step--1);
+  margin: 20px 0 8px;
+}
+#hosted-form input,
+#hosted-form select {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-height: 44px;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  padding: 10px;
+  font: inherit;
+}
+#hosted-form button {
+  background: var(--fg);
+  color: var(--bg);
+  border: 1px solid var(--fg);
+  padding: 12px 18px;
+  font: 500 var(--step--1) / 1.5 var(--mono);
+  cursor: pointer;
+  max-width: 100%;
+}
+#hosted-form button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+#hosted-form .hosted-meta {
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+#hosted-form .hosted-error {
+  color: var(--redline-ink);
+  margin: 4px 0;
+  font-size: var(--step--1);
+}
+#hosted-progress {
+  min-height: 2em;
+  overflow-wrap: anywhere;
+}
+#hosted-result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+}
+#hosted-form input[aria-invalid="true"] {
+  border-color: var(--redline-ink);
+}

@@ -680,6 +680,10 @@ describe("loading feedback while requests are held", () => {
     reviewFixture(browser, "", {
       url: `${server.origin}/${path}`,
       probe: true,
+      // The markerless ticker needs three 700ms rotations to establish a
+      // period. Observe those before acting on every fresh replay; relying
+      // on capture overhead makes the noise assertion machine-dependent.
+      ...(path.startsWith("loading-ticker/") ? { settleMs: 2200 } : {}),
     });
   const rules = (findings: ReviewedFixture) =>
     findings

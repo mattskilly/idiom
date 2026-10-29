@@ -21838,7 +21838,7 @@ var init_version = __esm({
     "use strict";
     SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
     IDIOM_VERSION = readPackageVersion();
-    IDIOM_BUILD_COMMIT = true ? "cda3b2d7adce837514f1536223f562c37d836ac4" : "unknown";
+    IDIOM_BUILD_COMMIT = true ? "00663e4d4f827a29b601cd8a4ff49757de99230e" : "unknown";
     IDIOM_VERSION_DISPLAY = `${IDIOM_VERSION} (${IDIOM_BUILD_COMMIT.slice(0, 7)})`;
   }
 });
@@ -33914,7 +33914,7 @@ async function beginEffectWindow(page, maximumMs, options = {}) {
     page.off("request", request2);
     page.off("requestfinished", finished);
     page.off("requestfailed", finished);
-    await page.evaluate((token2) => {
+    await (options.cleanupPage ?? page).evaluate((token2) => {
       const scope = window;
       const state = scope.__idiomQuiet;
       if (!state || state.token !== token2) return;
@@ -34283,7 +34283,7 @@ function installNoiseRecorder() {
   const batches2 = [];
   const roots = /* @__PURE__ */ new Set();
   const inputs = [];
-  let current = null;
+  const pending = /* @__PURE__ */ new Map();
   for (const type of ["pointerdown", "keydown", "input"])
     window.addEventListener(
       type,
@@ -34310,30 +34310,44 @@ function installNoiseRecorder() {
     }
     return chain[0] ?? null;
   };
-  const flush = () => {
-    const batch = current;
-    current = null;
-    if (batch === null) return;
-    const targets = [...batch.targets].filter((target2) => target2.isConnected);
-    const root2 = commonAncestor(targets);
+  const flush = (now) => {
+    for (const [root2, batch] of pending) {
+      if (now - batch.last <= BATCH_GAP_MS) continue;
+      pending.delete(root2);
+      if (!root2.isConnected) continue;
+      batches2.push({
+        time: batch.start,
+        root: root2,
+        targets: [...batch.targets].filter((target2) => target2.isConnected)
+      });
+    }
+    while (batches2.length + pending.size > MAX_BATCHES) batches2.shift();
+  };
+  const observer = new MutationObserver((records) => {
+    if (document.readyState === "loading") return;
+    const now = performance.now();
+    flush(now);
+    const connected = records.flatMap((record2) => {
+      const element = record2.target instanceof Element ? record2.target : record2.target.parentElement;
+      return element?.isConnected ? [element] : [];
+    });
+    const root2 = commonAncestor(connected);
     if (root2 === null) return;
     if (!roots.has(root2)) {
       if (roots.size >= MAX_ROOTS) return;
       roots.add(root2);
     }
-    batches2.push({ time: batch.start, root: root2, targets });
-    if (batches2.length > MAX_BATCHES) batches2.shift();
-  };
-  const observer = new MutationObserver((records) => {
-    const now = performance.now();
-    if (current !== null && now - current.last > BATCH_GAP_MS) flush();
-    current ??= { start: now, last: now, targets: /* @__PURE__ */ new Set() };
-    current.last = now;
-    for (const record2 of records) {
-      if (current.targets.size >= MAX_TARGETS) break;
-      const element = record2.target instanceof Element ? record2.target : record2.target.parentElement;
-      if (element) current.targets.add(element);
+    let batch = pending.get(root2);
+    if (!batch) {
+      batch = { start: now, last: now, targets: /* @__PURE__ */ new Set() };
+      pending.set(root2, batch);
     }
+    batch.last = now;
+    for (const target2 of connected) {
+      if (batch.targets.size >= MAX_TARGETS) break;
+      batch.targets.add(target2);
+    }
+    while (batches2.length + pending.size > MAX_BATCHES) batches2.shift();
   });
   observer.observe(document, {
     subtree: true,
@@ -34364,8 +34378,7 @@ function installNoiseRecorder() {
   const broad = (element) => element === document.documentElement || element === document.body || element.matches("main, [role=main]");
   scope.__idiomNoiseLog = {
     periodic: (extra = []) => {
-      if (current !== null && performance.now() - current.last > BATCH_GAP_MS)
-        flush();
+      flush(performance.now());
       const anchors = [...inputs, ...extra];
       const periodic = [...roots].filter((root2) => {
         const times = batches2.filter((batch) => batch.root === root2).map((batch) => batch.time);
@@ -34375,6 +34388,29 @@ function installNoiseRecorder() {
       return periodic.flatMap(
         (root2) => broad(root2) ? batches2.filter((batch) => batch.root === root2).flatMap((batch) => batch.targets).filter((target2) => !broad(target2)) : [root2]
       );
+    },
+    provisional: (extra = []) => {
+      const now = performance.now();
+      flush(now);
+      const anchors = [...inputs, ...extra];
+      return [...roots].flatMap((root2) => {
+        if (!root2.isConnected || broad(root2)) return [];
+        const times = batches2.filter((batch) => batch.root === root2).map((batch) => batch.time);
+        const open3 = pending.get(root2);
+        if (open3) times.push(open3.start);
+        const found = period(times);
+        if (found !== null) {
+          if (!open3 || caused(times, found.ms, anchors)) return [];
+          const completed = times.slice(0, -1);
+          return period(completed) === null ? [{ root: root2, deadline: open3.last + BATCH_GAP_MS + 1 }] : [];
+        }
+        if (times.length < 2) return [];
+        const last = times[times.length - 1] ?? 0;
+        const gap = last - (times[times.length - 2] ?? 0);
+        if (gap < MIN_PERIOD_MS || caused(times, gap, anchors)) return [];
+        const deadline = last + gap * 1.33 + BATCH_GAP_MS + 1;
+        return deadline > now ? [{ root: root2, deadline }] : [];
+      });
     }
   };
 }
@@ -34490,6 +34526,7 @@ function pendingWatcher(config) {
   };
   const early = [];
   const late = [];
+  let retained;
   const MAX_CHANGES = 50;
   const keep = (list5, entry) => {
     if (list5.length < MAX_CHANGES || entry.main && list5.filter((seen) => seen.main).length < MAX_CHANGES)
@@ -34500,12 +34537,14 @@ function pendingWatcher(config) {
     const noise = new Set(
       window.__idiomNoiseLog?.periodic(anchors) ?? []
     );
-    return (element) => {
+    const provisional = window.__idiomNoiseLog?.provisional(anchors) ?? [];
+    const has = (element) => {
       if (noise.size === 0) return false;
       for (let current = element; current; current = current.parentElement)
         if (noise.has(current)) return true;
       return false;
     };
+    return { has, provisional };
   };
   let mainEmpty = null;
   const visibilityLimit = 1e4;
@@ -34661,17 +34700,24 @@ function pendingWatcher(config) {
   };
   for (const type of actionEvents)
     window.addEventListener(type, onAction, true);
-  const settled = (noise) => {
+  const settled = (noise, cutoff = Infinity) => {
     const indicators = [];
     const kinds = /* @__PURE__ */ new Set();
-    for (const { element, indicator } of candidates) {
-      if (kinds.has(indicator.kind) || indicators.length >= 12) continue;
+    for (const { element, indicator } of candidates.slice(
+      0,
+      retained?.candidates
+    )) {
+      if (indicator.time > cutoff || kinds.has(indicator.kind) || indicators.length >= 12)
+        continue;
       if (filterable.has(indicator.kind) && noise(element)) continue;
       kinds.add(indicator.kind);
       indicators.push(indicator);
     }
     const change = (seen) => seen ? { time: seen.time, selector: seen.selector } : null;
-    const quiet = [...early, ...late].filter(({ element }) => !noise(element));
+    const quiet = [
+      ...early.slice(0, retained?.early),
+      ...late.slice(0, retained?.late)
+    ].filter(({ element, time }) => time <= cutoff && !noise(element));
     const after = late.filter(({ element }) => !noise(element));
     return {
       indicators,
@@ -34701,14 +34747,38 @@ function pendingWatcher(config) {
       releasedAt ??= time;
       return time;
     },
-    read: () => {
+    retain: () => {
+      onMutations(observer.takeRecords());
+      scan();
+      retained = {
+        candidates: candidates.length,
+        early: early.length,
+        late: late.length
+      };
+      return startedAt === null ? null : since();
+    },
+    read: (cutoff = Infinity) => {
       onMutations(observer.takeRecords());
       scan();
       const element = trigger;
+      const noise = periodicNoise();
+      const relevant = [
+        ...early.slice(0, retained?.early).filter(({ time }) => time <= cutoff),
+        ...late.slice(0, retained?.late).filter(({ time }) => time <= cutoff),
+        ...candidates.slice(0, retained?.candidates).filter(
+          ({ indicator }) => indicator.time <= cutoff && filterable.has(indicator.kind)
+        )
+      ];
+      const deadlines = noise.provisional.filter(
+        ({ root: root2 }) => relevant.some(
+          ({ element: element2 }) => !isNoisy(element2) && !noise.has(element2) && root2.contains(element2)
+        )
+      ).map(({ deadline }) => deadline);
       return {
         dispatched: startedAt !== null,
         elapsed: startedAt === null ? null : since(),
-        ...settled(periodicNoise()),
+        ...settled(noise.has, cutoff),
+        classificationDeadline: deadlines.length ? Math.min(...deadlines) : null,
         mainSelector: mainSelectorOf(mainElement),
         mainEmpty: mainEmpty === null ? null : { ...mainEmpty },
         routeChange,
@@ -34887,10 +34957,14 @@ async function replayHeld(options) {
   };
   let hold;
   const navigated = () => hold?.requests.some((request2) => request2.navigation) === true;
-  const read = () => page.evaluate((token2) => {
-    const active = window.__idiomPending;
-    return active?.token === token2 ? active.read() : null;
-  }, token).catch((error) => {
+  let candidateCutoff;
+  const read = () => page.evaluate(
+    ({ token: token2, cutoff }) => {
+      const active = window.__idiomPending;
+      return active?.token === token2 ? active.read(cutoff) : null;
+    },
+    { token, cutoff: candidateCutoff }
+  ).catch((error) => {
     if (contextGone.test(String(error)) && navigated()) return null;
     throw error;
   });
@@ -34899,10 +34973,7 @@ async function replayHeld(options) {
     if (latest === null) return;
     const facts = before ? {
       ...latest,
-      dispatched: before.dispatched,
-      indicators: before.indicators,
-      firstChange: before.firstChange,
-      firstMainChange: before.firstMainChange
+      dispatched: before.dispatched
     } : latest;
     held.dispatched = facts.dispatched;
     held.indicators = facts.indicators;
@@ -34992,6 +35063,10 @@ async function replayHeld(options) {
     if (repeatable && hold.pendingNonSafe()) {
       if (facts?.trigger.enabled === true) {
         before = facts;
+        candidateCutoff = await page.evaluate((token2) => {
+          const active = window.__idiomPending;
+          return active?.token === token2 ? active.retain() : null;
+        }, token) ?? facts.elapsed ?? void 0;
         held.notes.push(
           "feedback after the second activation is attributed to it, not recorded"
         );
@@ -35023,14 +35098,24 @@ async function replayHeld(options) {
     await hold.waitReleased(page);
     const releases = hold.requests.map((request2) => request2.releasedAt).filter((value) => value !== null);
     held.releasedAt = releases.length ? Math.min(...releases) : null;
-    const effectWindow = await beginEffectWindow(page, Math.max(delayMs, 1e3));
+    const observationEnd = clock() + Math.max(delayMs, 1e3);
+    const effectWindow = await beginEffectWindow(
+      page,
+      Math.max(0, observationEnd - clock()),
+      { cleanupPage: options.routePage }
+    );
     let settled = false;
     try {
       settled = await effectWindow.wait();
     } finally {
       await effectWindow.dispose();
     }
-    apply(await read());
+    let final = await read();
+    while (final?.classificationDeadline !== null && final !== null && clock() < observationEnd) {
+      await page.waitForTimeout(Math.min(25, observationEnd - clock()));
+      final = await read();
+    }
+    apply(final);
     await handle.finish(void 0, settled);
   } catch (error) {
     held.notes.push(`held replay failed: ${String(error).split("\n")[0]}`);
@@ -35039,7 +35124,7 @@ async function replayHeld(options) {
     throw error;
   } finally {
     await hold?.dispose();
-    await page.evaluate((token2) => {
+    await options.routePage.evaluate((token2) => {
       const active = window.__idiomPending;
       if (active?.token === token2) active.dispose();
     }, token).catch(() => void 0);
@@ -42478,7 +42563,10 @@ function createBrowserLauncher(overrides = {}) {
       launch: overrides.launch ?? (() => chromium2.launch({ headless: true })),
       createAxe: overrides.createAxe ?? ((page) => new AxeBuilder({ page })),
       now: overrides.now ?? (() => /* @__PURE__ */ new Date()),
-      monotonicNow: overrides.monotonicNow
+      monotonicNow: overrides.monotonicNow,
+      contextOptions: overrides.contextOptions,
+      prepareContext: overrides.prepareContext,
+      createLinkRequester: overrides.createLinkRequester
     };
     const browser = await runtime.launch();
     if (options?.signal?.aborted) {
@@ -42502,7 +42590,7 @@ function createBrowserLauncher(overrides = {}) {
           concurrency: settings.concurrency,
           ignore: settings.ignore,
           monotonicNow: runtime.monotonicNow,
-          request: () => playwrightRequest.newContext({ ignoreHTTPSErrors: false })
+          request: runtime.createLinkRequester ?? (() => playwrightRequest.newContext({ ignoreHTTPSErrors: false }))
         });
         return links;
       };
@@ -42510,6 +42598,7 @@ function createBrowserLauncher(overrides = {}) {
     const newContext = async (tuple) => {
       tuple.signal?.throwIfAborted();
       const context2 = await browser.newContext({
+        ...runtime.contextOptions,
         ...deterministicContextOptions(
           tuple.project,
           tuple.viewport,
@@ -42518,6 +42607,12 @@ function createBrowserLauncher(overrides = {}) {
         // A service worker's fetches bypass context routing.
         ...tuple.probe ? { serviceWorkers: "block" } : {}
       });
+      try {
+        await runtime.prepareContext?.(context2, tuple);
+      } catch (error) {
+        await context2.close().catch(() => void 0);
+        throw error;
+      }
       if (tuple.signal?.aborted) {
         void context2.close().catch(() => void 0);
         tuple.signal.throwIfAborted();
@@ -53192,6 +53287,7 @@ function summarizeFinding(finding, result2, base) {
   const screenshot2 = finding.evidence.screenshots.find((path) => path.includes("/crops/")) ?? finding.evidence.screenshots[0];
   return {
     id: finding.id,
+    fingerprint: finding.fingerprint,
     basis: finding.basis,
     basisDetails: finding.basisDetails,
     acceptance: finding.acceptance,
@@ -62557,11 +62653,11 @@ async function runQuick(options) {
     );
   }
   let design;
-  if (options.design !== void 0) {
+  if (options.design !== void 0 || options.designLocation !== void 0) {
     if (options.urls.length !== 1)
       throw new IdiomError("--design compares one page; pass a single URL");
     const parsed = designLocationSchema.safeParse(
-      quickDesignReference(options.design, directory)
+      options.designLocation ?? quickDesignReference(options.design, directory)
     );
     if (!parsed.success)
       throw new IdiomError(
