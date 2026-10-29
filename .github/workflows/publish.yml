@@ -53,7 +53,10 @@ jobs:
             exit 1
           }
           test -s dist/cli.js
-          grep -q "\"version\": \"${version}\"" server.json
+          # server.json arrived in v0.15.0; older tags have none to check.
+          if test -f server.json; then
+            grep -q "\"version\": \"${version}\"" server.json
+          fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
