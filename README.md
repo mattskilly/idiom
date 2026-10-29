@@ -51,6 +51,8 @@ When the same off-scale value keeps appearing in one place, for example 17px pad
 claude mcp add idiom -- npx -y @mattskilly/idiom mcp
 ```
 
+`npx` fetches from npm, which still serves 0.12.0. If you installed 0.15.0 from GitHub, use `claude mcp add idiom -- idiom mcp` so the tools match your installed CLI.
+
 In Claude Code, the bundled plugin reminds the agent which flows to check after it edits UI files, and once more before it stops if the UI changed since its last check. Codex, Cursor and Claude Desktop setup, tool timeouts and the plugin are in [docs/mcp.md](docs/mcp.md).
 
 After an autonomous build, `idiom sweep --all` captures every flow and groups findings that share a cause into one ranked cleanup set, emitting at most 10 repair tickets for you to triage.
@@ -73,15 +75,16 @@ These are Idiom's benchmark fixture pages in `test/fixtures/benchmark/`, a recon
 
 ## Install
 
-You need Node 20 or newer. Install the CLI globally with npm or Bun:
+You need Node 20 or newer. Install the current release, 0.15.0, from its GitHub release:
 
 ```sh
-npm install -g @mattskilly/idiom
-# or: bun add -g @mattskilly/idiom
+npm install -g https://github.com/mattskilly/idiom/releases/download/v0.15.0/mattskilly-idiom-0.15.0.tgz
 idiom --version
 ```
 
-The version command prints `<version> (<short source commit>)`, for example `0.15.0 (a85659a)`. To pin a project to an exact release instead, add it as a dev dependency (`bun add -d --exact @mattskilly/idiom@0.15.0`) and run it with `bunx idiom` or `npx idiom`.
+The npm registry still serves 0.12.0 until 0.15.0 is published there. After that, `npm install -g @mattskilly/idiom` (or `bun add -g @mattskilly/idiom`) installs the current release.
+
+The version command prints `<version> (<short source commit>)`, for example `0.15.0 (00663e4)`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D https://github.com/mattskilly/idiom/releases/download/v0.15.0/mattskilly-idiom-0.15.0.tgz` now, or `bun add -d --exact @mattskilly/idiom@0.15.0` once 0.15.0 is on npm.
 
 ### Browser setup
 
@@ -142,8 +145,8 @@ idiom review home         # deterministic + model critique
 ## Update Idiom
 
 ```sh
-npm install -g @mattskilly/idiom@latest
-# or: bun add -g @mattskilly/idiom@latest
+npm install -g https://github.com/mattskilly/idiom/releases/download/v0.15.0/mattskilly-idiom-0.15.0.tgz
+# once 0.15.0 is on npm: npm install -g @mattskilly/idiom@latest
 idiom --version
 ```
 
