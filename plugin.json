@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "idiom",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "Design acceptance tools and the conversational Idiom skill.",
   "homepage": "https://idiom.build",
   "repository": "https://github.com/mattskilly/idiom",

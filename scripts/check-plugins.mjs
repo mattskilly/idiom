@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 // Dependency-free release guard: usable before installing build dependencies.
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -234,17 +240,15 @@ export function checkPlugins(directory = root) {
     "plugins[0].category",
     "Developer tools",
   );
-  const mcp = read("mcp.json");
+  // Codex starts plugin MCP servers in the plugin directory, never the project;
+  // Codex users register the server with `codex mcp add` instead.
   check(
-    mcp.$schema === "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+    !existsSync(join(directory, "mcp.json")),
     "mcp.json",
-    "$schema",
-    "the Agent Plugins 1.0.0 MCP schema",
+    "file",
+    "absent (Codex plugin servers cannot bind to the project)",
   );
-  for (const [path, manifest] of [
-    [claudePath, claude],
-    ["mcp.json", mcp],
-  ]) {
+  for (const [path, manifest] of [[claudePath, claude]]) {
     const server = manifest.mcpServers?.idiom;
     check(server?.type === "stdio", path, "mcpServers.idiom.type", "stdio");
     check(server?.command === "npx", path, "mcpServers.idiom.command", "npx");

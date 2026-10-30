@@ -7,7 +7,7 @@ description: A fast happy path hides waiting, missing content and failed request
 
 A fast happy path hides waiting, missing content and failed requests. Make those conditions repeatable, check their feedback and keep the evidence through repair.
 
-_For Idiom v0.16.0_
+_For Idiom v0.16.1_
 
 ## Start by looking
 
@@ -36,7 +36,7 @@ These URLs and selectors are an application fixture contract, not routes or mock
 Install Node 20 or newer and initialize from the app repository:
 
 ```sh example=shell
-npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.0/mattskilly-idiom-0.16.0.tgz
+npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz
 npx playwright@1.62.1 install chromium
 idiom init --yes
 ```

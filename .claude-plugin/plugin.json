@@ -7,11 +7,11 @@
       "command": "npx",
       "args": [
         "-y",
-        "--package=https://github.com/mattskilly/idiom/releases/download/v0.16.0/mattskilly-idiom-0.16.0.tgz",
+        "--package=https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz",
         "idiom",
         "mcp"
       ]
     }
   },
-  "version": "0.16.0"
+  "version": "0.16.1"
 }

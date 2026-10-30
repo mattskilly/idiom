@@ -57,11 +57,12 @@ For Codex, run in your shell:
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz idiom mcp
 ```
 
-Both plugins bundle fifteen MCP tools over stdio and the Idiom skill. Claude Code also includes UI-edit and stop reminders. No global Idiom install is needed for the plugin. You need Node 20 or newer, npm/npx and the matching browser: `npx playwright@1.62.1 install chromium`. The first MCP launch downloads the exact GitHub release named by the plugin, independently of the npm registry's current version.
+The Claude Code plugin bundles fifteen MCP tools over stdio, the Idiom skill and UI-edit and stop reminders. In Codex the plugin supplies the skill and `codex mcp add` registers the tools, because Codex starts a plugin's own MCP server in the plugin directory rather than your project. No global Idiom install is needed for the plugin. You need Node 20 or newer, npm/npx and the matching browser: `npx playwright@1.62.1 install chromium`. The first MCP launch downloads the exact GitHub release named by the plugin, independently of the npm registry's current version.
 
-Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom` to ensure the refreshed release is installed, and start a new session.
+Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom`, rerun the `codex mcp add` line above with the new release (it replaces the entry), and start a new session.
 
 [docs/mcp.md](docs/mcp.md) covers standalone MCP for Cursor and Claude Desktop, timeouts, credentials, and local plugin development with `claude --plugin-dir /path/to/checkout`. When switching from standalone MCP, remove the duplicate registration with `claude mcp remove idiom`.
 
@@ -85,16 +86,16 @@ These are Idiom's benchmark fixture pages in `test/fixtures/benchmark/`, a recon
 
 ## Install
 
-You need Node 20 or newer. Install the current release, 0.16.0, from its GitHub release:
+You need Node 20 or newer. Install the current release, 0.16.1, from its GitHub release:
 
 ```sh
-npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.0/mattskilly-idiom-0.16.0.tgz
+npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz
 idiom --version
 ```
 
-The npm registry still serves 0.12.0 until 0.16.0 is published there. After that, `npm install -g @mattskilly/idiom` (or `bun add -g @mattskilly/idiom`) installs the current release.
+The npm registry still serves 0.12.0 until 0.16.1 is published there. After that, `npm install -g @mattskilly/idiom` (or `bun add -g @mattskilly/idiom`) installs the current release.
 
-The version command prints `<version> (<short source commit>)`, for example `0.16.0 (00663e4)`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D https://github.com/mattskilly/idiom/releases/download/v0.16.0/mattskilly-idiom-0.16.0.tgz` now, or `bun add -d --exact @mattskilly/idiom@0.16.0` once 0.16.0 is on npm.
+The version command prints `<version> (<short source commit>)`, for example `0.16.1 (00663e4)`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz` now, or `bun add -d --exact @mattskilly/idiom@0.16.1` once 0.16.1 is on npm.
 
 ### Browser setup
 
@@ -157,8 +158,8 @@ Known setup-derived URLs, pathnames and standalone route tokens are replaced in 
 ## Update Idiom
 
 ```sh
-npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.0/mattskilly-idiom-0.16.0.tgz
-# once 0.16.0 is on npm: npm install -g @mattskilly/idiom@latest
+npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz
+# once 0.16.1 is on npm: npm install -g @mattskilly/idiom@latest
 idiom --version
 ```
 

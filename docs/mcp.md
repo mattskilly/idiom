@@ -8,7 +8,7 @@ The portable Agent Skill installs with `npx skills add mattskilly/idiom --skill 
 
 ## Install the plugin
 
-The plugin includes the MCP server and Idiom skill; Claude Code also includes the UI-edit reminders described below. It needs Node 20 or newer, npm/npx and the matching browser, but no globally installed Idiom. The first launch downloads the exact versioned GitHub release tarball named by the plugin, and MCP initialization reports that release as `serverInfo.version`. It uses the application's working directory.
+The plugin includes the MCP server and Idiom skill; Claude Code also includes the UI-edit reminders described below. It needs Node 20 or newer, npm/npx and the matching browser, but no globally installed Idiom. The first launch downloads the exact versioned GitHub release tarball named by the plugin, and MCP initialization reports that release as `serverInfo.version`. It binds to the application's working directory. Codex starts a plugin's MCP servers in the installed plugin directory and passes no project, so the Codex plugin ships only the skill and the server is registered with `codex mcp add`, which Codex starts in each thread's project directory. If any host starts the server inside Idiom's plugin directory, it uses the client's MCP root that contains `.idiom/project.json` (or its first file root) when the client offers roots, and otherwise project tools return an error rather than reading or writing the plugin directory.
 
 In a Claude Code session:
 
@@ -29,9 +29,12 @@ For Codex (see [plugin packaging and marketplaces](https://developers.openai.com
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz idiom mcp
 ```
 
-Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom` to ensure the refreshed release is installed, and start a new session.
+Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.
+
+Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom`, rerun the `codex mcp add` line above with the new release (it replaces the entry), and start a new session.
 
 Remove an existing standalone server when switching to the plugin (`claude mcp remove idiom` in Claude Code, or remove the corresponding server entry in another client) to avoid duplicate tools. For long captures or optional model/Figma integrations, keep the [timeout](#codex) and [credential guidance](#credentials) below in mind. Plugin installation and tool discovery need no model credentials.
 

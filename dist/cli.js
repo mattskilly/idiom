@@ -2645,13 +2645,13 @@ function fromChainIssues(states) {
 function resolveFromStates(states) {
   const byId = new Map(states.map((state) => [state.id, state]));
   const resolved = /* @__PURE__ */ new Map();
-  const resolve64 = (state, visiting) => {
+  const resolve65 = (state, visiting) => {
     const done = resolved.get(state.id);
     if (done !== void 0) return done;
     const parent = state.from === void 0 ? void 0 : byId.get(state.from);
     if (parent === void 0 || visiting.has(parent.id)) return state;
     visiting.add(state.id);
-    const base = resolve64(parent, visiting);
+    const base = resolve65(parent, visiting);
     visiting.delete(state.id);
     if (base.url === void 0 && base.urlFrom === void 0) return state;
     const { url: _url, urlFrom: _urlFrom, ...own } = state;
@@ -2680,7 +2680,7 @@ function resolveFromStates(states) {
     resolved.set(state.id, flattened);
     return flattened;
   };
-  return states.map((state) => resolve64(state, /* @__PURE__ */ new Set()));
+  return states.map((state) => resolve65(state, /* @__PURE__ */ new Set()));
 }
 function routeStateId(route) {
   const slug3 = route.replace(/^\/+|\/+$/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
@@ -12423,7 +12423,7 @@ var init_mirrored_control = __esm({
         const unavailablePairs = [];
         const candidates = [];
         let compared = 0;
-        const resolve64 = (pair, selector) => {
+        const resolve65 = (pair, selector) => {
           const matches = marks.get(selector);
           if (matches === void 0) {
             notes.push(
@@ -12437,8 +12437,8 @@ var init_mirrored_control = __esm({
           return element;
         };
         for (const pair of config.mirrored) {
-          const a = resolve64(pair, pair.a);
-          const b = resolve64(pair, pair.b);
+          const a = resolve65(pair, pair.a);
+          const b = resolve65(pair, pair.b);
           if (a === void 0 || b === void 0) continue;
           const pairUnavailable = (reason2) => {
             unavailablePairs.push(`"${pair.name}": ${reason2}`);
@@ -21899,7 +21899,7 @@ var init_version = __esm({
     "use strict";
     SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
     IDIOM_VERSION = readPackageVersion();
-    IDIOM_BUILD_COMMIT = true ? "91d96c8c097b518a29adeda05ea275a9f02aaeb6" : "unknown";
+    IDIOM_BUILD_COMMIT = true ? "cc99c70e62af5faabf47d186aeeabf50f040f858" : "unknown";
     IDIOM_VERSION_DISPLAY = `${IDIOM_VERSION} (${IDIOM_BUILD_COMMIT.slice(0, 7)})`;
   }
 });
@@ -23117,7 +23117,7 @@ async function sampleLiveness(page, declaration) {
         before: painted3(el) ? text4(el) : ""
       }));
       if (pending.length)
-        await new Promise((resolve64) => setTimeout(resolve64, 1500));
+        await new Promise((resolve65) => setTimeout(resolve65, 1500));
       const elapsedMs = performance.now() - started;
       for (const { el, before, ...meta } of pending) {
         const reason = !el.isConnected ? "target detached or replaced" : !painted3(el) ? "target hidden or unmeasurable" : !before ? "first sample empty or hidden" : !text4(el) ? "second sample empty" : void 0;
@@ -25052,7 +25052,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         image2.src = url;
         await Promise.race([
           image2.decode().catch(() => void 0),
-          new Promise((resolve65) => setTimeout(resolve65, 500))
+          new Promise((resolve66) => setTimeout(resolve66, 500))
         ]);
         return { width: image2.naturalWidth, height: image2.naturalHeight };
       };
@@ -25970,7 +25970,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
               for (const frame of frames2) {
                 if ((frame.composite ?? "auto") !== "auto" && frame.composite !== "replace")
                   throw new Error("composite");
-                const resolve65 = (value) => value.replace(
+                const resolve66 = (value) => value.replace(
                   /translate(X|Y|3d)?\(([^)]+)\)/gi,
                   (_all, axis, args) => {
                     const parts = args.split(/[,\s]+/).filter(Boolean).map(
@@ -25981,7 +25981,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
                 );
                 const transform = String(frame.transform ?? "none");
                 let matrix = new DOMMatrix(
-                  transform === "none" ? void 0 : resolve65(transform)
+                  transform === "none" ? void 0 : resolve66(transform)
                 );
                 if (frame.translate !== void 0 && frame.translate !== "none") {
                   const parts = String(frame.translate).trim().split(/\s+/);
@@ -26764,7 +26764,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
       ]);
       const interactiveSelector = "a[href], button, input, select, textarea, summary, [role=button], [role=link], [role=menuitem], [role=checkbox], [role=switch], [role=tab]";
       const textless = (element) => (element.textContent ?? "").trim() === "" && !element.matches(interactiveSelector) && element.querySelector(interactiveSelector) === null;
-      const resolve64 = (pool, words2) => {
+      const resolve65 = (pool, words2) => {
         const counts = /* @__PURE__ */ new Map();
         for (const element of pool)
           for (const token2 of element.classList)
@@ -26796,10 +26796,10 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         };
       };
       for (const spec of inferredInput) {
-        let { selector, matches } = resolve64(rendered, spec.words);
+        let { selector, matches } = resolve65(rendered, spec.words);
         let matchedBy;
         if (matches.length === 0 && spec.words.length > 1 && shapeHeads.has(spec.words.at(-1) ?? "")) {
-          const looser = resolve64(
+          const looser = resolve65(
             rendered.filter(textless),
             spec.words.slice(0, -1)
           );
@@ -27766,7 +27766,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
       }
       const viewportIntersections = /* @__PURE__ */ new Map();
       if (dialogControls.length > 0)
-        await new Promise((resolve65) => {
+        await new Promise((resolve66) => {
           const pending = new Set(dialogControls.map(({ element }) => element));
           const observer = new IntersectionObserver((entries) => {
             for (const entry2 of entries) {
@@ -27777,12 +27777,12 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             if (pending.size === 0) {
               clearTimeout(timeout);
               observer.disconnect();
-              resolve65();
+              resolve66();
             }
           });
           const timeout = setTimeout(() => {
             observer.disconnect();
-            resolve65();
+            resolve66();
           }, 1e3);
           for (const element of pending) observer.observe(element);
         });
@@ -27790,7 +27790,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
         [...document.querySelectorAll("img")].map(async (image2) => {
           await Promise.race([
             image2.decode().catch(() => void 0),
-            new Promise((resolve65) => setTimeout(resolve65, 500))
+            new Promise((resolve66) => setTimeout(resolve66, 500))
           ]);
           const rect3 = image2.getBoundingClientRect();
           const styles = getComputedStyle(image2);
@@ -28200,7 +28200,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             entries: []
           };
         const collected = [];
-        await new Promise((resolve65) => {
+        await new Promise((resolve66) => {
           const observer = new PerformanceObserver((list5) => {
             collected.push(...list5.getEntries());
             finish();
@@ -28213,7 +28213,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
             clearTimeout(timer);
             collected.push(...observer.takeRecords());
             observer.disconnect();
-            resolve65();
+            resolve66();
           };
           observer.observe({ type: "layout-shift", buffered: true });
         });
@@ -28247,7 +28247,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
           };
         await Promise.race([
           document.fonts.ready,
-          new Promise((resolve65) => setTimeout(resolve65, 3e3))
+          new Promise((resolve66) => setTimeout(resolve66, 3e3))
         ]);
         const unquote = (value) => value.trim().replace(/^["']|["']$/g, "").trim().toLowerCase();
         const urlsByFamily = /* @__PURE__ */ new Map();
@@ -28707,7 +28707,7 @@ async function observePage(page, tokens2, axe, masks = [], observeOptions = {}) 
                 () => false
               ),
               new Promise(
-                (resolve65) => setTimeout(() => resolve65(void 0), 1500)
+                (resolve66) => setTimeout(() => resolve66(void 0), 1500)
               )
             ]);
             const style = getComputedStyle(image2);
@@ -30542,7 +30542,7 @@ async function navigateDesign(page, source) {
     }
   } else if (kind !== "file" && kind !== "image")
     source.provenance.final = page.url();
-  const access12 = await page.evaluate(() => {
+  const access13 = await page.evaluate(() => {
     const title = document.title.trim();
     const text4 = document.body?.innerText.trim() ?? "";
     const painted3 = [...document.querySelectorAll("body, body *")].some(
@@ -30564,7 +30564,7 @@ async function navigateDesign(page, source) {
       text4
     );
   });
-  if (access12)
+  if (access13)
     throw new Error(
       `Design preview is empty, inaccessible, or an error page. ${fix}`
     );
@@ -32482,7 +32482,7 @@ var init_deadline = __esm({
       }
       async run(work) {
         this.check();
-        return new Promise((resolve64, reject) => {
+        return new Promise((resolve65, reject) => {
           const abort = () => {
             this.signal.removeEventListener("abort", abort);
             reject(this.signal.reason);
@@ -32494,7 +32494,7 @@ var init_deadline = __esm({
           }).then(
             (value) => {
               this.check();
-              resolve64(value);
+              resolve65(value);
             },
             (error) => {
               this.check();
@@ -33066,8 +33066,8 @@ var init_filmstrips = __esm({
           }
         };
         let firstPaint;
-        const ready = new Promise((resolve64) => {
-          firstPaint = resolve64;
+        const ready = new Promise((resolve65) => {
+          firstPaint = resolve65;
         });
         const onFrame = (event) => {
           void session.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => void 0);
@@ -33150,8 +33150,8 @@ var init_filmstrips = __esm({
         try {
           await Promise.race([
             ready,
-            new Promise((resolve64) => {
-              timer = setTimeout(resolve64, 150);
+            new Promise((resolve65) => {
+              timer = setTimeout(resolve65, 150);
             })
           ]);
         } finally {
@@ -33270,7 +33270,7 @@ var init_filmstrips = __esm({
               async ({ selectors, until, origin }) => {
                 const frames = [];
                 const previous = /* @__PURE__ */ new Map();
-                return new Promise((resolve64) => {
+                return new Promise((resolve65) => {
                   let raf = 0;
                   let done = false;
                   const finish = () => {
@@ -33278,7 +33278,7 @@ var init_filmstrips = __esm({
                     done = true;
                     cancelAnimationFrame(raf);
                     clearTimeout(timer);
-                    resolve64(frames);
+                    resolve65(frames);
                   };
                   const tick = () => {
                     if (done) return;
@@ -34083,7 +34083,7 @@ function createLinkChecker(options) {
       active++;
       return;
     }
-    await new Promise((resolve65) => waiting.push(resolve65));
+    await new Promise((resolve66) => waiting.push(resolve66));
   };
   const release2 = () => {
     const next = waiting.shift();
@@ -34138,7 +34138,7 @@ function createLinkChecker(options) {
       release2();
     }
   };
-  const resolve64 = (link2) => {
+  const resolve65 = (link2) => {
     if (!link2.sameOrigin && !options.external)
       return Promise.resolve({
         status: "unchecked",
@@ -34159,7 +34159,7 @@ function createLinkChecker(options) {
   return {
     async check(records) {
       const checked = await Promise.all(
-        records.map(async (link2) => ({ ...link2, result: await resolve64(link2) }))
+        records.map(async (link2) => ({ ...link2, result: await resolve65(link2) }))
       );
       return checked.some(
         (link2) => link2.result.status === "unchecked" && link2.result.reason === budgetReason
@@ -35219,13 +35219,13 @@ async function createHoldRoute(page, options) {
       });
     requests.push(record2);
     const wait = Math.max(0, Math.min(delayMs, capEnd - clock()));
-    await new Promise((resolve64) => {
-      const timer = setTimeout(resolve64, wait);
+    await new Promise((resolve65) => {
+      const timer = setTimeout(resolve65, wait);
       holding.set(record2, {
         nonSafe,
         release: () => {
           clearTimeout(timer);
-          resolve64();
+          resolve65();
         }
       });
     });
@@ -35233,7 +35233,7 @@ async function createHoldRoute(page, options) {
     if (!navigation)
       record2.releasedAt = await Promise.race([
         options.release().catch(() => null),
-        new Promise((resolve64) => setTimeout(() => resolve64(null), 1e3))
+        new Promise((resolve65) => setTimeout(() => resolve65(null), 1e3))
       ]);
     return pass();
   };
@@ -35945,8 +35945,8 @@ var init_motion2 = __esm({
                 if (failure3) throw new Error(failure3);
                 await this.page.evaluate(
                   () => new Promise(
-                    (resolve64) => requestAnimationFrame(
-                      () => requestAnimationFrame(() => resolve64())
+                    (resolve65) => requestAnimationFrame(
+                      () => requestAnimationFrame(() => resolve65())
                     )
                   )
                 );
@@ -36040,13 +36040,13 @@ async function settleAnimations(page, milliseconds = 1500, signal, checkpoint) {
                 (animation) => animation.finished.catch(() => void 0)
               )
             ).then(
-              () => new Promise((resolve64) => {
-                if (disposed) return resolve64();
-                frame = requestAnimationFrame(() => resolve64());
+              () => new Promise((resolve65) => {
+                if (disposed) return resolve65();
+                frame = requestAnimationFrame(() => resolve65());
               })
             ),
-            new Promise((resolve64) => {
-              timer = setTimeout(resolve64, waitMs);
+            new Promise((resolve65) => {
+              timer = setTimeout(resolve65, waitMs);
             })
           ]);
         } finally {
@@ -39215,8 +39215,8 @@ async function createFailureRoute(page, options) {
       try {
         record2.injectedAt = await Promise.race([
           options.boundary(),
-          new Promise((resolve64) => {
-            markTimer = setTimeout(() => resolve64(null), 500);
+          new Promise((resolve65) => {
+            markTimer = setTimeout(() => resolve65(null), 500);
           })
         ]);
       } finally {
@@ -42625,10 +42625,10 @@ var init_scrollbars = __esm({
             work().catch(() => {
               void this.page.close().catch(() => void 0);
             }),
-            new Promise((resolve64) => {
+            new Promise((resolve65) => {
               timer = setTimeout(() => {
                 void this.page.close().catch(() => void 0);
-                resolve64();
+                resolve65();
               }, 1e3);
             })
           ]);
@@ -43046,8 +43046,8 @@ async function closeWithin(close2) {
   let timer;
   await Promise.race([
     Promise.resolve(close2()).catch(() => void 0),
-    new Promise((resolve64) => {
-      timer = setTimeout(resolve64, CLOSE_TIMEOUT_MS);
+    new Promise((resolve65) => {
+      timer = setTimeout(resolve65, CLOSE_TIMEOUT_MS);
     })
   ]);
   clearTimeout(timer);
@@ -44406,8 +44406,8 @@ async function withCaptureOwnership(maxMinutes, dependencies, work) {
     try {
       await Promise.race([
         owner2.cleanup(),
-        new Promise((resolve64) => {
-          timer = setTimeout(resolve64, CLEANUP_GRACE_MS);
+        new Promise((resolve65) => {
+          timer = setTimeout(resolve65, CLEANUP_GRACE_MS);
         })
       ]);
     } catch (error) {
@@ -59777,13 +59777,13 @@ async function refreshEligibility(snapshot3) {
 }
 function selectTargets(snapshot3, records, top) {
   const byId = new Map(records.map((record2) => [record2.finding.id, record2]));
-  const resolve64 = (ids) => [...new Set(ids)].flatMap((id2) => {
+  const resolve65 = (ids) => [...new Set(ids)].flatMap((id2) => {
     const record2 = byId.get(id2);
     return record2 === void 0 ? [] : [record2];
   });
   const issues5 = snapshot3.summary.issues;
   if (issues5 === void 0)
-    return resolve64(
+    return resolve65(
       snapshot3.summary.findings.map((finding) => finding.id)
     ).slice(0, top);
   const groups = new Map(
@@ -59791,7 +59791,7 @@ function selectTargets(snapshot3, records, top) {
   );
   const selected2 = [];
   for (const issue of issues5) {
-    const eligible = resolve64(
+    const eligible = resolve65(
       issue.groups.flatMap(
         (id2) => groups.get(id2)?.members.map((member) => member.id) ?? []
       )
@@ -60813,13 +60813,13 @@ async function discoverFlowRoutes(options) {
   try {
     await Promise.race([
       work(),
-      new Promise((resolve64) => {
+      new Promise((resolve65) => {
         timer = setTimeout(() => {
           expired = true;
           warnings.push(
             "Live discovery reached its overall time limit; remaining routes are unverified."
           );
-          resolve64();
+          resolve65();
         }, options.limits?.totalMs ?? 6e4);
       })
     ]);
@@ -65331,6 +65331,79 @@ var init_verify = __esm({
   }
 });
 
+// src/mcp/binding.ts
+import { access as access12, readFile as readFile76 } from "fs/promises";
+import { join as join83, resolve as resolve62 } from "path";
+import { fileURLToPath as fileURLToPath2 } from "url";
+async function isIdiomPluginInstall(directory) {
+  if (await exists10(join83(directory, PROJECT_FILE2))) return false;
+  try {
+    const metadata2 = JSON.parse(
+      await readFile76(join83(directory, "package.json"), "utf8")
+    );
+    if (metadata2.name !== "@mattskilly/idiom") return false;
+  } catch {
+    return false;
+  }
+  return await exists10(join83(directory, "plugin.json")) || await exists10(join83(directory, ".claude-plugin", "plugin.json"));
+}
+async function rootFromClient(server) {
+  const { roots } = await server.server.listRoots(void 0, {
+    timeout: ROOTS_TIMEOUT_MS
+  });
+  const directories2 = roots.flatMap((root2) => {
+    try {
+      return root2.uri.startsWith("file:") ? [fileURLToPath2(root2.uri)] : [];
+    } catch {
+      return [];
+    }
+  });
+  for (const directory of directories2)
+    if (await exists10(join83(directory, PROJECT_FILE2))) return directory;
+  return directories2[0];
+}
+function projectBinding(server, options) {
+  if (options.project !== void 0) {
+    const fixed = resolveProjectArgument(options.project, options.cwd);
+    return async () => fixed;
+  }
+  const cwd = resolveProjectArgument(void 0, options.cwd);
+  let plugin;
+  let fromRoots;
+  server.server.setNotificationHandler(
+    "notifications/roots/list_changed",
+    () => {
+      fromRoots = void 0;
+    }
+  );
+  return async () => {
+    plugin ??= isIdiomPluginInstall(cwd);
+    if (!await plugin) return cwd;
+    if (server.server.getClientCapabilities()?.roots) {
+      fromRoots ??= rootFromClient(server).catch(() => void 0);
+      const root2 = await fromRoots;
+      if (root2 !== void 0) return resolve62(root2);
+    }
+    throw new IdiomError(
+      `Idiom MCP started in its own plugin directory (${cwd}) and the client did not name a project root. Open your project in the host so it starts the server there or advertises it as an MCP root, or run idiom mcp --project /absolute/project/path.`
+    );
+  };
+}
+var PROJECT_FILE2, ROOTS_TIMEOUT_MS, exists10;
+var init_binding = __esm({
+  "src/mcp/binding.ts"() {
+    "use strict";
+    init_errors();
+    init_project2();
+    PROJECT_FILE2 = join83(".idiom", "project.json");
+    ROOTS_TIMEOUT_MS = 5e3;
+    exists10 = (path) => access12(path).then(
+      () => true,
+      () => false
+    );
+  }
+});
+
 // src/mcp/execution.ts
 function toolError(error) {
   const diagnostic = error instanceof Error ? error.message : String(error);
@@ -65360,8 +65433,8 @@ var init_execution = __esm({
         const signal = AbortSignal.any([ctx.mcpReq.signal, this.lifetime.signal]);
         const previous = this.tail;
         let release2;
-        this.tail = new Promise((resolve64) => {
-          release2 = resolve64;
+        this.tail = new Promise((resolve65) => {
+          release2 = resolve65;
         });
         let abort;
         const cancelled = new Promise((_, reject) => {
@@ -65428,14 +65501,14 @@ var init_execution = __esm({
 });
 
 // src/mcp/evidence.ts
-import { readFile as readFile76, realpath as realpath15 } from "fs/promises";
+import { readFile as readFile77, realpath as realpath15 } from "fs/promises";
 import {
   basename as basename17,
   dirname as dirname32,
   isAbsolute as isAbsolute25,
-  join as join83,
+  join as join84,
   relative as relative38,
-  resolve as resolve62,
+  resolve as resolve63,
   sep as sep24
 } from "path";
 function result(text4, data) {
@@ -65449,7 +65522,7 @@ function inside3(root2, target2) {
   return path !== ".." && !path.startsWith(`..${sep24}`) && !isAbsolute25(path);
 }
 async function insideRoot(root2, supplied, label4 = "path") {
-  const target2 = resolve62(root2, supplied);
+  const target2 = resolve63(root2, supplied);
   const physicalRoot = await realpath15(root2);
   let existing = target2;
   let rest = "";
@@ -65461,11 +65534,11 @@ async function insideRoot(root2, supplied, label4 = "path") {
       if (error.code !== "ENOENT") throw error;
       const parent = dirname32(existing);
       if (parent === existing) break;
-      rest = join83(basename17(existing), rest);
+      rest = join84(basename17(existing), rest);
       existing = parent;
     }
   }
-  if (/\0/.test(supplied) || !(inside3(root2, target2) || inside3(physicalRoot, target2)) || !inside3(physicalRoot, join83(existing, rest)))
+  if (/\0/.test(supplied) || !(inside3(root2, target2) || inside3(physicalRoot, target2)) || !inside3(physicalRoot, join84(existing, rest)))
     throw new IdiomError(
       `${label4} must be inside the bound project root ${root2}: ${supplied}`
     );
@@ -65497,14 +65570,14 @@ function findingDetail(record2, qualify2 = (id2) => id2) {
       combination: finding.combination
     },
     filmstrip: finding.evidence.filmstrip,
-    cropPath: crop === void 0 ? void 0 : resolve62(record2.runDirectory, crop),
+    cropPath: crop === void 0 ? void 0 : resolve63(record2.runDirectory, crop),
     evidencePaths: screenshots.map(
-      (path) => resolve62(record2.runDirectory, path)
+      (path) => resolve63(record2.runDirectory, path)
     ),
     evidenceStatus: crop === void 0 ? "unavailable: original finding has no visual evidence" : "available",
     timeline: finding.evidence.timeline === void 0 ? void 0 : {
       id: finding.evidence.timeline.id,
-      path: resolve62(
+      path: resolve63(
         record2.runDirectory,
         finding.evidence.timeline.artifact
       )
@@ -65515,7 +65588,7 @@ async function timelineDetail(runDirectory, reference3) {
   try {
     const path = await evidencePath(runDirectory, reference3.artifact);
     const parsed = actionTimelineArtifactSchema.parse(
-      JSON.parse(await readFile76(path, "utf8"))
+      JSON.parse(await readFile77(path, "utf8"))
     );
     const record2 = parsed.actions.find((action) => action.id === reference3.id);
     if (record2) return { status: "available", record: record2 };
@@ -65565,19 +65638,19 @@ var init_evidence2 = __esm({
             );
           let run2 = this.ids.get(id2);
           if (!run2) {
-            const runDirectory = join83(this.root, "idiom-quick-reports", runId);
+            const runDirectory = join84(this.root, "idiom-quick-reports", runId);
             await evidencePath(
-              join83(this.root, "idiom-quick-reports"),
+              join84(this.root, "idiom-quick-reports"),
               `${runId}/findings.json`
             );
             const findings = findingSchema.array().parse(
               JSON.parse(
-                await readFile76(join83(runDirectory, "findings.json"), "utf8")
+                await readFile77(join84(runDirectory, "findings.json"), "utf8")
               )
             );
             const groups2 = await readGroups(runDirectory) ?? [];
             const detail = JSON.parse(
-              await readFile76(join83(runDirectory, "mcp-detail.json"), "utf8")
+              await readFile77(join84(runDirectory, "mcp-detail.json"), "utf8")
             );
             run2 = {
               runDirectory,
@@ -65661,7 +65734,7 @@ var init_evidence2 = __esm({
           finding,
           runId: basename17(run2.runDirectory),
           runDirectory: run2.runDirectory,
-          findingsPath: join83(run2.runDirectory, "findings.json")
+          findingsPath: join84(run2.runDirectory, "findings.json")
         });
         const groups = issue ? run2.groups.filter((candidate2) => issue.groups.includes(candidate2.id)) : group ? [group] : [];
         return {
@@ -65714,7 +65787,7 @@ var init_evidence2 = __esm({
         const filmstrip = found.representative.evidence.filmstrip;
         if (filmstrip?.sheet) {
           try {
-            const data = await readFile76(
+            const data = await readFile77(
               await evidencePath(found.run.runDirectory, filmstrip.sheet)
             );
             if (data.length > FILMSTRIP_LIMITS.bytes)
@@ -65738,7 +65811,7 @@ var init_evidence2 = __esm({
         if (selected2 !== void 0) {
           try {
             const path = await evidencePath(found.run.runDirectory, selected2);
-            const data = await readFile76(path);
+            const data = await readFile77(path);
             if (!data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
               throw new Error("not a PNG");
             response.content.push({
@@ -65768,11 +65841,11 @@ var init_evidence2 = __esm({
         const configuredFlow = validated.flows[0]?.flow;
         if (!configuredFlow || configuredFlow.id !== flow)
           throw new IdiomError(`Unknown flow ${flow}.`);
-        const reports = join83(validated.projectDirectory, ".idiom", "reports");
-        const runDirectory = join83(reports, runId);
+        const reports = join84(validated.projectDirectory, ".idiom", "reports");
+        const runDirectory = join84(reports, runId);
         await evidencePath(reports, `${runId}/findings.json`);
         const originals = findingSchema.array().parse(
-          JSON.parse(await readFile76(join83(runDirectory, "findings.json"), "utf8"))
+          JSON.parse(await readFile77(join84(runDirectory, "findings.json"), "utf8"))
         );
         const findings = refs.map((ref) => {
           const finding = originals.find((finding2) => finding2.id === ref.id);
@@ -65810,13 +65883,22 @@ var init_evidence2 = __esm({
 });
 
 // src/mcp/tools.ts
-import { mkdtemp as mkdtemp11, readdir as readdir23, readFile as readFile77, rm as rm24, writeFile as writeFile47 } from "fs/promises";
+import { mkdtemp as mkdtemp11, readdir as readdir23, readFile as readFile78, rm as rm24, writeFile as writeFile47 } from "fs/promises";
 import { tmpdir as tmpdir7 } from "os";
-import { basename as basename18, isAbsolute as isAbsolute26, join as join84, resolve as resolve63 } from "path";
+import { basename as basename18, isAbsolute as isAbsolute26, join as join85, resolve as resolve64 } from "path";
 import { z as z32 } from "zod";
-function registerIdiomTools(server, root2, queue, dependencies) {
-  const evidence = new EvidenceStore(root2);
+function registerIdiomTools(server, binding2, queue, dependencies) {
+  const bind = typeof binding2 === "string" ? async () => binding2 : binding2;
+  let root2 = typeof binding2 === "string" ? binding2 : "";
+  let evidence = new EvidenceStore(root2);
   const configured = { project: root2 };
+  const rebind = async () => {
+    const next = await bind();
+    if (next === root2) return;
+    root2 = next;
+    evidence = new EvidenceStore(root2);
+    configured.project = root2;
+  };
   const capture = (execution) => execution.capture(dependencies.capture);
   const review = (execution) => ({
     ...dependencies.review,
@@ -65850,14 +65932,17 @@ function registerIdiomTools(server, root2, queue, dependencies) {
           openWorldHint: !readOnly
         }
       },
-      (args, ctx) => queue.run(ctx, (execution) => handler(args, execution))
+      (args, ctx) => queue.run(ctx, async (execution) => {
+        await rebind();
+        return handler(args, execution);
+      })
     );
   }
   const record2 = (finding, runDirectory) => ({
     finding,
     runId: basename18(runDirectory),
     runDirectory,
-    findingsPath: join84(runDirectory, "findings.json")
+    findingsPath: join85(runDirectory, "findings.json")
   });
   register(
     "idiom_quick",
@@ -65978,7 +66063,7 @@ function registerIdiomTools(server, root2, queue, dependencies) {
       throw new IdiomError(
         `Capture failed: ${failures.join("; ")}. Report: ${output.reportPath}`
       );
-    const originals = findingSchema.array().parse(JSON.parse(await readFile77(output.findingsPath, "utf8")));
+    const originals = findingSchema.array().parse(JSON.parse(await readFile78(output.findingsPath, "utf8")));
     const live = summary.baseline ? (output.deterministicOccurrences ?? originals).filter(
       (finding) => summary.findings.some(
         (item) => item.id === finding.id && item.where === tupleCoordinateKey(finding)
@@ -65993,7 +66078,7 @@ function registerIdiomTools(server, root2, queue, dependencies) {
           finding.id,
           {
             ...summary2,
-            ...summary2.screenshot === void 0 ? {} : { screenshot: resolve63(root2, summary2.screenshot) }
+            ...summary2.screenshot === void 0 ? {} : { screenshot: resolve64(root2, summary2.screenshot) }
           }
         ];
       })
@@ -66053,7 +66138,7 @@ function registerIdiomTools(server, root2, queue, dependencies) {
         ),
         preExistingFindings: summary.preExistingFindings?.map((item) => ({
           ...item,
-          ...item.screenshot === void 0 ? {} : { screenshot: resolve63(root2, item.screenshot) }
+          ...item.screenshot === void 0 ? {} : { screenshot: resolve64(root2, item.screenshot) }
         })),
         fixed: summary.fixed,
         coverage: summary.coverage,
@@ -66184,8 +66269,8 @@ function registerIdiomTools(server, root2, queue, dependencies) {
           runDirectory: snapshot3.runDirectory,
           reports: {
             markdown: snapshot3.summary.reportPath,
-            findings: join84(snapshot3.runDirectory, "findings.json"),
-            html: join84(snapshot3.runDirectory, "report.html")
+            findings: join85(snapshot3.runDirectory, "findings.json"),
+            html: join85(snapshot3.runDirectory, "report.html")
           },
           next: references2.length ? {
             tool: "idiom_verify",
@@ -66212,9 +66297,9 @@ function registerIdiomTools(server, root2, queue, dependencies) {
     false,
     async ({ flow, findings }, execution) => {
       const source = await evidence.source(flow, findings);
-      const temporary = await mkdtemp11(join84(tmpdir7(), "idiom-mcp-verify-"));
+      const temporary = await mkdtemp11(join85(tmpdir7(), "idiom-mcp-verify-"));
       try {
-        const spec = join84(temporary, "findings.md");
+        const spec = join85(temporary, "findings.md");
         await writeFile47(
           spec,
           source.findings.map(
@@ -66260,7 +66345,7 @@ ${JSON.stringify(finding)}
     async () => {
       const context2 = await loadProjectContext(configured);
       const entries = await readdir23(
-        join84(context2.projectDirectory, ".idiom", "flows")
+        join85(context2.projectDirectory, ".idiom", "flows")
       ).catch((error) => {
         if (error.code === "ENOENT") return [];
         throw error;
@@ -66562,7 +66647,7 @@ ${JSON.stringify(finding)}
         ...summary,
         findings: summary.findings.map((finding) => ({
           ...finding,
-          ...finding.screenshot === void 0 ? {} : { screenshot: resolve63(root2, finding.screenshot) }
+          ...finding.screenshot === void 0 ? {} : { screenshot: resolve64(root2, finding.screenshot) }
         })),
         ..."scope" in summary ? {
           flows: summary.flows.map(
@@ -66572,7 +66657,7 @@ ${JSON.stringify(finding)}
                 ...entry2.summary,
                 findings: entry2.summary.findings.map((f) => ({
                   ...f,
-                  ...f.screenshot === void 0 ? {} : { screenshot: resolve63(root2, f.screenshot) }
+                  ...f.screenshot === void 0 ? {} : { screenshot: resolve64(root2, f.screenshot) }
                 }))
               }
             }
@@ -66818,7 +66903,7 @@ function createIdiomMcpServer(options = {}) {
   const queue = new ToolExecutionQueue();
   registerIdiomTools(
     server,
-    resolveProjectArgument(options.project, options.cwd),
+    projectBinding(server, options),
     queue,
     options.dependencies ?? {}
   );
@@ -66832,8 +66917,8 @@ function createIdiomMcpServer(options = {}) {
 var init_server = __esm({
   "src/mcp/server.ts"() {
     "use strict";
-    init_project2();
     init_version();
+    init_binding();
     init_execution();
     init_tools();
   }
@@ -66846,11 +66931,13 @@ __export(mcp_exports, {
 });
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 async function mcpCommand(options = {}) {
-  const root2 = resolveProjectArgument(options.project, options.cwd);
   let server;
   const handle = serveStdio(
     () => {
-      server = createIdiomMcpServer({ project: root2 });
+      server = createIdiomMcpServer({
+        project: options.project,
+        cwd: options.cwd
+      });
       return server;
     },
     {
@@ -66858,7 +66945,7 @@ async function mcpCommand(options = {}) {
 `)
     }
   );
-  await new Promise((resolve64) => {
+  await new Promise((resolve65) => {
     let closing = false;
     const shutdown = () => {
       if (closing) return;
@@ -66874,7 +66961,7 @@ async function mcpCommand(options = {}) {
           process.stderr.write(`Idiom MCP shutdown: ${String(error)}
 `);
         } finally {
-          resolve64();
+          resolve65();
         }
       })();
     };
@@ -66887,7 +66974,6 @@ var init_mcp = __esm({
   "src/commands/mcp.ts"() {
     "use strict";
     init_server();
-    init_project2();
   }
 });
 
@@ -66897,7 +66983,7 @@ init_port();
 init_timings();
 init_baseline2();
 import { realpath as realpath16 } from "fs/promises";
-import { fileURLToPath as fileURLToPath2 } from "url";
+import { fileURLToPath as fileURLToPath3 } from "url";
 import {
   Command,
   CommanderError,
@@ -74065,7 +74151,7 @@ async function isEntryPoint(moduleUrl, argvEntry) {
   if (argvEntry === void 0) return false;
   try {
     const [modulePath, entryPath] = await Promise.all([
-      realpath16(fileURLToPath2(moduleUrl)),
+      realpath16(fileURLToPath3(moduleUrl)),
       realpath16(argvEntry)
     ]);
     return modulePath === entryPath;

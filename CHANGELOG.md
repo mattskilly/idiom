@@ -4,6 +4,13 @@ User-visible changes to Idiom are recorded here, newest first.
 
 ## [Unreleased]
 
+## [v0.16.1] - 2026-10-30
+
+Idiom's MCP tools now work in Codex.
+
+- **Codex gets its MCP server from `codex mcp add`.** Codex starts a plugin's MCP servers inside the installed plugin directory and tells them nothing about your project, so with the 0.16.0 Codex plugin every project tool failed with "no .idiom/project.json found". The Codex plugin now supplies only the Idiom skill, and one more line registers the server, which Codex starts in each thread's project directory: `codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz idiom mcp`. To update, rerun it with the new release. Codex users on 0.16.0 should run `codex plugin marketplace upgrade idiom`, `codex plugin add idiom@idiom` and then that line. Claude Code is unchanged.
+- **The server never treats its own plugin directory as your project.** If a host starts it there, it uses the client's MCP root that contains `.idiom/project.json` when the client offers roots, and otherwise returns an error naming the fix, without reading or writing the plugin directory. An explicit `--project` and any ordinary working directory behave as before.
+
 ## [v0.16.0] - 2026-10-30
 
 Idiom installs and updates as a Claude Code or Codex plugin, the new `idiom upgrade` brings a project's Idiom skills up to date without losing your edits, the optional critique can run on Codex, and a round of capture fixes makes reviews more accurate and private.

@@ -10,7 +10,7 @@ You need Node 20 or later and an app running locally. The first review takes a f
 ## 1. Install
 
 ```sh
-npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.0/mattskilly-idiom-0.16.0.tgz
+npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz
 npx playwright@1.62.1 install chromium
 ```
 
@@ -26,7 +26,7 @@ Idiom opens the page at desktop and mobile widths, in light and dark, clicks thr
 
 ## 3. Hand it to your agent
 
-The plugin bundles MCP tools and the Idiom skill; Claude Code also adds reminders after UI edits. A global CLI install is optional for plugin use. It needs Node 20 or later, npm/npx and the matching Chromium from step 1. The first MCP launch downloads the exact GitHub release named by the plugin.
+The Claude Code plugin bundles MCP tools, the Idiom skill and reminders after UI edits; in Codex the plugin adds the skill and `codex mcp add` adds the tools. A global CLI install is optional for plugin use. It needs Node 20 or later, npm/npx and the matching Chromium from step 1. The first MCP launch downloads the exact GitHub release named by the plugin.
 
 In Claude Code:
 
@@ -40,9 +40,12 @@ For Codex, in your shell:
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz idiom mcp
 ```
 
-Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom` to ensure the refreshed release is installed, and start a new session.
+Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.
+
+Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom`, rerun the `codex mcp add` line above with the new release (it replaces the entry), and start a new session.
 
 Remove a duplicate standalone server when switching (`claude mcp remove idiom` for Claude Code). For standalone clients, credentials, long-running tool timeouts and local plugin development, see [MCP](/docs/mcp). [Design QA for Claude Code](/docs/design-qa-for-claude-code) walks through the repair loop.
 

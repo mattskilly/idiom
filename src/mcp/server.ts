@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/server";
-import { resolveProjectArgument } from "../project.js";
 import { IDIOM_VERSION } from "../version.js";
+import { projectBinding } from "./binding.js";
 import { ToolExecutionQueue } from "./execution.js";
 import { type McpDependencies, registerIdiomTools } from "./tools.js";
 
@@ -19,7 +19,7 @@ export function createIdiomMcpServer(
   const queue = new ToolExecutionQueue();
   registerIdiomTools(
     server,
-    resolveProjectArgument(options.project, options.cwd),
+    projectBinding(server, options),
     queue,
     options.dependencies ?? {},
   );

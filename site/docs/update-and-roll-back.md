@@ -12,7 +12,7 @@ Update the CLI once, then run `idiom upgrade` in each project to bring its vendo
 While npm publication is on hold, the latest released CLI is available from its GitHub Release tarball:
 
 ```sh
-npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.0/mattskilly-idiom-0.16.0.tgz
+npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz
 idiom --version
 ```
 
@@ -21,7 +21,7 @@ idiom --version
 For a project dependency, pin the release tarball and commit the package manifest and lockfile:
 
 ```sh
-npm install --save-dev --save-exact https://github.com/mattskilly/idiom/releases/download/v0.16.0/mattskilly-idiom-0.16.0.tgz
+npm install --save-dev --save-exact https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz
 npx --no-install idiom --version
 ```
 

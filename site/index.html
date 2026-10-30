@@ -431,13 +431,14 @@ ol.cmds li { grid-template-columns:minmax(0,1fr) 14rem 28px; }
     <li class="session-command"><code>/plugin marketplace add mattskilly/idiom</code><span class="what">Claude Code session: add marketplace</span></li>
     <li class="session-command"><code>/plugin install idiom@idiom</code><span class="what">Claude Code session: MCP, skill and UI reminders</span></li>
     <li><code>codex plugin marketplace add mattskilly/idiom</code><span class="what">Codex shell: add marketplace</span></li>
-    <li><code>codex plugin add idiom@idiom</code><span class="what">Codex shell: MCP and skill</span></li>
+    <li><code>codex plugin add idiom@idiom</code><span class="what">Codex shell: Idiom skill</span></li>
+    <li><code>codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz idiom mcp</code><span class="what">Codex shell: MCP tools, started in your project</span></li>
     <li><code>npx playwright@1.62.1 install chromium</code><span class="what">Node 20+ and npm/npx required; browser once per machine</span></li>
-    <li><code>npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.0/mattskilly-idiom-0.16.0.tgz</code><span class="what">optional CLI: install the current release</span></li>
+    <li><code>npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz</code><span class="what">optional CLI: install the current release</span></li>
     <li><code>idiom quick http://localhost:3000</code><span class="what">no setup, findings in report.html</span></li>
     <li><code>npx skills add mattskilly/idiom --skill idiom</code><span class="what">other agents: portable Idiom skill</span></li>
   </ol>
-  <div class="col"><p>Update Claude Code with <code>/plugin marketplace update idiom</code>, then <code>/plugin update idiom@idiom</code> and <code>/reload-plugins</code>. Update Codex with <code>codex plugin marketplace upgrade idiom</code>, then <code>codex plugin add idiom@idiom</code> and a new session. The MCP runtime stays pinned to that plugin release. npm still serves an older CLI release; once the current one is published there, <code>npm install -g @mattskilly/idiom</code> works too. To check signed-in, empty and error states too, run <code>idiom init</code>.</p></div>
+  <div class="col"><p>Update Claude Code with <code>/plugin marketplace update idiom</code>, then <code>/plugin update idiom@idiom</code> and <code>/reload-plugins</code>. Update Codex with <code>codex plugin marketplace upgrade idiom</code>, then <code>codex plugin add idiom@idiom</code>, rerun the <code>codex mcp add</code> line with the new release and start a new session. The MCP runtime stays pinned to that plugin release. npm still serves an older CLI release; once the current one is published there, <code>npm install -g @mattskilly/idiom</code> works too. To check signed-in, empty and error states too, run <code>idiom init</code>.</p></div>
   <p class="actions"><a class="btn primary" href="https://idiom.build/docs/getting-started"><i class="h tl"></i><i class="h tr"></i><i class="h bl"></i><i class="h br"></i>Get started</a><a class="btn" href="https://idiom.build/docs">Read the docs</a><a class="btn" href="https://github.com/mattskilly/idiom">GitHub</a></p>
 </section>
 </main>

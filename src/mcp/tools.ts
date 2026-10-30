@@ -123,12 +123,22 @@ const reference = z.strictObject({
 
 export function registerIdiomTools(
   server: McpServer,
-  root: string,
+  binding: string | (() => Promise<string>),
   queue: ToolExecutionQueue,
   dependencies: McpDependencies,
 ) {
-  const evidence = new EvidenceStore(root);
+  const bind = typeof binding === "string" ? async () => binding : binding;
+  let root = typeof binding === "string" ? binding : "";
+  let evidence = new EvidenceStore(root);
   const configured = { project: root };
+  /** Rebinds before each call; evidence IDs belong to the project they came from. */
+  const rebind = async () => {
+    const next = await bind();
+    if (next === root) return;
+    root = next;
+    evidence = new EvidenceStore(root);
+    configured.project = root;
+  };
   const capture = (execution: Execution) =>
     execution.capture(dependencies.capture);
   const review = (execution: Execution): ReviewDependencies => ({
@@ -173,7 +183,11 @@ export function registerIdiomTools(
           openWorldHint: !readOnly,
         },
       },
-      (args, ctx) => queue.run(ctx, (execution) => handler(args, execution)),
+      (args, ctx) =>
+        queue.run(ctx, async (execution) => {
+          await rebind();
+          return handler(args, execution);
+        }),
     );
   }
   const record = (finding: Finding, runDirectory: string): CatalogFinding => ({

@@ -1,16 +1,17 @@
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { createIdiomMcpServer } from "../mcp/server.js";
-import { resolveProjectArgument } from "../project.js";
 
 /** Own the session; stdout belongs exclusively to the official SDK transport. */
 export async function mcpCommand(
   options: { project?: string | undefined; cwd?: string | undefined } = {},
 ): Promise<void> {
-  const root = resolveProjectArgument(options.project, options.cwd);
   let server: ReturnType<typeof createIdiomMcpServer> | undefined;
   const handle = serveStdio(
     () => {
-      server = createIdiomMcpServer({ project: root });
+      server = createIdiomMcpServer({
+        project: options.project,
+        cwd: options.cwd,
+      });
       return server;
     },
     {

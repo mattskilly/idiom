@@ -193,7 +193,6 @@ test("packed discovery manifest and portable skill match their tracked sources",
     ".claude-plugin/marketplace.json",
     ".agents/plugins/marketplace.json",
     "plugin.json",
-    "mcp.json",
     "skills/idiom/SKILL.md",
     "skills/idiom/references/init.md",
   ]) {
@@ -558,10 +557,8 @@ test("packed plugin resolves the existing skill and adjacent init guide and vali
       "mcp",
     ],
   });
-  const portableMcp = JSON.parse(
-    await readFile(join(runtimeRoot, "mcp.json"), "utf8"),
-  );
-  expect(portableMcp.mcpServers.idiom).toEqual(manifest.mcpServers.idiom);
+  // Codex would start a plugin MCP server in the plugin directory.
+  expect(packedFiles).not.toContain("mcp.json");
   const codexCatalog = JSON.parse(
     await readFile(
       join(runtimeRoot, ".agents/plugins/marketplace.json"),

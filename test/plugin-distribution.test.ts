@@ -18,7 +18,6 @@ const manifests = [
   ".claude-plugin/plugin.json",
   ".claude-plugin/marketplace.json",
   "plugin.json",
-  "mcp.json",
   ".agents/plugins/marketplace.json",
 ];
 async function fixture() {
@@ -111,13 +110,12 @@ test.each([
     "ON_USE",
   ],
   ["plugin.json", "$schema", "https://example.com/wrong"],
-  ["mcp.json", "$schema", "https://example.com/wrong"],
   ["plugin.json", "extensions.com.openai.hooks", {}],
   [".claude-plugin/plugin.json", "name", "other"],
   ["plugin.json", "name", "other"],
   [".claude-plugin/plugin.json", "mcpServers.idiom.command", "idiom"],
-  ["mcp.json", "mcpServers.idiom.type", "sse"],
-  ["mcp.json", "mcpServers.idiom.cwd", "./"],
+  [".claude-plugin/plugin.json", "mcpServers.idiom.type", "sse"],
+  [".claude-plugin/plugin.json", "mcpServers.idiom.cwd", "./"],
 ])("rejects drift in %s %s", async (file, field, value) => {
   const path = await fixture();
   await mutate(path, file, field, value);
@@ -127,7 +125,7 @@ test.each([
   expect(result.stderr).toContain(`${file}:`);
 });
 
-test.each([".claude-plugin/plugin.json", "mcp.json"])(
+test.each([".claude-plugin/plugin.json"])(
   "rejects every URL/version and argument drift in %s",
   async (file) => {
     const path = await fixture();
@@ -159,6 +157,17 @@ test.each([".claude-plugin/plugin.json", "mcp.json"])(
     }
   },
 );
+
+test("a root mcp.json fails because Codex would start it in the plugin directory", async () => {
+  const path = await fixture();
+  await writeFile(
+    join(path, "mcp.json"),
+    JSON.stringify({ mcpServers: { idiom: { command: "npx" } } }),
+  );
+  expect(checkPlugins(path).join("\n")).toContain(
+    "mcp.json: file must be absent",
+  );
+});
 
 test.each(manifests)(
   "missing or invalid %s fails with its path",

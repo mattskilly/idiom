@@ -46,9 +46,9 @@ test("how-to copy remains pinned to the dated release and public command surface
   const metadata = JSON.parse(
     await readFile(join(root, "package.json"), "utf8"),
   );
-  expect(metadata.version).toBe("0.16.0");
+  expect(metadata.version).toBe("0.16.1");
   expect(await readFile(join(root, "CHANGELOG.md"), "utf8")).toContain(
-    "## [v0.16.0] - 2026-10-30",
+    "## [v0.16.1] - 2026-10-30",
   );
   for (const { slug } of articles) {
     const source = await readFile(
@@ -76,7 +76,7 @@ test("how-to copy remains pinned to the dated release and public command surface
       expect(copy).toContain(
         `playwright@${metadata.dependencies.playwright} install chromium`,
       );
-      expect(copy).toContain("v0.16.0");
+      expect(copy).toContain("v0.16.1");
     }
   }
   const qa = outputs.get(articles[0]?.slug ?? "") ?? "";

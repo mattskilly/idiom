@@ -1,6 +1,6 @@
 {
   "name": "@mattskilly/idiom",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "Design acceptance for AI-built software.",
   "type": "module",
   "license": "Apache-2.0",
@@ -36,7 +36,6 @@
     "server.json",
     "skills/",
     "plugin.json",
-    "mcp.json",
     ".agents/plugins/marketplace.json"
   ],
   "scripts": {
