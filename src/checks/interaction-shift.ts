@@ -28,6 +28,12 @@ export const LATE_MS = 500;
 /** One frame of slack between a mutation's time and the sample that shows it. */
 const FRAME_SLACK_MS = 20;
 
+// Public precision remains unvalidated after the file-216 detector repairs
+// (docs/field-test/interaction-shift.json, file216DetectorRepair). Keep real
+// measurements and attribution, but withhold this cause's findings until a
+// fresh public audit meets 80% precision with at least five findings.
+const REPORT_SCROLLBAR_FINDINGS = false;
+
 export type ShiftCause = {
   selector: string;
   kind: "insert" | "remove" | "resize" | "scrollbar";
@@ -89,12 +95,15 @@ export function scrollbarShift(
     if (!before || !after || before.scrollable === after.scrollable) continue;
     const locked = after.scrollable ? before : after;
     const open = after.scrollable ? after : before;
-    if (!locked.lockedBy || open.gutter <= 0) continue;
+    // Overflow can lock while the layout gutter stays reserved (including
+    // browser/site mechanisms that do not expose `scrollbar-gutter: stable`).
+    const changedGutter = open.gutter - locked.gutter;
+    if (!locked.lockedBy || changedGutter <= 0) continue;
     if (after.stableGutter || locked.compensation) return undefined;
     return {
       time: after.time,
       direction: after.scrollable ? "added" : "removed",
-      gutter: open.gutter,
+      gutter: changedGutter,
       lockedBy: locked.lockedBy,
     };
   }
@@ -760,7 +769,7 @@ export const interactionShiftCheck: DeterministicCheck = {
         continue;
       const shifts = interactionShifts(action, viewport, settings);
       const scrollbar = scrollbarShift(action);
-      if (scrollbar) {
+      if (scrollbar && REPORT_SCROLLBAR_FINDINGS) {
         // Report the measured scrollbar change once for the whole page.
         const subject = describeAction(action);
         const moved = shifts

@@ -529,3 +529,46 @@ test("aggregate regions and class heuristics remain local to their flow", () => 
     }).some((i) => i.rootCause),
   ).toBe(false);
 });
+
+test("mixed-severity root cause retains score, breadth and highest-score symptom", () => {
+  const { groups, findingsById } = fixture(
+    ["#a", "#b", "#c"].map((selector) => ({
+      ...tokenDrift(selector),
+      selector,
+    })),
+  );
+  const rankingContext = context(
+    ["#a", "#b", "#c"].map((selector, index) =>
+      element(selector, {
+        ...radiusFrom("--r-md", true),
+        rect: { x: 0, y: index === 0 ? 0 : 900, width: 200, height: 100 },
+      }),
+    ),
+  );
+  const [before] = rootCauseIssues(
+    groups,
+    findingsById,
+    new Set(),
+    rankingContext,
+  );
+  const major = groups[1];
+  if (!major) throw new Error("missing symptom");
+  major.severity = "major";
+  for (const member of major.members) member.severity = "major";
+  const [after] = rootCauseIssues(
+    groups,
+    findingsById,
+    new Set(),
+    rankingContext,
+  );
+  expect(after).toMatchObject({
+    severity: "major",
+    id: before?.id,
+    score: before?.score,
+    salience: before?.salience,
+    prominence: before?.prominence,
+    explanation: before?.explanation,
+  });
+  expect(after?.explanation.selector).toBe("#a");
+  expect(after?.explanation.breadth).toBe(rootCauseBreadth(3));
+});

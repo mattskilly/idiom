@@ -15,6 +15,7 @@ import {
   type AnthropicExplorationClient,
 } from "../src/explore/anthropic.js";
 import { ClaudeCodeExplorationAdapter } from "../src/explore/claude-code.js";
+import { createExplorationAdapter } from "../src/explore/provider.js";
 import type {
   CandidateRequest,
   RefinementRequest,
@@ -481,4 +482,18 @@ test("Anthropic generation repairs design-law citations within its supported str
   expect(repair.output_config.format.schema).toEqual(
     generationRequest.output_config.format.schema,
   );
+});
+
+test("Codex is rejected explicitly instead of falling into the Anthropic adapter", () => {
+  const anthropicClient = { messages: { create: vi.fn() } };
+  expect(() =>
+    createExplorationAdapter({
+      model: { provider: "codex", model: "gpt", maxFindings: 5 },
+      environment: { ANTHROPIC_API_KEY: "present" },
+      anthropicClient: anthropicClient as never,
+    }),
+  ).toThrow(
+    'idiom explore supports model.provider "claude-code" or "anthropic"; Codex exploration is not available yet',
+  );
+  expect(anthropicClient.messages.create).not.toHaveBeenCalled();
 });

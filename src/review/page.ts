@@ -3,11 +3,16 @@ import { join, resolve } from "node:path";
 import type { CaptureCounts } from "../capture/types.js";
 import { pageSections } from "../checks/page-content.js";
 import { checksConfigFrom } from "../checks/registry.js";
-import { ClaudeCodeCritiqueError } from "../critique/claude-code.js";
 import {
   loadReferenceContext,
   tupleCritiqueMaterial,
 } from "../critique/context.js";
+import {
+  type CritiqueFallbackEvent,
+  type CritiqueModelConfig,
+  type CritiqueProvider,
+  describeCritiqueFailure,
+} from "../critique/provider.js";
 import { referenceFromFile } from "../critique/reference-file.js";
 import { validateCritiqueResult } from "../critique/schema.js";
 import type {
@@ -43,10 +48,9 @@ import {
 } from "./findings.js";
 import type { PageReviewScope, ReviewOutcome } from "./report.js";
 import {
-  claudeCodeDegradationReason,
   createReviewCritiqueAdapter,
   type ReviewDependencies,
-  safeDegradationReason,
+  withFallback,
 } from "./run.js";
 
 export type PageReviewDependencies = Omit<ReviewDependencies, "capture"> & {
@@ -136,7 +140,7 @@ export async function runPageReview(options: {
   cwd?: string | undefined;
   out?: string | undefined;
   deterministicOnly?: boolean | undefined;
-  provider?: "claude-code" | "anthropic" | undefined;
+  provider?: CritiqueProvider | undefined;
   model?: string | undefined;
   maxFindings?: number | undefined;
   dependencies?: PageReviewDependencies | undefined;
@@ -244,9 +248,13 @@ export async function runPageReview(options: {
 
   let modelDrafts: FindingDraft[] = [];
   let outcome: ReviewOutcome;
-  const provider =
-    options.provider ?? project?.model.provider ?? ("claude-code" as const);
+  // An explicit provider or model is honored literally, without fallback.
+  const explicit =
+    options.provider !== undefined || options.model !== undefined;
+  const provider: CritiqueProvider =
+    options.provider ?? project?.model.provider ?? "claude-code";
   const model = options.model ?? project?.model.model;
+  const fallbacks: CritiqueFallbackEvent[] = [];
   if (options.deterministicOnly === true) {
     outcome = { kind: "deterministic-only" };
   } else if (model === undefined) {
@@ -295,11 +303,13 @@ export async function runPageReview(options: {
       };
       const { capture: _capture, ...critiqueDependencies } =
         options.dependencies ?? {};
+      const modelConfig: CritiqueModelConfig =
+        explicit || project === undefined ? { provider, model } : project.model;
       const adapter = createReviewCritiqueAdapter({
-        provider,
-        model,
+        model: modelConfig,
         projectDirectory: projectDirectory ?? directory,
         dependencies: critiqueDependencies,
+        onFallback: (event) => fallbacks.push(event),
       });
       const critique = validateCritiqueResult({
         result: await adapter.critique(input),
@@ -315,17 +325,14 @@ export async function runPageReview(options: {
         tuples: loaded.tuples,
         legacyColorScheme,
       });
-      outcome = { kind: "full" };
+      outcome = withFallback({ kind: "full" }, fallbacks[0]);
     } catch (error) {
       outcome = {
         kind: "degraded",
-        reason:
-          provider === "claude-code" && error instanceof ClaudeCodeCritiqueError
-            ? claudeCodeDegradationReason(
-                error,
-                options.dependencies?.environment ?? process.env,
-              )
-            : safeDegradationReason(error),
+        reason: describeCritiqueFailure(
+          error,
+          options.dependencies?.environment ?? process.env,
+        ),
       };
     }
   }

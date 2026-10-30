@@ -16,21 +16,20 @@ import { projectChecksConfig } from "../checks/project-config.js";
 import { runDeterministicChecks } from "../checks/registry.js";
 import { scaleQuestions } from "../checks/scale-conformance.js";
 import { computeFlowStateCoverage } from "../coverage/states.js";
-import { AnthropicCritiqueAdapter } from "../critique/anthropic.js";
-import {
-  ClaudeCodeCritiqueAdapter,
-  ClaudeCodeCritiqueError,
-  type ClaudeCodeRunner,
-  sanitizeCritiqueDiagnostic,
-} from "../critique/claude-code.js";
+import type { ClaudeCodeRunner } from "../critique/claude-code.js";
 import { buildCritiqueContext } from "../critique/context.js";
+import type { CritiqueProcessRunner } from "../critique/process.js";
+import {
+  type CritiqueAdapterLike,
+  type CritiqueFallbackEvent,
+  type CritiqueModelConfig,
+  type CritiqueProvider,
+  createCritiqueAdapter,
+  createProviderCritiqueAdapter,
+  describeCritiqueFailure,
+  safeDegradationReason,
+} from "../critique/provider.js";
 import { validateCritiqueResult } from "../critique/schema.js";
-import type {
-  CritiqueAdapter,
-  CritiqueInput,
-  CritiqueResult,
-  ModelFindingCandidate,
-} from "../critique/types.js";
 import { decisionViews, readDecisionLog } from "../decisions/log.js";
 import { tupleDesigns } from "../design/evidence.js";
 import { IdiomError } from "../errors.js";
@@ -105,13 +104,7 @@ import {
 } from "./ranking.js";
 import { type ReviewOutcome, renderReport, writeReport } from "./report.js";
 
-type ReviewCritiqueAdapter =
-  | CritiqueAdapter
-  | {
-      critique(
-        input: CritiqueInput,
-      ): Promise<CritiqueResult | ModelFindingCandidate[]>;
-    };
+type ReviewCritiqueAdapter = CritiqueAdapterLike;
 
 export type ReviewDependencies = {
   monotonicNow?: (() => number) | undefined;
@@ -119,13 +112,14 @@ export type ReviewDependencies = {
   critique?: ReviewCritiqueAdapter | undefined;
   createCritiqueAdapter?:
     | ((options: {
-        provider: "claude-code" | "anthropic";
+        provider: CritiqueProvider;
         model: string;
         projectDirectory: string;
         environment: NodeJS.ProcessEnv;
       }) => ReviewCritiqueAdapter)
     | undefined;
   claudeCodeRunner?: ClaudeCodeRunner | undefined;
+  codexRunner?: CritiqueProcessRunner | undefined;
   environment?: NodeJS.ProcessEnv | undefined;
 };
 
@@ -177,76 +171,63 @@ export class SweepCaptureError extends Error {
 
 const MAX_DEGRADATION_REASON_LENGTH = 600;
 
-function safeDegradationDetail(error: unknown, limit: number): string {
-  return sanitizeCritiqueDiagnostic(error, limit);
-}
-
-export function safeDegradationReason(error: unknown): string {
-  return safeDegradationDetail(error, MAX_DEGRADATION_REASON_LENGTH);
-}
+export {
+  claudeCodeDegradationReason,
+  safeDegradationReason,
+} from "../critique/provider.js";
 
 function truncate(value: string, limit: number): string {
   return value.length <= limit ? value : `${value.slice(0, limit - 1)}…`;
 }
 
-export function claudeCodeDegradationReason(
-  error: unknown,
-  environment: NodeJS.ProcessEnv,
-): string {
-  const cliClause =
-    "Claude Code CLI is unavailable or not authenticated; install or update Claude Code and run `claude auth login`";
-  const fallbackClause =
-    environment.ANTHROPIC_API_KEY === undefined ||
-    environment.ANTHROPIC_API_KEY.trim() === ""
-      ? "ANTHROPIC_API_KEY is not set for the explicit direct-API fallback"
-      : 'select model.provider: "anthropic" to use the explicit direct-API fallback';
-  const separator = "; ";
-  const detailPrefix = "diagnostic: ";
-  const detailBudget =
-    MAX_DEGRADATION_REASON_LENGTH -
-    cliClause.length -
-    fallbackClause.length -
-    separator.length * 2 -
-    detailPrefix.length;
-  const detail = safeDegradationDetail(
-    error instanceof ClaudeCodeCritiqueError ? error.detail : error,
-    detailBudget,
-  );
-  return [
-    cliClause,
-    ...(detail === "" ? [] : [`${detailPrefix}${detail}`]),
-    fallbackClause,
-  ].join(separator);
-}
-
-/** The injected adapter, else the configured provider's own. */
+/**
+ * The injected adapter, else the configured provider's own, wrapped in the
+ * configured fallback. The creation hook is asked once per provider.
+ */
 export function createReviewCritiqueAdapter(options: {
-  provider: "claude-code" | "anthropic";
-  model: string;
+  model: CritiqueModelConfig;
   projectDirectory: string;
   dependencies?: Omit<ReviewDependencies, "capture"> | undefined;
+  onFallback?: ((event: CritiqueFallbackEvent) => void) | undefined;
 }): ReviewCritiqueAdapter {
   const dependencies = options.dependencies;
-  return (
-    dependencies?.critique ??
-    dependencies?.createCritiqueAdapter?.({
-      provider: options.provider,
-      model: options.model,
-      projectDirectory: options.projectDirectory,
-      environment: dependencies?.environment ?? process.env,
-    }) ??
-    (options.provider === "claude-code"
-      ? new ClaudeCodeCritiqueAdapter({
-          model: options.model,
-          projectDirectory: options.projectDirectory,
-          environment: dependencies?.environment,
-          runner: dependencies?.claudeCodeRunner,
-        })
-      : new AnthropicCritiqueAdapter({
-          model: options.model,
-          environment: dependencies?.environment,
-        }))
-  );
+  if (dependencies?.critique !== undefined) return dependencies.critique;
+  const environment = dependencies?.environment ?? process.env;
+  return createCritiqueAdapter({
+    model: options.model,
+    environment,
+    onFallback: options.onFallback,
+    build: ({ provider, model }) =>
+      dependencies?.createCritiqueAdapter?.({
+        provider,
+        model,
+        projectDirectory: options.projectDirectory,
+        environment,
+      }) ??
+      createProviderCritiqueAdapter({
+        provider,
+        model,
+        projectDirectory: options.projectDirectory,
+        environment: dependencies?.environment,
+        claudeCodeRunner: dependencies?.claudeCodeRunner,
+        codexRunner: dependencies?.codexRunner,
+      }),
+  });
+}
+
+/** Makes a fallback switch visible on the outcome it produced. */
+export function withFallback(
+  outcome: ReviewOutcome,
+  fallback: CritiqueFallbackEvent | undefined,
+): ReviewOutcome {
+  if (fallback === undefined) return outcome;
+  if (outcome.kind === "full") return { kind: "full", fallback };
+  if (outcome.kind !== "degraded") return outcome;
+  const note = `; critique used fallback ${fallback.to} after ${fallback.from} failed`;
+  return {
+    kind: "degraded",
+    reason: `${truncate(outcome.reason, MAX_DEGRADATION_REASON_LENGTH - note.length)}${note}`,
+  };
 }
 
 async function loadSpec(
@@ -507,6 +488,12 @@ export async function runReview(options: {
   let aggregatedDecisions: AggregatedDecision[] = [];
   let discardedDecisionObservations = 0;
   let sweepSurfaces: SweepSurface[] | undefined;
+  const fallbacks: CritiqueFallbackEvent[] = [];
+  const describeFailure = (error: unknown) =>
+    describeCritiqueFailure(
+      error,
+      options.dependencies?.environment ?? process.env,
+    );
 
   if (options.deterministicOnly === true) {
     outcome = { kind: "deterministic-only" };
@@ -533,20 +520,13 @@ export async function runReview(options: {
         priorRules,
         deterministicFindings,
         adapter: createReviewCritiqueAdapter({
-          provider: validated.project.model.provider,
-          model: validated.project.model.model,
+          model: validated.project.model,
           projectDirectory: validated.projectDirectory,
           dependencies: options.dependencies,
+          onFallback: (event) => fallbacks.push(event),
         }),
         spec,
-        describeFailure: (error) =>
-          validated.project.model.provider === "claude-code" &&
-          error instanceof ClaudeCodeCritiqueError
-            ? claudeCodeDegradationReason(
-                error,
-                options.dependencies?.environment ?? process.env,
-              )
-            : safeDegradationReason(error),
+        describeFailure,
       });
       sweepSurfaces = sweep.surfaces;
       discardedDecisionObservations = sweep.discardedDecisionObservations;
@@ -575,7 +555,7 @@ export async function runReview(options: {
         (surface) => surface.status === "failed",
       );
       // Unlike review, a partial sweep keeps the surfaces that succeeded.
-      outcome =
+      outcome = withFallback(
         failed.length === 0
           ? { kind: "full" }
           : {
@@ -589,7 +569,9 @@ export async function runReview(options: {
                   .join("; ")}`,
                 MAX_DEGRADATION_REASON_LENGTH,
               ),
-            };
+            },
+        fallbacks[0],
+      );
     } catch (error) {
       outcome = { kind: "degraded", reason: safeDegradationReason(error) };
     }
@@ -617,10 +599,10 @@ export async function runReview(options: {
         modelCandidateAllowance: validated.project.model.maxFindings,
       });
       const adapter = createReviewCritiqueAdapter({
-        provider: validated.project.model.provider,
-        model: validated.project.model.model,
+        model: validated.project.model,
         projectDirectory: validated.projectDirectory,
         dependencies: options.dependencies,
+        onFallback: (event) => fallbacks.push(event),
       });
       const critique = validateCritiqueResult({
         result: await adapter.critique(context),
@@ -652,33 +634,16 @@ export async function runReview(options: {
       suppressed.push(...modelRules.suppressed, ...model.suppressed);
       allDrafts = [...orderedDeterministic, ...model.kept];
       modelKeptDrafts = model.kept;
-      outcome = { kind: "full" };
+      outcome = withFallback({ kind: "full" }, fallbacks[0]);
     } catch (error) {
-      outcome = {
-        kind: "degraded",
-        reason:
-          validated.project.model.provider === "claude-code" &&
-          error instanceof ClaudeCodeCritiqueError
-            ? claudeCodeDegradationReason(
-                error,
-                options.dependencies?.environment ?? process.env,
-              )
-            : safeDegradationReason(error),
-      };
+      outcome = { kind: "degraded", reason: describeFailure(error) };
     }
   }
 
-  const describeFailure = (error: unknown) =>
-    validated.project.model.provider === "claude-code" &&
-    error instanceof ClaudeCodeCritiqueError
-      ? claudeCodeDegradationReason(
-          error,
-          options.dependencies?.environment ?? process.env,
-        )
-      : safeDegradationReason(error);
   let advisory: ReviewRunResult["advisory"];
   if (runAdvisory && contentFlow !== undefined) {
-    const review = await runAdvisoryReview({
+    const advisoryFallbacks: CritiqueFallbackEvent[] = [];
+    const ran = await runAdvisoryReview({
       projectDirectory: validated.projectDirectory,
       runDirectory,
       project: validated.project,
@@ -690,14 +655,18 @@ export async function runReview(options: {
         drafts: orderedDeterministic,
       }),
       adapter: createReviewCritiqueAdapter({
-        provider: validated.project.model.provider,
-        model: validated.project.model.model,
+        model: validated.project.model,
         projectDirectory: validated.projectDirectory,
         dependencies: options.dependencies,
+        onFallback: (event) => advisoryFallbacks.push(event),
       }),
       describeFailure,
       legacyColorScheme: validated.project.capture.colorScheme,
     });
+    const review = {
+      ...ran,
+      outcome: withFallback(ran.outcome, advisoryFallbacks[0]),
+    };
     advisory = {
       path: await writeAdvisoryReview(runDirectory, review),
       review,

@@ -1084,3 +1084,64 @@ test.each([1, 10, 20])(
     ).toEqual(original);
   },
 );
+
+test("cluster cutoff applies severity and supplied issue scores before publication; retry keeps identities", async () => {
+  const { directory, run, findings } = await clusterFixture();
+  for (const [i, finding] of findings.entries()) {
+    finding.severity = i === findings.length - 1 ? "blocker" : "minor";
+    // Keep clusters independent so a cutoff can exercise the last finding.
+    finding.verification.params = { selector: `#independent-${i}` };
+  }
+  await writeFile(join(run, "findings.json"), JSON.stringify(findings));
+  const records = findings.map((finding) => ({
+    finding,
+    runId: "2026-08-14T12-00-00-000Z",
+    runDirectory: run,
+    findingsPath: join(run, "findings.json"),
+  }));
+  const issueScores = new Map(findings.map((f, i) => [f.id, 100 - i]));
+  const options = {
+    project: directory,
+    selection: { policy: "current-run" as const, records },
+    issueScores,
+    maxTickets: 1,
+  };
+  const result = await emitClusterTickets(options);
+  expect(result.selectedClusters?.[0]?.members.map((m) => m.id)).toEqual([
+    findings.at(-1)?.id,
+  ]);
+  expect(result.omittedCount).toBe(findings.length - 1);
+  const first = result.outcomes.find((o) => o.kind === "created");
+  expect(first?.kind).toBe("created");
+  const retry = await emitClusterTickets(options);
+  expect(retry.outcomes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "already-emitted",
+        findingId: findings.at(-1)?.id,
+        path: first && "path" in first ? first.path : "",
+      }),
+    ]),
+  );
+});
+
+test("standalone cluster publication ranks pending members with neutral geometry before its cutoff", async () => {
+  const { directory, run, findings } = await clusterFixture();
+  const selected = findings.slice(0, 3);
+  for (const [i, f] of selected.entries()) {
+    f.severity = i === 2 ? "major" : "minor";
+    f.category = i === 1 ? "dead-control" : "target-size";
+    f.rule = `rule-${i}`;
+    f.verification.params = { selector: `#isolated-${i}` };
+  }
+  await writeFile(join(run, "findings.json"), JSON.stringify(selected));
+  await accept(directory, selected);
+  const result = await emitClusterTickets({
+    project: directory,
+    maxTickets: 2,
+  });
+  expect(
+    result.selectedClusters?.flatMap((c) => c.members.map((m) => m.id)),
+  ).toEqual([selected[2]?.id, selected[1]?.id]);
+  expect(result.omittedCount).toBe(1);
+});

@@ -6,6 +6,7 @@ import { generatedClass } from "./fingerprint.js";
 import { type CheckIssue, collapseIssues } from "./issues.js";
 import {
   affectedCounts,
+  comparePriority,
   type IssueRankingContext,
   type IssueRankingTuple,
   type RankingElement,
@@ -648,11 +649,7 @@ export function rootCauseIssues(
       primary,
       context,
     ),
-  ].sort(
-    (left, right) =>
-      right.score - left.score ||
-      severityOrder[left.severity] - severityOrder[right.severity],
-  );
+  ].sort(comparePriority);
 }
 
 function rootCauseIssue(

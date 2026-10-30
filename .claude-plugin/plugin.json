@@ -1,11 +1,17 @@
 {
   "name": "idiom",
   "description": "Design acceptance tools, UI check reminders and the conversational Idiom skill.",
-  "skills": ["./templates/idiom"],
   "mcpServers": {
     "idiom": {
+      "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@mattskilly/idiom", "mcp"]
+      "args": [
+        "-y",
+        "--package=https://github.com/mattskilly/idiom/releases/download/v0.16.0/mattskilly-idiom-0.16.0.tgz",
+        "idiom",
+        "mcp"
+      ]
     }
-  }
+  },
+  "version": "0.16.0"
 }

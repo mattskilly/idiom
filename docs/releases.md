@@ -1,6 +1,6 @@
 # Cutting an Idiom release
 
-Idiom is published to npm as `@mattskilly/idiom`, with a matching annotated Git tag and GitHub Release. Releases are cut in the private workshop repository (`mattskilly/idiom-dev`) and then copied to the public repository (`mattskilly/idiom`) as one commit per release; npm publishes from that public snapshot.
+Idiom releases have a matching annotated Git tag, GitHub Release and runtime tarball. The npm package is `@mattskilly/idiom`; npm publication is currently manual and on hold. The disabled publish workflow is not part of the plugin release path. Releases are cut in the private workshop repository (`mattskilly/idiom-dev`) and then copied to the public repository (`mattskilly/idiom`) as one commit per release; npm publishes from that public snapshot.
 
 ## Prepare the tag
 
@@ -8,17 +8,23 @@ Start from a clean `main` checkout with the intended release commit integrated. 
 
 - The newest dated changelog heading contains the exact candidate version.
 - `package.json` contains the exact version without a `v` prefix.
+- `.claude-plugin/plugin.json.version`, root `plugin.json.version` and `.claude-plugin/marketplace.json.metadata.version` equal the package version. Both plugin names and marketplace names stay `idiom`.
+- The MCP definitions in `.claude-plugin/plugin.json` and root `mcp.json` select `--package=https://github.com/mattskilly/idiom/releases/download/v<version>/mattskilly-idiom-<version>.tgz`. Update both the URL path and filename versions. Never use a latest selector.
+- `.agents/plugins/marketplace.json` points at the root portable plugin with `source: {"source":"local","path":"./"}`. Keep its catalog discoverable in the public snapshot.
+- Both plugins ship the generated portable skill `skills/idiom/` through default `skills/` discovery: `.claude-plugin/plugin.json` and root `plugin.json` declare no `skills` field. `templates/idiom/` is the authoring source for `generate:skill` and `idiom init`; no plugin points at it. `check:plugins` fails unless each manifest resolves to exactly one `idiom` skill.
+- Run `bun run check:plugins`; the same guard runs before build and public snapshot check/export, and in the disabled publication workflow's identity checks if that workflow is ever deliberately enabled again.
 - The annotated tag will be `v<version>`.
 - `server.json.version` and its npm package version match `package.json.version` exactly; `package.json.mcpName` equals `server.json.name`. Audit tool catalog parity, publisher metadata size and the marker-bearing npm release prerequisite in [distribution.md](distribution.md).
+- Before the following release, add each newly released tag to the offline skill catalog: run `node scripts/generate-skill-history.mjs` with all immutable release tags available, then `node scripts/generate-skill-history.mjs --check`. Review tag/peeled-commit provenance, exact blob digests and absence-aware file mappings in `templates/skill-history/`, and commit the generated data. Generation is a maintainer action, never an installation/runtime hook.
 - Run `bun run generate:skill` and `bun run generate:skill --check`; commit both portable outputs and inspect them in the public snapshot and npm pack.
 - `playwright` is pinned to an exact version in `package.json` and `bun.lock`.
 - Both browser-install commands in `README.md` use that exact Playwright version.
 - The README's copy-ready install command, printed-version instruction, and update literals name this exact Idiom version.
 - The update-smoke candidate `version` names this exact Idiom version.
 - The update-smoke `previous_version` names the immediately older release heading in the newest-first changelog.
-- `site/index.html`, `site/guide.html`, `site/design-qa-for-claude-code.html` and `site/testing-loading-empty-error-states.html` describe exactly this release: the field guide's version label names it, and every user-visible command, rule, default and MCP tool added or changed in its changelog section is reflected, while nothing unreleased is claimed. idiom.build deploys from `main`, so the site changes land in the release PR, never earlier. The README (the public GitHub page, carried by the public snapshot) gets the same pass: what Idiom does, how it works and why it helps, accurate to this release.
+- `site/index.html` and the hand-written docs in `site/docs/*.md` (including the two guides) describe exactly this release: the install lines in the landing page, `getting-started.md` and both guides, and the guides' "For Idiom" version tags, name it, and every user-visible command, rule, default and MCP tool added or changed in its changelog section is reflected, while nothing unreleased is claimed. idiom.build deploys from `main`, so the site changes land in the release PR, never earlier. The reference pages under idiom.build/docs (commands, rules, configuration, MCP, design comparison) are rendered from `docs/*.md` at build time and need no separate pass. The README (the public GitHub page, carried by the public snapshot) gets the same pass: what Idiom does, how it works and why it helps, accurate to this release.
 
-The current smoke pair is `previous_version="0.14.0"` and `version="0.15.0"`. When preparing the next release, advance both literals — the candidate becomes `version` and the newest released heading becomes `previous_version` — as part of the source commit. The published `v0.6.0` predates embedded provenance and prints a bare version; `v0.7.0` is the first release that prints `<version> (<short source commit>)`.
+The current smoke pair is `previous_version="0.15.0"` and `version="0.16.0"`. When preparing the next release, advance both literals — the candidate becomes `version` and the newest released heading becomes `previous_version` — as part of the source commit. The published `v0.6.0` predates embedded provenance and prints a bare version; `v0.7.0` is the first release that prints `<version> (<short source commit>)`.
 
 ### Record the source, then commit the distribution
 
@@ -135,7 +141,7 @@ The subshell removes the temporary notes file on success or failure. Inspect the
 
 ## Publish the public snapshot and npm package
 
-The tag and GitHub Release above live in the workshop repository. The public repository receives one commit per release, built from the public file set. `scripts/public-snapshot.mjs` excludes internal documents, `.agents/` skills and autobuild configuration; tracked portable `skills/`, `templates/` and `server.json` remain included. The script refuses to copy when any public file names a private product or contains a local path. It is not part of the snapshot.
+The tag and GitHub Release above live in the workshop repository. The public repository receives one commit per release, built from the public file set. `scripts/public-snapshot.mjs` excludes internal documents, internal agent skills and Autobuild configuration. The sole exception under `.agents/` is `.agents/plugins/marketplace.json`; unrelated files there remain excluded. Both Claude manifests, root `plugin.json`/`mcp.json`, portable `skills/`, `templates/`, `server.json` and `scripts/check-plugins.mjs` remain included. The package allowlist also ships all plugin metadata, without shipping internal agent skills. The script refuses to copy when any public file names a private product or contains a local path. It is not part of the snapshot.
 
 ```sh
 (
@@ -151,13 +157,48 @@ The tag and GitHub Release above live in the workshop repository. The public rep
   git add -f dist/cli.js
   git commit -m "Idiom v${version}"
   git tag -a "v${version}" -m "Idiom v${version}"
-  git push origin main "v${version}"
-  gh release create "v${version}" --repo mattskilly/idiom --verify-tag \
+  # Publish the immutable snapshot/tag without advancing the advertised catalog.
+  git push origin "v${version}"
+  pack_record="$(mktemp)"
+  npm pack --ignore-scripts --json > "$pack_record"
+  tarball="$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[0].filename)' "$pack_record")"
+  test "$tarball" = "mattskilly-idiom-${version}.tgz"
+  packed_root="$(mktemp -d)"
+  tar -xzf "$tarball" -C "$packed_root"
+  node scripts/check-plugins.mjs "$packed_root/package"
+  cmp dist/cli.js "$packed_root/package/dist/cli.js"
+  gh release create "v${version}" "$tarball" --repo mattskilly/idiom --verify-tag \
     --title "Idiom v${version}" --notes-file "$release_notes"
+  # Prove the unchanged public launcher URL is readable before advertising it.
+  curl --fail --location --retry 3 \
+    "https://github.com/mattskilly/idiom/releases/download/v${version}/mattskilly-idiom-${version}.tgz" \
+    --output "$packed_root/downloaded.tgz"
+  cmp "$tarball" "$packed_root/downloaded.tgz"
+  git push origin main
+  rm -rf "$packed_root"
+  rm -f "$pack_record"
+  # Keep the inspected tarball here for later manual npm publication.
 )
 ```
 
-Set `release_notes` to the extracted changelog body first (the extractor above). The first public release creates the repository with `gh repo create mattskilly/idiom --public` instead of cloning. Publishing the public GitHub Release starts `.github/workflows/publish.yml` in the public repository, which publishes to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers): GitHub's OIDC identity replaces an npm token or a local 2FA prompt, and npm attaches provenance. The workflow checks out the release tag, stops unless the tag, `package.json` and `server.json` versions agree, skips a version that is already on npm, and keeps `latest` on the newest version (an older version published later gets the `backport` dist-tag). It publishes exactly the `files` in `package.json` (the committed `dist/`, `templates/`, `skills/`, `server.json`, plugin and hooks); it does not rebuild, so the embedded build-source commit is the workshop commit recorded above. To publish an existing tag by hand, run `gh workflow run publish.yml --repo mattskilly/idiom -f tag=v<version>`. The workflow runs only in `mattskilly/idiom`. The package's trusted publisher on npmjs.com names user `mattskilly`, repository `idiom`, workflow `publish.yml` and environment `npm`. Confirm with `npm view @mattskilly/idiom version`. For registry publication, verify the exact release with `npm view @mattskilly/idiom@<version> version mcpName --json`, then follow [the separate registry and skill-listing handoff](distribution.md).
+Set `release_notes` to the extracted changelog body first (the extractor above). The first public release creates the repository with `gh repo create mattskilly/idiom --public` instead of cloning. Every plugin-bearing release must attach the exact prepared snapshot's `mattskilly-idiom-<version>.tgz`, packed with scripts disabled and the committed bundle intact. A GitHub source-code archive is not a runtime package. Inspect its package and plugin manifests, skills and hooks, and compare the downloaded asset bytes before advancing public `main`. The public default branch is the advancing release catalog; do not pin users to a permanent old tag. Published versions, tags and assets are immutable. A failure after publishing requires a new version, never replacement of an existing asset.
+
+npm publishing stays manual and on hold until the maintainer confirms the account is unblocked. Do not enable or dispatch `.github/workflows/publish.yml`, retry account settings, or make npm publication a prerequisite for plugin installation. Once cleared, the maintainer can publish the already inspected runtime tarball with `npm publish mattskilly-idiom-<version>.tgz --access public --auth-type=web`. Verify `npm view @mattskilly/idiom@<version> version mcpName --json`, then follow [the separate registry and skill-listing handoff](distribution.md). The disabled workflow retains identity checks for any future deliberate reactivation; no activation is implied here.
+
+## Smoke plugin installation and update
+
+Run these release gates with the real Claude Code and Codex CLIs in a disposable container/account or an isolated temporary home per host. For the latter, create fresh directories and set `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `XDG_CACHE_HOME` inside that host's temporary directory; also set `CLAUDE_CONFIG_DIR` for Claude and `CODEX_HOME` for Codex, creating those directories before invoking the host. Use an isolated npm cache and an environment without inherited authentication tokens. Never copy credentials or log in for this development smoke. If a host refuses plugin commands without authentication, record the exact error as **not run** and retain its authenticated native smoke as a public release gate. Remove all temporary directories afterwards.
+
+Hash the real home's `.claude`, `.codex` and plugin caches before and after, recording aggregate checksums and any changed paths. Verify that configuration files and plugin caches have identical bytes before and after; if concurrent agent sessions change session logs or SQLite journals, identify those paths explicitly instead of claiming the entire home was unchanged. Record OS, Node/npm, Claude/Codex versions, public snapshot SHA/tag and the exact asset URL.
+
+1. In a fresh application directory, install matching Chromium (`npx playwright@1.62.1 install chromium`). Use Claude's `/plugin marketplace add mattskilly/idiom` and `/plugin install idiom@idiom` (shell equivalents: `claude plugin marketplace add mattskilly/idiom` and `claude plugin install idiom@idiom`). For Codex, use `codex plugin marketplace add mattskilly/idiom`, then `codex plugin add idiom@idiom --json`. Record the reported installed path/version and cached launcher in each host. No global CLI is needed.
+2. Start a fresh session in each host. Inspect the fifteen MCP tools and confirm each host lists exactly one `idiom` skill, loaded from `skills/idiom`; Claude must also discover both original PostToolUse and Stop reminders. Write a UI fixture and observe the edit reminder and the one-time stop reminder. Codex must discover the portable skill and MCP server without inheriting Claude hooks: root `plugin.json` explicitly supplies `extensions.com.openai.hooks: {"hooks":{}}`.
+3. Launch the cached MCP definition from the application directory using its unmodified HTTPS URL. With the MCP SDK, initialize, inspect `serverInfo.version` (`client.getServerVersion().version`), list tools and call `idiom_flows` or `idiom_context` against an application with a distinct configuration. Record that the version equals the cached plugin/package version and that project resolution uses the application directory. A catalog/manifest version alone is insufficient.
+4. In another fresh disposable environment, install the preceding plugin-bearing release, record the same evidence, then advance its Git-backed marketplace to the candidate default branch. Claude: `claude plugin marketplace update idiom`, `claude plugin update idiom@idiom`, then `/reload-plugins` or a new session. Codex: `codex plugin marketplace upgrade idiom`, inspect the installed version, then `codex plugin add idiom@idiom --json` and start a new session. Record whether marketplace upgrade refreshed the configured plugin directly or re-add was needed. Prove the installed path/version, cached launcher and MCP version all advance to the candidate; a refreshed catalog is insufficient.
+
+For the first plugin release, the historical preceding public release has no marketplace. First exercise the install/update sequence with two disposable local Git snapshots A and B with distinct coherent fixture versions, normal default-branch tracking and the real native loaders. A loopback smart HTTP Git endpoint supports both loaders, including Claude's shallow clone; `file://` source syntax and dumb HTTP are insufficient for Claude. Do not manually replace plugin caches. For runtime development smoke, pack a built candidate and serve it on a loopback tarball URL; change only that test copy's URL. Use the actual `npx -y --package=<fixture-url> idiom mcp` arguments, an isolated npm cache, and a competing local/global Idiom of another version. Check protocol-clean stdout, all tools, application-root binding and the candidate MCP initialization version. Never substitute a fake npx or mock the server version.
+
+The local fixture exercise does not prove a public asset exists. After publication, repeat fresh add/install from `mattskilly/idiom` with its unchanged HTTPS launcher; repeat updates between public plugin releases when available. Copy all before/after versions, installed paths, tool/skill/hook inventories, reminder observations and MCP handshakes into the release record. This public smoke remains a release gate until the candidate files are actually published.
 
 ## Smoke a first install
 
@@ -251,8 +292,8 @@ Every release after the first must also prove replacement in place. Create anoth
   test "$(bun pm cache)" = "$BUN_INSTALL_CACHE_DIR"
   bun pm cache rm
   cd "$smoke_root/work"
-  previous_version="0.14.0"
-  version="0.15.0"
+  previous_version="0.15.0"
+  version="0.16.0"
   expected_display="$version ($(printf '%s' "$build_source_commit" | cut -c1-7))"
   idiom_bin="$BUN_INSTALL/bin/idiom"
 

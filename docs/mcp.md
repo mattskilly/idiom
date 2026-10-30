@@ -2,24 +2,55 @@
 
 `idiom mcp` exposes fifteen tools over stdio using the official TypeScript MCP SDK. It works with Claude Code, Codex, Cursor, Claude Desktop and other local MCP clients. No HTTP service or repair agent is required. Only model-enabled `idiom_sweep` needs model credentials, and only Figma references need `FIGMA_TOKEN`; both come from the server's environment, never from tool arguments (see [Credentials](#credentials)).
 
-Install Node 20 or newer and the matching Playwright Chromium browser. After installing Idiom, run `npx playwright install chromium`. The application must be reachable for quick review; configured flows use their normal setup/build/server settings.
+Install Node 20 or newer and the matching Playwright Chromium browser. Run `npx playwright@1.62.1 install chromium`. The application must be reachable for quick review; configured flows use their normal setup/build/server settings.
 
-The portable Agent Skill installs with `npx skills add mattskilly/idiom --skill idiom` once the public snapshot contains it. See [distribution and registry preparation](distribution.md) for the prepared manifest and publication prerequisites; this does not announce a live registry listing. The [Claude Code how-to](https://idiom.build/design-qa-for-claude-code) walks through setup and the repair loop.
+The portable Agent Skill installs with `npx skills add mattskilly/idiom --skill idiom` once the public snapshot contains it. See [distribution and registry preparation](distribution.md) for the prepared manifest and publication prerequisites; this does not announce a live registry listing. The [Claude Code how-to](https://idiom.build/docs/design-qa-for-claude-code) walks through setup and the repair loop.
 
-## Setup
+## Install the plugin
+
+The plugin includes the MCP server and Idiom skill; Claude Code also includes the UI-edit reminders described below. It needs Node 20 or newer, npm/npx and the matching browser, but no globally installed Idiom. The first launch downloads the exact versioned GitHub release tarball named by the plugin, and MCP initialization reports that release as `serverInfo.version`. It uses the application's working directory.
+
+In a Claude Code session:
+
+```text
+/plugin marketplace add mattskilly/idiom
+/plugin install idiom@idiom
+```
+
+Or from the application directory in your shell:
+
+```sh
+claude plugin marketplace add mattskilly/idiom
+claude plugin install idiom@idiom
+```
+
+For Codex (see [plugin packaging and marketplaces](https://developers.openai.com/plugins/build/plugins)):
+
+```sh
+codex plugin marketplace add mattskilly/idiom
+codex plugin add idiom@idiom
+```
+
+Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom` to ensure the refreshed release is installed, and start a new session.
+
+Remove an existing standalone server when switching to the plugin (`claude mcp remove idiom` in Claude Code, or remove the corresponding server entry in another client) to avoid duplicate tools. For long captures or optional model/Figma integrations, keep the [timeout](#codex) and [credential guidance](#credentials) below in mind. Plugin installation and tool discovery need no model credentials.
+
+## Standalone MCP setup
+
+These registrations are useful without a plugin, or to bind a fixed project root. Install the [CLI release](https://idiom.build/docs/getting-started) first so `idiom mcp` runs that installed version. An unversioned `npx -y @mattskilly/idiom mcp` selects npm's current release, which may lag GitHub.
 
 ### Claude Code
 
 Run from the application directory:
 
 ```sh
-claude mcp add idiom -- npx -y @mattskilly/idiom mcp
+claude mcp add idiom -- idiom mcp
 ```
 
 To bind a fixed root:
 
 ```sh
-claude mcp add idiom -- npx -y @mattskilly/idiom mcp --project /path/to/project
+claude mcp add idiom -- idiom mcp --project /path/to/project
 ```
 
 See [Claude Code MCP configuration](https://code.claude.com/docs/en/mcp).
@@ -30,8 +61,8 @@ Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.idiom]
-command = "npx"
-args = ["-y", "@mattskilly/idiom", "mcp", "--project", "/absolute/path/to/project"]
+command = "idiom"
+args = ["mcp", "--project", "/absolute/path/to/project"]
 tool_timeout_sec = 3900
 # Optional: only for Figma references and idiom_sweep.
 env = { FIGMA_TOKEN = "figd_…", ANTHROPIC_API_KEY = "sk-ant-…" }
@@ -47,8 +78,8 @@ Create `.cursor/mcp.json` in the application:
 {
   "mcpServers": {
     "idiom": {
-      "command": "npx",
-      "args": ["-y", "@mattskilly/idiom", "mcp", "--project", "/absolute/path/to/project"]
+      "command": "idiom",
+      "args": ["mcp", "--project", "/absolute/path/to/project"]
     }
   }
 }
@@ -64,18 +95,18 @@ Open Settings → Developer → Edit Config and add this to `claude_desktop_conf
 {
   "mcpServers": {
     "idiom": {
-      "command": "npx",
-      "args": ["-y", "@mattskilly/idiom", "mcp", "--project", "/absolute/path/to/project"]
+      "command": "idiom",
+      "args": ["mcp", "--project", "/absolute/path/to/project"]
     }
   }
 }
 ```
 
-To fetch Figma frames or run `idiom_sweep`, add `"env": { "FIGMA_TOKEN": "…", "ANTHROPIC_API_KEY": "…" }` beside `args`. Use an absolute project path because the desktop process may start in an unrelated directory. Ensure its environment can find Node and `npx`. See [local server setup](https://modelcontextprotocol.io/docs/2026-07-28/develop/connect-local-servers).
+To fetch Figma frames or run `idiom_sweep`, add `"env": { "FIGMA_TOKEN": "…", "ANTHROPIC_API_KEY": "…" }` beside `args`. Use an absolute project path because the desktop process may start in an unrelated directory. Ensure its environment can find Node and `idiom`. See [local server setup](https://modelcontextprotocol.io/docs/2026-07-28/develop/connect-local-servers).
 
 ### Credentials
 
-Tools never accept credentials as arguments. `FIGMA_TOKEN` (for Figma frames in `idiom_design_add`, captures and comparisons) and model credentials for `idiom_sweep` (`ANTHROPIC_API_KEY`, or the project's configured Claude Code runner) are read from the MCP server process's environment. Claude Code and Cursor pass the environment they were launched with; Codex and Claude Desktop take an `env` entry as shown above. Restart the server after changing it. A missing `FIGMA_TOKEN` is an actionable tool error and nothing is written; a missing or failing model degrades the sweep to deterministic findings with the reason, rather than failing it.
+Tools never accept credentials as arguments. `FIGMA_TOKEN` (for Figma frames in `idiom_design_add`, captures and comparisons) and model credentials for `idiom_sweep` (`ANTHROPIC_API_KEY`, or the authentication of the project's configured Claude Code or Codex CLI) are read from the MCP server process's environment. Claude Code and Cursor pass the environment they were launched with; Codex and Claude Desktop take an `env` entry as shown above. Restart the server after changing it. A missing `FIGMA_TOKEN` is an actionable tool error and nothing is written; a missing or failing model degrades the sweep to deterministic findings with the reason, rather than failing it. When the project configures `model.fallback`, the sweep text says which provider completed the critique after the primary failed.
 
 ## Project roots and evidence
 
@@ -148,6 +179,7 @@ Every CLI command is either reachable as an MCP tool or deliberately CLI-only. A
 | CLI command | MCP tool | Reason |
 | --- | --- | --- |
 | `init` | `idiom_init` | Non-interactive; Autobuild wiring and design-token learning need the interactive CLI. |
+| `upgrade` | CLI-only | Maintaining the agent’s vendored skills is an explicit project maintenance operation, separate from design checks. |
 | `mcp` | CLI-only | It is the MCP server itself. |
 | `quick` | `idiom_quick` | `--design` and `--out` are CLI-only; MCP writes under the bound root. |
 | `capture` | CLI-only | Raw capture without review; MCP captures run inside check, fix-plan, verify, sweep and baseline record. |
@@ -176,16 +208,18 @@ Every CLI command is either reachable as an MCP tool or deliberately CLI-only. A
 | `system` | CLI-only | Opens the design-system page in a browser and learns interactively. |
 | `validate` | `idiom_flows` | `idiom_flows` lists validated manifests; every configured tool validates first and returns validation errors as tool errors. |
 
-## Claude Code plugin
+## Local plugin development
 
-The package bundles `.claude-plugin/plugin.json` with the MCP launcher and the existing skill plus adjacent `init.md`. From a source checkout or unpacked package:
+From a source checkout or unpacked package, validate and load the local Claude Code plugin:
 
 ```sh
-claude plugin validate /absolute/path/to/idiom
-claude --plugin-dir /absolute/path/to/idiom
+claude plugin validate /path/to/checkout
+claude --plugin-dir /path/to/checkout
 ```
 
-The skill is namespaced as `/idiom:idiom`, for example `/idiom:idiom check checkout`. Its supported operations prefer MCP tools when present; unsupported workflows keep their CLI route and human judgment boundaries. The plugin launcher uses the session working directory. Use the explicit fixed-root MCP setup above for another project. See the [plugin manifest reference](https://code.claude.com/docs/en/plugins-reference).
+The skill is namespaced as `/idiom:idiom`, for example `/idiom:idiom check checkout`. The release manifest still starts its pinned release server even with `--plugin-dir`. To develop changed MCP code, build the checkout with `bun run build` and register it separately with `claude mcp add idiom-dev -- node /path/to/checkout/dist/cli.js mcp`, using one MCP connection at a time. See the [plugin manifest reference](https://code.claude.com/docs/en/plugins/manifest-reference).
+
+## Claude Code reminders
 
 The plugin also enables two lightweight Node hooks by default:
 

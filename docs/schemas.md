@@ -57,9 +57,13 @@ const Project = z.object({
   }),
   baselines: z.object({ directory: z.string().min(1) }).strict().optional(),
   model: z.object({
-    provider: z.enum(["claude-code", "anthropic"]),
+    provider: z.enum(["claude-code", "anthropic", "codex"]),
     model: z.string(),                   // model id passed to the selected provider
     maxFindings: z.number().int().min(1).max(5).default(5),
+    fallback: z.object({                 // optional; must differ from provider
+      provider: z.enum(["claude-code", "anthropic", "codex"]),
+      model: z.string().trim().min(1),
+    }).strict().optional(),
   }),
 })
 ```
@@ -86,7 +90,8 @@ Notes:
 - V2 `observations.json` optionally records craft-rule evidence: `fonts` (declared faces with status and stylesheet URLs, the families visible text uses with up to five selectors and a fallback flag, and failed font requests), `links` (visible http(s) links with absolute href, same-origin flag and the run's check result: `ok`, `broken` with code or DNS reason, or `unchecked` with a reason), `focusVisible` (each keyboard focus stop with the `node.property` keys that changed and an optional visible `proxy`), `lineLengths` (paragraphs over 45 rendered characters per line), `orphanWords` (headings and button labels whose last line holds one word; newer captures add optional `rect`, the union of the owner's measured painted word rects, `lastLine`, the stranded word's rect, both viewport-relative like element rects, and `ink`, `{status: "measured", share}` with share in [0, 1] of sampled screenshot pixels under `lastLine` that differ from their modal colour, or `{status: "unavailable", reason}`), `imageRenders` (broken images and `fill` images rendered off their natural ratio) and `layoutShift` (largest session-window score and up to 150 entries with source selectors). Scans use the `{status, reason?, records}` shape; older artifacts without these fields stay valid and the checks report unavailable coverage.
 - V2 `observations.json` optionally records `screenshot`: how the tuple screenshot was taken (`strategy` `viewport` | `full-page` | `tiled`, positive device `scale`, CSS `width`/`height`, `tiles` only when tiled) and, only when the full-page size changed between the start of observing and the screenshot, `drift` (`observed` and `captured` sizes) with `rects`, each observed selector's rect re-measured at screenshot time. Crops use `scale` and prefer `rects` over the observed element rect. `metadata.json` mirrors everything but `rects`. Older artifacts without it stay valid and crop as before.
 - `baselines.directory` — optional project-relative or absolute local directory for compact finding baselines; defaults to `.idiom/baselines`. This location is not part of the checks hash.
-- `model.provider` — `claude-code` is the scaffold default and uses the authenticated local CLI without an API key. `anthropic` is the explicit direct-API path and requires `ANTHROPIC_API_KEY`. Existing files are not migrated or reinterpreted.
+- `model.provider` — `claude-code` is the scaffold default and uses the authenticated local CLI without an API key. `anthropic` is the explicit direct-API path and requires `ANTHROPIC_API_KEY`. `codex` uses the authenticated local Codex CLI. Existing files are not migrated or reinterpreted.
+- `model.fallback` — optional `{provider, model}` used, visibly, only when the primary provider fails; it must name a different provider. Review, sweep and configured page review honor it; `idiom explore` does not, and explore rejects `codex` as its provider.
 - `model.maxFindings` — an integer from 1 through 5 and the material-findings cap across both evaluation layers. There is no overall score field anywhere, by design.
 
 ### Capture URL metadata

@@ -1,6 +1,6 @@
 {
   "name": "@mattskilly/idiom",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Design acceptance for AI-built software.",
   "type": "module",
   "license": "Apache-2.0",
@@ -34,17 +34,21 @@
     ".claude-plugin/",
     "hooks/",
     "server.json",
-    "skills/"
+    "skills/",
+    "plugin.json",
+    "mcp.json",
+    ".agents/plugins/marketplace.json"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun run build && vitest run",
     "lint": "biome check .",
-    "build": "tsup --config tsup.config.ts",
+    "build": "node scripts/check-plugins.mjs && tsup --config tsup.config.ts",
     "build:site": "node scripts/build-site.mjs",
     "build:hosted-runner": "node scripts/hosted/build-runner.mjs",
     "measure:hosted-review": "node scripts/hosted/measure.mjs",
-    "generate:skill": "node scripts/generate-skill.mjs"
+    "generate:skill": "node scripts/generate-skill.mjs",
+    "check:plugins": "node scripts/check-plugins.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
@@ -75,6 +79,7 @@
     "ajv-formats": "^3.0.1",
     "botid": "1.5.11",
     "electron": "42.5.0",
+    "marked": "^18.1.2",
     "tsup": "^8.0.0",
     "vitest": "^3.0.0",
     "yaml": "^2.9.1"

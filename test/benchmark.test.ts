@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { type Browser, chromium } from "playwright";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { scrollbarShift } from "../src/checks/interaction-shift.js";
 import { signalChecks } from "../src/checks/registry.js";
 import { scaleQuestions } from "../src/checks/scale-conformance.js";
 import type { ObservationArtifact } from "../src/checks/types.js";
@@ -1002,7 +1003,7 @@ test("interaction shift: a slow beacon, keepalive fetch and analytics request no
   expect(click?.durationMs).toBeLessThan(150 + 300);
 }, 60_000);
 
-test("interaction shift: headless scroll locks are non-defects; real scrollbars are attributed once", async () => {
+test("interaction shift: real scrollbars remain measured while their findings are withheld", async () => {
   // Headless capture has no layout scrollbars, so neither lock can move content.
   for (const version of ["before", "after"]) {
     expect(
@@ -1025,28 +1026,28 @@ test("interaction shift: headless scroll locks are non-defects; real scrollbars 
     // macOS draws zero-width overlay scrollbars unless the system setting says
     // otherwise; a styled scrollbar takes layout width on every platform.
     const classic = "<head><style>::-webkit-scrollbar { width: 15px; }</style>";
-    const found = shifts(
-      await reviewFixture(
-        scrolling,
-        (await fixture("interaction-shift-scrollbar/before.html")).replace(
-          "<head>",
-          classic,
-        ),
-        { probe: true },
-      ),
+    const reviewed = await reviewStates(
+      scrolling,
+      [
+        {
+          state: "plans",
+          html: (
+            await fixture("interaction-shift-scrollbar/before.html")
+          ).replace("<head>", classic),
+        },
+      ],
+      { probe: true },
     );
-    expect(found).toHaveLength(1);
-    const [hit] = found;
-    expect(hit).toMatchObject({
-      severity: "major",
-      selectorHint: "html",
-      fingerprintHint: "interaction-shift:scrollbar",
+    const click = reviewed.tuples[0]?.timelines?.actions.find(
+      (action) => action.source === "probe-click",
+    );
+    if (!click) throw new Error("missing scrollbar action");
+    expect(scrollbarShift(click)).toMatchObject({
+      direction: "removed",
+      lockedBy: "body overflow: hidden",
+      gutter: 15,
     });
-    expect(hit?.explanation).toContain("the page scrollbar was removed");
-    expect(hit?.explanation).toContain("body overflow: hidden");
-    expect(hit?.explanation).toContain("15px");
-    expect(hit?.fix).toContain("scrollbar-gutter: stable");
-    expect(hit?.explanation).toContain("(8px)");
+    expect(shifts(reviewed.findings)).toEqual([]);
     expect(
       shifts(
         await reviewFixture(

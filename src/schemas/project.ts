@@ -10,6 +10,13 @@ import {
 
 export const colorSchemeSchema = z.enum(["light", "dark"]);
 
+export const critiqueProviderSchema = z.enum([
+  "claude-code",
+  "anthropic",
+  "codex",
+]);
+export type CritiqueProvider = z.infer<typeof critiqueProviderSchema>;
+
 const colorSchemesSchema = z
   .array(colorSchemeSchema)
   .min(1, "must contain at least one color scheme")
@@ -765,11 +772,27 @@ const projectInputSchema = z
     coverage: coverageSchema.optional(),
     model: z
       .object({
-        provider: z.enum(["claude-code", "anthropic"]),
+        provider: critiqueProviderSchema,
         model: z.string(),
         maxFindings: z.number().int().min(1).max(5).default(5),
+        /** Used, visibly, only when the primary provider fails. */
+        fallback: z
+          .object({
+            provider: critiqueProviderSchema,
+            model: z.string().trim().min(1),
+          })
+          .strict()
+          .optional(),
       })
-      .strict(),
+      .strict()
+      .superRefine((model, context) => {
+        if (model.fallback?.provider === model.provider)
+          context.addIssue({
+            code: "custom",
+            path: ["fallback", "provider"],
+            message: "must differ from model.provider",
+          });
+      }),
   })
   .strict();
 

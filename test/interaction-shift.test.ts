@@ -1510,64 +1510,17 @@ describe("scrollbar shift", () => {
       (candidate) => candidate.selectorHint === "html",
     );
 
-  test("a measured removal is one finding that recommends a stable gutter", async () => {
-    expect(scrollbarShift(dialog([open, locked()]))).toEqual({
+  test("a measured removal retains detection while public findings are withheld", () => {
+    const subject = dialog([open, locked()]);
+    expect(scrollbarShift(subject)).toEqual({
       time: 24,
       direction: "removed",
       gutter: 15,
       lockedBy: "body overflow: hidden",
     });
-    const result = run(
-      tuple({ timelines: artifact([dialog([open, locked()])]) }),
+    expect(run(tuple({ timelines: artifact([subject]) })).candidates).toEqual(
+      [],
     );
-    expect(result.candidates).toHaveLength(1);
-    const [finding] = result.candidates;
-    expect(finding).toMatchObject({
-      severity: "major",
-      selectorHint: "html",
-      fingerprintHint: "interaction-shift:scrollbar",
-      timeline: "probe-1",
-    });
-    expect(finding?.explanation).toBe(
-      'After clicking "Show notice" (button#show), the page scrollbar was removed (body overflow: hidden), so all content shifts 15px horizontally 24ms after input on systems with classic scrollbars.',
-    );
-    const { buildRuleContract } = await import("../src/findings/contract.js");
-    const { evaluateRuleAcceptance } = await import(
-      "../src/verify/acceptance.js"
-    );
-    const { emptyObservation } = await import("./motion-support.js");
-    if (!finding) throw new Error("missing scrollbar finding");
-    expect(finding.observation?.result).toMatchObject({
-      rootScroll: [open, locked()],
-    });
-    const current = tuple({
-      observations: emptyObservation,
-      timelines: artifact([dialog([open, locked()])]),
-    });
-    const contract = buildRuleContract(current, finding).acceptance;
-    expect(contract.target).toMatchObject({
-      kind: "action",
-      action: { selector: "button#show" },
-    });
-    expect(
-      evaluateRuleAcceptance({
-        contract,
-        currentA: [current],
-        currentB: [current],
-      }).status,
-    ).toBe("failed");
-    const fixed = tuple({
-      observations: emptyObservation,
-      timelines: artifact([dialog([open, locked({ compensation: true })])]),
-    });
-    expect(
-      evaluateRuleAcceptance({ contract, currentA: [fixed], currentB: [fixed] })
-        .status,
-    ).toBe("passed");
-    expect(finding.fix).toContain("scrollbar-gutter: stable");
-    expect(finding?.acceptance).toEqual([
-      'After clicking "Show notice" (button#show), locking or unlocking page scroll does not change the width available to content.',
-    ]);
   });
 
   test("headless scroll locks and unlocks without a measured gutter are non-defects", () => {
@@ -1582,6 +1535,17 @@ describe("scrollbar shift", () => {
       expect(run(tuple({ timelines: artifact([subject]) })).candidates).toEqual(
         [],
       );
+    }
+  });
+
+  test("a retained layout gutter is not scrollbar removal or addition", () => {
+    for (const samples of [
+      [open, locked({ gutter: 15 })],
+      [locked({ time: 0, gutter: 15 }), { ...open, time: 30 }],
+    ]) {
+      const subject = dialog(samples);
+      expect(scrollbarShift(subject)).toBeUndefined();
+      expect(scrollbar(subject)).toEqual([]);
     }
   });
 
@@ -1611,9 +1575,9 @@ describe("scrollbar shift", () => {
     ).toEqual([]);
   });
 
-  test("lock and unlock in one action is one finding; unlock alone is an addition", () => {
+  test("lock/unlock detection remains available while findings are withheld", () => {
     const both = dialog([open, locked(), { ...open, time: 300 }]);
-    expect(scrollbar(both)).toHaveLength(1);
+    expect(scrollbar(both)).toEqual([]);
     expect(scrollbarShift(both)?.direction).toBe("removed");
     const unlock = scrollbarShift(
       dialog([locked({ time: 0 }), { ...open, time: 30 }]),
@@ -1659,8 +1623,7 @@ describe("scrollbar shift", () => {
       "main > p",
     ]);
     const findings = run(tuple({ timelines: artifact([subject]) })).candidates;
-    expect(findings).toHaveLength(1);
-    expect(findings[0]?.selectorHint).toBe("html");
-    expect(findings[0]?.explanation).toContain("aside.note (8px)");
+    // Suppression must not reattribute the same movement to the insert.
+    expect(findings).toEqual([]);
   });
 });

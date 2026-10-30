@@ -1,0 +1,201 @@
+{
+  "schema": 1,
+  "releases": [
+    {
+      "version": "0.0.1",
+      "tag": "v0.0.1",
+      "tagObject": "adf22db8da3651e8a1e3a92007cf4b721aaec756",
+      "commit": "100f6130dd8c5ae72880e6ba419f1162f0c32f32",
+      "files": {
+        "idiom/SKILL.md": "e0de111da6a429fb795b56e52d768b022bea2983983e9283f4879b2cf4469f82",
+        "idiom/init.md": "44f8e530fe872357a281cba998125df9cfbb6c47d63dc49f595d5b92981f947c"
+      }
+    },
+    {
+      "version": "0.0.2",
+      "tag": "v0.0.2",
+      "tagObject": "b1716837118adc27e19db5bbc4f53a185228e4cb",
+      "commit": "94a48bc70b36eccbdbee5309cf80b87dfa14c080",
+      "files": {
+        "idiom/SKILL.md": "faa687a481e1f73e17fcb57dc0735f4aa5a7b25fcafd8215cc8caadb50cdfe6b",
+        "idiom/init.md": "44f8e530fe872357a281cba998125df9cfbb6c47d63dc49f595d5b92981f947c"
+      }
+    },
+    {
+      "version": "0.1.0",
+      "tag": "v0.1.0",
+      "tagObject": "07693abe3601d09c69737569f74a5992a4ec2a51",
+      "commit": "6b81faff4a970afe19770fca03baa19c247b6d5a",
+      "files": {
+        "idiom/SKILL.md": "faa687a481e1f73e17fcb57dc0735f4aa5a7b25fcafd8215cc8caadb50cdfe6b",
+        "idiom/init.md": "44f8e530fe872357a281cba998125df9cfbb6c47d63dc49f595d5b92981f947c",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.2.0",
+      "tag": "v0.2.0",
+      "tagObject": "ca6953620bfbd600671f48bf65b405eebdeebd48",
+      "commit": "038aa3032a4ed3668a11474f26247140a2b5a161",
+      "files": {
+        "idiom/SKILL.md": "3b4ba24c3d7ce6493795995e62d558dfef19f9ceb24be3a9c1eee0d351b78ae4",
+        "idiom/init.md": "44f8e530fe872357a281cba998125df9cfbb6c47d63dc49f595d5b92981f947c",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.3.0",
+      "tag": "v0.3.0",
+      "tagObject": "f09f9c47f3c7005bf38ff26898c6c346a1f07d5d",
+      "commit": "f1ea801c80d233874441f33d5f22b669a450730a",
+      "files": {
+        "idiom/SKILL.md": "65fcc93b11dde6ff22af190a8176e1b9d2ec8403f7d4a3d5c321aa5719653c3f",
+        "idiom/init.md": "44f8e530fe872357a281cba998125df9cfbb6c47d63dc49f595d5b92981f947c",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.4.0",
+      "tag": "v0.4.0",
+      "tagObject": "fbaf50b8715b134b5c203dadc5c9fdcf536256d4",
+      "commit": "a6439b1a3e2be5019fec6b9c2792eb68ef77e349",
+      "files": {
+        "idiom/SKILL.md": "65fcc93b11dde6ff22af190a8176e1b9d2ec8403f7d4a3d5c321aa5719653c3f",
+        "idiom/init.md": "44f8e530fe872357a281cba998125df9cfbb6c47d63dc49f595d5b92981f947c",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.5.0",
+      "tag": "v0.5.0",
+      "tagObject": "07b89366747f1da0edc16686028863820ed52a9f",
+      "commit": "12a48784818be17a2de8d92801797650546526d7",
+      "files": {
+        "idiom/SKILL.md": "65fcc93b11dde6ff22af190a8176e1b9d2ec8403f7d4a3d5c321aa5719653c3f",
+        "idiom/init.md": "b02ddc80299284221e139827fa8fefa0eb730412947711bb6f78d46dafebef2b",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.6.0",
+      "tag": "v0.6.0",
+      "tagObject": "c1b831b9c20391614acef14abe076fe7afece349",
+      "commit": "c3254ead47260191ce34cade6d7a4e85e51886e9",
+      "files": {
+        "idiom/SKILL.md": "65fcc93b11dde6ff22af190a8176e1b9d2ec8403f7d4a3d5c321aa5719653c3f",
+        "idiom/init.md": "b02ddc80299284221e139827fa8fefa0eb730412947711bb6f78d46dafebef2b",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.7.0",
+      "tag": "v0.7.0",
+      "tagObject": "0c4f13d86227587f7a5403f1da8cc24d98c3f7fd",
+      "commit": "e83d48cb9c20fecd8108bde288ed3ab8d1920d65",
+      "files": {
+        "idiom/SKILL.md": "65fcc93b11dde6ff22af190a8176e1b9d2ec8403f7d4a3d5c321aa5719653c3f",
+        "idiom/init.md": "b02ddc80299284221e139827fa8fefa0eb730412947711bb6f78d46dafebef2b",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.8.0",
+      "tag": "v0.8.0",
+      "tagObject": "a645e9eaa559191f3f40c8ecf8e6d9749fabf7df",
+      "commit": "6144afbfa6dd2d87c35cc46a0a5a5d4f79bd9da7",
+      "files": {
+        "idiom/SKILL.md": "65fcc93b11dde6ff22af190a8176e1b9d2ec8403f7d4a3d5c321aa5719653c3f",
+        "idiom/init.md": "b02ddc80299284221e139827fa8fefa0eb730412947711bb6f78d46dafebef2b",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.9.0",
+      "tag": "v0.9.0",
+      "tagObject": "b6a4d02ef7589da6f5c4acdc72d0a9da533bea62",
+      "commit": "7d9aba8b1a8b8c2fbbb347c991cabb066795ac52",
+      "files": {
+        "idiom/SKILL.md": "65fcc93b11dde6ff22af190a8176e1b9d2ec8403f7d4a3d5c321aa5719653c3f",
+        "idiom/init.md": "a59d18563081cde0ccf27fb79f060838fac78e7ae2b2787c15f569b91e1153bd",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.9.1",
+      "tag": "v0.9.1",
+      "tagObject": "d8a4ed95e327bfaf0048ca38e850b3452971e9ed",
+      "commit": "852499ddb355520936d1676a69da5f4c205534a9",
+      "files": {
+        "idiom/SKILL.md": "65fcc93b11dde6ff22af190a8176e1b9d2ec8403f7d4a3d5c321aa5719653c3f",
+        "idiom/init.md": "a59d18563081cde0ccf27fb79f060838fac78e7ae2b2787c15f569b91e1153bd",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.10.0",
+      "tag": "v0.10.0",
+      "tagObject": "349f12257b2ca7e9fb2925cbb2e3271e2f98421a",
+      "commit": "13159f62dffc357f0898cd74a3bfbd53ab6c51ad",
+      "files": {
+        "idiom/SKILL.md": "bcc3216c27e1fe74de18a3d96a5319695faa722fc1ad6ae8bea1fcf43d313939",
+        "idiom/init.md": "a59d18563081cde0ccf27fb79f060838fac78e7ae2b2787c15f569b91e1153bd",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.11.0",
+      "tag": "v0.11.0",
+      "tagObject": "6f3af7e9752ddb324f247efae59249e4707da361",
+      "commit": "96501ad312f46b28cab2dc693be0bae475a5267e",
+      "files": {
+        "idiom/SKILL.md": "bcc3216c27e1fe74de18a3d96a5319695faa722fc1ad6ae8bea1fcf43d313939",
+        "idiom/init.md": "a59d18563081cde0ccf27fb79f060838fac78e7ae2b2787c15f569b91e1153bd",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.12.0",
+      "tag": "v0.12.0",
+      "tagObject": "b4a3113354999f4ae90e63579cf1a36a440ce93e",
+      "commit": "e3c9940c3ac3d4441472a1abc4f297ffd04ad0b6",
+      "files": {
+        "idiom/SKILL.md": "b65c9a53a4e78fbe0efd94b0d75c9e5f93c96cf831f2655cf9d85af3d331bb71",
+        "idiom/init.md": "2d31881e26d7fd7044eec563792b7e483aeff6144678c7209f4b77d052eaa2a4",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.13.0",
+      "tag": "v0.13.0",
+      "tagObject": "448644f63e91d775473b0b7a1008e472d8deef97",
+      "commit": "b48532f6c55961e0bfbd78e8bf4847dffefb39ff",
+      "files": {
+        "idiom/SKILL.md": "b65c9a53a4e78fbe0efd94b0d75c9e5f93c96cf831f2655cf9d85af3d331bb71",
+        "idiom/init.md": "2d31881e26d7fd7044eec563792b7e483aeff6144678c7209f4b77d052eaa2a4",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.14.0",
+      "tag": "v0.14.0",
+      "tagObject": "1ff2ea2f6fa9e91668174405c1cfefbb2ccacfa3",
+      "commit": "ee33c3a058fe193ece6e75906a6e9396fc44a092",
+      "files": {
+        "idiom/SKILL.md": "69fc6918c8ef074815a54440227c232f3562dfc127c561f23c52518b416393d3",
+        "idiom/init.md": "2d31881e26d7fd7044eec563792b7e483aeff6144678c7209f4b77d052eaa2a4",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    },
+    {
+      "version": "0.15.0",
+      "tag": "v0.15.0",
+      "tagObject": "4a1ddb1eee3b0ac8320fe1402dec31d35ca0a82a",
+      "commit": "a9462874560d8431a0b463fb520f372995ccadab",
+      "files": {
+        "idiom/SKILL.md": "9c8683c7679a244b76b7185f1fdf14e9c6b8a74a74f6fecaf9532cf9a013b767",
+        "idiom/init.md": "2d31881e26d7fd7044eec563792b7e483aeff6144678c7209f4b77d052eaa2a4",
+        "ab-verify-idiom/SKILL.md": "de4ee4c3c6169c1a5e97ff20ffb0c508dd6b81ae59a24b289dea316a064c0345"
+      }
+    }
+  ]
+}

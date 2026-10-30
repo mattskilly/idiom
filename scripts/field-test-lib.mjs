@@ -831,3 +831,72 @@ function optional(key, value) {
     ? {}
     : { [key]: value };
 }
+
+/** Every `runDirectory` recorded anywhere under a target's results. */
+export function runDirectories(target) {
+  const found = new Set();
+  const visit = (value) => {
+    if (Array.isArray(value)) for (const item of value) visit(item);
+    else if (value && typeof value === "object")
+      for (const [key, item] of Object.entries(value))
+        if (key === "runDirectory" && typeof item === "string") found.add(item);
+        else visit(item);
+  };
+  visit(target);
+  return [...found];
+}
+
+/**
+ * Issues still waiting for a human rating, Top 10 first in target and rank
+ * order, then feel issues outside the Top 10. Only issues with a label slot
+ * are queued, so `labels-template` decides what can be rated.
+ */
+export function ratingQueue(results, labels) {
+  const queued = new Set();
+  const queue = [];
+  const add = (target, issue, topTen) => {
+    const label = labels?.labels?.[issue.key];
+    if (label === undefined || queued.has(issue.key)) return;
+    queued.add(issue.key);
+    if (RATINGS.includes(label.human?.rating)) return;
+    queue.push({
+      key: issue.key,
+      target: target.id,
+      kind: target.kind,
+      topTen,
+      rank: issue.rank,
+      rules: issue.rules,
+      severity: issue.severity,
+      title: issue.title,
+      ...optional("selector", issue.selector),
+      ...optional(
+        "where",
+        [issue.state, issue.viewport, issue.colorScheme]
+          .filter(Boolean)
+          .join(" / "),
+      ),
+      ...optional("evidence", issue.evidence),
+      runDirectories: runDirectories(target),
+      agent: label.agent ?? null,
+    });
+  };
+  for (const target of results.targets ?? [])
+    for (const issue of target.topIssues ?? []) add(target, issue, true);
+  for (const target of results.targets ?? [])
+    for (const issue of target.feelIssues ?? []) add(target, issue, false);
+  return queue;
+}
+
+/** Records a human rating on an existing label slot; never adds slots. */
+export function applyHumanRating(labels, key, rating, reason = "") {
+  if (!RATINGS.includes(rating)) throw new Error(`unknown rating: ${rating}`);
+  const label = labels?.labels?.[key];
+  if (label === undefined) throw new Error(`no label slot for ${key}`);
+  return {
+    ...labels,
+    labels: {
+      ...labels.labels,
+      [key]: { ...label, human: { rating, reason: reason.trim() } },
+    },
+  };
+}

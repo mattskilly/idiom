@@ -264,11 +264,12 @@ test("copied replays normalize setup URLs and owned ports like each state's inde
   for (const [state, evidence] of Object.entries(shared.replayEvidence)) {
     const serialized = JSON.stringify(evidence);
     expect(serialized).not.toContain("live-token");
+    expect(serialized).not.toContain("%7Bsetup-stdout:");
     expect(serialized).toContain(`http://127.0.0.1:${port}`);
-    expect(serialized).toContain(`/%7Bsetup-stdout:${state}%7D/api/slow-step`);
+    expect(serialized).toContain(`/{setup-stdout:${state}}/api/slow-step`);
     expect(evidence.actions?.map(({ id }) => id)).toContain("slow-step-1");
     for (const action of evidence.actions ?? []) {
-      expect(action.url).toBe(`/%7Bsetup-stdout:${state}%7D`);
+      expect(action.url).toBe(`/{setup-stdout:${state}}`);
     }
   }
 }, 240_000);

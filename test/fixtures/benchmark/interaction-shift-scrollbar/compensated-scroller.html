@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Plans</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d1d1f; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px; }
+  section { height: 3000px; }
+  .dialog { position: fixed; top: 120px; left: 50%; width: 360px; margin-left: -180px; padding: 24px; background: #fff; border: 1px solid #ccc; box-shadow: 0 8px 24px rgba(0,0,0,.2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Plans</h1>
+  <button id="open" type="button" aria-haspopup="dialog">Compare plans</button>
+  <section><p class="note">Every plan includes support.</p></section>
+</main>
+<script>
+  // Library-style lock that measures a temporary off-screen scroller once at
+  // startup and caches the width, then gives it back while scroll is locked.
+  const probe = document.createElement("div");
+  probe.style.cssText =
+    "position:absolute;top:-9999px;width:100px;height:100px;overflow:scroll";
+  document.body.append(probe);
+  const width = probe.offsetWidth - probe.clientWidth;
+  probe.remove();
+  new Image().src = `/measured?source=scroller&width=${width}`;
+  document.getElementById("open").addEventListener("click", () => {
+    const dialog = document.createElement("div");
+    dialog.className = "dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-label", "Compare plans");
+    dialog.textContent = "Starter, Team and Business.";
+    document.body.append(dialog);
+    const scrolls =
+      document.documentElement.scrollHeight > window.innerHeight;
+    if (scrolls && width > 0) document.body.style.paddingRight = `${width}px`;
+    document.body.style.overflow = "hidden";
+  });
+</script>
+</body>
+</html>

@@ -3,6 +3,7 @@ import { IdiomError } from "../errors.js";
 import type { CatalogFinding } from "../review/catalog.js";
 import {
   affectedCounts,
+  comparePriority,
   type IssueRankingTuple,
   scoreGroup,
 } from "../review/ranking.js";
@@ -127,10 +128,5 @@ export async function groupSweep(
         explanation: winner.explanation,
       };
     })
-    .sort(
-      (a, b) =>
-        b.score - a.score ||
-        severity[a.severity] - severity[b.severity] ||
-        a.id.localeCompare(b.id),
-    );
+    .sort((a, b) => comparePriority(a, b) || a.id.localeCompare(b.id));
 }

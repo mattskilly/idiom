@@ -20,7 +20,10 @@ import {
   writeBaselineReport,
   writeTupleArtifacts,
 } from "../src/capture/artifacts.js";
+import { failureKey } from "../src/capture/failure.js";
+import { FilmstripCapture } from "../src/capture/filmstrips.js";
 import { isPortOpen } from "../src/capture/process.js";
+import { createReplayLedger } from "../src/capture/replay-ledger.js";
 import {
   resolveStates,
   selectCaptureTuples,
@@ -29,14 +32,22 @@ import {
   snapshotSource,
 } from "../src/capture/resolve.js";
 import { runCapture, sanitizeDerivedResult } from "../src/capture/run.js";
+import { isStagingDirectoryName } from "../src/capture/staging.js";
+import { TIMELINE_LIMITS } from "../src/capture/timeline.js";
 import type {
   BrowserLauncher,
   BrowserTuple,
   TupleResult,
 } from "../src/capture/types.js";
+import { filmstripConfigSchema } from "../src/checks/filmstrip-schema.js";
+import {
+  linkRecording,
+  recordingKey,
+} from "../src/checks/temporal-evidence.js";
+import type { ActionTimeline } from "../src/checks/types.js";
 import { loadCaptureRun } from "../src/review/artifacts.js";
 import { flowSchema } from "../src/schemas/flow.js";
-import { projectSchema } from "../src/schemas/project.js";
+import { checksConfigSchema, projectSchema } from "../src/schemas/project.js";
 
 import { productionFixture } from "./production-support.js";
 
@@ -418,41 +429,631 @@ test("axis artifact writes round-trip through three-level capture discovery", as
   }
 });
 
+function textCapture(dom: string): TupleResult {
+  return {
+    ok: true,
+    status: 200,
+    dom,
+    screenshot: Buffer.from("png"),
+    console: [],
+    axe: { violations: [] },
+    observations: emptyObservations(),
+    mismatches: [],
+    startedAt: "start",
+    endedAt: "end",
+  };
+}
+
+function textTimeline(name: string): ActionTimeline {
+  return {
+    source: "web-step",
+    kind: "click",
+    stepIndex: 1,
+    name,
+    url: name,
+    startedAt: 1,
+    durationMs: 10,
+    settled: true,
+    status: "ran",
+    truncated: [],
+    shifts: [],
+    frames: [],
+    mutations: [],
+    animations: [],
+    requests: [],
+    viewTransition: { used: false },
+    effectRegion: { controls: [] },
+  };
+}
+
+const setupMetadata = {
+  kind: "setup-stdout" as const,
+  origin: "http://127.0.0.1:3107",
+  source: "setup-stdout" as const,
+  pattern: "URL (\\S+)",
+  append: "?tz=America/New_York",
+  template: "http://127.0.0.1:3107/{setup-stdout:state}?tz=America/New_York",
+};
+const setupPath = "/{setup-stdout:state}";
+
 test("setup-derived private URLs are redacted from every textual browser artifact", () => {
   const navigationUrl =
     "http://127.0.0.1:3107/book/jane/private-slug?tz=America/New_York";
+  const metadataUrl = setupMetadata;
+  const filmstrips = new FilmstripCapture(
+    filmstripConfigSchema.parse({}),
+    checksConfigSchema.parse({}),
+  );
+  const action = linkRecording(textTimeline("private-slug"), "recording-1");
+  const input: TupleResult = {
+    ...textCapture(
+      `<form action="/book/jane/private-slug"></form><script>{"url":"${navigationUrl}","params":{"code":"private-slug"}}</script>`,
+    ),
+    filmstrips,
+    console: [
+      {
+        type: "log",
+        text: `${navigationUrl} private-slug`,
+        healthAllowed: true,
+        location: { url: "private-slug", lineNumber: 1, columnNumber: 1 },
+      },
+    ],
+    axe: {
+      url: navigationUrl,
+      html: "/book/jane/private-slug",
+      nested: [
+        {
+          "private-slug": "private-slug",
+          count: 3,
+          enabled: true,
+          empty: null,
+        },
+      ],
+    },
+    observations: {
+      ...emptyObservations(),
+      headings: [{ selector: "h1", level: 1, text: "private-slug" }],
+    },
+    timelines: {
+      version: 1,
+      status: "ran",
+      limits: TIMELINE_LIMITS,
+      truncated: { actions: 0 },
+      actions: [action],
+    },
+  };
+  const before = JSON.stringify(input);
+  const result = sanitizeDerivedResult(input, navigationUrl, metadataUrl);
+  expect(JSON.stringify(result)).not.toContain("private-slug");
+  expect(result.dom).not.toContain("private-slug");
+  expect(result.dom).not.toContain(navigationUrl);
+  expect(result.console[0]).toMatchObject({
+    text: `${metadataUrl.template} ${setupPath}`,
+    healthAllowed: true,
+    location: { url: setupPath, lineNumber: 1 },
+  });
+  expect(result.axe).toMatchObject({
+    nested: [{ [setupPath]: setupPath, count: 3, enabled: true, empty: null }],
+  });
+  expect(result.observations?.headings[0]?.text).toBe(setupPath);
+  expect(result.timelines?.actions[0]?.name).toBe(setupPath);
+  expect(recordingKey(result.timelines?.actions[0] ?? {})).toBe("recording-1");
+  expect(result.screenshot).toBe(input.screenshot);
+  expect(result.filmstrips).toBe(filmstrips);
+  expect(JSON.stringify(input)).toBe(before);
+  expect(JSON.stringify(result)).toContain("setup-stdout:state");
+  expect(JSON.stringify(result)).not.toContain("%7Bsetup-stdout:");
+  expect(
+    sanitizeDerivedResult(input, navigationUrl, {
+      kind: "literal",
+      origin: metadataUrl.origin,
+      url: navigationUrl,
+    }),
+  ).toBe(input);
+});
+
+test.each([
+  [
+    "/book/private-middle/confirm",
+    '"private-middle" "book" "confirm"',
+    `"${setupPath}" "${setupPath}" "${setupPath}"`,
+  ],
+  [
+    "/private/private-long/private",
+    "private-long private",
+    `${setupPath} ${setupPath}`,
+  ],
+  ["/x//route/", "x route unrelated", `${setupPath} ${setupPath} unrelated`],
+  [
+    "/caf%C3%A9%20name/a%2Fb",
+    "caf%C3%A9%20name café name a%2Fb a/b",
+    Array(4).fill(setupPath).join(" "),
+  ],
+  [
+    "/quote%22slash%5Cvalue",
+    '"quote\\"slash\\\\value" quote%22slash%5Cvalue',
+    `"${setupPath}" ${setupPath}`,
+  ],
+  ["/amp&value", "amp&amp;value amp&value", `${setupPath} ${setupPath}`],
+  ["/quote%22%26value", "quote&quot;&amp;value", setupPath],
+  [
+    "/it's%22%26value",
+    "it's&quot;&amp;value it&#39;s&quot;&amp;value",
+    `${setupPath} ${setupPath}`,
+  ],
+  [
+    "/angle%3C%26value",
+    "angle&lt;&amp;value angle%3C%26value",
+    `${setupPath} ${setupPath}`,
+  ],
+  ["/bad%ZZvalue", "bad%ZZvalue", setupPath],
+  [
+    "/a.*$%26%5Cvalue",
+    "a.*$&\\value a.*$%26%5Cvalue",
+    `${setupPath} ${setupPath}`,
+  ],
+  [
+    "/state/setup-stdout",
+    `state setup-stdout ${setupMetadata.template} ${setupPath}`,
+    `${setupPath} ${setupPath} ${setupMetadata.template} ${setupPath}`,
+  ],
+  ["/", "unrelated /path/with/slashes", "unrelated /path/with/slashes"],
+  ["", "unrelated /path/with/slashes", "unrelated /path/with/slashes"],
+])(
+  "redacts literal route and serialization forms for %s",
+  (path, text, expected) => {
+    const navigationUrl = `${setupMetadata.origin}${path}`;
+    const input = textCapture(text);
+    const result = sanitizeDerivedResult(input, navigationUrl, setupMetadata);
+    expect(result.dom).toBe(expected);
+    expect(
+      sanitizeDerivedResult(result, navigationUrl, setupMetadata).dom,
+    ).toBe(expected);
+  },
+);
+
+test("redacts escaped full URLs without aliases and retains template serialization", () => {
+  const navigationUrl = `${setupMetadata.origin}/private-slug?q=one&other=two`;
+  const metadata = {
+    ...setupMetadata,
+    template: `${setupMetadata.template}&more=value`,
+  };
+  const result = sanitizeDerivedResult(
+    textCapture(
+      `<a href="${navigationUrl.replaceAll("&", "&amp;")}">private-slug</a>`,
+    ),
+    navigationUrl,
+    metadata,
+  );
+  expect(result.dom).toBe(
+    `<a href="${metadata.template.replaceAll("&", "&amp;")}">${setupPath}</a>`,
+  );
+});
+
+test("bare segment redaction preserves larger words, identifiers and axe structure", () => {
+  const result = sanitizeDerivedResult(
+    {
+      ...textCapture('b book available booking-confirm "private-slug"'),
+      axe: {
+        id: "region",
+        impact: "serious",
+        tags: ["button"],
+        testEngine: { name: "axe-core", version: "4.13.0" },
+        nodes: [{ html: '<b class="booking-confirm">private-slug</b>' }],
+      },
+      timelines: {
+        version: 1,
+        status: "ran",
+        limits: TIMELINE_LIMITS,
+        truncated: { actions: 0 },
+        actions: [textTimeline("private-slug")],
+      },
+    },
+    `${setupMetadata.origin}/b/book/region/serious/button/ran/axe-core/private-slug`,
+    setupMetadata,
+  );
+  expect(result.dom).toBe(
+    `${setupPath} ${setupPath} available booking-confirm "${setupPath}"`,
+  );
+  expect(result.axe).toMatchObject({
+    id: "region",
+    impact: "serious",
+    tags: ["button"],
+    testEngine: { name: "axe-core", version: "4.13.0" },
+  });
+  expect(result.timelines?.status).toBe("ran");
+  expect(result.timelines?.actions[0]?.source).toBe("web-step");
+});
+
+test("route segments spelled like tag names leave markup and selector structure intact", () => {
+  const dom =
+    '<p class="b"><b data-slug="offer-k2j3h4" p>offer-k2j3h4</b> b</p>' +
+    '<button type="button">p</button>' +
+    '<script>self.push(["offer-k2j3h4"]);if(a<button)go()</script>';
+  const result = sanitizeDerivedResult(
+    {
+      ...textCapture(dom),
+      axe: {
+        violations: [
+          {
+            id: "region",
+            nodes: [
+              {
+                html: "<b>offer-k2j3h4</b>",
+                target: ["body > b", "p.offer-k2j3h4", "#offer-k2j3h4"],
+              },
+            ],
+          },
+        ],
+      },
+      observations: {
+        ...emptyObservations(),
+        headings: [
+          { selector: "html[0]/body[0]/b[0]", level: 1, text: "b" },
+          { selector: "p>b,button#offer-k2j3h4", level: 2, text: "p" },
+        ],
+      },
+    },
+    `${setupMetadata.origin}/b/p/button/offer-k2j3h4`,
+    setupMetadata,
+  );
+  expect(result.dom).toBe(
+    `<p class="${setupPath}"><b data-slug="${setupPath}" p>${setupPath}</b> ${setupPath}</p>` +
+      `<button type="${setupPath}">${setupPath}</button>` +
+      `<script>self.push(["${setupPath}"]);if(a<${setupPath})go()</script>`,
+  );
+  expect(JSON.stringify(result)).not.toContain("offer-k2j3h4");
+  expect(result.axe).toMatchObject({
+    violations: [
+      {
+        nodes: [
+          {
+            html: `<b>${setupPath}</b>`,
+            target: ["body > b", `p.${setupPath}`, `#${setupPath}`],
+          },
+        ],
+      },
+    ],
+  });
+  expect(result.observations?.headings).toMatchObject([
+    { selector: "html[0]/body[0]/b[0]", text: setupPath },
+    { selector: `p>b,button#${setupPath}` },
+  ]);
+});
+
+test("copied held replay evidence uses the receiving state's route sanitizer and keeps recording identity", async () => {
+  const f = await productionFixture();
+  const ledger = createReplayLedger();
+  const rawCopies: ActionTimeline[] = [];
+  const published: ActionTimeline[] = [];
+  const route = "private-slug";
+  const request: ActionTimeline["requests"][number] = {
+    method: "GET",
+    path: route,
+    resourceType: "fetch",
+    startTime: 0,
+    endTime: 10,
+    status: 200,
+    outcome: "ok",
+  };
+  const recorded: ActionTimeline = {
+    ...textTimeline(route),
+    source: "slow-replay",
+    requests: [request],
+    held: {
+      of: "web-step",
+      delayMs: 1500,
+      withinMs: 1000,
+      dispatched: true,
+      requests: [
+        {
+          method: "GET",
+          path: route,
+          resourceType: "fetch",
+          startTime: 0,
+          releasedAt: 1500,
+          forwarded: true,
+          navigation: false,
+        },
+      ],
+      releasedAt: 1500,
+      indicator: null,
+      indicators: [],
+      firstChange: null,
+      firstMainChange: null,
+      changedAfterRelease: false,
+      changeAfterReleaseAt: null,
+      mainChangedAfterRelease: false,
+      mainChangeAfterReleaseAt: null,
+      mainSelector: "main",
+      mainEmpty: null,
+      routeChange: null,
+      trigger: { checkedAt: 1000, enabled: true },
+      secondActivation: { attempted: false, duplicates: [] },
+      notes: [route],
+    },
+  };
+  try {
+    const flow = flowSchema.parse({
+      ...f.flow,
+      setup: [
+        {
+          run: "node -e 'console.log(process.env.SETUP_URL)'",
+          captureStdout: true,
+          env: { SETUP_URL: `${f.project.server.readyUrl}${route}` },
+        },
+      ],
+      states: ["first", "second"].map((id) => ({
+        id,
+        description: id,
+        urlFrom: { source: "setup-stdout", pattern: "(http[^\\s]+)" },
+        steps: [{ action: "click", selector: "#load" }],
+        expect: {},
+      })),
+    });
+    const result = await runCapture({
+      projectDirectory: f.directory,
+      project: f.project,
+      flow,
+      dependencies: {
+        replayLedger: {
+          ...ledger,
+          plan(partition, states) {
+            ledger.plan(partition, states);
+            for (const { keys } of states)
+              for (const key of keys)
+                ledger.record(partition, key, "recorded-state", [recorded], []);
+          },
+          fill(partition, state, keys) {
+            const copy = ledger.fill(partition, state, keys);
+            for (const action of copy.actions) {
+              linkRecording(action, "copied-recording");
+              rawCopies.push(action);
+            }
+            return copy;
+          },
+        },
+        browserLauncher: async () => ({
+          version: "Fixture browser",
+          planProbes: true,
+          close: async () => {},
+          capture: async () => {
+            const filmstrips = new FilmstripCapture(
+              f.project.capture.filmstrips,
+              f.project.checks,
+            );
+            filmstrips.finalCandidates = (facts) => {
+              published.push(
+                ...(facts.timelines?.actions.filter(
+                  (action) => action.source === "slow-replay",
+                ) ?? []),
+              );
+              return [];
+            };
+            return {
+              ...textCapture(route),
+              filmstrips,
+              timelines: {
+                version: 1,
+                status: "ran",
+                limits: TIMELINE_LIMITS,
+                truncated: { actions: 0 },
+                actions: [{ ...textTimeline("Load"), requests: [request] }],
+              },
+            };
+          },
+        }),
+      },
+    });
+    expect(rawCopies).toHaveLength(2);
+    expect(published).toHaveLength(2);
+    for (const action of rawCopies) expect(action.held?.notes).toEqual([route]);
+    for (const [index, state] of ["first", "second"].entries()) {
+      const action = published[index];
+      const placeholder = `/{setup-stdout:${state}}`;
+      expect(action?.name).toBe(placeholder);
+      expect(action?.requests[0]?.path).toBe(placeholder);
+      expect(action?.held?.notes).toEqual([placeholder]);
+      expect(recordingKey(action ?? {})).toBe("copied-recording");
+      expect(
+        await readFile(
+          join(result.runDirectory, state, "desktop", "timelines.json"),
+          "utf8",
+        ),
+      ).not.toContain(route);
+    }
+    expect(
+      (
+        await loadCaptureRun({
+          runDirectory: result.runDirectory,
+          expectedFlow: flow.id,
+        })
+      ).tuples,
+    ).toHaveLength(2);
+  } finally {
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});
+
+test("probe rounds merge raw identities and completed failure keys before redacting saved evidence", async () => {
+  const f = await productionFixture();
+  const selector = '[data-code="private-slug"]';
+  const failure: NonNullable<ActionTimeline["failure"]> = {
+    of: "probe-click",
+    sourceAction: "click",
+    mode: "status",
+    status: 500,
+    feedbackWithinMs: 2000,
+    eligibility: { basis: "response", responseAt: 10, changeAt: 10, selector },
+    dispatched: true,
+    navigated: false,
+    requests: [
+      {
+        method: "GET",
+        path: "/api/private-slug",
+        resourceType: "fetch",
+        startTime: 0,
+        injectedAt: 10,
+        delivered: true,
+      },
+    ],
+    observationStart: 0,
+    observationEnd: 100,
+    feedback: [],
+    changes: [],
+    trigger: {
+      disabled: false,
+      busy: false,
+      hidden: false,
+      inert: false,
+      initiallyEnabled: true,
+    },
+    pending: [],
+    main: { selector: "main", initiallyEmpty: false, empty: false },
+    retry: [],
+    complete: true,
+    truncated: false,
+    notes: [],
+  };
+  const completedKey = failureKey(selector, failure.requests);
+  let calls = 0;
+  try {
+    const flow = flowSchema.parse({
+      ...f.flow,
+      setup: [
+        {
+          run: "node -e 'console.log(process.env.SETUP_URL)'",
+          captureStdout: true,
+          env: { SETUP_URL: `${f.project.server.readyUrl}book/private-slug` },
+        },
+      ],
+      states: [
+        {
+          id: "derived",
+          description: "Derived",
+          expect: {},
+          urlFrom: { source: "setup-stdout", pattern: "(http[^\\s]+)" },
+        },
+      ],
+    });
+    const result = await runCapture({
+      projectDirectory: f.directory,
+      project: f.project,
+      flow,
+      dependencies: {
+        replayLedger: {
+          ...createReplayLedger(),
+          assignedCount: () => (calls < 3 ? 1 : 0),
+          steal: () => (calls < 3 ? 1 : 0),
+        },
+        browserLauncher: async () => ({
+          version: "Fixture browser",
+          planProbes: true,
+          close: async () => {},
+          capture: async (tuple) => {
+            calls += 1;
+            if (calls === 3)
+              expect(tuple.failureReplays).toEqual([completedKey]);
+            const enumerating = tuple.enumerateProbe === true;
+            return {
+              ...textCapture("private-slug"),
+              probeMs: enumerating ? undefined : 1,
+              observations: {
+                ...emptyObservations(),
+                version: 2,
+                maskMembership: [],
+                probe: {
+                  status: "ran",
+                  results: enumerating
+                    ? []
+                    : [
+                        {
+                          selector,
+                          name: "private-slug",
+                          region: "main",
+                          persistent: true,
+                          effects: [],
+                          status: calls === 2 ? "not-reached" : "completed",
+                        },
+                      ],
+                  failureReplay: {
+                    mode: "status",
+                    status: 500,
+                    feedbackWithinMs: 2000,
+                    queued: 1,
+                    ran: 1,
+                    completed: enumerating ? [] : [completedKey],
+                    notes: [],
+                  },
+                },
+              },
+              timelines: {
+                version: 1,
+                status: "ran",
+                limits: TIMELINE_LIMITS,
+                truncated: { actions: 0 },
+                actions: enumerating
+                  ? []
+                  : [
+                      {
+                        ...textTimeline("private-slug"),
+                        source: "failure-replay",
+                        selector,
+                        failure,
+                      },
+                    ],
+              },
+            };
+          },
+        }),
+      },
+    });
+    expect(calls).toBe(3);
+    const loaded = await loadCaptureRun({
+      runDirectory: result.runDirectory,
+      expectedFlow: flow.id,
+    });
+    const tuple = loaded.tuples[0];
+    if (tuple?.observations?.version !== 2)
+      throw new Error("missing observations");
+    expect(tuple.observations.probe?.results).toHaveLength(1);
+    expect(tuple.observations.probe?.results[0]).toMatchObject({
+      name: "/{setup-stdout:derived}",
+      status: "completed",
+    });
+    expect(
+      tuple.timelines?.actions.filter(
+        (action) => action.source === "failure-replay",
+      ),
+    ).toHaveLength(1);
+    expect(JSON.stringify(tuple.observations)).not.toContain("private-slug");
+    expect(JSON.stringify(tuple.timelines)).not.toContain("private-slug");
+  } finally {
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});
+
+test("setup-derived path suffixes keep their bytes and drop the query and fragment", () => {
+  const navigationUrl =
+    "http://127.0.0.1:3107/book/private-slug/api%2Fv1?tz=America/New_York#top";
+  const append = "/api%2Fv1?tz=America/New_York#top";
   const metadataUrl = {
     kind: "setup-stdout" as const,
     origin: "http://127.0.0.1:3107",
     source: "setup-stdout" as const,
     pattern: "URL (\\S+)",
-    append: "?tz=America/New_York",
-    template: "http://127.0.0.1:3107/{setup-stdout:state}?tz=America/New_York",
+    append,
+    template: `http://127.0.0.1:3107/{setup-stdout:state}${append}`,
   };
   const result = sanitizeDerivedResult(
     {
       ok: true,
       status: 200,
-      dom: '<form action="/book/jane/private-slug"></form>',
+      dom: `<a href="${navigationUrl}">/book/private-slug/api%2Fv1</a>`,
       screenshot: Buffer.from("png"),
-      console: [
-        {
-          type: "log",
-          text: navigationUrl,
-          location: { url: navigationUrl, lineNumber: 1, columnNumber: 1 },
-        },
-      ],
-      axe: { url: navigationUrl, html: "/book/jane/private-slug" },
-      observations: {
-        ...emptyObservations(),
-        headings: [
-          {
-            selector: "h1",
-            level: 1,
-            text: "/book/jane/private-slug",
-          },
-        ],
-      },
+      console: [],
+      axe: {},
+      observations: emptyObservations(),
       mismatches: [],
       startedAt: "start",
       endedAt: "end",
@@ -460,8 +1061,11 @@ test("setup-derived private URLs are redacted from every textual browser artifac
     navigationUrl,
     metadataUrl,
   );
-  expect(JSON.stringify(result)).not.toContain("private-slug");
-  expect(JSON.stringify(result)).toContain("setup-stdout:state");
+  if (!result.ok) throw new Error("expected a successful result");
+  expect(result.dom).toBe(
+    `<a href="${metadataUrl.template}">/{setup-stdout:state}/api%2Fv1</a>`,
+  );
+  expect(result.dom).not.toContain("private-slug");
 });
 
 test("secret scanning covers text, JSON, and binary bytes before publication", async () => {
@@ -799,6 +1403,127 @@ test("repo-internal explicit output must be managed or gitignored", async () => 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+async function commitFile(
+  directory: string,
+  path: string,
+  content: string,
+): Promise<void> {
+  await writeFile(join(directory, path), content);
+  await execFileAsync("git", ["add", path], { cwd: directory });
+  await execFileAsync("git", ["commit", "--quiet", "-m", `add ${path}`], {
+    cwd: directory,
+  });
+}
+
+async function writeResidue(directory: string, path: string): Promise<void> {
+  await mkdir(join(directory, path), { recursive: true });
+  await writeFile(join(directory, path, "run.json"), "{}\n");
+}
+
+test("interrupted capture staging residue beside an explicit output stays clean", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-staging-residue-"));
+  await initializeGitRepository(directory);
+  await commitFile(directory, ".gitignore", "capture-output/\n");
+  const out = join(directory, "capture-output");
+  const workspace = await createArtifactWorkspace({
+    projectDirectory: directory,
+    out,
+  });
+  try {
+    // Simulate a hard-killed run: staged bytes, never published or cleaned.
+    await writeFile(join(workspace.stagingDirectory, "run.json"), "{}\n");
+    await expect(
+      snapshotSource(directory, { excludedPaths: [out] }),
+    ).resolves.toMatchObject({ dirty: true });
+    const options = { excludedPaths: [out], explicitOutputPath: out };
+    await expect(snapshotSource(directory, options)).resolves.toMatchObject({
+      dirty: false,
+    });
+
+    await writeFile(join(directory, "src.txt"), "new\n");
+    await expect(snapshotSource(directory, options)).resolves.toMatchObject({
+      dirty: true,
+    });
+    await rm(join(directory, "src.txt"));
+
+    await writeFile(join(directory, "tracked.txt"), "changed\n");
+    await expect(snapshotSource(directory, options)).resolves.toMatchObject({
+      dirty: true,
+    });
+    await writeFile(join(directory, "tracked.txt"), "unchanged\n");
+
+    for (const unrelated of [
+      ".capture-output.staging-abc",
+      ".capture-output.staging-abc12!",
+      ".other-output.staging-abc123",
+      "nested/.capture-output.staging-abc123",
+    ]) {
+      await writeResidue(directory, unrelated);
+      await expect(
+        snapshotSource(directory, options),
+        unrelated,
+      ).resolves.toMatchObject({ dirty: true });
+      await rm(join(directory, unrelated.split("/")[0] ?? unrelated), {
+        recursive: true,
+      });
+    }
+    await expect(snapshotSource(directory, options)).resolves.toMatchObject({
+      dirty: false,
+    });
+  } finally {
+    await rm(workspace.dataDirectory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("staging residue beside a nested explicit output stays clean", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-staging-nested-"));
+  await initializeGitRepository(directory);
+  await commitFile(directory, ".gitignore", "artifacts/run-1/\n");
+  const out = join(directory, "artifacts", "run-1");
+  try {
+    await writeResidue(directory, "artifacts/.run-1.staging-Ab12Cd");
+    const options = { excludedPaths: [out], explicitOutputPath: out };
+    await expect(snapshotSource(directory, options)).resolves.toMatchObject({
+      dirty: false,
+    });
+    await writeResidue(directory, ".run-1.staging-Ab12Cd");
+    await expect(snapshotSource(directory, options)).resolves.toMatchObject({
+      dirty: true,
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("staging residue is not excluded without an explicit output", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-staging-default-"));
+  await initializeGitRepository(directory);
+  try {
+    await writeResidue(directory, ".capture-output.staging-abc123");
+    await expect(snapshotSource(directory)).resolves.toMatchObject({
+      dirty: true,
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("staging names match only the literal output basename", () => {
+  expect(
+    isStagingDirectoryName("/x/run.v1+x", ".run.v1+x.staging-abc123"),
+  ).toBe(true);
+  expect(
+    isStagingDirectoryName("/x/run.v1+x", ".runXv1+x.staging-abc123"),
+  ).toBe(false);
+  expect(isStagingDirectoryName("/x/run.v1+x", ".run.v1x.staging-abc123")).toBe(
+    false,
+  );
+  expect(
+    isStagingDirectoryName("/x/run.v1+x", ".run.v1+x.staging-abc1234"),
+  ).toBe(false);
 });
 
 test("teardown rejection still removes the exact data and staging directories", async () => {
@@ -1257,7 +1982,7 @@ test.each([false, true])(
   async (failTuple) => {
     const f = await productionFixture();
     try {
-      const privateUrl = `${f.project.server.readyUrl}private-booking?q=private-token&other=value#hash`;
+      const privateUrl = `${f.project.server.readyUrl}person/private-booking/confirm?q=private-token&other=value#hash`;
       const flow = flowSchema.parse({
         ...f.flow,
         setup: [
@@ -1293,7 +2018,7 @@ test.each([false, true])(
             capture: async (tuple) => {
               effective = tuple.navigationUrl;
               expect(effective).toMatch(
-                /\/private-booking\?q=private-token&other=value#hash-suffix$/,
+                /\/person\/private-booking\/confirm\?q=private-token&other=value#hash-suffix$/,
               );
               expect(new URL(effective).port).not.toBe(
                 String(f.project.server.port),
@@ -1301,7 +2026,7 @@ test.each([false, true])(
               expect(await (await fetch(effective)).text()).toContain(
                 "PRODUCTION MARKER",
               );
-              const echo = `${privateUrl}-suffix ${effective} ${effective.replaceAll("&", "&amp;")} ${`${privateUrl}-suffix`.replaceAll("&", "&amp;")}`;
+              const echo = `person private-booking confirm ${privateUrl}-suffix ${effective} ${effective.replaceAll("&", "&amp;")} ${`${privateUrl}-suffix`.replaceAll("&", "&amp;")} ${new URL(effective).pathname}`;
               const common = {
                 dom: echo,
                 screenshot: Buffer.from("png"),
@@ -1346,12 +2071,32 @@ test.each([false, true])(
       for (const file of files) {
         const text = await readFile(join(path, file), "utf8");
         expect(text, file).not.toContain("private-booking");
+        expect(text, file).not.toContain("person");
+        expect(text, file).not.toContain("confirm");
         expect(text, file).not.toContain("private-token");
         // Derived text is canonicalized to the configured origin; only the
         // metadata keeps the served origin as provenance.
         if (file !== "metadata.json")
           expect(text, file).not.toContain(new URL(effective).origin);
+        // The full URL and its path carry one literal placeholder form.
+        expect(text, file).not.toContain("%7Bsetup-stdout:");
+        if (file === "metadata.json") continue;
+        expect(text, file).toContain(
+          `${new URL(f.project.server.readyUrl).origin}/{setup-stdout:derived}-suffix`,
+        );
+        expect(text, file).toContain(" /{setup-stdout:derived}-suffix");
       }
+      if (failTuple) {
+        const message = JSON.parse(metadata).failure.message as string;
+        expect(message).toContain(
+          `${new URL(f.project.server.readyUrl).origin}/{setup-stdout:derived}-suffix`,
+        );
+        expect(message).toContain(" /{setup-stdout:derived}-suffix");
+        expect(message).not.toContain("%7Bsetup-stdout:");
+      }
+      expect(await readFile(join(path, "screenshot.png"))).toEqual(
+        Buffer.from("png"),
+      );
       expect(JSON.parse(metadata).url.canonicalOrigin).toBe(
         new URL(f.project.server.readyUrl).origin,
       );

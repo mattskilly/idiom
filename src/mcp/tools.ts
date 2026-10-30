@@ -1081,13 +1081,24 @@ export function registerIdiomTools(
           : {}),
         degraded: summary.outcome.kind === "degraded",
       };
-      const key = process.env.ANTHROPIC_API_KEY?.trim();
-      if (key && JSON.stringify(output).includes(key))
+      const serialized = JSON.stringify(output);
+      if (
+        [
+          process.env.ANTHROPIC_API_KEY,
+          process.env.OPENAI_API_KEY,
+          process.env.CODEX_API_KEY,
+        ].some((value) => {
+          const key = value?.trim();
+          return key !== undefined && key !== "" && serialized.includes(key);
+        })
+      )
         throw new IdiomError(
           "Sweep output unexpectedly contained a model credential; refusing to return it.",
         );
+      const fallback =
+        summary.outcome.kind === "full" ? summary.outcome.fallback : undefined;
       return result(
-        `${renderSweepSummary(summary).trimEnd()}${output.degraded ? `\n${"scope" in summary ? "Sweep incomplete" : "Model critique degraded"}: ${summary.outcome.kind === "degraded" ? summary.outcome.reason : ""}` : ""}`,
+        `${renderSweepSummary(summary).trimEnd()}${output.degraded ? `\n${"scope" in summary ? "Sweep incomplete" : "Model critique degraded"}: ${summary.outcome.kind === "degraded" ? summary.outcome.reason : ""}` : ""}${fallback === undefined ? "" : `\nModel critique used fallback provider ${fallback.to} after ${fallback.from} failed: ${fallback.reason}`}`,
         output,
       );
     },

@@ -14,12 +14,16 @@ import { basename, dirname, join } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { planAutobuildWiring } from "../autobuild/wiring.js";
+import { sanitizeCritiqueDiagnostic } from "../critique/claude-code.js";
 import {
   type GenerateFlow,
   type Generation,
   generateSiteFlow,
 } from "../flows/generate.js";
 import { resolveProjectArgument } from "../project.js";
+import { skillIdentity } from "../skills/merge.js";
+import { inspect } from "../skills/paths.js";
+import { seedPristine } from "../skills/pristine.js";
 import { discoverSources } from "../system/learn/discover.js";
 import { applySystemDraft } from "../system/learn/draft.js";
 import {
@@ -36,6 +40,7 @@ import {
   templateNames,
 } from "../templates.js";
 import { validateProjectConfiguration } from "../validation.js";
+import { IDIOM_VERSION } from "../version.js";
 
 export type InitConfirmationRequest =
   | { kind: "offer-system-learning"; prompt: string; path: string }
@@ -86,6 +91,7 @@ export type InitResult = {
   replaced: string[];
   unchanged: string[];
   skipped: string[];
+  skillWarnings?: string[];
   autobuild: AutobuildInitOutcome;
   systemLearning: {
     kind:
@@ -147,6 +153,12 @@ async function installSkills(
   projectDirectory: string,
   result: InitResult,
 ): Promise<void> {
+  try {
+    await inspect(projectDirectory, canonicalSkillFile);
+  } catch {
+    result.skipped.push(canonicalSkillFile);
+    return;
+  }
   const canonicalDirectory = join(projectDirectory, canonicalSkillPath);
   let canonicalOwned = false;
 
@@ -195,6 +207,12 @@ async function installSkills(
 
   if (!canonicalOwned) return;
 
+  try {
+    await inspect(projectDirectory, claudeSkillPath);
+  } catch {
+    result.skipped.push(claudeSkillPath);
+    return;
+  }
   const claudeEntry = join(projectDirectory, claudeSkillPath);
   if (!(await entryExists(claudeEntry))) {
     await mkdir(dirname(claudeEntry), { recursive: true });
@@ -257,6 +275,14 @@ async function verifierSkillState(
   projectDirectory: string,
   template: string,
 ): Promise<ManagedEntryState> {
+  try {
+    await inspect(projectDirectory, autobuildSkillFile);
+  } catch {
+    return {
+      kind: "unsafe",
+      reason: `${autobuildSkillFile} has a protected ancestor.`,
+    };
+  }
   const directory = join(projectDirectory, autobuildSkillPath);
   try {
     const entry = await lstat(directory);
@@ -279,9 +305,16 @@ async function verifierSkillState(
         kind: "unsafe",
         reason: `${autobuildSkillFile} is occupied by a foreign entry.`,
       };
-    return (await readFile(file, "utf8")) === template
-      ? { kind: "exact" }
-      : { kind: "replaceable" };
+    const content = await readFile(file, "utf8");
+    if (
+      skillIdentity(content) !== undefined &&
+      skillIdentity(content) !== "ab-verify-idiom"
+    )
+      return {
+        kind: "unsafe",
+        reason: `${autobuildSkillFile} is a foreign skill.`,
+      };
+    return content === template ? { kind: "exact" } : { kind: "replaceable" };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
       return {
@@ -296,6 +329,14 @@ async function verifierClaudeState(
   projectDirectory: string,
 ): Promise<ManagedEntryState> {
   const path = join(projectDirectory, autobuildClaudeSkillPath);
+  try {
+    await inspect(projectDirectory, autobuildClaudeSkillPath);
+  } catch {
+    return {
+      kind: "unsafe",
+      reason: `${autobuildClaudeSkillPath} has a protected ancestor.`,
+    };
+  }
   try {
     const entry = await lstat(path);
     if (
@@ -350,6 +391,9 @@ async function prepareWiring(
   const skillState = await verifierSkillState(projectDirectory, skillTemplate);
   const claudeState = await verifierClaudeState(projectDirectory);
   const paths = [
+    ...[".agents", ".agents/skills", ".claude", ".claude/skills"].map((path) =>
+      join(projectDirectory, path),
+    ),
     configPath,
     join(projectDirectory, autobuildSkillPath),
     join(projectDirectory, autobuildSkillFile),
@@ -605,7 +649,6 @@ export async function initProject(options: {
       result.skipped.push(relativePath);
     }
   }
-  await installSkills(projectDirectory, result);
   if (wiringApproved && wiring !== undefined) {
     if (!(await snapshotsUnchanged(wiring.snapshots))) {
       result.autobuild = {
@@ -617,6 +660,40 @@ export async function initProject(options: {
     } else {
       await applyWiring(projectDirectory, wiring, result);
       result.autobuild = { kind: "applied" };
+    }
+  }
+  await installSkills(projectDirectory, result);
+  try {
+    const files: Record<string, string> = {};
+    for (const name of idiomSkillFileNames)
+      files[name] = await readIdiomSkillFile(name);
+    if (!result.skipped.includes(canonicalSkillFile))
+      await seedPristine(projectDirectory, "idiom", files, IDIOM_VERSION);
+  } catch (error) {
+    result.skillWarnings ??= [];
+    recordOnce(
+      result.skillWarnings,
+      `Pristine records for idiom could not be seeded: ${sanitizeCritiqueDiagnostic(error)}`,
+    );
+  }
+  if (
+    result.autobuild.kind === "applied" ||
+    result.autobuild.kind === "already-wired"
+  ) {
+    try {
+      await seedPristine(
+        projectDirectory,
+        "ab-verify-idiom",
+        { "SKILL.md": await readAutobuildVerifierSkillTemplate() },
+        IDIOM_VERSION,
+        wiringApproved && wiring?.skillState.kind === "replaceable",
+      );
+    } catch (error) {
+      result.skillWarnings ??= [];
+      recordOnce(
+        result.skillWarnings,
+        `Pristine records for ab-verify-idiom could not be seeded: ${sanitizeCritiqueDiagnostic(error)}`,
+      );
     }
   }
   const sources = await discoverSources(projectDirectory);
@@ -759,6 +836,7 @@ export function initSummaryLines(result: InitResult): string[] {
       lines.push("TODO-only flow: no concrete states are ready to capture.");
   }
   for (const file of result.skipped) lines.push(`Preserved existing ${file}`);
+  for (const warning of result.skillWarnings ?? []) lines.push(warning);
   if (result.autobuild.kind === "available-noninteractive")
     lines.push(
       "Autobuild verification is available; rerun `idiom init` interactively to review and approve wiring.",

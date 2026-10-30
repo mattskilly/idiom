@@ -68,6 +68,25 @@ test("validates a named flow and discovers its project upward", async () => {
   ]);
 });
 
+test("discovers the project upward from an explicit nested --project directory", async () => {
+  const directory = await project();
+  await writeFlow(directory, "booking");
+  const nested = join(directory, "apps", "web");
+  await mkdir(nested, { recursive: true });
+  const absolute = await validateProject({
+    project: nested,
+    cwd: tmpdir(),
+    flow: "booking",
+  });
+  expect(absolute.projectDirectory).toBe(directory);
+  const relative = await validateProject({
+    project: join("apps", "web"),
+    cwd: directory,
+    flow: "booking",
+  });
+  expect(relative.projectDirectory).toBe(directory);
+});
+
 test("validates every flow in deterministic filename order", async () => {
   const directory = await project();
   await writeFlow(directory, "zeta");

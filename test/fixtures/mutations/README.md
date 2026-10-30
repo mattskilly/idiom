@@ -58,8 +58,8 @@ from `otherFindings`.
 
 The runner keeps all deterministic findings. Production finalization assigns
 IDs and deduplicates; individual-finding rank is separately computed with
-`buildIssueRankingContext`, `affectedCounts` and `scoreGroup` (salience ×
-prominence), then severity and stable draft order for ties. This is neither the
+severity first, then `buildIssueRankingContext`, `affectedCounts` and `scoreGroup`
+(salience × prominence) within each tier, then stable draft order for ties. This is neither the
 severity-first finding-ID order nor the collapsed presentation issue order.
 
 Add an operator by declaring its edit locus, deterministic structural

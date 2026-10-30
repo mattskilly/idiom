@@ -18,7 +18,14 @@ const articles = [
   },
 ];
 const outputs = new Map<string, string>();
+let siteCss = "";
 let browser: Browser;
+// Pages link /docs/site.css; inline it so each page renders as deployed, offline.
+const rendered = (slug: string) =>
+  (outputs.get(slug) ?? "").replace(
+    '<link rel="stylesheet" href="/docs/site.css">',
+    `<style>${siteCss}</style>`,
+  );
 beforeAll(async () => {
   await promisify(execFile)(process.execPath, ["scripts/build-site.mjs"], {
     cwd: root,
@@ -26,8 +33,9 @@ beforeAll(async () => {
   for (const { slug } of articles)
     outputs.set(
       slug,
-      await readFile(join(root, "site/dist", `${slug}.html`), "utf8"),
+      await readFile(join(root, "site/dist/docs", `${slug}.html`), "utf8"),
     );
+  siteCss = await readFile(join(root, "site/dist/docs/site.css"), "utf8");
   browser = await chromium.launch({ headless: true });
 });
 afterAll(async () => {
@@ -38,13 +46,15 @@ test("how-to copy remains pinned to the dated release and public command surface
   const metadata = JSON.parse(
     await readFile(join(root, "package.json"), "utf8"),
   );
-  expect(metadata.version).toBe("0.15.0");
+  expect(metadata.version).toBe("0.16.0");
   expect(await readFile(join(root, "CHANGELOG.md"), "utf8")).toContain(
-    "## [v0.15.0] - 2026-10-28",
+    "## [v0.16.0] - 2026-10-30",
   );
   for (const { slug } of articles) {
-    const source = await readFile(join(root, "site", `${slug}.html`), "utf8");
-    expect(source).not.toMatch(/<(?:!doctype|html|head|body)\b/i);
+    const source = await readFile(
+      join(root, "site/docs", `${slug}.md`),
+      "utf8",
+    );
     for (const html of [source, outputs.get(slug) ?? ""]) {
       // Ignore font bytes and CSS; these are reader-facing copy rules.
       const copy = html.replace(/<style>[\s\S]*?<\/style>/g, "");
@@ -66,7 +76,7 @@ test("how-to copy remains pinned to the dated release and public command surface
       expect(copy).toContain(
         `playwright@${metadata.dependencies.playwright} install chromium`,
       );
-      expect(copy).toContain("v0.15.0");
+      expect(copy).toContain("v0.16.0");
     }
   }
   const qa = outputs.get(articles[0]?.slug ?? "") ?? "";
@@ -88,6 +98,17 @@ test("how-to copy remains pinned to the dated release and public command surface
     "waived",
   ])
     expect(qa.toLowerCase(), topic).toContain(topic.toLowerCase());
+  for (const command of [
+    "/plugin marketplace add mattskilly/idiom",
+    "/plugin install idiom@idiom",
+    "/plugin marketplace update idiom",
+    "/plugin update idiom@idiom",
+    "codex plugin marketplace add mattskilly/idiom",
+    "codex plugin add idiom@idiom",
+    "codex plugin marketplace upgrade idiom",
+    "claude --plugin-dir /path/to/checkout",
+  ])
+    expect(qa).toContain(command);
   const states = outputs.get(articles[1]?.slug ?? "") ?? "";
   for (const topic of [
     "loading-state-missing",
@@ -122,7 +143,7 @@ test.each(articles)(
     try {
       const page = await context.newPage();
       await page.setContent(html);
-      expect(await page.title()).toBe(`${title} · Idiom`);
+      expect(await page.title()).toBe(`${title} · Idiom docs`);
       expect(await page.locator("html").getAttribute("lang")).toBe("en");
       expect(await page.locator("meta[charset]").getAttribute("charset")).toBe(
         "utf-8",
@@ -132,13 +153,13 @@ test.each(articles)(
       ).toBe("width=device-width, initial-scale=1");
       expect(
         await page.locator('link[rel="canonical"]').getAttribute("href"),
-      ).toBe(`https://idiom.build/${slug}`);
+      ).toBe(`https://idiom.build/docs/${slug}`);
       expect(
         await page.locator('meta[property="og:url"]').getAttribute("content"),
-      ).toBe(`https://idiom.build/${slug}`);
+      ).toBe(`https://idiom.build/docs/${slug}`);
       expect(
         await page.locator('meta[property="og:title"]').getAttribute("content"),
-      ).toBe(`idiom · ${title}`);
+      ).toBe(`${title} · Idiom docs`);
       const lede = (await page.locator(".lede").innerText())
         .replace(/\s+/g, " ")
         .trim();
@@ -152,18 +173,16 @@ test.each(articles)(
         .evaluateAll((nodes) =>
           nodes.map((node) => node.getAttribute("href") ?? ""),
         );
-      expect(links).toContain("/guide");
+      expect(links).toContain("/docs");
       expect(links).toContain(
-        `/${articles.find((article) => article.slug !== slug)?.slug}`,
+        `/docs/${articles.find((article) => article.slug !== slug)?.slug}`,
       );
       for (const link of links) {
-        const url = new URL(link, `https://idiom.build/${slug}`);
+        const url = new URL(link, `https://idiom.build/docs/${slug}`);
         if (url.origin !== "https://idiom.build") continue;
         const path = url.pathname === "/" ? "index" : url.pathname.slice(1);
-        const target = await readFile(
-          join(root, "site/dist", `${path}.html`),
-          "utf8",
-        );
+        const file = /\.\w+$/.test(path) ? path : `${path}.html`;
+        const target = await readFile(join(root, "site/dist", file), "utf8");
         if (url.hash) expect(target).toContain(`id="${url.hash.slice(1)}"`);
       }
       const examples = await page
@@ -220,10 +239,10 @@ test.each(articles)(
   },
 );
 
-test("field guide links both deployable articles", async () => {
-  const guide = await readFile(join(root, "site/dist/guide.html"), "utf8");
+test("the docs link both deployable articles", async () => {
+  const guide = await readFile(join(root, "site/dist/docs.html"), "utf8");
   for (const { slug, title } of articles)
-    expect(guide).toContain(`<a href="/${slug}">${title}</a>`);
+    expect(guide).toContain(`<a href="/docs/${slug}">${title}</a>`);
 });
 
 for (const article of articles) {
@@ -245,11 +264,11 @@ for (const article of articles) {
         page.on("request", (request) => {
           if (/^https?:/.test(request.url())) remote.push(request.url());
         });
-        await page.setContent(outputs.get(article.slug) ?? "", {
+        await page.setContent(rendered(article.slug), {
           waitUntil: "load",
         });
         expect(remote).toEqual([]);
-        expect(await page.locator("h1").innerText()).toBe(article.title);
+        expect(await page.locator("main h1").innerText()).toBe(article.title);
         expect(await page.locator("main").isVisible()).toBe(true);
         expect(await page.locator(".lede").isVisible()).toBe(true);
         expect(

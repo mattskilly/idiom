@@ -574,6 +574,33 @@ describe("deterministic checks", () => {
     ).toEqual([["phone", "button.small"]]);
   });
 
+  test("reports responsive-break not applicable off the minimum width while target-size runs everywhere", () => {
+    const small = () =>
+      observations([
+        element({
+          selector: "button.small",
+          rect: { x: 0, y: 0, width: 43, height: 44 },
+        }),
+      ]);
+    const result = runDeterministicChecks([
+      tuple({ viewport: "wide", width: 900, observations: small() }),
+      tuple({ viewport: "phone", width: 320, observations: small() }),
+    ]);
+    const coverage = (check: string, viewport: string) =>
+      result.coverage.find(
+        (entry) =>
+          entry.coverage.check === check && entry.tuple.viewport === viewport,
+      )?.coverage;
+    expect(coverage("responsive-break", "wide")).toEqual({
+      check: "responsive-break",
+      status: "not-applicable",
+      reason: "evaluated only at the minimum captured CSS width",
+    });
+    expect(coverage("responsive-break", "phone")?.status).toBe("ran");
+    expect(coverage("target-size", "wide")?.status).toBe("ran");
+    expect(coverage("target-size", "phone")?.status).toBe("ran");
+  });
+
   test("excludes canonical visually hidden controls from geometry findings", () => {
     const clipped = {
       ...styles,
@@ -791,6 +818,55 @@ describe("deterministic checks", () => {
         )
         .map(({ candidate }) => candidate.selectorHint),
     ).toEqual(["button.first | button.second"]);
+  });
+
+  test("a not-applicable responsive-break tuple counts as clear for acceptance", async () => {
+    const { buildRuleContract } = await import("../src/findings/contract.js");
+    const { evaluateRuleAcceptance } = await import(
+      "../src/verify/acceptance.js"
+    );
+    const config = checksConfigFrom();
+    const overlapping = observations([
+      element({ selector: "button.first", hitTestWith: ["button.second"] }),
+      element({ selector: "button.second" }),
+    ]);
+    const wide = tuple({ viewport: "wide", width: 900 });
+    const phone = tuple({ observations: overlapping });
+    const before = [wide, phone];
+    const found = runDeterministicChecks(
+      before,
+      undefined,
+      config,
+    ).candidates.find(
+      ({ candidate }) => candidate.rule === "idiom:interactive-overlap",
+    );
+    if (!found) throw new Error("expected interactive overlap");
+    const { acceptance } = buildRuleContract(
+      found.tuple,
+      found.candidate,
+      config,
+      before,
+    );
+    expect(acceptance.requiredCoordinates).toContainEqual(
+      expect.objectContaining({ viewport: "wide" }),
+    );
+    const fixed = [
+      wide,
+      tuple({
+        observations: observations([
+          element({ selector: "button.first" }),
+          element({ selector: "button.second" }),
+        ]),
+      }),
+    ];
+    expect(
+      evaluateRuleAcceptance({
+        contract: acceptance,
+        currentA: fixed,
+        currentB: fixed,
+        config,
+      }).status,
+    ).toBe("passed");
   });
 
   describe("joined controls", () => {

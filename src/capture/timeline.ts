@@ -331,6 +331,7 @@ function timelineRecorder(config: RecorderConfig): void {
     "padding-inline-end",
     "margin-inline-end",
   ];
+  const initialRightSpace = new Map<HTMLElement, number[]>();
   const rootFacts = () => {
     const html = document.documentElement;
     const body = document.body;
@@ -370,6 +371,22 @@ function timelineRecorder(config: RecorderConfig): void {
     const roots = [document.documentElement, document.body].filter(
       (element): element is HTMLElement => element instanceof HTMLElement,
     );
+    // Libraries such as react-remove-scroll can set body margin through a
+    // stylesheet whose rules are inaccessible or whose shorthand declarations
+    // are not exposed by the CSSOM walk below. Compare the computed space with
+    // the action baseline so an existing page margin is not compensation.
+    let computedCompensation = false;
+    for (const element of roots) {
+      const style = getComputedStyle(element);
+      const space = rightSide.map(
+        (name) => Number.parseFloat(style.getPropertyValue(name)) || 0,
+      );
+      const initial = initialRightSpace.get(element);
+      if (!initial) initialRightSpace.set(element, space);
+      else if (space.some((value, index) => value > (initial[index] ?? 0)))
+        computedCompensation = true;
+    }
+    if (computedCompensation) return true;
     if (
       roots.some((element) =>
         rightSide.some((name) => element.style.getPropertyValue(name) !== ""),
@@ -410,17 +427,19 @@ function timelineRecorder(config: RecorderConfig): void {
   const sampleRoot = () => {
     if (config.load || !document.body) return;
     const facts = rootFacts();
+    const compensation = compensated();
     const last = rootScroll.at(-1);
     if (
       last &&
       last.gutter === facts.gutter &&
       last.scrollable === facts.scrollable &&
       last.stableGutter === facts.stableGutter &&
-      last.lockedBy === facts.lockedBy
+      last.lockedBy === facts.lockedBy &&
+      last.compensation === compensation
     )
       return;
     if (rootScroll.length >= 8) return;
-    rootScroll.push({ time: now(), ...facts, compensation: compensated() });
+    rootScroll.push({ time: now(), ...facts, compensation });
   };
   let dirty = true;
   let stopped = false;

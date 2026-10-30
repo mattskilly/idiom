@@ -8,6 +8,7 @@
 //   node scripts/field-test.mjs labels-template
 //   node scripts/field-test.mjs feel
 //   node scripts/field-test.mjs score
+//   node scripts/field-test.mjs rate [--out <scratch dir>] [--port <n>]
 //
 // Ranked data comes from the MCP `idiom_quick` tool (same runQuick as CLI
 // `quick`, but it returns every ranked issue); a CLI `quick` smoke per target
@@ -21,21 +22,26 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
+import { createServer } from "node:http";
 import { cpus, tmpdir, totalmem } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import {
+  applyHumanRating,
   classifyFailure,
   countProbeTimeouts,
   FEEL_RULES,
   feelPrecision,
   mergeLabelTemplate,
   probeTupleOverheadMs,
+  ratingQueue,
   renderGenerated,
   replaceGeneratedSection,
   sumHeldReplays,
@@ -706,14 +712,191 @@ async function score() {
   log(`updated ${paths.doc}`);
 }
 
+/** The newest default scratch directory, when `run` was not given --out. */
+async function latestScratch() {
+  const parent = join(tmpdir(), "idiom-field-test");
+  if (!existsSync(parent)) return undefined;
+  const names = (await readdir(parent)).sort();
+  return names.length === 0 ? undefined : join(parent, names.at(-1));
+}
+
+/**
+ * Serves a local page for the human rating pass: one queued issue at a time
+ * with its evidence, rated agree/disagree/unsure into labels.json. The agent's
+ * rating stays hidden until the human has rated, so it cannot anchor them.
+ */
+async function rate(args) {
+  const scratch = option(args, "--out") ?? (await latestScratch());
+  const port = Number(option(args, "--port") ?? 4791);
+  const results = await readJson(paths.results);
+  const expand = (path) =>
+    path
+      .replace("$SCRATCH", scratch ?? "$SCRATCH")
+      .replace("$TMPDIR", tmpdir());
+  const evidenceFor = async (item) => {
+    if (item.evidence === undefined) return undefined;
+    for (const directory of item.runDirectories) {
+      const candidate = resolve(expand(directory), item.evidence);
+      if (
+        await stat(candidate).then(
+          (s) => s.isFile(),
+          () => false,
+        )
+      )
+        return candidate;
+    }
+    return undefined;
+  };
+  const queue = async () => ratingQueue(results, await readJson(paths.labels));
+  const save = async (key, rating, reason) => {
+    const labels = applyHumanRating(
+      await readJson(paths.labels),
+      key,
+      rating,
+      reason,
+    );
+    const temporary = `${paths.labels}.${process.pid}.tmp`;
+    await writeJson(temporary, labels);
+    await rename(temporary, paths.labels);
+  };
+  const body = (request) =>
+    new Promise((done, fail) => {
+      let text = "";
+      request.on("data", (chunk) => {
+        text += chunk;
+      });
+      request.on("end", () => done(text));
+      request.on("error", fail);
+    });
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
+    try {
+      if (request.method === "GET" && url.pathname === "/") {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(RATE_PAGE);
+      } else if (request.method === "GET" && url.pathname === "/queue") {
+        const items = await queue();
+        const withEvidence = await Promise.all(
+          items.map(async ({ runDirectories: _dirs, ...item }, index) => ({
+            ...item,
+            hasEvidence: (await evidenceFor(items[index])) !== undefined,
+          })),
+        );
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(withEvidence));
+      } else if (request.method === "GET" && url.pathname === "/evidence") {
+        const item = (await queue()).find(
+          (entry) => entry.key === url.searchParams.get("key"),
+        );
+        const file = item && (await evidenceFor(item));
+        if (file === undefined) {
+          response.writeHead(404);
+          response.end();
+          return;
+        }
+        response.writeHead(200, { "content-type": "image/png" });
+        response.end(await readFile(file));
+      } else if (request.method === "POST" && url.pathname === "/rate") {
+        const { key, rating, reason } = JSON.parse(await body(request));
+        await save(key, rating, reason ?? "");
+        response.writeHead(204);
+        response.end();
+      } else {
+        response.writeHead(404);
+        response.end();
+      }
+    } catch (error) {
+      response.writeHead(400, { "content-type": "text/plain" });
+      response.end(error instanceof Error ? error.message : String(error));
+    }
+  });
+  server.listen(port, "127.0.0.1", async () => {
+    const waiting = (await queue()).length;
+    log(
+      `${waiting} issue(s) to rate; evidence from ${scratch ?? "(no scratch dir found)"}`,
+    );
+    log(`open http://127.0.0.1:${port}  (Ctrl-C when done)`);
+  });
+}
+
+const RATE_PAGE = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Field test rating</title>
+<style>
+:root{--bg:#fafaf9;--fg:#1c1917;--muted:#57534e;--line:#e7e5e4;--card:#fff;--agree:#15803d;--disagree:#b91c1c;--unsure:#a16207}
+@media (prefers-color-scheme:dark){:root{--bg:#0c0a09;--fg:#f5f5f4;--muted:#a8a29e;--line:#292524;--card:#1c1917;--agree:#4ade80;--disagree:#f87171;--unsure:#facc15}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:20px 16px 120px}
+header{display:flex;justify-content:space-between;gap:12px;align-items:baseline;color:var(--muted)}
+progress{width:100%;height:6px;margin:8px 0 20px;accent-color:var(--fg)}
+h1{font-size:18px;margin:4px 0 8px;overflow-wrap:anywhere}
+.meta{color:var(--muted);font-size:13px;display:flex;flex-wrap:wrap;gap:4px 16px}
+code{font-size:12px;overflow-wrap:anywhere}
+figure{margin:16px 0;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px;text-align:center}
+figure img{max-width:100%;max-height:60vh;object-fit:contain}
+.none{color:var(--muted);padding:40px}
+.bar{position:fixed;inset:auto 0 0 0;background:var(--card);border-top:1px solid var(--line);padding:12px 16px}
+.bar div{max-width:1100px;margin:0 auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button{font:inherit;padding:8px 14px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
+button[data-r=agree]{border-color:var(--agree)}button[data-r=disagree]{border-color:var(--disagree)}button[data-r=unsure]{border-color:var(--unsure)}
+input{flex:1;min-width:180px;font:inherit;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+.agent{margin-top:8px;color:var(--muted);font-size:13px}
+kbd{font-size:11px;border:1px solid var(--line);border-radius:3px;padding:0 4px;margin-left:4px}
+</style></head><body><main>
+<header><span id="pos"></span><span>Is this a real problem a person would notice?</span></header>
+<progress id="bar" value="0" max="1"></progress>
+<div id="item"></div>
+</main>
+<div class="bar"><div>
+<button data-r="agree">Agree<kbd>A</kbd></button>
+<button data-r="disagree">Disagree<kbd>D</kbd></button>
+<button data-r="unsure">Unsure<kbd>U</kbd></button>
+<input id="reason" placeholder="Why (optional, N to focus)">
+<button id="skip">Skip<kbd>S</kbd></button>
+</div></div>
+<script>
+let queue=[],index=0,total=0,done=0,last=null;
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+async function load(){queue=await (await fetch("/queue")).json();total=total||queue.length;index=0;show()}
+function show(){
+  const pos=document.getElementById("pos"),item=document.getElementById("item");
+  document.getElementById("bar").max=Math.max(total,1);document.getElementById("bar").value=done;
+  const agent=last?'<p class="agent">Previous: you said <b>'+esc(last.rating)+'</b>; the agent said <b>'+esc(last.agent?.rating??"nothing")+'</b>'+(last.agent?.reason?' ('+esc(last.agent.reason)+')':'')+'</p>':'';
+  if(index>=queue.length){pos.textContent=done+" rated";item.innerHTML=agent+'<h1>All done.</h1><p>Next: <code>node scripts/field-test.mjs feel</code> then <code>node scripts/field-test.mjs score</code>.</p>';return}
+  const q=queue[index];
+  pos.textContent=(done+1)+" of "+total+" · "+q.target+(q.topTen?" · Top 10 #"+q.rank:" · feel")+" · "+q.severity;
+  item.innerHTML=agent+'<h1>'+esc(q.title)+'</h1><div class="meta"><span>'+q.rules.map(r=>'<code>'+esc(r)+'</code>').join(" ")+'</span>'+(q.where?'<span>'+esc(q.where)+'</span>':'')+(q.selector?'<span><code>'+esc(q.selector)+'</code></span>':'')+'</div>'+
+    (q.hasEvidence?'<figure><img alt="Evidence for this finding" src="/evidence?key='+encodeURIComponent(q.key)+'"></figure>':'<figure><p class="none">No evidence image on disk for this run. Rate from the title, or skip.</p></figure>');
+  document.getElementById("reason").value="";
+}
+async function rate(r){
+  const q=queue[index];if(!q)return;
+  const reason=document.getElementById("reason").value;
+  const res=await fetch("/rate",{method:"POST",body:JSON.stringify({key:q.key,rating:r,reason})});
+  if(!res.ok){alert(await res.text());return}
+  last={rating:r,agent:q.agent};done++;index++;show();
+}
+document.querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>rate(b.dataset.r));
+document.getElementById("skip").onclick=()=>{index++;show()};
+document.addEventListener("keydown",e=>{
+  if(e.target.id==="reason"){if(e.key==="Escape")e.target.blur();return}
+  const k=e.key.toLowerCase();
+  if(k==="a")rate("agree");else if(k==="d")rate("disagree");else if(k==="u")rate("unsure");
+  else if(k==="s"){index++;show()}else if(k==="n"){e.preventDefault();document.getElementById("reason").focus()}
+});
+load();
+</script></body></html>
+`;
+
 const [command, ...rest] = process.argv.slice(2);
 if (command === "run") await runCommand(rest);
 else if (command === "labels-template") await labelsTemplate();
 else if (command === "feel") await feel();
 else if (command === "score") await score();
+else if (command === "rate") await rate(rest);
 else {
   log(
-    "usage: field-test.mjs run [--only ids] [--out dir] [--targets file --results file] | labels-template | feel | score",
+    "usage: field-test.mjs run [--only ids] [--out dir] [--targets file --results file] | labels-template | feel | score | rate [--out dir] [--port n]",
   );
   process.exit(2);
 }

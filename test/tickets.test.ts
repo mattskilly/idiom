@@ -813,3 +813,37 @@ test("an instance acceptance does not authorize ticketing a later commit", async
   expect(result.outcomes).toEqual([]);
   expect(result.ineligible).toEqual(["finding-1"]);
 });
+
+test("legacy publication follows severity then score and retries retain ticket identities", async () => {
+  const low = finding("finding-1", "phone", "low");
+  low.severity = "minor";
+  const high = finding("finding-2", "desktop", "high");
+  high.category = "dead-control";
+  high.severity = "minor";
+  const major = finding("finding-3", "phone", "major");
+  const blocker = finding("finding-4", "desktop", "blocker");
+  blocker.severity = "blocker";
+  const { directory } = await fixture([low, high, major, blocker]);
+  for (const item of [low, high, major, blocker])
+    await appendDecision({
+      projectDirectory: directory,
+      finding: item,
+      decision: "accept",
+      reason: "Repair",
+      scope: "instance",
+    });
+  const first = await ticketsCommand({ project: directory });
+  expect(first.outcomes.map((o) => o.findingId)).toEqual([
+    "finding-4",
+    "finding-3",
+    "finding-2",
+    "finding-1",
+  ]);
+  const retry = await ticketsCommand({ project: directory });
+  expect(retry.outcomes.map((o) => o.kind)).toEqual(
+    Array(4).fill("already-emitted"),
+  );
+  expect(
+    retry.outcomes.map((o) => ("ticketId" in o ? o.ticketId : "")),
+  ).toEqual(first.outcomes.map((o) => ("ticketId" in o ? o.ticketId : "")));
+});

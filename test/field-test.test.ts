@@ -6,6 +6,7 @@ import * as lib from "../scripts/field-test-lib.mjs";
 
 const {
   ALLOWED_KINDS,
+  applyHumanRating,
   countProbeTimeouts,
   classifyFailure,
   FEEL_RULES,
@@ -21,6 +22,8 @@ const {
   summarizeHeldReplays,
   sumHeldReplays,
   probeTupleOverheadMs,
+  ratingQueue,
+  runDirectories,
   summarizeProbeSafety,
   summarizeQuickResult,
   sumProbeSafety,
@@ -747,4 +750,97 @@ test("probeTupleOverheadMs compares a probed tuple with its unprobed sibling", (
   expect(
     probeTupleOverheadMs([meta("desktop", "light", 5)], [{}]),
   ).toBeUndefined();
+});
+
+describe("human rating pass", () => {
+  const issue = (key: string, rank: number) => ({
+    key,
+    rank,
+    rules: ["idiom:text-clipped"],
+    severity: "major",
+    category: "overflow-clip",
+    score: 1,
+    title: `issue ${key}`,
+    state: "home",
+    viewport: "mobile",
+    evidence: `home/mobile/light/crops/${key}.png`,
+  });
+  const results = {
+    targets: [
+      {
+        id: "a",
+        kind: "marketing",
+        runs: [{ runDirectory: "$SCRATCH/a/run" }],
+        topIssues: [issue("a:1", 1), issue("a:2", 2)],
+        feelIssues: [issue("a:9", 12), issue("a:1", 1)],
+      },
+      {
+        id: "b",
+        kind: "repo",
+        runDirectory: "$SCRATCH/b/reports",
+        topIssues: [issue("b:1", 1)],
+      },
+    ],
+  };
+  const slot = (rating: string | null) => ({
+    target: "a",
+    rules: ["idiom:text-clipped"],
+    title: "t",
+    agent: { rating: "disagree", reason: "decorative" },
+    human: rating ? { rating, reason: "" } : null,
+  });
+  const labels = {
+    version: 1,
+    labels: {
+      "a:1": slot(null),
+      "a:2": slot("agree"),
+      "a:9": slot(null),
+      "b:1": slot(null),
+    },
+  };
+
+  test("queues human-unrated slots, Top 10 before feel, each issue once", () => {
+    const queue = ratingQueue(results, labels);
+    expect(queue.map((item: { key: string }) => item.key)).toEqual([
+      "a:1",
+      "b:1",
+      "a:9",
+    ]);
+    expect(queue[0]).toMatchObject({
+      topTen: true,
+      where: "home / mobile",
+      runDirectories: ["$SCRATCH/a/run"],
+      agent: { rating: "disagree" },
+    });
+    expect(queue[2].topTen).toBe(false);
+  });
+
+  test("skips issues without a label slot", () => {
+    expect(ratingQueue(results, { version: 1, labels: {} })).toEqual([]);
+  });
+
+  test("finds run directories at any depth", () => {
+    expect(runDirectories(results.targets[1])).toEqual(["$SCRATCH/b/reports"]);
+  });
+
+  test("records the human rating and keeps the agent's", () => {
+    const rated = applyHumanRating(labels, "a:1", "agree", "  real clip ");
+    expect(rated.labels["a:1"]).toMatchObject({
+      agent: { rating: "disagree" },
+      human: { rating: "agree", reason: "real clip" },
+    });
+    expect(labels.labels["a:1"].human).toBeNull();
+    expect(
+      ratingQueue(results, rated).map((item: { key: string }) => item.key),
+    ).toEqual(["b:1", "a:9"]);
+  });
+
+  test("rejects unknown ratings and missing slots", () => {
+    expect(() => applyHumanRating(labels, "a:1", "maybe")).toThrow(
+      /unknown rating/,
+    );
+    expect(() => applyHumanRating(labels, "zz", "agree")).toThrow(
+      /no label slot/,
+    );
+  });
 });

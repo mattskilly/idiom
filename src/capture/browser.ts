@@ -38,6 +38,7 @@ import {
   recordProbeRequest,
 } from "./probe.js";
 import { ProgressCollector } from "./progress.js";
+import { ScrollbarController, scrollbarLaunchOptions } from "./scrollbars.js";
 import { TimelineCollector } from "./timeline.js";
 import type {
   BrowserLauncher,
@@ -117,11 +118,13 @@ export async function captureReferenceUrl(options: {
   )();
   let context: BrowserContext | undefined;
   let page: Page | undefined;
+  let scrollbars: ScrollbarController | undefined;
   try {
     context = await browser.newContext(
       deterministicContextOptions(options.project, options.viewport),
     );
     page = await context.newPage();
+    scrollbars = await ScrollbarController.create(page);
     const response = await page.goto(options.url);
     const status = response?.status();
     if (status === undefined || status < 200 || status >= 300)
@@ -137,6 +140,7 @@ export async function captureReferenceUrl(options: {
     });
   } finally {
     await closeWithin(() => page?.close());
+    await scrollbars?.dispose();
     await context?.close().catch(() => undefined);
     await browser.close().catch(() => undefined);
   }
@@ -150,6 +154,7 @@ async function captureInContext(
 ): Promise<TupleResult> {
   const records: ConsoleRecord[] = [];
   let page: Page | undefined;
+  let scrollbars: ScrollbarController | undefined;
   // Third-party probing shares one ledger across the sweep and the clicks.
   const safety =
     tuple.probe && tuple.probeSafety === "third-party"
@@ -159,6 +164,7 @@ async function captureInContext(
   let probeStartedAt: number | undefined;
   try {
     page = await context.newPage();
+    scrollbars = await ScrollbarController.create(page);
     const steps = "health" in tuple.state ? tuple.state.steps : [];
     const health = tuple.health ?? {
       allow:
@@ -532,6 +538,13 @@ async function captureInContext(
               stateTimeoutMs,
               monotonicNow: runtime.monotonicNow,
               replacePage: () => context.newPage(),
+              preparePage: async (activePage) => {
+                const controller =
+                  activePage === target
+                    ? (scrollbars as ScrollbarController)
+                    : await ScrollbarController.create(activePage);
+                return controller.probe();
+              },
               skip: settings.skip,
               respectControlIntent: settings.respectControlIntent,
               maxControls: settings.maxControls,
@@ -588,6 +601,7 @@ async function captureInContext(
     });
   } finally {
     await closeWithin(() => page?.close());
+    await scrollbars?.dispose();
   }
 }
 
@@ -615,7 +629,8 @@ export function createBrowserLauncher(
   return async (options): Promise<BrowserSession> => {
     options?.signal?.throwIfAborted();
     const runtime: BrowserRuntime = {
-      launch: overrides.launch ?? (() => chromium.launch({ headless: true })),
+      launch:
+        overrides.launch ?? (() => chromium.launch(scrollbarLaunchOptions)),
       createAxe:
         overrides.createAxe ??
         ((page) => new AxeBuilder({ page }) as { analyze(): Promise<unknown> }),
@@ -751,6 +766,7 @@ export function createBrowserLauncher(
           tuple.signal?.throwIfAborted();
           context = await newContext(tuple);
           const page = await context.newPage();
+          await ScrollbarController.create(page);
           const steps = "health" in tuple.state ? tuple.state.steps : [];
           const health = tuple.health ?? {
             allow:

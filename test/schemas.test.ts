@@ -158,6 +158,47 @@ describe("schema behavior", () => {
     ).toBe(false);
   });
 
+  test("accepts codex and an opt-in fallback naming a different provider", async () => {
+    const legacy = (await json("examples/booking/.idiom/project.json")) as {
+      model: Record<string, unknown>;
+    };
+    const parse = (model: Record<string, unknown>) =>
+      projectSchema.safeParse({
+        ...legacy,
+        model: { ...legacy.model, ...model },
+      });
+    expect(parse({ provider: "codex" }).data?.model.provider).toBe("codex");
+    expect(
+      parse({
+        provider: "claude-code",
+        fallback: { provider: "codex", model: "gpt-configured" },
+      }).data?.model.fallback,
+    ).toEqual({ provider: "codex", model: "gpt-configured" });
+    const same = parse({
+      provider: "codex",
+      fallback: { provider: "codex", model: "other" },
+    });
+    expect(same.success).toBe(false);
+    expect(same.error?.issues).toContainEqual(
+      expect.objectContaining({
+        path: ["model", "fallback", "provider"],
+        message: "must differ from model.provider",
+      }),
+    );
+    expect(
+      parse({
+        provider: "codex",
+        fallback: { provider: "anthropic", model: "m", extra: true },
+      }).success,
+    ).toBe(false);
+    expect(
+      parse({
+        provider: "codex",
+        fallback: { provider: "anthropic", model: " " },
+      }).success,
+    ).toBe(false);
+  });
+
   test("applies defaults without mutating the input", () => {
     const input = minimalFlow();
     const original = structuredClone(input);

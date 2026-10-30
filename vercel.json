@@ -11,6 +11,23 @@
       "includeFiles": "hosted-dist/identity.json"
     }
   },
+  "redirects": [
+    {
+      "source": "/guide",
+      "destination": "/docs",
+      "permanent": true
+    },
+    {
+      "source": "/design-qa-for-claude-code",
+      "destination": "/docs/design-qa-for-claude-code",
+      "permanent": true
+    },
+    {
+      "source": "/testing-loading-empty-error-states",
+      "destination": "/docs/testing-loading-empty-error-states",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     {
       "source": "/r/:id",

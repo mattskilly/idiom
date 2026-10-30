@@ -4,6 +4,7 @@ import {
   type PrivateStore,
   type Stored,
 } from "../src/hosted/blob.js";
+import { LEDGER_PATH } from "../src/hosted/ledger.js";
 import type { HostedReport } from "../src/hosted/schema.js";
 
 export const HASH = "a".repeat(64);
@@ -37,12 +38,14 @@ export function report(): HostedReport {
 export class MemoryBlob implements PrivateStore {
   objects = new Map<string, Stored>();
   calls: string[] = [];
+  reads: { path: string; maxBytes: number; bytes: number }[] = [];
   version = 0;
   conflicts = 0;
   failedDeletes = 0;
   async get(path: string, maxBytes: number) {
     this.calls.push(`get:${path}`);
     const item = this.objects.get(path);
+    this.reads.push({ path, maxBytes, bytes: item?.bytes.length ?? 0 });
     if (!item) return null;
     if (item.bytes.length > maxBytes) throw new Error("oversize");
     return { bytes: Buffer.from(item.bytes), etag: item.etag };
@@ -83,4 +86,42 @@ export class MemoryBlob implements PrivateStore {
         : {}),
     };
   }
+}
+
+// Read/edit durable fixtures without bypassing ETags in the code under test.
+type TestRun = {
+  id: string;
+  expires: number;
+  deliveries: number;
+  amount: number;
+  resources?: { imageBytes: number; ledgerBytes: number; attempts: number };
+};
+export function ledgerState(store: MemoryBlob) {
+  const stored = store.objects.get(LEDGER_PATH);
+  if (!stored) throw new Error("missing ledger fixture");
+  return JSON.parse(stored.bytes.toString()) as {
+    version: 1;
+    month: string;
+    day: string;
+    charged: number;
+    admissions: number;
+    ips: Record<string, number>;
+    runs: TestRun[];
+  };
+}
+export function editLedger(
+  store: MemoryBlob,
+  change: (state: ReturnType<typeof ledgerState>) => void,
+) {
+  const state = ledgerState(store);
+  change(state);
+  store.objects.set(LEDGER_PATH, {
+    bytes: Buffer.from(JSON.stringify(state)),
+    etag: String(++store.version),
+  });
+}
+export function runState(store: MemoryBlob, id = ID) {
+  const run = ledgerState(store).runs.find((entry) => entry.id === id);
+  if (!run) throw new Error("missing run fixture");
+  return run;
 }

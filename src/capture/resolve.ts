@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
-import { relative, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { IdiomError } from "../errors.js";
 import { type Flow, isWebFlow } from "../schemas/flow.js";
 import type { Project } from "../schemas/project.js";
+import { isStagingDirectoryName } from "./staging.js";
 import type {
   CaptureTupleSelection,
   FlowState,
@@ -58,8 +59,11 @@ export async function snapshotSource(
         relative(resolve(projectDirectory), resolve(path)),
       );
     const explicitOutput = options.explicitOutputPath;
-    if (explicitOutput !== undefined) {
-      const canonicalOutput = canonicalizeFromProject(explicitOutput);
+    const canonicalOutput =
+      explicitOutput === undefined
+        ? undefined
+        : canonicalizeFromProject(explicitOutput);
+    if (explicitOutput !== undefined && canonicalOutput !== undefined) {
       const managedReports = canonicalizeFromProject(
         resolve(projectDirectory, ".idiom", "reports"),
       );
@@ -106,10 +110,33 @@ export async function snapshotSource(
       ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
       { cwd: root, encoding: "utf8" },
     );
+    // A hard-killed run leaves its staging sibling beside the explicit output.
+    const stagingParent =
+      canonicalOutput === undefined
+        ? undefined
+        : relative(root, dirname(canonicalOutput));
+    const stagingPrefix =
+      stagingParent === undefined ||
+      stagingParent === ".." ||
+      stagingParent.startsWith(`..${sep}`)
+        ? undefined
+        : stagingParent === ""
+          ? ""
+          : `${stagingParent.split(sep).join("/")}/`;
+    const pathIsStagingResidue = (path: string) => {
+      if (canonicalOutput === undefined || stagingPrefix === undefined)
+        return false;
+      if (!path.startsWith(stagingPrefix)) return false;
+      const [segment] = path.slice(stagingPrefix.length).split("/");
+      return (
+        segment !== undefined &&
+        isStagingDirectoryName(canonicalOutput, segment)
+      );
+    };
     const pathIsExcluded = (path: string) =>
       excludedDirectories.some(
         (directory) => path === directory || path.startsWith(`${directory}/`),
-      );
+      ) || pathIsStagingResidue(path);
     const records = status.split("\0").filter((record) => record.length > 0);
     let dirty = false;
     for (let index = 0; index < records.length; index += 1) {

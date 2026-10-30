@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "idiom": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "--package=https://github.com/mattskilly/idiom/releases/download/v0.16.0/mattskilly-idiom-0.16.0.tgz",
+        "idiom",
+        "mcp"
+      ]
+    }
+  }
+}

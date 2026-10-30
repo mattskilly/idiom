@@ -22,6 +22,7 @@ import {
   observationLoader,
 } from "./cluster.js";
 import { indexTickets, readIndexedTicket, ticketsForLineage } from "./index.js";
+import { rankClusters, type TicketScores } from "./ranking.js";
 import { renderClusterTicket } from "./render.js";
 import { sweepTicketEvidence } from "./sweep-evidence.js";
 import { resolveTicketTarget } from "./target.js";
@@ -47,6 +48,7 @@ export type ClusterTicketsOptions = {
   out?: string | undefined;
   /** Root cause per source finding id (before lineage canonicalisation). */
   rootCauses?: ReadonlyMap<string, ClusterCause> | undefined;
+  issueScores?: TicketScores | undefined;
 };
 
 export async function emitClusterTickets(
@@ -181,9 +183,17 @@ export async function emitClusterTickets(
   if (pending.length === 0 && checkpoint.size === 0) return result;
   await persistCatalogFindingNames(catalog);
   const pendingById = new Map(pending.map((member) => [member.id, member]));
+  const canonicalScores = new Map<string, number>();
+  for (const [id, score] of options.issueScores ?? []) {
+    const canonicalId = findCatalogLineage(catalog, id).id;
+    canonicalScores.set(
+      canonicalId,
+      Math.max(canonicalScores.get(canonicalId) ?? -Infinity, score),
+    );
+  }
   const candidates =
     options.orderedClusters === undefined
-      ? groupFindings(pending)
+      ? rankClusters(groupFindings(pending), canonicalScores)
       : options.orderedClusters
           .map((cluster) => ({
             ...cluster,

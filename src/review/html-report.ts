@@ -1,5 +1,5 @@
 import type { ProductionBuild } from "../capture/types.js";
-import { paintedCoverageText } from "../checks/painted.js";
+import { coverageStatusText, paintedCoverageText } from "../checks/painted.js";
 import type { CheckCoverage, CheckTuple } from "../checks/types.js";
 import { tupleDesigns } from "../design/evidence.js";
 import type { LoadedDesign } from "../design/types.js";
@@ -24,8 +24,11 @@ import type { UnruledDecision } from "../schemas/ruling.js";
 import type { AdvisoryReview } from "./advisory.js";
 import type { SuppressedFinding } from "./findings.js";
 import { describeSpread, type FindingGroup, isRepeated } from "./groups.js";
+import { orderFindings } from "./presentation-order.js";
+import { buildIssueRankingContext } from "./ranking.js";
 import {
   designSourceTitle,
+  fallbackSentence,
   groupCrop,
   type PageReviewScope,
   pageFindingEvidence,
@@ -150,12 +153,12 @@ function coverageTable(options: ReviewHtmlOptions): string {
   ];
   const narrow =
     options.narrowWidth === undefined
-      ? "Responsive and target checks were unavailable because the capture has no viewport tuples."
-      : `Responsive and target checks use the minimum captured CSS width, ${options.narrowWidth}px.`;
+      ? "The responsive check was unavailable because the capture has no viewport tuples."
+      : `The responsive check (responsive-break) runs only at the minimum captured CSS width, ${options.narrowWidth}px; at other viewports it is reported as not applicable.`;
   return `<section><h2>Check coverage</h2><p>${escapeHtml(narrow)}</p><table><thead><tr><th>State</th><th>Viewport</th>${axisAware ? "<th>Scheme</th>" : ""}<th>Check</th><th>Coverage</th><th>Reason</th></tr></thead><tbody>${rows
     .map(
       ({ state, viewport, colorScheme, coverage }) =>
-        `<tr><td>${escapeHtml(state)}</td><td>${escapeHtml(viewport)}</td>${axisAware ? `<td>${escapeHtml(colorScheme)}</td>` : ""}<td>${escapeHtml(coverage.check)}</td><td>${escapeHtml(coverage.status)}</td><td>${escapeHtml(paintedCoverageText(coverage))}</td></tr>`,
+        `<tr><td>${escapeHtml(state)}</td><td>${escapeHtml(viewport)}</td>${axisAware ? `<td>${escapeHtml(colorScheme)}</td>` : ""}<td>${escapeHtml(coverage.check)}</td><td>${escapeHtml(coverageStatusText(coverage.status))}</td><td>${escapeHtml(paintedCoverageText(coverage))}</td></tr>`,
     )
     .join("")}</tbody></table></section>`;
 }
@@ -242,7 +245,7 @@ function unruledSection(options: ReviewHtmlOptions): string {
 
 function advisorySection(review: AdvisoryReview | undefined): string {
   if (review === undefined) return "";
-  return `<section><h2>Advisory design review</h2><p>A model pass told each declared pattern's intent, asked only for spacing, hierarchy and coherence problems. These results do not gate: they never fail idiom check and are not counted as actionable findings.</p>${review.outcome.kind === "degraded" ? `<p><strong>Incomplete:</strong> ${escapeHtml(review.outcome.reason)}</p>` : ""}${review.patterns
+  return `<section><h2>Advisory design review</h2><p>A model pass told each declared pattern's intent, asked only for spacing, hierarchy and coherence problems. These results do not gate: they never fail idiom check and are not counted as actionable findings.</p>${review.outcome.kind === "degraded" ? `<p><strong>Incomplete:</strong> ${escapeHtml(review.outcome.reason)}</p>` : ""}${review.outcome.kind === "full" && review.outcome.fallback !== undefined ? `<p>${escapeHtml(fallbackSentence(review.outcome.fallback))}</p>` : ""}${review.patterns
     .map(
       (pattern) =>
         `<article class="panel"><h3>${escapeHtml(pattern.id)}</h3><p><strong>Intent:</strong> ${escapeHtml(pattern.intent)}</p><p class="meta">Reference: ${escapeHtml(pattern.reference ?? "none")} · Status: ${escapeHtml(pattern.status)}${pattern.reason === undefined ? "" : ` (${escapeHtml(pattern.reason)})`}</p>${
@@ -282,10 +285,16 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
     options.outcome.kind === "quick"
       ? "Model layer is unavailable in quick review; deterministic checks ran against the captured public pages."
       : options.outcome.kind === "full"
-        ? "Model layer completed successfully."
+        ? options.outcome.fallback === undefined
+          ? "Model layer completed successfully."
+          : fallbackSentence(options.outcome.fallback)
         : options.outcome.kind === "deterministic-only"
           ? "Model layer skipped by choice (--deterministic-only)."
           : `Model layer did not run: ${options.outcome.reason} Deterministic findings remain available.`;
+  const rankedFindings = orderFindings(
+    options.findings,
+    buildIssueRankingContext(options.tuples),
+  );
   const states = [...new Set(options.tuples.map((tuple) => tuple.state))];
   const stateSections = states
     .map((state) => {
@@ -296,7 +305,7 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
             tuple.screenshotPath === undefined
               ? undefined
               : options.screenshots.get(tuple.screenshotPath);
-          const findings = options.findings.filter(
+          const findings = rankedFindings.filter(
             (finding) =>
               finding.state === state &&
               finding.viewport === tuple.viewport &&

@@ -258,10 +258,11 @@ export async function isPortOpen(
 
 async function waitForPortRelease(
   port: number,
+  host: string,
   timeoutMs: number,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  while (await isPortOpen(port)) {
+  while (await isPortOpen(port, host)) {
     if (Date.now() >= deadline) return false;
     await delay(50);
   }
@@ -329,7 +330,7 @@ export async function startServer(options: {
   const readyHost = ready.hostname.replace(/^\[(.*)\]$/, "$1");
   const occupied = (await isPortOpen(readyPort, readyHost))
     ? readyPort
-    : (await isPortOpen(server.port))
+    : (await isPortOpen(server.port, readyHost))
       ? server.port
       : undefined;
   if (occupied !== undefined) {
@@ -343,7 +344,7 @@ export async function startServer(options: {
   const configuredPort =
     options.configuredPort !== undefined &&
     options.configuredPort !== server.port &&
-    !(await isPortOpen(options.configuredPort))
+    !(await isPortOpen(options.configuredPort, readyHost))
       ? options.configuredPort
       : undefined;
   options.signal?.throwIfAborted();
@@ -370,17 +371,17 @@ export async function startServer(options: {
     if (stopPromise !== undefined) return stopPromise;
     stopPromise = (async () => {
       const childClosed = await waitForClose(child, 0);
-      const portClosed = !(await isPortOpen(server.port));
+      const portClosed = !(await isPortOpen(server.port, readyHost));
       if (!childClosed || !portClosed) signalTree(child, "SIGTERM");
       const [termExit, termRelease] = await Promise.all([
         waitForClose(child, teardownTimeoutMs),
-        waitForPortRelease(server.port, teardownTimeoutMs),
+        waitForPortRelease(server.port, readyHost, teardownTimeoutMs),
       ]);
       if (!termExit || !termRelease) {
         signalTree(child, "SIGKILL");
         const [killExit, killRelease] = await Promise.all([
           waitForClose(child, teardownTimeoutMs),
-          waitForPortRelease(server.port, teardownTimeoutMs),
+          waitForPortRelease(server.port, readyHost, teardownTimeoutMs),
         ]);
         if (!killExit || !killRelease) {
           throw new IdiomError(
@@ -421,7 +422,10 @@ export async function startServer(options: {
       } catch {
         // The server may not have bound yet.
       }
-      if (configuredPort !== undefined && (await isPortOpen(configuredPort))) {
+      if (
+        configuredPort !== undefined &&
+        (await isPortOpen(configuredPort, readyHost))
+      ) {
         throw new IdiomError(
           `application server started on its configured port ${configuredPort}, not the reserved port ${server.port}: its start command pins the port instead of reading PORT. Set "server.fixedPort": true in .idiom/project.json, or pass --port ${configuredPort}`,
         );

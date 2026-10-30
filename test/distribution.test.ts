@@ -189,6 +189,11 @@ test("packed runtime dependencies exclude hosted SDKs and retain deployment inpu
 test("packed discovery manifest and portable skill match their tracked sources", async () => {
   for (const file of [
     "server.json",
+    ".claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    ".agents/plugins/marketplace.json",
+    "plugin.json",
+    "mcp.json",
     "skills/idiom/SKILL.md",
     "skills/idiom/references/init.md",
   ]) {
@@ -490,10 +495,12 @@ test("packed CLI completes the zero-configuration quick path outside Git", async
 test.each(["legacy", "auto"] as const)(
   "packed Node MCP serves %s negotiation with runtime dependencies only",
   async (mode) => {
+    const application = join(temporaryDirectory, `mcp-${mode}-application`);
+    await mkdir(application);
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: [runtimeEntry, "mcp", "--project", runtimeRoot],
-      cwd: temporaryDirectory,
+      args: [runtimeEntry, "mcp"],
+      cwd: application,
       stderr: "pipe",
     });
     const client = new Client(
@@ -502,6 +509,13 @@ test.each(["legacy", "auto"] as const)(
     );
     try {
       await client.connect(transport);
+      expect(client.getServerVersion()?.version).toBe(originalVersion);
+      for (const file of ["plugin.json", ".claude-plugin/plugin.json"]) {
+        const plugin = JSON.parse(
+          await readFile(join(runtimeRoot, file), "utf8"),
+        );
+        expect(client.getServerVersion()?.version).toBe(plugin.version);
+      }
       expect((await client.listTools()).tools).toHaveLength(15);
       const response = await client.callTool({
         name: "idiom_flows",
@@ -509,6 +523,19 @@ test.each(["legacy", "auto"] as const)(
       });
       expect(response).toMatchObject({ isError: true });
       expect(JSON.stringify(response)).toContain("idiom init");
+      const initialized = await client.callTool({
+        name: "idiom_init",
+        arguments: {},
+      });
+      expect(initialized.isError).not.toBe(true);
+      expect(
+        JSON.parse(
+          await readFile(join(application, ".idiom/project.json"), "utf8"),
+        ),
+      ).toHaveProperty("version", 1);
+      await expect(
+        readFile(join(runtimeRoot, ".idiom/project.json")),
+      ).rejects.toThrow();
     } finally {
       await client.close();
     }
@@ -522,10 +549,40 @@ test("packed plugin resolves the existing skill and adjacent init guide and vali
     await readFile(join(runtimeRoot, ".claude-plugin/plugin.json"), "utf8"),
   );
   expect(manifest.mcpServers.idiom).toEqual({
+    type: "stdio",
     command: "npx",
-    args: ["-y", "@mattskilly/idiom", "mcp"],
+    args: [
+      "-y",
+      `--package=https://github.com/mattskilly/idiom/releases/download/v${originalVersion}/mattskilly-idiom-${originalVersion}.tgz`,
+      "idiom",
+      "mcp",
+    ],
   });
-  expect(manifest.skills).toEqual(["./templates/idiom"]);
+  const portableMcp = JSON.parse(
+    await readFile(join(runtimeRoot, "mcp.json"), "utf8"),
+  );
+  expect(portableMcp.mcpServers.idiom).toEqual(manifest.mcpServers.idiom);
+  const codexCatalog = JSON.parse(
+    await readFile(
+      join(runtimeRoot, ".agents/plugins/marketplace.json"),
+      "utf8",
+    ),
+  );
+  expect(codexCatalog.plugins[0].source).toEqual({
+    source: "local",
+    path: "./",
+  });
+  const portable = JSON.parse(
+    await readFile(
+      join(runtimeRoot, codexCatalog.plugins[0].source.path, "plugin.json"),
+      "utf8",
+    ),
+  );
+  expect(portable.version).toBe(originalVersion);
+  expect(portable.extensions["com.openai"].hooks).toEqual({ hooks: {} });
+  // Both plugins load the portable skill through default skills/ discovery.
+  expect(manifest.skills).toBeUndefined();
+  expect(portable.skills).toBeUndefined();
   for (const file of [
     "hooks/hooks.json",
     "hooks/lib.mjs",
@@ -584,20 +641,35 @@ test("packed plugin resolves the existing skill and adjacent init guide and vali
   ).toContain("Page.tsx");
   expect((await runHook("stop", {})).decision).toBe("block");
   expect(await runHook("stop", {})).toBeUndefined();
-  for (const directory of manifest.skills) {
-    expect(
-      await readFile(join(runtimeRoot, directory, "SKILL.md"), "utf8"),
-    ).toContain("prefer MCP tools");
-    expect(
-      await readFile(join(runtimeRoot, directory, "init.md"), "utf8"),
-    ).toContain("idiom init");
-  }
+  const packedSkills = packedFiles.filter((file) =>
+    /^skills\/[^/]+\/SKILL\.md$/.test(file),
+  );
+  expect(packedSkills).toEqual(["skills/idiom/SKILL.md"]);
+  expect(
+    await readFile(join(runtimeRoot, "skills/idiom/SKILL.md"), "utf8"),
+  ).toMatch(/^---\nname: idiom\n[\s\S]*prefer MCP tools/);
+  expect(
+    await readFile(
+      join(runtimeRoot, "skills/idiom/references/init.md"),
+      "utf8",
+    ),
+  ).toContain("idiom init");
   const validation = await execFileAsync(
     "claude",
     ["plugin", "validate", runtimeRoot],
     { timeout: 45000 },
   );
   expect(validation.stdout).toContain("Validation passed");
+  const marketplaceValidation = await execFileAsync(
+    "claude",
+    [
+      "plugin",
+      "validate",
+      join(runtimeRoot, ".claude-plugin/marketplace.json"),
+    ],
+    { timeout: 45000 },
+  );
+  expect(marketplaceValidation.stdout).toContain("Validation passed");
 }, 60000);
 
 test("built stdio keeps setup stdout off the wire and cleans children after cancellation and EOF", async () => {
@@ -779,4 +851,68 @@ test("ordinary packed commands do not load the changed-check parser", async () =
   } finally {
     await rename(hidden, parser);
   }
+});
+
+test("packed Node CLI ships offline history and upgrades project skills without Autobuild", async () => {
+  expect(packedFiles).toContain("templates/skill-history/catalog.json");
+  const project = join(temporaryDirectory, "skill-upgrade-project");
+  await mkdir(project);
+  expect(
+    (await invoke(runtimeEntry, ["--project", project, "init", "--yes"])).code,
+  ).toBe(0);
+  const pristine = join(project, ".agents/skills/.idiom-pristine");
+  const provenance = JSON.parse(
+    await readFile(join(pristine, "manifest.json"), "utf8"),
+  );
+  expect(provenance.files["idiom/SKILL.md"].version).toBe(originalVersion);
+  const local = join(project, ".agents/skills/idiom/SKILL.md");
+  const baseline = await readFile(local, "utf8");
+  await writeFile(local, `${baseline}\nRepository customization.\n`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await invoke(runtimeEntry, [
+      "--project",
+      project,
+      "upgrade",
+      "--json",
+      "--no-agent",
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      installedVersion: originalVersion,
+      files: [{ action: "current" }, { action: "current" }],
+    });
+    expect(await readFile(local, "utf8")).toBe(
+      `${baseline}\nRepository customization.\n`,
+    );
+    expect(await readFile(join(pristine, "idiom/SKILL.md"), "utf8")).toBe(
+      baseline,
+    );
+  }
+  const { files } = JSON.parse(
+    await readFile(
+      join(runtimeRoot, "templates/skill-history/catalog.json"),
+      "utf8",
+    ),
+  ).releases[0];
+  const legacy = join(temporaryDirectory, "skill-upgrade-legacy");
+  await mkdir(join(legacy, ".agents/skills/idiom"), { recursive: true });
+  for (const [key, hash] of Object.entries(files))
+    await copyFile(
+      join(runtimeRoot, `templates/skill-history/blobs/${hash}.md`),
+      join(legacy, `.agents/skills/${key}`),
+    );
+  const upgraded = await invoke(runtimeEntry, [
+    "--project",
+    legacy,
+    "upgrade",
+    "--json",
+    "--no-agent",
+  ]);
+  expect(upgraded.code).toBe(0);
+  expect(
+    JSON.parse(upgraded.stdout).files.some(
+      (file: { action: string }) => file.action === "adopted",
+    ),
+  ).toBe(true);
 });

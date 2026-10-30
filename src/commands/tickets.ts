@@ -13,6 +13,7 @@ import {
   persistCatalogFindingNames,
 } from "../review/catalog.js";
 import { lineageDecision } from "../review/lifecycle.js";
+import { rankTicketRecords } from "../tickets/ranking.js";
 import { renderTicket, ticketIdsForIdentities } from "../tickets/render.js";
 import { parseFindingBlocks } from "../verify/spec.js";
 
@@ -274,7 +275,7 @@ export async function ticketsCommand(options: {
   // commit the migration boundary before either can cite a canonical name.
   await persistCatalogFindingNames(catalog);
 
-  for (const record of unique.values()) {
+  for (const record of rankTicketRecords([...unique.values()])) {
     const lineage = findCatalogLineage(catalog, record.finding.id);
     const accepted =
       lineageDecision(lineage, decisions, record)?.decision === "accept";

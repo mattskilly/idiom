@@ -68,11 +68,7 @@ import {
   runSetupSteps,
   startServer,
 } from "./process.js";
-import {
-  createReplayLedger,
-  type ReplayCopy,
-  type ReplayLedger,
-} from "./replay-ledger.js";
+import { createReplayLedger, type ReplayLedger } from "./replay-ledger.js";
 import {
   captureTupleKey,
   resolveStates,
@@ -131,39 +127,314 @@ export type CaptureDependencies = CaptureLifetime & {
   figma?: import("../design/figma/client.js").FigmaDependencies | undefined;
 };
 
-function replaceDerivedValue(
-  value: string,
+function derivedTextTransform(
   navigationUrl: string,
   metadataUrl: MetadataUrl,
   aliases: string[] = [],
-): string {
-  if (metadataUrl.kind !== "setup-stdout") return value;
-  const navigation = new URL(navigationUrl);
-  const template = new URL(metadataUrl.template);
-  let replaced = value;
+): DerivedTransform {
+  if (metadataUrl.kind !== "setup-stdout") return (value) => value;
+  const path = templatePath(metadataUrl.template);
+  const replacements = new Map<string, { value: string; segment: boolean }>();
+  const json = (value: string) => JSON.stringify(value).slice(1, -1);
+  const amp = (value: string) => value.replaceAll("&", "&amp;");
+  const htmlText = (value: string) =>
+    amp(value).replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const htmlAttribute = (value: string) =>
+    htmlText(value).replaceAll('"', "&quot;");
+  const html = (value: string) => htmlAttribute(value).replaceAll("'", "&#39;");
+  const forms = [
+    (value: string) => value,
+    json,
+    // Text, browser attributes and framework attributes escape different
+    // quote sets. Embedded JSON can appear inside any of these contexts.
+    ...[amp, htmlText, htmlAttribute, html].flatMap((serialize) => [
+      serialize,
+      (value: string) => serialize(json(value)),
+      (value: string) => json(serialize(value)),
+    ]),
+  ];
+  const add = (candidate: string, replacement: string, segment = false) => {
+    for (const form of forms) {
+      const key = form(candidate);
+      if (key && !replacements.has(key))
+        replacements.set(key, { value: form(replacement), segment });
+    }
+  };
+  // Keep stable output intact when later probe rounds sanitize it again,
+  // even if a route segment is also part of the state/template name.
+  add(metadataUrl.template, metadataUrl.template);
+  if (path !== "/") add(path, path);
   for (const url of [navigationUrl, ...aliases]) {
-    replaced = replaced.split(url).join(metadataUrl.template);
-    if (aliases.length > 0) {
-      // Rebased aliases can also appear in serialized DOM attributes.
-      replaced = replaced
-        .split(url.replaceAll("&", "&amp;"))
-        .join(metadataUrl.template.replaceAll("&", "&amp;"));
+    add(url, metadataUrl.template);
+    const { pathname } = new URL(url);
+    if (pathname !== "/") add(pathname, path);
+    // Split before decoding: an encoded slash belongs to one parameter.
+    for (const segment of pathname.split("/")) {
+      if (!segment) continue;
+      add(segment, path, true);
+      try {
+        add(decodeURIComponent(segment), path, true);
+      } catch {
+        // Malformed escapes still have an exact encoded spelling to protect.
+      }
     }
   }
-  return replaced.split(navigation.pathname).join(template.pathname);
+  const matcher = (mode: DerivedMode) =>
+    new RegExp(
+      [...replacements.entries()]
+        .filter(([, entry]) => mode !== "url" || !entry.segment)
+        .sort(([a], [b]) => b.length - a.length)
+        .map(([candidate, entry]) => {
+          const literal = candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          if (!entry.segment) return literal;
+          // A bare parameter is a complete token, not part of an ordinary
+          // word, CSS identifier or percent escape (e.g. b in block/available).
+          // In a selector, a token at the start of a compound (after a
+          // combinator or path slash) is a tag name such as b in body[0]/b[0].
+          const selectorTag = mode === "selector" ? "(?<=[^\\s>+~,(/])" : "";
+          return `(?<![\\p{L}\\p{N}_%\\-])${selectorTag}${literal}(?![\\p{L}\\p{N}_%\\-])`;
+        })
+        .join("|"),
+      "gu",
+    );
+  const matchers = {
+    text: matcher("text"),
+    url: matcher("url"),
+    selector: matcher("selector"),
+  };
+  // One pass over the original text prevents overlaps and replacement text
+  // from being consumed by a later segment replacement.
+  const transform = (
+    value: string,
+    mode: Exclude<DerivedMode, "markup"> = "text",
+  ) =>
+    value.replace(
+      matchers[mode],
+      (match) => replacements.get(match)?.value ?? match,
+    );
+  return (value, mode = "text") =>
+    mode === "markup"
+      ? mapMarkup(value, (text) => transform(text))
+      : transform(value, mode);
 }
 
-function mapStrings(value: unknown, map: (value: string) => string): unknown {
-  if (typeof value === "string") return map(value);
-  if (Array.isArray(value)) return value.map((entry) => mapStrings(entry, map));
+/**
+ * The path of a metadata URL template, read from its raw text. Template
+ * placeholders are display text, and URL pathname serialization would
+ * percent-encode their braces.
+ */
+function templatePath(template: string): string {
+  const path = template
+    .replace(/^[a-z][a-z\d+.-]*:\/\/[^/?#]*/i, "")
+    .split(/[?#]/, 1)[0];
+  return path === undefined || path === "" ? "/" : path;
+}
+
+type DerivedMode = "text" | "url" | "selector" | "markup";
+type DerivedTransform = (value: string, mode?: DerivedMode) => string;
+
+const rawTextElements = new Set([
+  "script",
+  "style",
+  "textarea",
+  "title",
+  "xmp",
+  "iframe",
+  "noembed",
+  "noframes",
+  "noscript",
+  "plaintext",
+]);
+
+/**
+ * Transform an HTML string's text and attribute values while leaving tag and
+ * attribute names alone, so a route value spelled like a tag (b, p, button)
+ * never rewrites the markup itself.
+ */
+function mapMarkup(html: string, text: (value: string) => string): string {
+  const tag = /<(\/?)([A-Za-z][^\s/>]*)((?:[^>"']|"[^"]*"|'[^']*')*)(>|$)/y;
+  const attribute =
+    /([^\s"'>/=]+)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)|[^\s"'>/=]+|[\s\S]/g;
+  let out = "";
+  let textStart = 0;
+  let index = 0;
+  while (index < html.length) {
+    const open = html.indexOf("<", index);
+    if (open === -1) break;
+    tag.lastIndex = open;
+    const match = tag.exec(html);
+    if (!match) {
+      index = open + 1;
+      continue;
+    }
+    const [, close = "", name = "", attributes = "", end = ""] = match;
+    out += text(html.slice(textStart, open));
+    out += `<${close}${name}${attributes.replace(
+      attribute,
+      (whole, attributeName?: string, equals?: string, value?: string) =>
+        value === undefined ? whole : `${attributeName}${equals}${text(value)}`,
+    )}${end}`;
+    index = textStart = tag.lastIndex;
+    if (!close && rawTextElements.has(name.toLowerCase())) {
+      // Script and style bodies are text even when they contain `<b`.
+      const closing = new RegExp(`</${name}[\\s/>]`, "iy");
+      let body = index;
+      for (; body < html.length; body++) {
+        if (html[body] !== "<") continue;
+        closing.lastIndex = body;
+        if (closing.test(html)) break;
+      }
+      index = body;
+    }
+  }
+  return out + text(html.slice(textStart));
+}
+
+type StringMap = (value: string, field?: string, measured?: boolean) => string;
+
+// Bare route values belong in captured text/identities, not measurement enums,
+// tag/role names, computed CSS, engine ids or other structural string fields.
+const structuralFields = new Set([
+  "status",
+  "source",
+  "kind",
+  "type",
+  "timing",
+  "direction",
+  "cause",
+  "align",
+  "of",
+  "mode",
+  "basis",
+  "resourceType",
+  "outcome",
+  "iterations",
+  "side",
+  "trigger",
+  "policy",
+  "timeoutScope",
+  "axis",
+  "matchedBy",
+  "cut",
+  "role",
+  "scope",
+  "action",
+  "strategy",
+  "pointer",
+  "hover",
+  "purpose",
+  "effects",
+  "truncated",
+  "method",
+  "tag",
+  "property",
+  "properties",
+  "authoredProperties",
+  "appearance",
+  "cursor",
+  "haspopup",
+  "state",
+  "transition",
+  "animation",
+  "transform",
+  "pseudoElement",
+  "fontSize",
+  "fontWeight",
+  "family",
+  "format",
+  "used",
+  "sourceAction",
+  "controlId",
+  "timelineId",
+  "structuralPath",
+  "legacyRenderedPath",
+  "stableIslandPath",
+  "contentType",
+]);
+
+// Axe's fixed report keys are structure; additional keys in rule data can be
+// page-derived (unlike the strict observation/timeline schemas).
+const axeFields = new Set([
+  "testEngine",
+  "testRunner",
+  "testEnvironment",
+  "timestamp",
+  "url",
+  "toolOptions",
+  "inapplicable",
+  "incomplete",
+  "passes",
+  "violations",
+  "id",
+  "impact",
+  "tags",
+  "description",
+  "help",
+  "helpUrl",
+  "nodes",
+  "any",
+  "all",
+  "none",
+  "html",
+  "target",
+  "failureSummary",
+  "summary",
+  "data",
+  "message",
+  "relatedNodes",
+  "name",
+  "version",
+  "userAgent",
+  "windowWidth",
+  "windowHeight",
+  "orientationAngle",
+  "orientationType",
+  "result",
+  "type",
+  "status",
+  "kind",
+]);
+
+function mapStrings(
+  value: unknown,
+  map: StringMap,
+  field?: string,
+  mapKey?: StringMap,
+  parent?: string,
+  measured = false,
+): unknown {
+  if (typeof value === "string") return map(value, field, measured);
+  if (Array.isArray(value))
+    return value.map((entry) =>
+      mapStrings(entry, map, field, mapKey, parent, measured),
+    );
   if (value !== null && typeof value === "object") {
+    // These subtrees contain measured CSS/configuration, not route text.
+    const measuredValues =
+      measured ||
+      field === "styles" ||
+      field === "tokens" ||
+      ["testEngine", "testRunner", "testEnvironment", "toolOptions"].includes(
+        field ?? "",
+      ) ||
+      "transitionProperty" in value;
     return linkRecording(
       {
-        ...value,
         ...Object.fromEntries(
           Object.entries(value).map(([key, entry]) => [
-            key,
-            mapStrings(entry, map),
+            // Screenshot rects are a selector-keyed dictionary. Fixed schema
+            // property names remain intact; these keys follow their selectors.
+            field === "rects" && parent === "screenshot"
+              ? map(key, "selector")
+              : (mapKey?.(key) ?? key),
+            mapStrings(
+              entry,
+              map,
+              field === "attributes" ? undefined : key,
+              mapKey,
+              field,
+              measuredValues,
+            ),
           ]),
         ),
       },
@@ -177,6 +448,10 @@ function mapStrings(value: unknown, map: (value: string) => string): unknown {
 function mapResult(
   result: TupleResult,
   map: (value: string) => string,
+  evidenceMap: StringMap = map,
+  axeMap: StringMap = map,
+  axeKeyMap?: StringMap,
+  domMap: (value: string) => string = map,
 ): TupleResult {
   const records = result.console.map((record) => ({
     ...record,
@@ -185,10 +460,10 @@ function mapResult(
       ? {}
       : { location: { ...record.location, url: map(record.location.url) } }),
   }));
-  const axe = mapStrings(result.axe, map);
+  const axe = mapStrings(result.axe, axeMap, undefined, axeKeyMap);
   const observations = mapStrings(
     result.observations,
-    map,
+    evidenceMap,
   ) as TupleResult["observations"];
   const timelines =
     result.timelines === undefined
@@ -196,13 +471,13 @@ function mapResult(
       : {
           timelines: mapStrings(
             result.timelines,
-            map,
+            evidenceMap,
           ) as TupleResult["timelines"],
         };
   if (result.ok) {
     return {
       ...result,
-      dom: map(result.dom),
+      dom: domMap(result.dom),
       console: records,
       axe,
       observations,
@@ -211,7 +486,7 @@ function mapResult(
   }
   return {
     ...result,
-    ...(result.dom === undefined ? {} : { dom: map(result.dom) }),
+    ...(result.dom === undefined ? {} : { dom: domMap(result.dom) }),
     console: records,
     axe,
     observations,
@@ -227,8 +502,29 @@ export function sanitizeDerivedResult(
   aliases: string[] = [],
 ): TupleResult {
   if (metadataUrl.kind !== "setup-stdout") return result;
-  return mapResult(result, (value) =>
-    replaceDerivedValue(value, navigationUrl, metadataUrl, aliases),
+  const transform = derivedTextTransform(navigationUrl, metadataUrl, aliases);
+  const mode = (field: string | undefined, structural = false): DerivedMode =>
+    structural || structuralFields.has(field ?? "")
+      ? "url"
+      : /selector/i.test(field ?? "") || field === "target"
+        ? "selector"
+        : field === "html"
+          ? "markup"
+          : "text";
+  return mapResult(
+    result,
+    (value) => transform(value),
+    (value, field, measured) => transform(value, mode(field, measured)),
+    (value, field, measured) =>
+      transform(
+        value,
+        mode(
+          field,
+          measured || ["id", "impact", "tags", "version"].includes(field ?? ""),
+        ),
+      ),
+    (key) => (axeFields.has(key) ? key : transform(key)),
+    (value) => transform(value, "markup"),
   );
 }
 
@@ -872,16 +1168,7 @@ async function captureOwned(
             },
             probe: probeTiming,
           };
-          const result = canonicalizeOrigin(
-            sanitizeDerivedResult(
-              captured,
-              resolution.value.navigationUrl,
-              resolution.value.metadataUrl,
-              resolution.value.sanitizationAliases,
-            ),
-            boundOrigin,
-            configuredOrigin,
-          );
+          const result = captured;
           if (result.observations?.version === 2) {
             controls = (result.observations.probe?.results ?? []).flatMap(
               (control) =>
@@ -1062,23 +1349,8 @@ async function captureOwned(
               timelines: result.timelines,
               probe,
               delayMs: project.checks.loading.delayMs,
-              // The ledger holds in-session evidence, while this tuple has
-              // already been sanitized. Normalize copies (including failure
-              // keys) for the receiving state's setup URL and configured
-              // origin, without rewriting its saved evidence a second time.
-              normalizeCopy: (copy) =>
-                mapStrings(copy, (value) =>
-                  replaceOrigin(
-                    replaceDerivedValue(
-                      value,
-                      resolution.value.navigationUrl,
-                      resolution.value.metadataUrl,
-                      resolution.value.sanitizationAliases,
-                    ),
-                    boundOrigin,
-                    configuredOrigin,
-                  ),
-                ) as ReplayCopy,
+              // Keep copied evidence raw as well: later probe rounds compare
+              // selectors, names and completed failure keys against the browser.
             });
           }
         };
@@ -1233,8 +1505,43 @@ async function captureOwned(
           );
         }
       }
-      for (const entry of laneResults) {
+      for (const [index, entry] of laneResults.entries()) {
         if (entry === undefined) continue;
+        const selected = selectedTuples[index];
+        const resolution = selected && resolutionByState.get(selected.state.id);
+        if (entry.artifact.result && resolution?.ok) {
+          // All planning, probe rounds and ledger merges use raw identities.
+          // Normalize the completed evidence once, before checks and writers.
+          const result = canonicalizeOrigin(
+            sanitizeDerivedResult(
+              entry.artifact.result,
+              resolution.value.navigationUrl,
+              resolution.value.metadataUrl,
+              resolution.value.sanitizationAliases,
+            ),
+            boundOrigin,
+            configuredOrigin,
+          );
+          entry.artifact.result = result;
+          const controlText = derivedTextTransform(
+            resolution.value.navigationUrl,
+            resolution.value.metadataUrl,
+            resolution.value.sanitizationAliases,
+          );
+          entry.controls = entry.controls.map((control) => ({
+            ...control,
+            selector: replaceOrigin(
+              controlText(control.selector, "selector"),
+              boundOrigin,
+              configuredOrigin,
+            ),
+            name: replaceOrigin(
+              controlText(control.name),
+              boundOrigin,
+              configuredOrigin,
+            ),
+          }));
+        }
         tuples.push(entry.artifact);
         timings.tuples.push(entry.timing);
         if (entry.executed)

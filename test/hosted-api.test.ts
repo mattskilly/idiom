@@ -2,10 +2,18 @@ import { expect, test, vi } from "vitest";
 import { type ApiDependencies, hostedApi } from "../src/hosted/api.js";
 import { LIMITS } from "../src/hosted/config.js";
 import { HostedError } from "../src/hosted/errors.js";
-import { AdmissionLedger } from "../src/hosted/ledger.js";
-import { Reports } from "../src/hosted/reports.js";
+import { AdmissionLedger, LEDGER_PATH } from "../src/hosted/ledger.js";
+import { prefixFor, Reports } from "../src/hosted/reports.js";
 import { imageInput, parseInput } from "../src/hosted/schema.js";
-import { HASH, MemoryBlob, png, report } from "./hosted-helpers.js";
+import {
+  editLedger,
+  HASH,
+  ID,
+  MemoryBlob,
+  png,
+  report,
+  runState,
+} from "./hosted-helpers.js";
 
 function dependencies(): ApiDependencies {
   const store = new MemoryBlob();
@@ -212,4 +220,233 @@ test("multipart exclusivity, duplicate fields, filenames, sniffing, dimensions a
       }),
     ),
   ).rejects.toThrow();
+});
+
+async function publishedView(assetCount = 4) {
+  const deps = dependencies();
+  const store = deps.reports.store as MemoryBlob;
+  const assets = new Map(
+    Array.from({ length: assetCount }, (_, i) => [`asset-${i}.png`, png]),
+  );
+  const data = report();
+  data.assets = [...assets].map(([name, bytes]) => ({
+    name,
+    bytes: bytes.length,
+  }));
+  data.filmstrips = [...assets.keys()];
+  await deps.ledger.admit("8.8.8.8", ID, 500_000);
+  const saved = await deps.reports.publish(ID, data, assets);
+  store.calls = [];
+  store.reads = [];
+  return { deps, store, saved };
+}
+function contentRequest(
+  route: "report" | "asset",
+  method = "GET",
+  userAgent = "browser",
+  name = "asset-0.png",
+  id = ID,
+) {
+  return new Request(
+    `https://idiom.build/api/hosted-${route}?id=${id}&name=${name}`,
+    {
+      method,
+      headers: { "user-agent": userAgent },
+    },
+  );
+}
+async function fullView(
+  deps: ApiDependencies,
+  userAgent = "browser",
+  concurrent = false,
+) {
+  const page = await hostedApi(
+    contentRequest("report", "GET", userAgent),
+    "report",
+    deps,
+  );
+  expect(page.status).toBe(200);
+  const html = await page.text();
+  // Fetch every emitted URL, even repeated references, through the real route.
+  const urls = [...html.matchAll(/<img src="([^"]+)"/g)].map((match) =>
+    (match[1] ?? "").replaceAll("&amp;", "&"),
+  );
+  const fetchImage = async (url: string) => {
+    const response = await hostedApi(
+      new Request(new URL(url, "https://idiom.build"), {
+        headers: { "user-agent": userAgent },
+      }),
+      "asset",
+      deps,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(png);
+  };
+  if (concurrent) {
+    // Seven simultaneous image claims exercise a normal view within eight CAS attempts.
+    for (let start = 0; start < urls.length; start += 7)
+      await Promise.all(urls.slice(start, start + 7).map(fetchImage));
+  } else for (const url of urls) await fetchImage(url);
+  return urls.length;
+}
+test.each([4, 7])(
+  "128 full %i-asset views cost 128 page credits; final-page images and direct downloads remain eligible",
+  async (count) => {
+    const { deps, store } = await publishedView(count);
+    let images = 0;
+    for (let i = 0; i < LIMITS.deliveries; i++) {
+      images += await fullView(deps, "browser", i === 0);
+      expect(runState(store).deliveries).toBe(LIMITS.deliveries - i - 1);
+    }
+    // issue + design both repeat asset-0 in addition to the filmstrip references.
+    expect(images).toBe(128 * (count + 2));
+    expect(runState(store).resources?.imageBytes).toBe(
+      LIMITS.deliveryImageBytes - images * png.length,
+    );
+    store.calls = [];
+    const denied = await hostedApi(contentRequest("report"), "report", deps);
+    expect(denied.status).toBe(503);
+    expect(await denied.json()).toMatchObject({ code: "cap-reached" });
+    expect(store.calls.some((call) => call.endsWith("report.json"))).toBe(
+      false,
+    );
+    expect(
+      (await hostedApi(contentRequest("asset"), "asset", deps)).status,
+    ).toBe(200);
+    expect(runState(store).deliveries).toBe(0);
+  },
+);
+test("one supported 24-asset report and all its renderer URLs use one page credit", async () => {
+  const { deps, store } = await publishedView(24);
+  expect(await fullView(deps)).toBe(26);
+  expect(runState(store).deliveries).toBe(127);
+});
+test.each([
+  "Slackbot-LinkExpanding",
+  "Twitterbot",
+  "facebookexternalhit",
+  "spoofed arbitrary agent",
+])(
+  "%s HEAD/GET/images count once; HEAD alone reads metadata only",
+  async (agent) => {
+    const { deps, store } = await publishedView(4);
+    const before = runState(store);
+    for (const route of ["report", "asset"] as const) {
+      const response = await hostedApi(
+        contentRequest(route, "HEAD", agent),
+        route,
+        deps,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("");
+      expect(response.headers.get("cache-control")).toContain("no-store");
+      expect(response.headers.get("x-robots-tag")).toContain("noindex");
+      expect(response.headers.get("content-type")).toContain(
+        route === "asset" ? "image/png" : "text/html",
+      );
+    }
+    expect(store.calls).toEqual([
+      `get:${prefixFor(ID)}manifest.json`,
+      `get:${prefixFor(ID)}manifest.json`,
+    ]);
+    expect(store.calls.some((call) => call.includes(LEDGER_PATH))).toBe(false);
+    expect(runState(store)).toEqual(before);
+    await fullView(deps, agent);
+    expect(runState(store).deliveries).toBe(127);
+  },
+);
+test("HEAD preserves missing/deleted/expired/unknown-asset errors and method rejection", async () => {
+  const { deps, store, saved } = await publishedView();
+  for (const route of ["report", "asset"] as const) {
+    expect(
+      (
+        await hostedApi(
+          contentRequest(route, "HEAD", "browser", "asset-0.png", HASH),
+          route,
+          deps,
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      (await hostedApi(contentRequest(route, "PUT"), route, deps)).status,
+    ).toBe(405);
+  }
+  for (const name of ["../report.json", "asset-99.png", "invalid"])
+    expect(
+      (
+        await hostedApi(
+          contentRequest("asset", "HEAD", "browser", name),
+          "asset",
+          deps,
+        )
+      ).status,
+    ).toBe(404);
+  const stored = store.objects.get(`${prefixFor(ID)}manifest.json`);
+  if (!stored) throw new Error("missing fixture");
+  const original = Buffer.from(stored.bytes);
+  const manifest = JSON.parse(original.toString());
+  manifest.expiresAt = deps.now();
+  stored.bytes = Buffer.from(JSON.stringify(manifest));
+  for (const route of ["report", "asset"] as const)
+    expect(
+      (await hostedApi(contentRequest(route, "HEAD"), route, deps)).status,
+    ).toBe(404);
+  stored.bytes = original;
+  await deps.reports.delete(ID, saved.deleteToken);
+  store.calls = [];
+  for (const route of ["report", "asset"] as const)
+    expect(
+      (await hostedApi(contentRequest(route, "HEAD"), route, deps)).status,
+    ).toBe(404);
+  expect(store.calls.every((call) => call.endsWith("manifest.json"))).toBe(
+    true,
+  );
+  expect(runState(store).deliveries).toBe(128);
+});
+test("direct legacy image replay exhausts the original maximum byte envelope before any PNG read on denial", async () => {
+  const { deps, store } = await publishedView(1);
+  const stored = store.objects.get(`${prefixFor(ID)}manifest.json`);
+  if (!stored) throw new Error("missing fixture");
+  const manifest = JSON.parse(stored.bytes.toString());
+  delete manifest.assetSizes;
+  stored.bytes = Buffer.from(JSON.stringify(manifest));
+  for (let i = 0; i < LIMITS.deliveryImageBytes / LIMITS.assetBytes; i++)
+    expect(
+      (await hostedApi(contentRequest("asset"), "asset", deps)).status,
+    ).toBe(200);
+  expect(runState(store)).toMatchObject({
+    deliveries: 128,
+    resources: { imageBytes: 0 },
+  });
+  store.calls = [];
+  expect((await hostedApi(contentRequest("asset"), "asset", deps)).status).toBe(
+    503,
+  );
+  expect(store.calls.some((call) => call.endsWith("asset-0.png"))).toBe(false);
+  expect(
+    (await hostedApi(contentRequest("report"), "report", deps)).status,
+  ).toBe(200);
+});
+test("GET never bypasses exhausted work through a preview user agent", async () => {
+  const { deps, store } = await publishedView();
+  editLedger(store, (state) => {
+    const run = state.runs[0];
+    if (run?.resources) run.resources.attempts = 0;
+  });
+  for (const route of ["report", "asset"] as const)
+    expect(
+      (
+        await hostedApi(
+          contentRequest(route, "GET", "Slackbot-LinkExpanding"),
+          route,
+          deps,
+        )
+      ).status,
+    ).toBe(503);
+  expect(
+    store.calls.some(
+      (call) => call.endsWith("report.json") || call.endsWith("asset-0.png"),
+    ),
+  ).toBe(false);
 });

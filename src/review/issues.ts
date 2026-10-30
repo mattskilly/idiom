@@ -2,6 +2,7 @@ import type { Finding } from "../schemas/finding.js";
 import { normalizeSelectorHint } from "./fingerprint.js";
 import {
   affectedCounts,
+  comparePriority,
   type IssueRankingContext,
   type RankingExplanation,
   ruleFamily,
@@ -155,11 +156,7 @@ export function collapseIssues<G extends IssueGroup>(
           : {}),
       };
     })
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        severityOrder[left.severity] - severityOrder[right.severity],
-    );
+    .sort(comparePriority);
 }
 
 export function categoryCounts(

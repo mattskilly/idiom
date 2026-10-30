@@ -1,7 +1,8 @@
 # How check ranks Top issues
 
-`check` ranks presentation issues by **salience × prominence**, then worst
-severity, then first-seen bucket order. Scores use full precision. `--top N`
+`check` ranks presentation issues by **severity first** (BLOCKER, MAJOR, MINOR),
+then prominence as measured by the existing **salience × prominence** score within
+each tier, then first-seen bucket order. Scores use full precision. `--top N`
 limits the displayed prefix; JSON always contains the entire ranked catalogue.
 Detection, thresholds, finding fingerprints, durable groups, decisions, baseline
 comparison and failure gates are independent of this presentation.
@@ -159,7 +160,7 @@ never combine one group's salience with another's geometry. Equal products use
 member severity then original order. The winning group supplies `id`, the first
 entry of `groups`, and the explanation; remaining groups retain original order.
 The issue heading reports the worst severity across all its groups. Final issue
-sorting uses score, worst issue severity, then original bucket order.
+sorting uses worst issue severity, score, then original bucket order.
 
 Compact text shows one example and the family occurrence count. `--all` shows
 every original group's own rule, problem, evidence and decision command. Commands

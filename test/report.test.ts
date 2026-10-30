@@ -474,3 +474,92 @@ test("platform launch shapes and the CLI use the injectable launcher", async () 
     }),
   ).rejects.toThrow("launcher unavailable");
 });
+
+test("Markdown and HTML order original finding blocks by severity then exact-target score", async () => {
+  const { renderReport } = await import("../src/review/report.js");
+  const { renderReviewHtmlReport } = await import(
+    "../src/review/html-report.js"
+  );
+  const { findingSchema } = await import("../src/schemas/finding.js");
+  const { orderFindings, findingScore } = await import(
+    "../src/review/presentation-order.js"
+  );
+  const { buildIssueRankingContext } = await import("../src/review/ranking.js");
+  const tuple = {
+    state: "ready",
+    viewport: "desktop",
+    width: 100,
+    height: 100,
+    metadataPath: "ready/desktop/metadata.json",
+    observations: {
+      version: 1,
+      viewport: { width: 100, height: 100 },
+      elements: [
+        {
+          selector: "#large",
+          visible: true,
+          rect: { x: 0, y: 0, width: 100, height: 100 },
+          ancestorSelectors: [],
+        },
+      ],
+    },
+  } as unknown as import("../src/checks/types.js").CheckTuple;
+  const findings = [
+    ["low", "minor", "target-size", "#missing"],
+    ["large", "minor", "dead-control", "#large"],
+    ["major", "major", "target-size", "#missing"],
+    ["tie", "minor", "target-size", "#missing"],
+    ["blocker", "blocker", "target-size", "#missing"],
+  ].map(([id, severity, category, selector]) =>
+    findingSchema.parse({
+      id,
+      fingerprint: id,
+      severity,
+      category,
+      rule: `rule-${id}`,
+      status: "open",
+      confidence: 1,
+      layer: "deterministic",
+      createdAt: "2026-10-29T00:00:00Z",
+      commit: "abc",
+      flow: "flow",
+      state: "ready",
+      viewport: "desktop",
+      evidence: { screenshots: [] },
+      explanation: `Problem ${id}`,
+      acceptance: ["Repair"],
+      verification: {
+        kind: "deterministic-check",
+        check: category,
+        params: { selector },
+      },
+    }),
+  );
+  const original = JSON.stringify(findings);
+  const context = buildIssueRankingContext([tuple]);
+  const ordered = orderFindings(findings, context);
+  expect(ordered.map((f) => [f.id, findingScore(f, context)])).toEqual([
+    ["blocker", 1],
+    ["major", 1],
+    ["large", 22.5],
+    ["low", 1],
+    ["tie", 1],
+  ]);
+  const options = {
+    flow: "flow",
+    commit: "abc",
+    findings,
+    tuples: [tuple],
+    coverage: [],
+    outcome: { kind: "deterministic-only" as const },
+  };
+  for (const output of [
+    renderReport(options),
+    renderReviewHtmlReport({ ...options, screenshots: new Map() }),
+  ]) {
+    const positions = ordered.map((f) => output.indexOf(`Problem ${f.id}`));
+    expect(positions.every((p) => p >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  }
+  expect(JSON.stringify(findings)).toBe(original);
+});

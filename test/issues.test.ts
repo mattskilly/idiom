@@ -70,7 +70,7 @@ test("40 siblings collapse by rule with unioned places and summed members", () =
   ).toHaveLength(2);
 });
 
-test("score precedes severity, severity breaks score ties, then original bucket order", () => {
+test("severity precedes score, then original bucket order within equal tiers and scores", () => {
   const groups = [
     group("hygiene", {
       severity: "blocker",
@@ -81,10 +81,10 @@ test("score precedes severity, severity breaks score ties, then original bucket 
     group("equal-major", { category: "clipped-text", severity: "major" }),
   ];
   expect(collapseIssues(groups, new Set()).map((issue) => issue.id)).toEqual([
+    "hygiene",
     "equal-major",
     "broken",
     "equal-first",
-    "hygiene",
   ]);
 });
 
@@ -287,4 +287,71 @@ test("different saliences never borrow each other's geometry or combine rule fam
     ["placeholder", 4, 2.5, 10],
     ["broken", 9, 1, 9],
   ]);
+});
+
+test("tiers dominate score while same-tier scores and stable ties remain unchanged", () => {
+  const issues = collapseIssues(
+    [
+      group("minor-low"),
+      group("minor-high", { category: "dead-control" }),
+      group("minor-tie", { category: "error-text" }),
+      group("major-low", { severity: "major", category: "control-anatomy" }),
+      group("blocker-low", { severity: "blocker", rule: "other" }),
+    ],
+    new Set(),
+  );
+  expect(issues.map((i) => [i.id, i.score])).toEqual([
+    ["blocker-low", 1],
+    ["major-low", 1],
+    ["minor-high", 9],
+    ["minor-tie", 9],
+    ["minor-low", 1],
+  ]);
+});
+
+test("mixed-severity family keeps its highest-score example while worst severity ranks it", () => {
+  const high = group("example", {
+    category: "overflow-clip",
+    rule: "idiom:input-value-truncated",
+  });
+  const low = group("major", {
+    category: "overflow-clip",
+    rule: "idiom:element-content-clipped",
+    severity: "major",
+  });
+  // Different geometry makes the minor member the winning example.
+  const context = new Map([
+    [
+      "editor/desktop",
+      {
+        state: "editor",
+        viewport: { width: 100, height: 100 },
+        primaryRegions: new Set<string>(),
+        elements: new Map([
+          [
+            "#example",
+            {
+              selector: "#example",
+              visible: true,
+              rect: { x: 0, y: 0, width: 100, height: 100 },
+              ancestorSelectors: [],
+            },
+          ],
+        ]),
+      },
+    ],
+  ]);
+  const [alone] = collapseIssues([high], new Set(), context);
+  const [mixed] = collapseIssues(
+    [group("unrelated", { category: "dead-control" }), high, low],
+    new Set(),
+    context,
+  );
+  expect(mixed).toMatchObject({
+    id: "example",
+    severity: "major",
+    score: alone?.score,
+    explanation: alone?.explanation,
+    groups: ["example", "major"],
+  });
 });

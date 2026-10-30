@@ -8,6 +8,7 @@ How to run each Idiom command, its flags and what it prints. What to write in `.
 idiom mcp                    # stdio MCP tools for coding agents
 idiom quick <url...>         # public-page review with no setup
 idiom init                   # safe project scaffold
+idiom upgrade                # update vendored skills, preserving customization
 idiom validate [flow]        # project + manifest validation
 idiom reference add|list|remove  # manage visual references and anti-references
 idiom capture <flow>         # deterministic browser capture
@@ -222,6 +223,45 @@ harnesses; `.claude/skills` is Claude Code's project discovery path. If Claude
 Code was already running when the top-level skills directory was first created,
 restart the session so `/idiom` is discovered.
 
+## upgrade
+
+```sh
+idiom upgrade [--project <dir>] [--no-agent] [--dry-run] [--json]
+```
+
+Merge the installed CLI's skill templates into a project (0.16.0 and later).
+It never updates the CLI itself. Without `--project`, an initialized ancestor is selected, with
+the current directory as fallback. Only already-installed or pristine-tracked
+`ab-verify-idiom` skills participate; Autobuild detection alone grants no install.
+
+Init seeds upstream bytes under `.agents/skills/.idiom-pristine/<skill>/<file>`
+and per-file version/digest records in its `manifest.json`. Upgrade compares
+those bytes with local and incoming, advances successful baselines to **incoming**,
+and preserves conflicted files and their records. Exact historical templates
+are recognized offline; unknown customized legacy bytes require a manual merge.
+
+The text report lists previous/installed versions (including unknown, candidate
+or mixed provenance), each file, and `current`, `adopted`, `merged`, `resolved`,
+`conflicted`, `installed`, `removed` or `kept`. Conflicts include pristine and
+installed incoming paths. Foreign discovery entries are reported separately and
+preserved exactly. Successful neighbors still advance. Any content conflict or
+discovery collision returns exit 1 **after** the report; success returns 0.
+`--json` prints the same structured report as a single JSON document on stdout.
+
+`--no-agent` never loads or invokes a resolver. `--dry-run` writes nothing and
+never calls a model; overlaps report `conflicted` with `needsResolution: true`.
+Git on PATH is needed only for divergent three-way text merges. Overlaps normally
+use review's configured `model.provider` and `model.model`: subscription Claude
+Code by default, or explicit Anthropic with `ANTHROPIC_API_KEY`. Tool-free,
+bounded proposals replace conflict hunks only, and must retain clean regions,
+upstream-only changes and frontmatter identity without new markers. Provider
+failure or validation rejection leaves that file and baseline untouched.
+
+Commit skill files, pristine state and owned `.claude/skills` discovery links
+together. Downgrading to an earlier upgrade-capable CLI uses these same rules.
+For manual conflicts and older binaries without this command, follow
+[Update and roll back](https://idiom.build/docs/update-and-roll-back).
+
 ## validate
 
 ```sh
@@ -229,7 +269,7 @@ idiom validate --project /path/to/app
 idiom validate booking --project /path/to/app
 ```
 
-Without `--project`, validation starts in the current directory and walks upward to the nearest `.idiom/project.json`. With no flow argument it validates every `.json` file in `.idiom/flows/` in filename order. It validates the project first, then schema and cross-record constraints such as flow viewport names.
+Validation starts in the `--project` directory, or in the current directory when `--project` is omitted. A relative `--project` resolves against the current directory. From that start it walks upward to the nearest `.idiom/project.json`, so `--project /path/to/app/apps/web` validates the project rooted at `/path/to/app` when that is the closest ancestor with a manifest. If no ancestor has one, validation exits `1` with `no .idiom/project.json found from <dir> or any parent directory`. With no flow argument it validates every `.json` file in `.idiom/flows/` in filename order. It validates the project first, then schema and cross-record constraints such as flow viewport names.
 
 Success exits `0` and names the validated flows. Missing files, malformed JSON, and schema errors exit `1`; diagnostics include both the source file and exact field path, such as `states[3].urlFrom.pattern`.
 
@@ -274,9 +314,12 @@ The equivalent explicit forms are:
 ```sh
 idiom capture booking --project /path/to/booking-app
 idiom capture booking --project /path/to/booking-app --out /path/to/baseline
+idiom capture booking --project /path/to/booking-app --out ./baseline
 ```
 
-Without `--out`, each run gets a new timestamped directory under `.idiom/reports/`. An explicit output path must not already exist and is never overwritten. A custom path inside the target repository must either be under `.idiom/reports/` or covered by the repository's ignore rules; otherwise capture fails before setup so its own output cannot change the next run's source dirty flag. The run-level `baseline.md` links each capture tuple and its six artifacts. Existing singleton projects retain `state/viewport`; projects declaring multiple top-level `colorSchemes` use `state/viewport/colorScheme`:
+Relative `--out` paths resolve from the directory where the command is invoked, even when `--project` selects another directory. In the last example, `./baseline` is beneath the invoking directory. An absolute `--out` path identifies that exact directory.
+
+Without `--out`, each run gets a new timestamped directory under the selected project's `.idiom/reports/`. An explicit output path must not already exist and is never overwritten. A custom path inside the target repository must either be under `.idiom/reports/` or covered by the repository's ignore rules; otherwise capture fails before setup so its own output cannot change the next run's source dirty flag. The run-level `baseline.md` links each capture tuple and its six artifacts. Existing singleton projects retain `state/viewport`; projects declaring multiple top-level `colorSchemes` use `state/viewport/colorScheme`:
 
 - `screenshot.png` — full-page, animation-disabled rendered output
 - `dom.html` — rendered DOM after the configured settle period
@@ -306,7 +349,9 @@ Electron evidence has two disclosed provider boundaries. Diagnostics are one fin
 
 Before publication, Idiom scans every staged artifact for non-empty inherited or configured environment values named `*_TOKEN`, `*_SECRET`, or `*_KEY`. A match identifies only the variable and artifact, removes the private staging/data directories, and publishes nothing. Capture makes no model or external API calls; after dependencies and Chromium are installed, its only HTTP traffic is to the configured loopback application.
 
-Reproducibility is a same-machine contract because the booking app deliberately uses system fonts. Context settings, device scale, iteration order, and artifact paths are pinned. The app also intentionally mints new private booking slugs on every fresh seed: Idiom uses each raw value only for in-memory navigation, redacts it from textual artifacts, and persists the stable setup-output declaration plus a state-keyed URL template. Literal state URLs are recorded exactly. Therefore unchanged consecutive runs have equivalent screenshots and metadata after removing only the named timestamp fields.
+Reproducibility is a same-machine contract because the booking app deliberately uses system fonts. Context settings, device scale, iteration order, and artifact paths are pinned. The app also intentionally mints new private booking slugs on every fresh seed: Idiom uses the raw setup-derived URL for browser navigation and persists the stable setup-output declaration plus a state-keyed URL template. Therefore unchanged consecutive runs have equivalent screenshots and metadata after removing only the named timestamp fields.
+
+For setup-stdout-derived navigation values, saved DOM, console and accessibility text replace the complete URL, non-root pathname and every nonempty route segment, including encoded/once-decoded segments and their ordinary JSON-string and HTML-entity forms. The same sanitizer covers captured observation/timeline strings and tuple failure messages. With no route schema to identify private parameters, every segment is a candidate, including short ones. Bare segments match complete tokens rather than substrings inside larger words, CSS identifiers or percent escapes. In saved DOM and accessibility HTML snippets they are replaced in text and attribute values, never in tag or attribute names, and in selectors never in tag-name position (so a route segment such as `b` or `button` leaves the markup and path-style selectors intact). Captured observation/timeline text and selector identities are redacted while structural fields (such as statuses, tag/role names and measured CSS) remain intact; selector-keyed screenshot geometry follows the redacted selectors. Probe rounds and replay merges use raw in-memory identities, with redaction applied to their completed evidence before checks and saving. Literal state URLs are recorded exactly. Screenshot pixels and the rendered browser state are unchanged. This bounded replacement does not discover arbitrary secrets or all possible encodings; the separate environment-value publication scan still checks configured secret values before publication.
 
 Probe, time-budget and colour-scheme settings are in [configuration.md](configuration.md#capture-settings); production builds are in [configuration.md](configuration.md#production-builds).
 
@@ -528,7 +573,7 @@ Sizes become `checks.components` entries (or, with "tall"/"wide", a state invari
 +++ b/.idiom/project.json
 @@ -34,5 +34,15 @@
      "provider": "claude-code",
-     "model": "claude-sonnet-4-5",
+     "model": "claude-sonnet-5-5",
      "maxFindings": 5
 +  },
 +  "checks": {
@@ -580,7 +625,7 @@ The direct Messages API remains an explicit fallback for existing projects and m
 {
   "model": {
     "provider": "anthropic",
-    "model": "claude-sonnet-4-5",
+    "model": "claude-sonnet-5-5",
     "maxFindings": 5
   }
 }
@@ -589,6 +634,23 @@ The direct Messages API remains an explicit fallback for existing projects and m
 ```sh
 ANTHROPIC_API_KEY=<credential> idiom review booking
 ```
+
+To review with Codex instead, install and authenticate the Codex CLI (`codex login`) and select `codex`. Idiom runs `codex exec` read-only and ephemeral in the project directory, attaches every screenshot and image reference to the request, and reads the structured result from a temporary file. It needs no Anthropic credential and removes `ANTHROPIC_API_KEY` from the child. The critique context, allowances, validation and one repair round are the same as Claude Code's.
+
+Any provider can name a fallback, with its own model id, used only when the primary fails:
+
+```json
+{
+  "model": {
+    "provider": "codex",
+    "model": "<codex model id>",
+    "maxFindings": 5,
+    "fallback": { "provider": "claude-code", "model": "claude-sonnet-5-5" }
+  }
+}
+```
+
+The fallback must be a different provider. After the first primary failure the rest of that run uses the fallback. The report stays full but says which provider completed it and why the primary failed, and the CLI prints a `Warning:` line. If both fail, the review degrades as usual and the reason names both.
 
 Review writes `findings.json`, `unruled-decisions.json`, `report.md`, and `report.html` beside the capture. Both report formats begin with the declared flow coverage: selected states, viewport dimensions, colour schemes, successfully captured tuples, commit identity, project axes narrowed out by the flow, and any failed or unavailable tuple. When surfaces are declared, the same block always names judged, governed-but-not-judged, and ungoverned groups, including an explicit `none`. The self-contained HTML groups findings by state and embeds every displayed screenshot; it makes no network requests and supports light and dark system themes. It always runs ten local checks for overflow/clipping, narrow-viewport breakage, contrast, accessible labels, target size, headings, design-token drift, console errors, missing states, and spacing-rhythm outliers, plus the thirty-two craft checks described under [Checks](configuration.md#checks). Spacing rhythm is inferred only from a strong prevailing clearance among comparable interactive placements in the current run, so uniformly tight products are not judged against a built-in spacing scale. Captures with legacy observations show that check as `not evaluated` instead of guessing. Both providers receive the same product/design context, prior decisions, rules and rulings, every eligible deterministic finding, managed reference and anti-reference images with their notes/provenance, legacy loose references, captured screenshots, and bounded allowances. Both polarities are equally binding. Both providers return strict findings plus best-effort decision observations. Findings retain their existing local screenshot/state/viewport, exact known-reference-label, and no-rating validation. A `reference-mismatch` finding must cite at least one specific reference or anti-reference label; that citation is persisted and printed in the report. The direct provider retains its base64 Messages transport and requires an image-capable Messages model.
 
@@ -606,7 +668,7 @@ unavailable instead of implying that the law is complete.
 
 At most five material findings are published across both layers. After both layers complete, eligible findings are deduplicated and ranked by severity, confidence descending, then canonical fingerprint; deterministic confidence is `1.0`, so deterministic findings naturally win equal-severity confidence comparisons. Reports visibly label each material finding's layer and list every eligible finding below the cap cutoff in a separate evaluated-but-not-selected section. Model findings have per-finding confidence below `1.0` and cite real captured screenshots plus the guidance they violate. Standing rule-scope rejections from `.idiom/decisions.jsonl` and suppressions from `.idiom/rules.json` filter matching deterministic and model findings before selection and remain visible, with their provenance and reason, in every report's suppressed-findings appendix. Rules-file severity overrides apply before ranking and are annotated as `original -> effective` in the report.
 
-A report is labeled full only when the selected model provider completes successfully. `--deterministic-only` is labeled as an intentional model skip. A full review invokes the provider even when deterministic candidates already meet or exceed the material cap; cap saturation is never itself a degradation. A missing or unauthenticated `claude`, an unsupported model or CLI version, malformed output, provider/network failure, or missing API key on the explicit `anthropic` path produces a visible degradation warning and a non-full report. When Claude Code cannot run and no API key is available, the warning names both prerequisites and still exits 0 with ranked deterministic findings. A present key is never used as an automatic fallback; the warning explains how to select `model.provider: "anthropic"` explicitly. Partial model batches are never published. `--deterministic-only` does not construct a provider or read provider-only screenshot/context inputs and makes zero external calls. A corrupt decision log remains an actionable project-data error because silently forgetting human policy would be unsafe.
+A report is labeled full only when the selected model provider completes successfully. `--deterministic-only` is labeled as an intentional model skip. A full review invokes the provider even when deterministic candidates already meet or exceed the material cap; cap saturation is never itself a degradation. A missing or unauthenticated `claude`, an unsupported model or CLI version, malformed output, provider/network failure, or missing API key on the explicit `anthropic` path produces a visible degradation warning and a non-full report. When Claude Code cannot run and no API key is available, the warning names both prerequisites and still exits 0 with ranked deterministic findings. A present key is never used as an automatic fallback; the warning explains how to select `model.provider: "anthropic"` explicitly or configure `model.fallback`. A configured `model.fallback` is used visibly, never silently. A missing or unauthenticated `codex` degrades the same way, with a `codex login` hint. Partial model batches are never published. `--deterministic-only` does not construct a provider or read provider-only screenshot/context inputs and makes zero external calls. A corrupt decision log remains an actionable project-data error because silently forgetting human policy would be unsafe.
 
 `--from` validates the stored flow and commit coherence and does not compare with current `HEAD`, launch a browser, start a server, or run Git. In full mode it may call the configured model; combine it with `--deterministic-only` for an offline replay. When `design.tokensFile` is absent, token drift is reported as skipped; when declared, the project-relative stylesheet is parsed and its custom-property values are normalized in Chromium. Review never produces an aggregate design rating.
 
@@ -623,7 +685,7 @@ idiom review --page https://localhost:3000/ --brief brief.md --direction directi
   --focus hierarchy primary-action --frame refs/editorial.png "Calm, editorial, one accent colour"
 ```
 
-With `--brief`, every statistic on the page (percentages, multipliers, prices, `12,000+ teams`, `4.9/5`) has to appear in the brief, or `page-content` reports it as `idiom:unsupported-claim`. Footers and years are ignored. The model critique (`--model`, `--provider`, or the project's `model` inside an Idiom project) reads the brief and direction as numbered lines. It reports sections that drift from the direction (`direction-drift`), offer changes (`offer-change`) and claims the brief does not contain (`unsupported-claim`). Each finding names the page section (`s1`, `s2`, …), cites the brief or direction line it relies on, and gives a concrete fix. Citations are checked against the file: a line that does not exist, or an excerpt that is not on it, is rejected. Only the brief is the source of truth; claims are never fact-checked against the web.
+With `--brief`, every statistic on the page (percentages, multipliers, prices, `12,000+ teams`, `4.9/5`) has to appear in the brief, or `page-content` reports it as `idiom:unsupported-claim`. Footers and years are ignored. The model critique (`--model`, `--provider` (`claude-code`, `anthropic` or `codex`), or the project's `model` inside an Idiom project, including its `fallback`; an explicit `--provider` or `--model` skips the fallback) reads the brief and direction as numbered lines. It reports sections that drift from the direction (`direction-drift`), offer changes (`offer-change`) and claims the brief does not contain (`unsupported-claim`). Each finding names the page section (`s1`, `s2`, …), cites the brief or direction line it relies on, and gives a concrete fix. Citations are checked against the file: a line that does not exist, or an excerpt that is not on it, is rejected. Only the brief is the source of truth; claims are never fact-checked against the web.
 
 `--focus` takes `hierarchy`, `primary-action` (one primary action per view), `naming`, `radii-heights` and `jargon`; findings in a requested area rank first within their severity. `--frame` adds reference frames as image files, text files or literal text. `--max-findings` (default 10) caps the material findings, `--out` sets the output directory (default `idiom-page-reviews/<timestamp>`), and `--deterministic-only` skips the model. Without a model, the report says the critique degraded and keeps the deterministic findings.
 

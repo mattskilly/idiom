@@ -11,10 +11,12 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import type { snapshotSource } from "../src/capture/resolve.js";
 import type { BrowserLauncher, TupleResult } from "../src/capture/types.js";
 import { run } from "../src/cli.js";
 import { initProject } from "../src/commands/init.js";
 import { instructionCommand } from "../src/commands/instruction.js";
+import { ClaudeCodeCritiqueError } from "../src/critique/claude-code.js";
 import type {
   CritiqueInput,
   ModelFindingCandidate,
@@ -46,7 +48,8 @@ async function freePort(): Promise<number> {
 async function captureFixture(
   failed: boolean,
   maxFindings = 5,
-  provider: "claude-code" | "anthropic" = "anthropic",
+  provider: "claude-code" | "anthropic" | "codex" = "anthropic",
+  fallback?: { provider: "claude-code" | "anthropic" | "codex"; model: string },
 ) {
   const directory = await mkdtemp(join(tmpdir(), "idiom-cli-capture-"));
   temporaryDirectories.push(directory);
@@ -78,6 +81,7 @@ async function captureFixture(
         provider,
         model: "unused",
         maxFindings,
+        ...(fallback === undefined ? {} : { fallback }),
       },
     }),
   );
@@ -705,6 +709,8 @@ test("subcommand help and option errors return without exiting the host process"
 
 test("capture parses --project/--out and prints its published report", async () => {
   const fixture = await captureFixture(false);
+  const invokingDirectory = await mkdtemp(join(tmpdir(), "idiom-cli-invoke-"));
+  temporaryDirectories.push(invokingDirectory);
   const out = join(fixture.directory, "custom-output");
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -720,6 +726,7 @@ test("capture parses --project/--out and prints its published report", async () 
       out,
     ],
     {
+      cwd: invokingDirectory,
       stdout: (message) => stdout.push(message),
       stderr: (message) => stderr.push(message),
       capture: {
@@ -732,9 +739,168 @@ test("capture parses --project/--out and prints its published report", async () 
   expect(code).toBe(0);
   expect(stdout.join("")).toContain("Captured fixture: 1 passed, 0 failed");
   expect(stdout.join("")).toContain(join(out, "baseline.md"));
+  for (const artifact of [
+    "baseline.md",
+    "run.json",
+    "state/desktop/screenshot.png",
+  ]) {
+    await expect(access(join(out, artifact))).resolves.toBeUndefined();
+  }
   expect(stderr.join("")).toMatch(
     /Timings:[\s\S]*build:[\s\S]*start:[\s\S]*capture[\s\S]*probe[\s\S]*checks:/,
   );
+});
+
+test.each(["injected", "process"])(
+  "capture resolves relative --out from the %s cwd when --project selects another directory",
+  async (cwdSource) => {
+    const fixture = await captureFixture(false);
+    const invokingDirectory = await mkdtemp(
+      join(tmpdir(), "idiom-cli-invoke-"),
+    );
+    temporaryDirectories.push(invokingDirectory);
+    const relativeOut =
+      cwdSource === "injected" ? "nested/baseline" : "baseline";
+    const out = join(invokingDirectory, relativeOut);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const snapshot = vi.fn<typeof snapshotSource>(async () => ({
+      commit: "abc123",
+      dirty: false,
+    }));
+    const cwdSpy =
+      cwdSource === "process"
+        ? vi.spyOn(process, "cwd").mockReturnValue(invokingDirectory)
+        : undefined;
+    try {
+      const code = await run(
+        [
+          "node",
+          "idiom",
+          "capture",
+          "fixture",
+          "--project",
+          fixture.directory,
+          "--out",
+          relativeOut,
+        ],
+        {
+          ...(cwdSource === "injected" ? { cwd: invokingDirectory } : {}),
+          stdout: (message) => stdout.push(message),
+          stderr: (message) => stderr.push(message),
+          capture: {
+            browserLauncher: fixture.browserLauncher,
+            inheritedEnvironment: { PATH: process.env.PATH },
+            snapshotSource: snapshot,
+          },
+        },
+      );
+      expect(code, stderr.join("")).toBe(0);
+      for (const artifact of [
+        "baseline.md",
+        "run.json",
+        "state/desktop/screenshot.png",
+      ]) {
+        await expect(access(join(out, artifact))).resolves.toBeUndefined();
+      }
+      expect(stdout.join("")).toContain(join(out, "baseline.md"));
+      await expect(
+        access(join(fixture.directory, relativeOut)),
+      ).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(snapshot).toHaveBeenCalledWith(
+        fixture.directory,
+        expect.objectContaining({
+          explicitOutputPath: out,
+          excludedPaths: expect.arrayContaining([out]),
+        }),
+      );
+    } finally {
+      cwdSpy?.mockRestore();
+    }
+  },
+);
+
+test("capture keeps default output under the selected project with a distinct cwd", async () => {
+  const fixture = await captureFixture(false);
+  const invokingDirectory = await mkdtemp(join(tmpdir(), "idiom-cli-invoke-"));
+  temporaryDirectories.push(invokingDirectory);
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const timestamp = "2026-08-14T12-00-00-000Z";
+  const out = join(fixture.directory, ".idiom", "reports", timestamp);
+  const code = await run(
+    ["node", "idiom", "capture", "fixture", "--project", fixture.directory],
+    {
+      cwd: invokingDirectory,
+      stdout: (message) => stdout.push(message),
+      stderr: (message) => stderr.push(message),
+      capture: {
+        browserLauncher: fixture.browserLauncher,
+        inheritedEnvironment: { PATH: process.env.PATH },
+        snapshotSource: async () => ({ commit: "abc123", dirty: false }),
+        now: () => new Date("2026-08-14T12:00:00.000Z"),
+      },
+    },
+  );
+  expect(code, stderr.join("")).toBe(0);
+  expect(stdout.join("")).toContain(join(out, "baseline.md"));
+  for (const artifact of [
+    "baseline.md",
+    "run.json",
+    "state/desktop/screenshot.png",
+  ]) {
+    await expect(access(join(out, artifact))).resolves.toBeUndefined();
+  }
+  expect(await readdir(invokingDirectory)).toEqual([]);
+});
+
+test("capture refuses an existing relative --out in the invoking directory", async () => {
+  const fixture = await captureFixture(false);
+  const invokingDirectory = await mkdtemp(join(tmpdir(), "idiom-cli-invoke-"));
+  temporaryDirectories.push(invokingDirectory);
+  const relativeOut = "baseline";
+  const out = join(invokingDirectory, relativeOut);
+  await mkdir(out);
+  const sentinel = Buffer.from("existing output must survive\n");
+  await writeFile(join(out, "sentinel.txt"), sentinel);
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const code = await run(
+    [
+      "node",
+      "idiom",
+      "capture",
+      "fixture",
+      "--project",
+      fixture.directory,
+      "--out",
+      relativeOut,
+    ],
+    {
+      cwd: invokingDirectory,
+      stdout: (message) => stdout.push(message),
+      stderr: (message) => stderr.push(message),
+      capture: {
+        browserLauncher: fixture.browserLauncher,
+        inheritedEnvironment: { PATH: process.env.PATH },
+        snapshotSource: async () => ({ commit: "abc123", dirty: false }),
+      },
+    },
+  );
+  expect(code).toBe(1);
+  expect(stderr.join("")).toContain(
+    `capture output already exists and will not be overwritten: ${out}`,
+  );
+  expect(await readFile(join(out, "sentinel.txt"))).toEqual(sentinel);
+  expect(await readdir(out)).toEqual(["sentinel.txt"]);
+  expect(stdout).toEqual([]);
+  await expect(
+    access(join(fixture.directory, relativeOut)),
+  ).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });
 
 test("verify parses its required options and reports the distinct no-findings outcome", async () => {
@@ -1145,6 +1311,102 @@ test("provider factory receives legacy Anthropic routing context", async () => {
       projectDirectory: fixture.directory,
     }),
   );
+});
+
+test("a failing primary falls back, visibly, to the configured provider", async () => {
+  const fixture = await captureFixture(false, 5, "claude-code", {
+    provider: "codex",
+    model: "gpt-configured",
+  });
+  const stderr: string[] = [];
+  const failing = vi.fn(async () => {
+    throw new ClaudeCodeCritiqueError("usage limit reached");
+  });
+  const succeeding = vi.fn(async () => []);
+  const factory = vi.fn((options: { provider: string }) => ({
+    critique: options.provider === "codex" ? succeeding : failing,
+  }));
+  const code = await run(
+    [
+      "node",
+      "idiom",
+      "review",
+      "fixture",
+      "--project",
+      fixture.directory,
+      "--json",
+    ],
+    {
+      stdout: () => undefined,
+      stderr: (message) => stderr.push(message),
+      review: {
+        environment: {},
+        capture: {
+          browserLauncher: fixture.browserLauncher,
+          inheritedEnvironment: { PATH: process.env.PATH },
+          snapshotSource: async () => ({ commit: "abc123", dirty: false }),
+        },
+        createCritiqueAdapter: factory,
+      },
+    },
+  );
+  expect(code).toBe(0);
+  expect(failing).toHaveBeenCalledTimes(1);
+  expect(succeeding).toHaveBeenCalledTimes(1);
+  expect(factory).toHaveBeenCalledWith(
+    expect.objectContaining({ provider: "codex", model: "gpt-configured" }),
+  );
+  expect(stderr.join("")).toContain(
+    "Warning: Model critique used fallback provider codex after claude-code failed: Claude Code CLI is unavailable",
+  );
+  expect(stderr.join("")).not.toContain("Model critique degraded");
+  const reports = await readdir(join(fixture.directory, ".idiom", "reports"));
+  const runDirectory = join(
+    fixture.directory,
+    ".idiom",
+    "reports",
+    reports[0] ?? "",
+  );
+  const report = await readFile(join(runDirectory, "report.md"), "utf8");
+  expect(report).toContain("# Full review: fixture");
+  expect(report).toContain(
+    "Model layer: Model layer completed using fallback provider codex after claude-code failed",
+  );
+  const html = await readFile(join(runDirectory, "report.html"), "utf8");
+  expect(html).toContain(
+    "Model layer completed using fallback provider codex after claude-code failed",
+  );
+});
+
+test("without a fallback a failing primary still degrades", async () => {
+  const fixture = await captureFixture(false, 5, "codex");
+  const stderr: string[] = [];
+  const code = await run(
+    ["node", "idiom", "review", "fixture", "--project", fixture.directory],
+    {
+      stdout: () => undefined,
+      stderr: (message) => stderr.push(message),
+      review: {
+        environment: {},
+        capture: {
+          browserLauncher: fixture.browserLauncher,
+          inheritedEnvironment: { PATH: process.env.PATH },
+          snapshotSource: async () => ({ commit: "abc123", dirty: false }),
+        },
+        codexRunner: async () => ({
+          stdout: "",
+          stderr: "not logged in",
+          exitCode: 1,
+          signal: null,
+        }),
+      },
+    },
+  );
+  expect(code).toBe(0);
+  expect(stderr.join("")).toContain(
+    "Warning: Model critique degraded: Codex CLI is unavailable or not authenticated; install or update Codex and run `codex login`; diagnostic: exit 1: not logged in",
+  );
+  expect(stderr.join("")).not.toContain("fallback provider");
 });
 
 test("Claude Code failure preserves both fixed prerequisites after sanitizing a long diagnostic", async () => {

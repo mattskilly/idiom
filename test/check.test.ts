@@ -12,6 +12,7 @@ import { baselineRecordCommand } from "../src/commands/baseline.js";
 import { checkCommand, renderCheckSummary } from "../src/commands/check.js";
 import { initProject } from "../src/commands/init.js";
 import { readDecisionLog } from "../src/decisions/log.js";
+import { comparePriority } from "../src/review/ranking.js";
 import type { Finding } from "../src/schemas/finding.js";
 import { parseFindingBlocks } from "../src/verify/spec.js";
 import { fixture } from "./benchmark-support.js";
@@ -349,6 +350,24 @@ test("check proposes current open material without accepting, changing the summa
   const { tickets, ...unchanged } = summary;
   expect(unchanged).toEqual(before);
   expect(tickets?.createdPaths.length).toBeGreaterThan(0);
+  const scores = new Map(
+    (summary.groups ?? []).flatMap((g) => {
+      const issue = summary.issues?.find((i) => i.groups.includes(g.id));
+      return g.members.map((m) => [m.id, issue?.score ?? 0] as const);
+    }),
+  );
+  const priority = (tickets?.selectedClusters ?? []).map((c) => ({
+    severity:
+      [...c.members].sort((a, b) =>
+        comparePriority(
+          { severity: a.record.finding.severity, score: 0 },
+          { severity: b.record.finding.severity, score: 0 },
+        ),
+      )[0]?.record.finding.severity ?? ("minor" as const),
+    score: Math.max(...c.members.map((m) => scores.get(m.id) ?? 0)),
+  }));
+  expect(priority).toEqual([...priority].sort(comparePriority));
+
   const persisted = JSON.parse(
     await readFile(join(summary.runDirectory, "findings.json"), "utf8"),
   ) as Finding[];

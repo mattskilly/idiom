@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { type CaptureDependencies, runCapture } from "../capture/run.js";
 import type { CaptureScope } from "../capture/scope.js";
 import type { CaptureRunResult } from "../capture/types.js";
@@ -17,10 +18,11 @@ export async function captureCommand(options: {
   refreshDesign?: boolean | undefined;
   dependencies?: CaptureDependencies | undefined;
 }): Promise<CaptureRunResult> {
+  const cwd = options.cwd ?? process.cwd();
   const validated = await validateProject({
     project: options.project,
     flow: options.flow,
-    cwd: options.cwd,
+    cwd,
   });
   const record = validated.flows[0];
   if (record === undefined || record.flow.id !== options.flow) {
@@ -32,7 +34,7 @@ export async function captureCommand(options: {
     projectDirectory: validated.projectDirectory,
     project: validated.project,
     flow: record.flow,
-    out: options.out,
+    out: options.out === undefined ? undefined : resolve(cwd, options.out),
     prod: options.prod,
     scope: options.scope,
     port: options.port,

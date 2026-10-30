@@ -169,25 +169,26 @@ export async function hostedApi(
     if (route === "report") {
       if (request.method !== "GET" && request.method !== "HEAD")
         return json({}, 405);
+      if (request.method === "HEAD") {
+        await deps.reports.manifest(id);
+        return new Response(null, { headers: reportHeaders });
+      }
       const { report, expiresAt } = await deps.reports.read(id);
-      return new Response(
-        request.method === "HEAD"
-          ? null
-          : renderHostedReport(id, report, expiresAt),
-        { headers: reportHeaders },
-      );
+      return new Response(renderHostedReport(id, report, expiresAt), {
+        headers: reportHeaders,
+      });
     }
     if (route === "asset") {
       if (request.method !== "GET" && request.method !== "HEAD")
         return json({}, 405);
-      const bytes = await deps.reports.asset(
-        id,
-        url.searchParams.get("name") ?? "",
-      );
-      return new Response(
-        request.method === "HEAD" ? null : new Uint8Array(bytes),
-        { headers: { ...reportHeaders, "content-type": "image/png" } },
-      );
+      const name = url.searchParams.get("name") ?? "";
+      const headers = { ...reportHeaders, "content-type": "image/png" };
+      if (request.method === "HEAD") {
+        await deps.reports.assetMetadata(id, name);
+        return new Response(null, { headers });
+      }
+      const bytes = await deps.reports.asset(id, name);
+      return new Response(new Uint8Array(bytes), { headers });
     }
     if (route === "delete") {
       if (request.method !== "POST") return json({}, 405);

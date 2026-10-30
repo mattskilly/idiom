@@ -52,6 +52,7 @@ jobs:
             echo "::error::Tag $TAG does not match package.json version $version"
             exit 1
           }
+          node scripts/check-plugins.mjs
           test -s dist/cli.js
           # server.json arrived in v0.15.0; older tags have none to check.
           if test -f server.json; then

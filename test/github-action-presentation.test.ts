@@ -445,3 +445,24 @@ test("resolution joins fingerprints and coordinates and refuses stale, uncovered
     ).notices.join(),
   ).toContain("matching candidate npm package");
 });
+
+test("comment and artifact keep tier precedence and incoming equal-severity order", () => {
+  const result = report(
+    [
+      finding("minor", "measured", "minorfirst"),
+      finding("major", "measured", "majorfirst"),
+      finding("blocker", "measured", "blockerfirst"),
+      finding("major", "measured", "majorsecond"),
+    ],
+    "never",
+  );
+  const ids = ["blockerfirst", "majorfirst", "majorsecond", "minorfirst"];
+  expect(
+    presentation(result).tiers[1].entries.map((e: { id: string }) => e.id),
+  ).toEqual(ids);
+  for (const output of [renderComment(result, artifact), renderIndex(result)]) {
+    const positions = ids.map((id) => output.indexOf(`Problem ${id}`));
+    expect(positions.every((p) => p >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  }
+});

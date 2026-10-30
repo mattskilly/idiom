@@ -209,7 +209,9 @@ test("README exposes design and agent entry points", () => {
   for (const fragment of [
     "fifteen",
     "stdio",
-    "claude mcp add idiom -- npx -y @mattskilly/idiom mcp",
+    "/plugin marketplace add mattskilly/idiom",
+    "/plugin install idiom@idiom",
+    "codex plugin add idiom@idiom",
     "](docs/mcp.md)",
   ])
     expect(agent).toContain(fragment);
@@ -428,6 +430,28 @@ test("release publication uses the tested changelog extractor in order", async (
   expect(releaseGuide).toContain(`--title "Idiom v${versionVariable}"`);
   expect(releaseGuide).toContain('--notes-file "$release_notes"');
 
+  const publicRelease =
+    releaseGuide.split("## Publish the public snapshot and npm package")[1] ??
+    "";
+  const publicTagIndex = publicRelease.indexOf(
+    `git push origin "v${versionVariable}"`,
+  );
+  const packIndex = publicRelease.indexOf("npm pack --ignore-scripts --json");
+  const uploadIndex = publicRelease.indexOf(
+    `gh release create "v${versionVariable}" "$tarball"`,
+  );
+  const readbackIndex = publicRelease.indexOf(
+    'cmp "$tarball" "$packed_root/downloaded.tgz"',
+  );
+  const advertiseIndex = publicRelease.indexOf("git push origin main");
+  expect(publicTagIndex).toBeGreaterThan(-1);
+  expect(packIndex).toBeGreaterThan(publicTagIndex);
+  expect(uploadIndex).toBeGreaterThan(packIndex);
+  expect(readbackIndex).toBeGreaterThan(uploadIndex);
+  expect(advertiseIndex).toBeGreaterThan(readbackIndex);
+  expect(publicRelease).toContain(
+    'node scripts/check-plugins.mjs "$packed_root/package"',
+  );
   for (const version of ["0.0.1", "0.0.2"]) {
     const extracted = await extractedReleaseBody(version);
     expect(extracted.trim()).not.toBe("");
@@ -438,9 +462,9 @@ test("release publication uses the tested changelog extractor in order", async (
 test("MCP setup snippets parse to the documented launchers and preserve fixed desktop roots", async () => {
   const { parse } = await import("smol-toml");
   const source = await readFile(join(repositoryRoot, "docs/mcp.md"), "utf8");
-  expect(source).toContain(
-    "claude mcp add idiom -- npx -y @mattskilly/idiom mcp",
-  );
+  expect(source).toContain("claude mcp add idiom -- idiom mcp");
+  expect(source).toContain("/plugin install idiom@idiom");
+  expect(source).toContain("codex plugin add idiom@idiom");
   const snippets = [...source.matchAll(/```json\n([\s\S]*?)\n```/g)].map(
     (snippet) => JSON.parse(snippet[1] ?? ""),
   );
@@ -450,14 +474,8 @@ test("MCP setup snippets parse to the documented launchers and preserve fixed de
   expect(launchers).toHaveLength(2);
   for (const settings of launchers) {
     expect(settings.mcpServers.idiom).toEqual({
-      command: "npx",
-      args: [
-        "-y",
-        "@mattskilly/idiom",
-        "mcp",
-        "--project",
-        "/absolute/path/to/project",
-      ],
+      command: "idiom",
+      args: ["mcp", "--project", "/absolute/path/to/project"],
     });
   }
   const agentSettings = snippets.filter(
@@ -474,14 +492,8 @@ test("MCP setup snippets parse to the documented launchers and preserve fixed de
   expect(configuration).toMatchObject({
     mcp_servers: {
       idiom: {
-        command: "npx",
-        args: [
-          "-y",
-          "@mattskilly/idiom",
-          "mcp",
-          "--project",
-          "/absolute/path/to/project",
-        ],
+        command: "idiom",
+        args: ["mcp", "--project", "/absolute/path/to/project"],
         tool_timeout_sec: 3900,
       },
     },
@@ -492,4 +504,32 @@ test("MCP setup snippets parse to the documented launchers and preserve fixed de
     "Progress notifications do not extend every client's timeout",
   );
   expect(readme).toContain("](docs/mcp.md)");
+});
+
+test("public ranking contract says severity first and retains salience × prominence within tiers", async () => {
+  for (const file of [
+    "README.md",
+    "docs/ranking.md",
+    "docs/architecture.md",
+    "docs/rules.md",
+    "site/docs/findings.md",
+  ]) {
+    const source = await readFile(join(repositoryRoot, file), "utf8");
+    expect(source).toMatch(/severity(?:\*\*)? first|severity first\*\*/);
+    expect(source).toContain("salience × prominence");
+    expect(source).toMatch(/within\s+(?:each|a) tier/);
+  }
+});
+
+test("validate reference states project discovery for explicit and omitted --project", () => {
+  const start = commandsDoc.indexOf("## validate");
+  expect(start).toBeGreaterThanOrEqual(0);
+  const end = commandsDoc.indexOf("\n## ", start + 1);
+  const section = commandsDoc.slice(start, end === -1 ? undefined : end);
+  expect(section).toMatch(/`--project` directory/);
+  expect(section).toMatch(/omitted/);
+  expect(section).toMatch(
+    /walks upward to the nearest `\.idiom\/project\.json`/,
+  );
+  expect(section).not.toContain("Without `--project`, validation");
 });

@@ -175,3 +175,25 @@ test("family heading uses worst severity while all occurrences keep their own ru
     expect(text).toContain(`--finding ${g.members[0]?.id}`);
   }
 });
+
+test("Top-N takes the severity-first prefix without dropping catalogue members or changing scores", () => {
+  const result = summary();
+  const groups = result.groups ?? [];
+  const last = groups.at(-1);
+  if (!last) throw new Error("missing group");
+  last.severity = "major";
+  const before = collapseIssues(
+    groups.map((g) => ({ ...g, severity: "minor" })),
+    new Set(),
+  );
+  result.issues = collapseIssues(groups, new Set());
+  expect(result.issues[0]?.id).toBe(last.id);
+  expect(result.issues.map((i) => [i.id, i.score]).sort()).toEqual(
+    before.map((i) => [i.id, i.score]).sort(),
+  );
+  const text = renderCheckSummary(result, { top: 1 });
+  expect(text).toContain("Top issues (1 of 8)");
+  expect(text).toContain("1. [major]");
+  expect(text).toContain("Problem 7");
+  expect(text).not.toContain("Problem 0");
+});

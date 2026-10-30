@@ -326,3 +326,15 @@ export function scoreGroup(
     primaryAction,
   };
 }
+
+/** Priority of completed presentation items; callers retain their own final tie-break. */
+export function comparePriority(
+  left: { severity: Finding["severity"]; score: number },
+  right: { severity: Finding["severity"]; score: number },
+): number {
+  const severity = { blocker: 0, major: 1, minor: 2 };
+  return (
+    severity[left.severity] - severity[right.severity] ||
+    right.score - left.score
+  );
+}

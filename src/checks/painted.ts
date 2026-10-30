@@ -2,6 +2,7 @@ import type {
   CheckCoverage,
   CheckResult,
   CheckTuple,
+  CoverageStatus,
   ObservedElement,
 } from "./types.js";
 
@@ -49,6 +50,10 @@ export function paintedGate(tuple: CheckTuple, rules: readonly string[]) {
       coverage: { ...result.coverage, ...coverage() },
     }),
   };
+}
+
+export function coverageStatusText(status: CoverageStatus): string {
+  return status === "not-applicable" ? "not applicable" : status;
 }
 
 export function paintedCoverageText(coverage: {

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -15,9 +15,11 @@ import {
   createBrowserLauncher,
   deterministicContextOptions,
 } from "../src/capture/browser.js";
-import { runCapture } from "../src/capture/run.js";
+import { runCapture, sanitizeDerivedResult } from "../src/capture/run.js";
+import type { TupleResult } from "../src/capture/types.js";
 import { observationArtifactSchema } from "../src/checks/artifact-schema.js";
 import {
+  loadTokenDeclarations,
   normalizeTokenDeclarations,
   observePage,
 } from "../src/checks/observe.js";
@@ -26,6 +28,9 @@ import {
   runDeterministicChecks,
 } from "../src/checks/registry.js";
 import type { ObservationArtifact } from "../src/checks/types.js";
+import { initProject } from "../src/commands/init.js";
+import { loadCaptureRun } from "../src/review/artifacts.js";
+import { screenshotPlacement } from "../src/review/crops.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { checksConfigSchema, projectSchema } from "../src/schemas/project.js";
 
@@ -87,6 +92,214 @@ const observations = {
   tokens: { status: "not-configured" as const },
 };
 
+test("setup route redaction changes saved text while Chromium sees the private rendered state", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-private-route-"));
+  let raw: TupleResult | undefined;
+  let browser: Browser | undefined;
+  try {
+    await initProject({ project: directory, yes: true });
+    const port = await freePort();
+    const script = join(directory, "server.mjs");
+    await writeFile(
+      script,
+      `import { createServer } from 'node:http';
+      createServer((req, res) => {
+        const url = 'http://' + req.headers.host + req.url;
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end('<!doctype html><html lang="en"><title>Private route</title><main>' +
+          '<h1>private-slug</h1><p><b>Bold</b></p><button aria-label="private-slug">Open</button>' +
+          '<script type="application/json">' + JSON.stringify({ url, params: { code: 'private-slug' } }) + '</script>' +
+          '<script>console.log("private-slug")</script></main></html>');
+      }).listen(Number(process.env.PORT), '127.0.0.1');`,
+    );
+    const capturedProject = projectSchema.parse({
+      ...project,
+      server: {
+        build: "node -e 0",
+        start: `node '${script}'`,
+        readyUrl: `http://127.0.0.1:${port}/`,
+        port,
+        env: {},
+      },
+      capture: { ...project.capture, settleMs: 0 },
+      checks: { probe: { enabled: false } },
+    });
+    const flow = flowSchema.parse({
+      id: "private-route",
+      title: "Private route",
+      intent: [],
+      setup: [
+        {
+          run: "node -e 'console.log(process.env.SETUP_URL)'",
+          captureStdout: true,
+          env: {
+            SETUP_URL: `http://127.0.0.1:${port}/b/book/available/block/button/ran/private-slug`,
+          },
+        },
+      ],
+      states: [
+        {
+          id: "derived",
+          description: "Private page",
+          urlFrom: { source: "setup-stdout", pattern: "(http[^\\s]+)" },
+          expect: {
+            status: 200,
+            textPresent: ["private-slug"],
+            selectorPresent: ['button[aria-label="private-slug"]'],
+          },
+        },
+      ],
+    });
+    browser = await chromium.launch({ headless: true });
+    const activeBrowser = browser;
+    const result = await runCapture({
+      projectDirectory: directory,
+      project: capturedProject,
+      flow,
+      dependencies: {
+        inheritedEnvironment: { PATH: process.env.PATH },
+        snapshotSource: async () => ({ commit: "fixture", dirty: false }),
+        browserLauncher: async () => {
+          const session = await createBrowserLauncher({
+            launch: async () => activeBrowser,
+          })();
+          return {
+            ...session,
+            capture: async (tuple) => {
+              expect(tuple.navigationUrl).toMatch(
+                /\/b\/book\/available\/block\/button\/ran\/private-slug$/,
+              );
+              raw = await session.capture(tuple);
+              expect(raw.ok).toBe(true);
+              expect(raw.mismatches).toEqual([]);
+              expect(raw.dom).toContain(tuple.navigationUrl);
+              expect(raw.dom).toContain('"code":"private-slug"');
+              expect(
+                raw.console.some((record) => record.text === "private-slug"),
+              ).toBe(true);
+              expect(JSON.stringify(raw.axe)).toContain("private-slug");
+              return raw;
+            },
+          };
+        },
+      },
+    });
+    expect(result.counts).toEqual({ passed: 1, failed: 0, total: 1 });
+    const artifacts = join(result.runDirectory, "derived", "phone");
+    for (const file of ["dom.html", "console.jsonl", "axe.json"]) {
+      const text = await readFile(join(artifacts, file), "utf8");
+      expect(text, file).not.toContain("private-slug");
+      expect(text, file).toContain("setup-stdout:derived");
+    }
+    // Route segments b and button are tag names: the markup stays parseable.
+    const dom = await readFile(join(artifacts, "dom.html"), "utf8");
+    expect(dom).toContain("<p><b>Bold</b></p>");
+    expect(dom).toMatch(
+      /<button aria-label="[^"]*setup-stdout:derived[^"]*">Open<\/button>/,
+    );
+    const saved = observationArtifactSchema.parse(
+      JSON.parse(await readFile(join(artifacts, "observations.json"), "utf8")),
+    );
+    if (!raw?.ok) throw new Error("missing raw capture");
+    const original = observationArtifactSchema.parse(raw.observations);
+    if (saved.version !== 2 || original.version !== 2)
+      throw new Error("expected v2 observations");
+    expect(
+      original.elements.some((element) => element.styles.display === "block"),
+    ).toBe(true);
+    expect(
+      original.elements.some(
+        (element) =>
+          element.signals?.renderedContent?.textEvidence?.status ===
+          "available",
+      ),
+    ).toBe(true);
+    expect(saved.elements.map((element) => element.styles)).toEqual(
+      original.elements.map((element) => element.styles),
+    );
+    expect(saved.elements.map((element) => element.tag)).toEqual(
+      original.elements.map((element) => element.tag),
+    );
+    expect(
+      saved.elements
+        .map((element) => element.selector)
+        .filter((selector) => !selector.includes("setup-stdout")),
+    ).toEqual(
+      original.elements
+        .map((element) => element.selector)
+        .filter((selector) => !selector.includes("private-slug")),
+    );
+    const structuralSignals = (artifact: typeof original) =>
+      artifact.elements.map(({ signals }) => ({
+        renderedContent: signals?.renderedContent,
+        role: signals?.role,
+        motion: signals?.motion,
+        appearance: signals?.appearance,
+        cursor: signals?.cursor,
+      }));
+    expect(structuralSignals(saved)).toEqual(structuralSignals(original));
+    expect(
+      (
+        await loadCaptureRun({
+          runDirectory: result.runDirectory,
+          expectedFlow: flow.id,
+        })
+      ).tuples,
+    ).toHaveLength(1);
+    // An element's screenshot-time rect must follow its redacted selector.
+    const element = original.elements.find(
+      (element) => element.tag === "button",
+    );
+    if (!element) throw new Error("missing button");
+    const selector = '[data-code="private-slug"]';
+    const remeasured = { x: 75, y: 80, width: 90, height: 40 };
+    const geometry = sanitizeDerivedResult(
+      {
+        ...raw,
+        observations: {
+          ...original,
+          elements: [{ ...element, selector }],
+          screenshot: {
+            strategy: "viewport",
+            scale: 2,
+            width: 780,
+            height: 1688,
+            drift: {
+              observed: { width: 390, height: 844 },
+              captured: { width: 390, height: 900 },
+            },
+            rects: { [selector]: remeasured },
+          },
+        },
+      },
+      `http://127.0.0.1:${port}/b/book/available/block/button/ran/private-slug`,
+      {
+        kind: "setup-stdout",
+        origin: `http://127.0.0.1:${port}`,
+        source: "setup-stdout",
+        pattern: "(http[^\\s]+)",
+        append: "",
+        template: `http://127.0.0.1:${port}/{setup-stdout:derived}`,
+      },
+    );
+    const checked = observationArtifactSchema.parse(geometry.observations);
+    const redactedElement = checked.elements[0];
+    if (!redactedElement) throw new Error("missing redacted element");
+    expect(redactedElement.selector).not.toContain("private-slug");
+    expect(screenshotPlacement(checked).rect(redactedElement)).toEqual(
+      remeasured,
+    );
+    expect(JSON.stringify(checked)).not.toContain("private-slug");
+    expect(raw?.screenshot).toBeDefined();
+    expect(await readFile(join(artifacts, "screenshot.png"))).toEqual(
+      raw?.screenshot,
+    );
+  } finally {
+    await browser?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 async function freePort(): Promise<number> {
   const server = createServer();
   await new Promise<void>((accept) => server.listen(0, "127.0.0.1", accept));
@@ -99,13 +312,33 @@ async function freePort(): Promise<number> {
   return address.port;
 }
 
+/** Capture pages own a CDP session that hides scrollbars before navigation. */
+function withScrollbarSession<T extends object>(page: T) {
+  const send = vi.fn(async (_method: string, _params?: object) => ({}));
+  const session = { send, detach: vi.fn(async () => undefined) };
+  let sessions = 0;
+  return Object.assign(page, {
+    once: vi.fn(),
+    isClosed: () => false,
+    // Later sessions (filmstrips) stay unavailable, as before this mock.
+    context: () => ({
+      newCDPSession: async () => {
+        sessions += 1;
+        if (sessions > 1) throw new Error("no further CDP sessions");
+        return session;
+      },
+    }),
+    scrollbarSends: send,
+  });
+}
+
 test("isolates each tuple, captures truthful artifacts, and reports every mismatch", async () => {
   if (state === undefined) throw new Error("missing state");
   const viewport = project.viewports[0];
   if (viewport === undefined) throw new Error("missing viewport");
   const handlers = new Map<string, (value: never) => void>();
   const screenshot = vi.fn(async () => Buffer.from("png"));
-  const page = {
+  const page = withScrollbarSession({
     on: vi.fn((event: string, handler: (value: never) => void) => {
       handlers.set(event, handler);
     }),
@@ -127,7 +360,7 @@ test("isolates each tuple, captures truthful artifacts, and reports every mismat
     evaluate: vi.fn(async () => observations),
     screenshot,
     close: vi.fn(async () => undefined),
-  };
+  });
   const context = {
     newPage: vi.fn(async () => page as unknown as Page),
     close: vi.fn(async () => undefined),
@@ -160,6 +393,14 @@ test("isolates each tuple, captures truthful artifacts, and reports every mismat
     reducedMotion: "reduce",
   });
   expect(page.waitForTimeout).toHaveBeenCalledWith(125);
+  // State capture keeps today's scrollbar-free layout, set before navigating.
+  expect(page.scrollbarSends).toHaveBeenCalledWith(
+    "Emulation.setScrollbarsHidden",
+    { hidden: true },
+  );
+  expect(page.scrollbarSends.mock.invocationCallOrder[0]).toBeLessThan(
+    page.goto.mock.invocationCallOrder[0] ?? 0,
+  );
   expect(screenshot).toHaveBeenCalledWith({
     fullPage: true,
     animations: "disabled",
@@ -414,12 +655,12 @@ test("URL references reject non-success HTTP responses without taking a screensh
   const viewport = project.viewports[0];
   if (viewport === undefined) throw new Error("missing viewport");
   const screenshot = vi.fn(async () => Buffer.from("png"));
-  const page = {
+  const page = withScrollbarSession({
     goto: vi.fn(async () => ({ status: () => 404 })),
     waitForTimeout: vi.fn(async () => undefined),
     screenshot,
     close: vi.fn(async () => undefined),
-  };
+  });
   const context = {
     newPage: vi.fn(async () => page as unknown as Page),
     close: vi.fn(async () => undefined),
@@ -447,7 +688,7 @@ test("turns screenshot exceptions into typed failures and still closes context",
   if (state === undefined) throw new Error("missing state");
   const viewport = project.viewports[0];
   if (viewport === undefined) throw new Error("missing viewport");
-  const page = {
+  const page = withScrollbarSession({
     on: vi.fn(),
     goto: async () => ({ status: () => 200 }),
     waitForTimeout: async () => undefined,
@@ -461,7 +702,7 @@ test("turns screenshot exceptions into typed failures and still closes context",
       throw new Error("png failed");
     },
     close: async () => undefined,
-  };
+  });
   const context = {
     newPage: async () => page as unknown as Page,
     close: vi.fn(async () => undefined),
@@ -494,12 +735,12 @@ test("URL references use flow capture context pins with a viewport-bounded scree
   const viewport = project.viewports[0];
   if (viewport === undefined) throw new Error("missing viewport");
   const screenshot = vi.fn(async () => Buffer.from("png"));
-  const page = {
+  const page = withScrollbarSession({
     goto: vi.fn(async () => ({ status: () => 200 })),
     waitForTimeout: vi.fn(async () => undefined),
     screenshot,
     close: vi.fn(async () => undefined),
-  };
+  });
   const context = {
     newPage: vi.fn(async () => page as unknown as Page),
     close: vi.fn(async () => undefined),
@@ -593,6 +834,7 @@ test.each([
   {
     colorScheme: "light" as const,
     normalizedValues: [
+      "6px",
       "rgb(10, 124, 82)",
       "rgb(16, 18, 16)",
       "rgb(44, 55, 66)",
@@ -609,6 +851,7 @@ test.each([
   {
     colorScheme: "dark" as const,
     normalizedValues: [
+      "6px",
       "rgb(174, 181, 174)",
       "rgb(210, 211, 212)",
       "rgb(235, 238, 235)",
@@ -737,6 +980,80 @@ test.each([
   },
   30_000,
 );
+
+test("fails capture when declared color tokens resolve to nothing even though radii do", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-color-tokens-"));
+  const browser = await chromium.launch({ headless: true });
+  try {
+    await writeFile(
+      join(directory, "theme.css"),
+      `@theme inline {
+  --color-bg: var(--bg);
+  --color-ink: var(--ink);
+  --radius-sm: 4px;
+  --radius-lg: 12px;
+}
+`,
+    );
+    await writeFile(
+      join(directory, "radii.css"),
+      ":root { --radius-sm: 4px; }\n",
+    );
+    const declarations = await loadTokenDeclarations(directory, "theme.css");
+    const page = await browser.newPage();
+
+    await page.setContent(
+      "<style>:root{color-scheme: light; --bg: light-dark(rgb(250, 250, 250), rgb(10, 10, 10)); --ink: light-dark(rgb(20, 20, 20), rgb(240, 240, 240));}</style><body><p>x</p></body>",
+    );
+    const resolved = await normalizeTokenDeclarations(page, declarations);
+    expect(
+      resolved.status === "configured" && resolved.normalizedValues,
+    ).toEqual(["12px", "4px", "rgb(20, 20, 20)", "rgb(250, 250, 250)"]);
+
+    await page.setContent("<body><p>x</p></body>");
+    for (const attempt of [
+      normalizeTokenDeclarations(page, declarations),
+      observePage(page, declarations),
+    ]) {
+      const error = await attempt.then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(Error);
+      const message = (error as Error).message;
+      expect(message).toContain("color-token resolution");
+      expect(message).toContain("--color-bg");
+      expect(message).not.toContain(
+        "no usable custom-property color or radius values",
+      );
+    }
+
+    const radiiOnly = await normalizeTokenDeclarations(
+      page,
+      await loadTokenDeclarations(directory, "radii.css"),
+    );
+    expect(
+      radiiOnly.status === "configured" && radiiOnly.normalizedValues,
+    ).toEqual(["4px"]);
+
+    await expect(
+      normalizeTokenDeclarations(
+        page,
+        await loadTokenDeclarations(directory, undefined, [
+          {
+            name: "--brand",
+            value: "#123456",
+            kind: "color",
+            source: { path: "DESIGN.md", key: "colors.brand" },
+          },
+        ]),
+      ),
+    ).resolves.toMatchObject({ status: "configured" });
+  } finally {
+    await browser.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 30_000);
 
 test("collects stable live observations and makes 320px defects appear and disappear", async () => {
   const browser = await chromium.launch({ headless: true });
@@ -1105,6 +1422,108 @@ test("collects stable live observations and makes 320px defects appear and disap
         ({ candidate }) => candidate.category === "target-size",
       ),
     ).toBe(false);
+  } finally {
+    await page.close();
+    await browser.close();
+  }
+}, 30_000);
+
+test("observes declarations authored in applicable imported stylesheets", async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 320, height: 600 } });
+  const sheets: Record<string, string> = {
+    "/base.css":
+      '@import url("/deep.css"); .imported { color: rgb(201, 35, 61); }',
+    "/deep.css": ".deep-imported { background-color: #00ff00; }",
+    "/wide.css": ".wide-only { color: #ff0000; }",
+    "/grid.css": ".supported-import { color: #ff0000; }",
+    "/nope.css": ".unsupported-import { color: #ff0000; }",
+  };
+  try {
+    await page.route("http://idiom.test/**", async (route) => {
+      const { pathname } = new URL(route.request().url());
+      const css = sheets[pathname];
+      if (css !== undefined)
+        return route.fulfill({ contentType: "text/css", body: css });
+      return route.fulfill({
+        contentType: "text/html",
+        body: `<!doctype html>
+          <style>
+            @import url("/base.css");
+            @import url("/wide.css") (min-width: 900px);
+            @import url("/grid.css") supports(display: grid);
+            @import url("/nope.css") supports(idiom-not-a-property: yes);
+            @import url("http://other.test/remote.css");
+            .local { color: #222222; }
+          </style>
+          <p class="imported">Imported</p>
+          <p class="deep-imported">Deep imported</p>
+          <p class="wide-only">Wide only</p>
+          <p class="supported-import">Supported import</p>
+          <p class="unsupported-import">Unsupported import</p>
+          <p class="cross-origin">Cross origin</p>
+          <p class="local">Local</p>`,
+      });
+    });
+    await page.route("http://other.test/**", (route) =>
+      route.fulfill({
+        contentType: "text/css",
+        body: ".cross-origin { color: #ff0000; }",
+      }),
+    );
+    await page.goto("http://idiom.test/");
+    const observed = await observePage(page, {
+      status: "configured",
+      source: "theme.css",
+      declarations: { "--ink": "#111827" },
+      normalizedValues: ["rgb(17, 24, 39)"],
+    });
+    if (observed.version !== 2) throw new Error("expected version 2");
+    const element = (selector: string) => {
+      const found = observed.elements.find(
+        (candidate) => candidate.selector === selector,
+      );
+      if (found === undefined) throw new Error(`missing ${selector}`);
+      return found;
+    };
+    expect(element("p.imported").authoredProperties).toContain("color");
+    expect(element("p.deep-imported").authoredProperties).toContain(
+      "backgroundColor",
+    );
+    expect(element("p.supported-import").authoredProperties).toContain("color");
+    expect(element("p.wide-only").authoredProperties).not.toContain("color");
+    expect(element("p.unsupported-import").authoredProperties).not.toContain(
+      "color",
+    );
+    expect(element("p.cross-origin").authoredProperties).not.toContain("color");
+    expect(element("p.local").authoredProperties).toContain("color");
+    expect(element("p.imported").styleSources?.color).toMatchObject({
+      sheet: "base.css",
+      selector: ".imported",
+    });
+
+    const tokenDrift = runDeterministicChecks([
+      {
+        flow: "imports",
+        state: "loaded",
+        viewport: "phone",
+        width: 320,
+        height: 600,
+        metadataPath: "loaded/phone/metadata.json",
+        artifactPaths: ["loaded/phone/metadata.json"],
+        commit: "abc123",
+        createdAt: "2026-10-30T12:00:00.000Z",
+        observations: observed,
+        axe: { violations: [] },
+        console: [],
+        mismatches: [],
+      },
+    ]).candidates.filter(
+      ({ candidate }) => candidate.category === "token-drift",
+    );
+    expect(tokenDrift.map(({ candidate }) => candidate.selectorHint)).toContain(
+      `${element("p.imported").selector}::color`,
+    );
   } finally {
     await page.close();
     await browser.close();

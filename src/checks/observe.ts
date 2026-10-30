@@ -9,11 +9,12 @@ import {
   invariantLabel,
   invariantSelectors,
 } from "../schemas/invariant.js";
-import { extractCss } from "../system/learn/css.js";
+import { cssKind, extractCss } from "../system/learn/css.js";
 import { inlineDeclarations } from "../system/learn/inline.js";
 import { normalizeCssValues } from "../system/learn/normalize.js";
 import { type DesignToken, tokenIdentity } from "../system/learn/schema.js";
 import type { ExtractedToken } from "../system/learn/types.js";
+import { ensureAuthoredRuleIndex } from "./authored-rules-dom.js";
 import { menuTriggerPattern } from "./collection-actions.js";
 import type { InferredComponentInput } from "./design-components.js";
 import {
@@ -218,12 +219,29 @@ async function normalizeInlineTokens(
   );
 }
 
+/** Color tokens a probed tokens file declares; inline-only configs have none. */
+function declaredColorTokenNames(
+  tokens: Extract<TokenDeclarations, { status: "configured" }>,
+): string[] {
+  if (tokens.values.length === 0) return [];
+  return [
+    ...new Set([
+      ...(tokens.fileTokens ?? [])
+        .filter((t) => t.kind === "color")
+        .map((t) => t.name),
+      ...Object.entries(tokens.declarations)
+        .filter(([name, value]) => cssKind(name, value) === "color")
+        .map(([name]) => name),
+    ]),
+  ].sort();
+}
+
 export async function normalizeTokenDeclarations(
   page: Page,
   tokens: TokenDeclarations,
 ): Promise<TokenObservation> {
   if (tokens.status === "not-configured") return tokens;
-  const normalizedValues = await page.evaluate((tokenInput) => {
+  const { colors, radii } = await page.evaluate((tokenInput) => {
     const createProbe = (parentColor: string) => {
       const parent = document.createElement("span");
       parent.style.color = parentColor;
@@ -236,7 +254,8 @@ export async function normalizeTokenDeclarations(
     };
     const first = createProbe("rgb(1, 2, 3)");
     const second = createProbe("rgb(4, 5, 6)");
-    const normalized = new Set<string>();
+    const colors = new Set<string>();
+    const radii = new Set<string>();
     for (const value of tokenInput.values) {
       first.probe.style.color = "";
       second.probe.style.color = "";
@@ -245,19 +264,29 @@ export async function normalizeTokenDeclarations(
       if (first.probe.style.color !== "" && second.probe.style.color !== "") {
         const firstColor = getComputedStyle(first.probe).color;
         const secondColor = getComputedStyle(second.probe).color;
-        if (firstColor === secondColor) normalized.add(firstColor);
+        if (firstColor === secondColor) colors.add(firstColor);
       }
       first.probe.style.borderTopLeftRadius = "";
       first.probe.style.borderTopLeftRadius = value;
       if (first.probe.style.borderTopLeftRadius !== "") {
         const radius = getComputedStyle(first.probe).borderTopLeftRadius;
-        if (radius !== "0px") normalized.add(radius);
+        if (radius !== "0px") radii.add(radius);
       }
     }
     first.parent.remove();
     second.parent.remove();
-    return [...normalized].sort();
+    return { colors: [...colors].sort(), radii: [...radii].sort() };
   }, tokens);
+  const normalizedValues = [...new Set([...colors, ...radii])].sort();
+  // Resolved radii must not mask a color theme whose var() or light-dark()
+  // values failed to resolve: that would yield an empty color allow-list.
+  const declaredColors = declaredColorTokenNames(tokens);
+  if (declaredColors.length > 0 && colors.length === 0) {
+    const preview = `${declaredColors.slice(0, 5).join(", ")}${declaredColors.length > 5 ? ", …" : ""}`;
+    throw new IdiomError(
+      `design.tokensFile ${JSON.stringify(tokens.source)} declares ${declaredColors.length} color token(s) (${preview}) but none resolved to a rendered color in the captured page; color-token resolution failed, so capture would produce an empty color allow-list. Check that the stylesheets defining their var() references (and any light-dark() values) load on this page.`,
+    );
+  }
   if (
     normalizedValues.length === 0 &&
     tokens.inline === undefined &&
@@ -375,6 +404,7 @@ export async function observePage(
   const axeHeadingTargets = extractAxeHeadingTargets(axe);
   await ensureExplanationDom(page);
   await ensureVisibilityDom(page);
+  await ensureAuthoredRuleIndex(page);
   const artifact: ObservationArtifact = await page.evaluate(
     async ({
       tokenInput,
@@ -506,12 +536,51 @@ export async function observePage(
         sheet: string;
         order: number;
       }> = [];
+      const sheetLabel = (target: CSSStyleSheet, fallback: string) => {
+        if (!target.href) return fallback;
+        try {
+          const url = new URL(target.href);
+          return url.origin === location.origin
+            ? url.pathname.replace(/^\//, "")
+            : target.href;
+        } catch {
+          return target.href;
+        }
+      };
+      const visitedSheets = new Set<CSSStyleSheet>();
       const collectRules = (
         rules: CSSRuleList,
         sheet: string,
         parentSelector?: string,
       ) => {
         for (const rule of rules) {
+          if (rule instanceof CSSImportRule) {
+            // Imported sheets apply only when the import's own media and
+            // supports conditions match the captured tuple; Chromium still
+            // exposes rules behind a non-matching media import.
+            try {
+              const imported = rule.styleSheet;
+              const media = rule.media.mediaText.trim();
+              const supportsText = (
+                rule as CSSImportRule & { supportsText?: string | null }
+              ).supportsText;
+              const supports =
+                typeof supportsText === "string" ? supportsText.trim() : "";
+              if (
+                imported !== null &&
+                !visitedSheets.has(imported) &&
+                (media === "" || matchMedia(media).matches) &&
+                (supports === "" || CSS.supports(supports))
+              ) {
+                visitedSheets.add(imported);
+                collectRules(imported.cssRules, sheetLabel(imported, sheet));
+              }
+            } catch {
+              // Cross-origin imports and unparseable conditions are not
+              // observable.
+            }
+            continue;
+          }
           let nestedParent = parentSelector;
           if (rule instanceof CSSStyleRule) {
             nestedParent =
@@ -555,24 +624,32 @@ export async function observePage(
         }
       };
       for (const [index, sheet] of [...document.styleSheets].entries()) {
-        let label = `<style>[${index}]`;
-        if (sheet.href) {
-          try {
-            const url = new URL(sheet.href);
-            label =
-              url.origin === location.origin
-                ? url.pathname.replace(/^\//, "")
-                : sheet.href;
-          } catch {
-            label = sheet.href;
-          }
-        }
         try {
-          collectRules(sheet.cssRules, label);
+          collectRules(sheet.cssRules, sheetLabel(sheet, `<style>[${index}]`));
         } catch {
           // Cross-origin stylesheets cannot be inspected safely.
         }
       }
+      const createAuthoredRuleIndex = globalThis.__idiomAuthoredRuleIndex;
+      if (!createAuthoredRuleIndex)
+        throw new Error("authored rule index helpers unavailable");
+      // Candidate rules per element by rightmost-compound key, so matching
+      // stays near-linear on large stylesheets.
+      const authoredRuleIndex = createAuthoredRuleIndex(authoredRules);
+      // Read through Element.prototype: a form's named controls (e.g.
+      // <input name="id">) shadow these on the element itself.
+      const getAttribute = Element.prototype.getAttribute;
+      const localNameOf = Object.getOwnPropertyDescriptor(
+        Element.prototype,
+        "localName",
+      )?.get;
+      const indexFacts = (element: Element) => ({
+        id: getAttribute.call(element, "id") ?? "",
+        classes: (getAttribute.call(element, "class") ?? "")
+          .split(/[\t\n\f\r ]+/)
+          .filter((name) => name !== ""),
+        localName: String(localNameOf?.call(element) ?? ""),
+      });
       const camelCase = (property: string) =>
         property.replace(/-([a-z])/g, (_match, letter: string) =>
           letter.toUpperCase(),
@@ -2594,7 +2671,7 @@ export async function observePage(
         for (const property of html.style)
           authoredProperties.add(camelCase(property));
         const matchedRules: typeof authoredRules = [];
-        for (const rule of authoredRules) {
+        for (const rule of authoredRuleIndex.candidates(indexFacts(element))) {
           try {
             if (!element.matches(rule.selector)) continue;
             matchedRules.push(rule);

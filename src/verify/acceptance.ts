@@ -431,7 +431,9 @@ export function evaluateRuleAcceptance(options: {
       const coverage = checked.coverage.find(
         (r) => r.tuple === tuple && r.coverage.check === contract.check,
       )?.coverage;
-      if (coverage?.status !== "ran")
+      // A not-applicable tuple cannot emit the rule by design, so it counts as
+      // clear, just as the empty `ran` it replaced did.
+      if (coverage?.status !== "ran" && coverage?.status !== "not-applicable")
         return {
           status: "not-recheckable" as const,
           reason: coverage?.reason ?? "Rule did not run on a required tuple.",

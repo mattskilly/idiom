@@ -1,7 +1,7 @@
 import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ProductionBuild } from "../capture/types.js";
-import { paintedCoverageText } from "../checks/painted.js";
+import { coverageStatusText, paintedCoverageText } from "../checks/painted.js";
 import type { CheckCoverage, CheckTuple } from "../checks/types.js";
 import { tupleDesigns } from "../design/evidence.js";
 import type { DesignDescriptor } from "../design/types.js";
@@ -20,12 +20,21 @@ import type { UnruledDecision } from "../schemas/ruling.js";
 import type { AdvisoryReview } from "./advisory.js";
 import type { SuppressedFinding } from "./findings.js";
 import { describeSpread, type FindingGroup, isRepeated } from "./groups.js";
+import { orderFindings } from "./presentation-order.js";
+import { buildIssueRankingContext } from "./ranking.js";
+
+/** The fallback provider that completed the model layer, when one did. */
+export type OutcomeFallback = { from: string; to: string; reason: string };
 
 export type ReviewOutcome =
-  | { kind: "full" }
+  | { kind: "full"; fallback?: OutcomeFallback | undefined }
   | { kind: "deterministic-only" }
   | { kind: "quick"; targets: string[] }
   | { kind: "degraded"; reason: string };
+
+export function fallbackSentence(fallback: OutcomeFallback): string {
+  return `Model layer completed using fallback provider ${fallback.to} after ${fallback.from} failed: ${fallback.reason}.`;
+}
 
 /** What a page review (`idiom review --page`) judged, for the report header. */
 export type PageReviewScope = {
@@ -229,6 +238,8 @@ export function advisoryMarkdown(review: AdvisoryReview): string[] {
   ];
   if (review.outcome.kind === "degraded")
     lines.push(`Incomplete: ${text(review.outcome.reason)}`, "");
+  if (review.outcome.kind === "full" && review.outcome.fallback !== undefined)
+    lines.push(text(fallbackSentence(review.outcome.fallback)), "");
   for (const pattern of review.patterns) {
     lines.push(
       `### ${text(pattern.id)}`,
@@ -332,7 +343,12 @@ export function renderReport(options: {
       "",
     );
   } else if (options.outcome.kind === "full") {
-    lines.push("Model layer: completed successfully.", "");
+    lines.push(
+      options.outcome.fallback === undefined
+        ? "Model layer: completed successfully."
+        : `Model layer: ${text(fallbackSentence(options.outcome.fallback))}`,
+      "",
+    );
   } else if (options.outcome.kind === "deterministic-only") {
     lines.push("Model layer: skipped by choice (`--deterministic-only`).", "");
   } else {
@@ -420,6 +436,10 @@ export function renderReport(options: {
       }
     }
   }
+  const rankedFindings = orderFindings(
+    options.findings,
+    buildIssueRankingContext(options.tuples),
+  );
   const states = [...new Set(options.tuples.map((tuple) => tuple.state))];
   for (const state of states) {
     lines.push(`## ${state}`, "");
@@ -471,7 +491,7 @@ export function renderReport(options: {
           `Capture failure: ${text(tuple.failure.message)} ([metadata](${tuple.metadataPath}))`,
           "",
         );
-      const findings = options.findings.filter(
+      const findings = rankedFindings.filter(
         (finding) =>
           finding.state === state &&
           finding.viewport === tuple.viewport &&
@@ -656,7 +676,7 @@ export function renderReport(options: {
   lines.push("## Check coverage", "");
   if (options.narrowWidth === undefined)
     lines.push(
-      "Responsive and target checks were unavailable because the capture has no viewport tuples.",
+      "The responsive check was unavailable because the capture has no viewport tuples.",
       "",
     );
   else {
@@ -664,7 +684,7 @@ export function renderReport(options: {
       .filter((tuple) => tuple.width === options.narrowWidth)
       .map((tuple) => tuple.viewport);
     lines.push(
-      `Responsive and target checks use the minimum captured CSS width, ${options.narrowWidth}px (${[...new Set(narrowNames)].sort().join(", ")}).`,
+      `The responsive check (responsive-break) runs only at the minimum captured CSS width, ${options.narrowWidth}px (${[...new Set(narrowNames)].sort().join(", ")}); at other viewports it is reported as not applicable.`,
       "",
     );
   }
@@ -679,15 +699,15 @@ export function renderReport(options: {
   for (const coverage of options.captureCoverage ?? []) {
     lines.push(
       axisAware
-        ? `| — | — | — | ${coverage.check} | ${coverage.status} | ${text(paintedCoverageText(coverage))} |`
-        : `| — | — | ${coverage.check} | ${coverage.status} | ${text(paintedCoverageText(coverage))} |`,
+        ? `| — | — | — | ${coverage.check} | ${coverageStatusText(coverage.status)} | ${text(paintedCoverageText(coverage))} |`
+        : `| — | — | ${coverage.check} | ${coverageStatusText(coverage.status)} | ${text(paintedCoverageText(coverage))} |`,
     );
   }
   for (const entry of options.coverage) {
     lines.push(
       axisAware
-        ? `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.tuple.colorScheme ?? "light"} | ${entry.coverage.check} | ${entry.coverage.status} | ${text(paintedCoverageText(entry.coverage))} |`
-        : `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.coverage.check} | ${entry.coverage.status} | ${text(paintedCoverageText(entry.coverage))} |`,
+        ? `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.tuple.colorScheme ?? "light"} | ${entry.coverage.check} | ${coverageStatusText(entry.coverage.status)} | ${text(paintedCoverageText(entry.coverage))} |`
+        : `| ${text(entry.tuple.state)} | ${text(entry.tuple.viewport)} | ${entry.coverage.check} | ${coverageStatusText(entry.coverage.status)} | ${text(paintedCoverageText(entry.coverage))} |`,
     );
   }
   lines.push("");

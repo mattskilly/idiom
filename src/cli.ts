@@ -61,6 +61,11 @@ import { type RulingDependencies, rulingCommand } from "./commands/ruling.js";
 import { renderSweepSummary, sweepCommand } from "./commands/sweep.js";
 import { systemCommand } from "./commands/system.js";
 import { clusterTicketsCommand, ticketsCommand } from "./commands/tickets.js";
+import {
+  renderUpgrade,
+  upgradeCommand,
+  upgradeFailed,
+} from "./commands/upgrade.js";
 import { validateCommand } from "./commands/validate.js";
 import { verifyCommand } from "./commands/verify.js";
 import { renderStateCoverage } from "./coverage/states.js";
@@ -75,8 +80,11 @@ import type { ReferenceDependencies } from "./references/run.js";
 import type { OpenReportDependencies } from "./report/open.js";
 import { advisoryCount } from "./review/advisory.js";
 import type { PageReviewDependencies } from "./review/page.js";
+import type { ReviewOutcome } from "./review/report.js";
 import type { ReviewDependencies } from "./review/run.js";
 import { type PageFocusArea, pageFocusAreas } from "./schemas/finding.js";
+import type { CritiqueProvider } from "./schemas/project.js";
+import type { UpgradeDependencies } from "./skills/upgrade.js";
 import type { SystemRunDependencies } from "./system/run.js";
 import { renderClusterTicketsResult } from "./tickets/emit.js";
 import type { VerifyDependencies } from "./verify/run.js";
@@ -102,6 +110,7 @@ export type ProgramDependencies = {
   fix?: FixDependencies;
   page?: PageReviewDependencies;
   system?: SystemRunDependencies;
+  upgrade?: UpgradeDependencies;
 };
 
 type SharedOptions = { project?: string };
@@ -113,6 +122,16 @@ function lineWriter(
 }
 
 /** --focus values, space- or comma-separated, checked against the known areas. */
+function writeFallbackWarning(
+  writeErr: (message: string) => void,
+  outcome: ReviewOutcome,
+): void {
+  if (outcome.kind === "full" && outcome.fallback !== undefined)
+    writeErr(
+      `Warning: Model critique used fallback provider ${outcome.fallback.to} after ${outcome.fallback.from} failed: ${outcome.fallback.reason}`,
+    );
+}
+
 function parseFocus(values: string[] | undefined): PageFocusArea[] | undefined {
   if (values === undefined) return undefined;
   const areas = values.flatMap((value) =>
@@ -218,6 +237,39 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
     });
 
   program
+    .command("upgrade")
+    .description("update vendored skills while preserving local customization")
+    .option("--no-agent", "leave overlapping edits for manual resolution")
+    .option(
+      "--dry-run",
+      "report proposed changes without writing or calling a model",
+    )
+    .option("--json", "print a structured upgrade report")
+    .action(async (_options, command: Command) => {
+      const options = command.optsWithGlobals<
+        SharedOptions & { agent: boolean; dryRun?: boolean; json?: boolean }
+      >();
+      const report = await upgradeCommand(
+        {
+          project: options.project,
+          cwd: dependencies.cwd,
+          agent: options.agent,
+          dryRun: options.dryRun,
+        },
+        dependencies.upgrade,
+      );
+      writeOut(
+        options.json ? JSON.stringify(report, null, 2) : renderUpgrade(report),
+      );
+      if (upgradeFailed(report))
+        throw new CommanderError(
+          1,
+          "idiom.upgrade-conflicted",
+          "Skill upgrade has unresolved conflicts",
+        );
+    });
+
+  program
     .command("mcp")
     .description("serve Idiom tools over MCP stdio")
     .action(async (_options, command: Command) => {
@@ -292,7 +344,10 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       "serve the application on this port instead of a free one",
       parsePortOption,
     )
-    .option("--out <dir>", "exact output directory (must not exist)")
+    .option(
+      "--out <dir>",
+      "exact output directory, relative to the invoking directory (must not exist)",
+    )
     .option(
       "--refresh-design",
       "refetch pinned Figma frames instead of reusing .idiom/designs",
@@ -570,7 +625,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       new Option(
         "--provider <provider>",
         "with --page, critique provider",
-      ).choices(["claude-code", "anthropic"]),
+      ).choices(["claude-code", "anthropic", "codex"]),
     )
     .option("--model <id>", "with --page, critique model")
     .option(
@@ -600,7 +655,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           focus?: string[];
           frame?: string[];
           out?: string;
-          provider?: "claude-code" | "anthropic";
+          provider?: CritiqueProvider;
           model?: string;
           maxFindings?: string;
         },
@@ -662,6 +717,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
             writeErr(
               `Warning: Model critique degraded: ${result.outcome.reason}`,
             );
+          writeFallbackWarning(writeErr, result.outcome);
           return;
         }
         const pageOnly = (
@@ -733,6 +789,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           writeErr(
             `Warning: Model critique degraded: ${result.outcome.reason}`,
           );
+        writeFallbackWarning(writeErr, result.outcome);
         const violations = result.publishedBudget?.violations ?? [];
         if (violations.length > 0)
           throw new IdiomError(
@@ -1120,6 +1177,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           writeErr(
             `Warning: ${"scope" in summary ? "Sweep incomplete" : "Model critique degraded"}: ${summary.outcome.reason}`,
           );
+        writeFallbackWarning(writeErr, summary.outcome);
         const failing =
           options.failOn === "never"
             ? []

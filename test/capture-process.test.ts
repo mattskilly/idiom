@@ -11,7 +11,7 @@ import {
 import { createServer, Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, type TestContext, test, vi } from "vitest";
 import {
   bindProjectToPort,
   replaceOrigin,
@@ -52,9 +52,12 @@ function shellPath(file: string): string {
   return JSON.stringify(file);
 }
 
-async function freePort(): Promise<number> {
+async function freePort(host = "127.0.0.1"): Promise<number> {
   const server = createServer();
-  await new Promise<void>((accept) => server.listen(0, "127.0.0.1", accept));
+  await new Promise<void>((accept, reject) => {
+    server.once("error", reject);
+    server.listen(0, host, accept);
+  });
   const address = server.address();
   if (address === null || typeof address === "string")
     throw new Error("no port");
@@ -150,63 +153,86 @@ test("data-directory expansion handles args, cwd, and repeated placeholders", ()
   );
 });
 
-test("owned server reaches readiness and releases its port after SIGTERM", async () => {
-  const port = await freePort();
-  const project = projectSchema.parse({
-    version: 1,
-    app: { name: "fixture", framework: "other" },
-    server: {
-      build: "node -e 0",
-      start: `node ${shellPath(join(fixture, "server.mjs"))}`,
-      readyUrl: `http://127.0.0.1:${port}/`,
-      port,
-      env: {},
-      startupTimeoutMs: 5_000,
-    },
-    capture: {},
-    design: {},
-    model: { provider: "anthropic", model: "unused" },
-  });
-  const server = await startServer({
-    projectDirectory: fixture,
-    project,
-    environment: { ...process.env, PORT: String(port) },
-  });
-  expect(await isPortOpen(port)).toBe(true);
-  await server.stop();
-  expect(await isPortOpen(port)).toBe(false);
-});
+async function loopbackPort(
+  host: string,
+  context: TestContext,
+): Promise<number> {
+  try {
+    return await freePort(host);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (
+      host === "::1" &&
+      (code === "EAFNOSUPPORT" || code === "EADDRNOTAVAIL")
+    ) {
+      context.skip();
+    }
+    throw error;
+  }
+}
 
-test("owned server escalates to a hard kill when SIGTERM is ignored", async () => {
-  const port = await freePort();
-  const project = projectSchema.parse({
-    version: 1,
-    app: { name: "fixture", framework: "other" },
-    server: {
-      build: "node -e 0",
-      start: `node ${shellPath(join(fixture, "server.mjs"))}`,
-      readyUrl: `http://127.0.0.1:${port}/`,
-      port,
-      env: {},
-      startupTimeoutMs: 5_000,
-    },
-    capture: {},
-    design: {},
-    model: { provider: "anthropic", model: "unused" },
-  });
-  const server = await startServer({
-    projectDirectory: fixture,
-    project,
-    environment: {
-      ...process.env,
-      PORT: String(port),
-      IGNORE_TERM: "1",
-    },
-    dependencies: { teardownTimeoutMs: 100 },
-  });
-  await server.stop();
-  expect(await isPortOpen(port)).toBe(false);
-});
+function loopbackUrl(host: string, port: number): string {
+  return `http://${host === "::1" ? `[${host}]` : host}:${port}/`;
+}
+
+test.for(["127.0.0.1", "::1"])(
+  "owned server on %s reaches readiness and releases its port after SIGTERM",
+  async (host, context) => {
+    const port = await loopbackPort(host, context);
+    const server = await startServer({
+      projectDirectory: fixture,
+      project: portedProject({
+        start: `node ${shellPath(join(fixture, "server.mjs"))}`,
+        readyUrl: loopbackUrl(host, port),
+        port,
+        startupTimeoutMs: 5_000,
+      }),
+      environment: {
+        ...process.env,
+        PORT: String(port),
+        CAPTURE_TEST_HOST: host,
+        IGNORE_TERM: "0",
+      },
+    });
+    try {
+      expect(await isPortOpen(port, host)).toBe(true);
+      await server.stop();
+      expect(await isPortOpen(port, host)).toBe(false);
+    } finally {
+      await server.stop();
+    }
+  },
+);
+
+test.for(["127.0.0.1", "::1"])(
+  "owned server on %s escalates to a hard kill when SIGTERM is ignored",
+  async (host, context) => {
+    const port = await loopbackPort(host, context);
+    const server = await startServer({
+      projectDirectory: fixture,
+      project: portedProject({
+        start: `node ${shellPath(join(fixture, "server.mjs"))}`,
+        readyUrl: loopbackUrl(host, port),
+        port,
+        startupTimeoutMs: 5_000,
+      }),
+      environment: {
+        ...process.env,
+        PORT: String(port),
+        CAPTURE_TEST_HOST: host,
+        IGNORE_TERM: "1",
+      },
+      dependencies: { teardownTimeoutMs: 100 },
+    });
+    try {
+      expect(await isPortOpen(port, host)).toBe(true);
+      await server.stop();
+      expect(await isPortOpen(port, host)).toBe(false);
+    } finally {
+      await server.stop();
+    }
+  },
+);
 
 test("a start command that pins its port fails fast with the fix", async () => {
   const reserved = await freePort();
@@ -517,6 +543,48 @@ test("an IPv6 ready host is refused even when IPv4 loopback is free", async (con
     await new Promise<void>((accept) => blocker.close(() => accept()));
   }
 });
+
+test.for(["127.0.0.1", "::1"])(
+  "an occupied server.port on %s is refused when the ready URL port is free",
+  async (host, context) => {
+    // Check capability before exercising the lifecycle; its failures must not skip.
+    await loopbackPort(host, context);
+    const blocker = createServer();
+    await new Promise<void>((accept, reject) => {
+      blocker.once("error", reject);
+      blocker.listen(0, host, accept);
+    });
+    try {
+      const address = blocker.address();
+      if (address === null || typeof address === "string")
+        throw new Error("no port");
+      const port = address.port;
+      const readyPort = await freePort(host);
+      const spawn = vi.fn(() => {
+        throw new Error("must not spawn");
+      });
+      expect(await isPortOpen(readyPort, host)).toBe(false);
+      await expect(
+        startServer({
+          projectDirectory: fixture,
+          project: portedProject({
+            readyUrl: loopbackUrl(host, readyPort),
+            port,
+          }),
+          environment: process.env,
+          dependencies: { spawn },
+        }),
+      ).rejects.toThrow(`port ${port} in use by another process`);
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      await new Promise<void>((accept, reject) =>
+        blocker.close((error) =>
+          error === undefined ? accept() : reject(error),
+        ),
+      );
+    }
+  },
+);
 
 test("origin canonicalization and review mapping apply the same transform", () => {
   const actual = "http://127.0.0.1:543";

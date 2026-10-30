@@ -19,6 +19,7 @@ import { coordinateIndex } from "../src/review/groups.js";
 import {
   affectedCounts,
   buildIssueRankingContext,
+  comparePriority,
   scoreGroup,
 } from "../src/review/ranking.js";
 import type { Finding } from "../src/schemas/finding.js";
@@ -255,7 +256,6 @@ export function rankFindings(
 ) {
   const context = buildIssueRankingContext(capture.tuples);
   const coordinates = coordinateIndex(capture.drafts);
-  const severity = { blocker: 0, major: 1, minor: 2 };
   return capture.findings
     .map((finding) => {
       const draft = capture.drafts.find(
@@ -286,9 +286,10 @@ export function rankFindings(
     })
     .sort(
       (a, b) =>
-        b.score - a.score ||
-        severity[a.finding.severity] - severity[b.finding.severity] ||
-        a.stableOrder - b.stableOrder,
+        comparePriority(
+          { severity: a.finding.severity, score: a.score },
+          { severity: b.finding.severity, score: b.score },
+        ) || a.stableOrder - b.stableOrder,
     );
 }
 

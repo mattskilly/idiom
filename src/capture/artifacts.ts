@@ -9,13 +9,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { arch, release, tmpdir } from "node:os";
-import { basename, dirname, join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { recordingKey } from "../checks/temporal-evidence.js";
 import { writeDesignArtifacts } from "../design/artifacts.js";
 import type { CapturedDesign, DesignDescriptor } from "../design/types.js";
 import { IdiomError } from "../errors.js";
 import type { Flow, StateCombination, ToggleCap } from "../schemas/flow.js";
 import { IDIOM_VERSION } from "../version.js";
+import { stagingDirectoryPrefix } from "./staging.js";
 import type {
   MetadataUrl,
   ProductionBuild,
@@ -107,7 +108,7 @@ export async function createArtifactWorkspace(options: {
   const parent = dirname(finalDirectory);
   await mkdir(parent, { recursive: true });
   const stagingDirectory = await mkdtemp(
-    join(parent, `.${basename(finalDirectory)}.staging-`),
+    join(parent, stagingDirectoryPrefix(finalDirectory)),
   );
   const dataDirectory = await mkdtemp(join(tmpdir(), "idiom-capture-data-"));
   return { finalDirectory, stagingDirectory, dataDirectory };

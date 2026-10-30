@@ -2,21 +2,11 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as bundle } from "esbuild";
+import { buildDocs } from "./site-docs.mjs";
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const siteDirectory = join(repositoryRoot, "site");
 const sourcePath = join(siteDirectory, "index.html");
-const documents = [
-  { path: "guide.html", canonical: "https://idiom.build/guide" },
-  {
-    path: "design-qa-for-claude-code.html",
-    canonical: "https://idiom.build/design-qa-for-claude-code",
-  },
-  {
-    path: "testing-loading-empty-error-states.html",
-    canonical: "https://idiom.build/testing-loading-empty-error-states",
-  },
-];
 const imagePath = join(siteDirectory, "social-preview.png");
 const outputDirectory =
   process.env.IDIOM_SITE_OUTPUT ?? join(siteDirectory, "dist");
@@ -179,40 +169,41 @@ function metadataMarkup({ title, description, canonical = canonicalUrl }) {
   ].join("\n");
 }
 
-async function atomicWrite(path, content) {
-  const nonce = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-  const temporary = `${path}.${nonce}.tmp`;
-  try {
-    await writeFile(temporary, content);
-    await rename(temporary, path);
-  } catch (error) {
-    await rm(temporary, { force: true });
-    throw error;
-  }
-}
-
-async function buildDocument({ path, canonical }) {
-  const source = await readFile(join(siteDirectory, path), "utf8");
-  const { head, body } = splitSource(source);
-  const wordmark = normalizedText(
-    elementWithClass(source, "wordmark", "guide .wordmark copy hook"),
-    "guide .wordmark",
-  );
-  const headerMeta = normalizedText(
-    elementWithClass(source, "meta", "guide header .meta copy hook"),
-    "guide header .meta",
-  );
-  const description = normalizedText(
-    elementWithClass(source, "lede", "guide .lede copy hook"),
-    "guide .lede",
-  );
-  if (wordmark === "" || headerMeta === "" || description === "") {
-    fail("guide metadata copy hooks must contain text");
-  }
-
-  const title = `${wordmark} · ${headerMeta}`;
-  const output = `<!doctype html>\n<html lang="en">\n<head>\n${metadataMarkup({ title, description, canonical })}\n${head}\n</head>\n<body>${body}</body>\n</html>\n`;
-  await atomicWrite(join(outputDirectory, path), output);
+// What the page says, restated for search and answer engines: the product and
+// its FAQ, read from the visible copy so the two can never disagree.
+function structuredData(source, description) {
+  const faq = [
+    ...source.matchAll(
+      /<div class="qa"><h3>([\s\S]*?)<\/h3><p>([\s\S]*?)<\/p><\/div>/g,
+    ),
+  ].map(([, question, answer]) => ({
+    "@type": "Question",
+    name: normalizedText(question.replace(/<\/?code>/g, ""), "FAQ question"),
+    acceptedAnswer: {
+      "@type": "Answer",
+      text: normalizedText(answer.replace(/<\/?code>/g, ""), "FAQ answer"),
+    },
+  }));
+  if (faq.length === 0) fail("expected FAQ entries in .qa blocks");
+  const graph = [
+    {
+      "@type": "SoftwareApplication",
+      name: "Idiom",
+      url: canonicalUrl,
+      description,
+      applicationCategory: "DeveloperApplication",
+      operatingSystem: "macOS, Linux, Windows",
+      license: "https://www.apache.org/licenses/LICENSE-2.0",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      sameAs: ["https://github.com/mattskilly/idiom"],
+    },
+    { "@type": "FAQPage", mainEntity: faq },
+  ];
+  const json = JSON.stringify({
+    "@context": "https://schema.org",
+    "@graph": graph,
+  });
+  return `<script type="application/ld+json">${json.replace(/</g, "\\u003c")}</script>`;
 }
 
 async function build() {
@@ -273,7 +264,7 @@ async function build() {
   }
 
   const title = `${wordmark} · ${mastheadMeta}`;
-  const output = `<!doctype html>\n<html lang="en">\n<head>\n${metadataMarkup({ title, description })}\n${head}\n</head>\n<body>${body}</body>\n</html>\n`;
+  const output = `<!doctype html>\n<html lang="en">\n<head>\n${metadataMarkup({ title, description })}\n${structuredData(source, description)}\n${head}\n</head>\n<body>${body}</body>\n</html>\n`;
 
   await mkdir(outputDirectory, { recursive: true });
   const nonce = `${process.pid}-${Date.now()}`;
@@ -296,4 +287,18 @@ async function build() {
 }
 
 await build();
-for (const document of documents) await buildDocument(document);
+// Pages that moved into /docs; vercel.json redirects their old paths.
+for (const moved of [
+  "guide.html",
+  "design-qa-for-claude-code.html",
+  "testing-loading-empty-error-states.html",
+])
+  await rm(join(outputDirectory, moved), { force: true });
+await buildDocs({
+  root: repositoryRoot,
+  outputDirectory,
+  siteCss: /<style\b[^>]*>([\s\S]*?)<\/style>/i.exec(
+    await readFile(sourcePath, "utf8"),
+  )[1],
+  meta: metadataMarkup,
+});

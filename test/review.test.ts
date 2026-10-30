@@ -1869,3 +1869,94 @@ test("painted skip counts render beside partial coverage reasons with escaping",
     JSON.parse(JSON.stringify(options.coverage))[0].coverage.paintedSkipped,
   ).toEqual({ "idiom:orphan-word": 2, "idiom:<test>": 0 });
 });
+
+test("coverage shows responsive-break not applicable off the minimum width and names only the responsive check", () => {
+  const at = (viewport: string, width: number) => ({
+    flow: "booking",
+    state: "ready",
+    viewport,
+    width,
+    height: 844,
+    metadataPath: "m.json",
+    artifactPaths: [],
+    commit: "fixture",
+    createdAt: "2026-10-26T00:00:00Z",
+    console: [],
+    mismatches: [],
+  });
+  const phone = at("phone", 390);
+  const desktop = at("desktop", 1280);
+  const options = {
+    flow: "booking",
+    commit: "fixture",
+    findings: [],
+    tuples: [phone, desktop],
+    narrowWidth: 390,
+    outcome: { kind: "full" as const },
+    coverage: [
+      {
+        tuple: phone,
+        coverage: {
+          check: "responsive-break" as const,
+          status: "ran" as const,
+        },
+      },
+      {
+        tuple: desktop,
+        coverage: {
+          check: "responsive-break" as const,
+          status: "not-applicable" as const,
+          reason: "evaluated only at the minimum captured CSS width",
+        },
+      },
+      {
+        tuple: desktop,
+        coverage: { check: "target-size" as const, status: "ran" as const },
+      },
+    ],
+  };
+  const markdown = renderReport(options);
+  const html = renderReviewHtmlReport({ ...options, screenshots: new Map() });
+  expect(markdown).toContain(
+    "| ready | desktop | responsive-break | not applicable | evaluated only at the minimum captured CSS width |",
+  );
+  expect(markdown).toContain("| ready | phone | responsive-break | ran |  |");
+  expect(markdown).toContain("| ready | desktop | target-size | ran |  |");
+  expect(markdown).toContain(
+    "The responsive check (responsive-break) runs only at the minimum captured CSS width, 390px (phone); at other viewports it is reported as not applicable.",
+  );
+  expect(html).toContain(
+    "<tr><td>ready</td><td>desktop</td><td>responsive-break</td><td>not applicable</td><td>evaluated only at the minimum captured CSS width</td></tr>",
+  );
+  expect(html).toContain(
+    "<tr><td>ready</td><td>phone</td><td>responsive-break</td><td>ran</td><td></td></tr>",
+  );
+  expect(html).toContain(
+    "<tr><td>ready</td><td>desktop</td><td>target-size</td><td>ran</td><td></td></tr>",
+  );
+  expect(html).toContain(
+    "The responsive check (responsive-break) runs only at the minimum captured CSS width, 390px; at other viewports it is reported as not applicable.",
+  );
+  for (const output of [markdown, html]) {
+    const sentence = output.slice(output.indexOf("The responsive check"));
+    expect(sentence.slice(0, sentence.indexOf("not applicable."))).not.toMatch(
+      /target/,
+    );
+  }
+
+  const empty = {
+    ...options,
+    tuples: [],
+    coverage: [],
+    narrowWidth: undefined,
+  };
+  for (const output of [
+    renderReport(empty),
+    renderReviewHtmlReport({ ...empty, screenshots: new Map() }),
+  ]) {
+    expect(output).toContain(
+      "The responsive check was unavailable because the capture has no viewport tuples.",
+    );
+    expect(output).not.toContain("Responsive and target");
+  }
+});

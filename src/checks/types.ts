@@ -1211,7 +1211,12 @@ export type ScreenshotGeometry = {
 
 export type ObservationArtifact = ObservationArtifactV1 | ObservationArtifactV2;
 
-export type CoverageStatus = "ran" | "skipped" | "unavailable";
+/** `not-applicable`: the check intentionally does not evaluate this tuple — not disabled (`skipped`), not missing evidence (`unavailable`). */
+export type CoverageStatus =
+  | "ran"
+  | "skipped"
+  | "unavailable"
+  | "not-applicable";
 
 export type CheckCoverage = {
   check: DeterministicCheckId;

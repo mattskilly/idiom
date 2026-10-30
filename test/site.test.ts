@@ -83,9 +83,12 @@ async function loadPage(options: {
   page: Page;
   networkRequests: string[];
 }> {
+  // Reduced motion renders every animated element in its final state, so
+  // screenshots compare the page rather than a moment in its animation.
   const context = await browser.newContext({
     viewport: { width: options.width, height: 900 },
     colorScheme: options.colorScheme,
+    reducedMotion: "reduce",
   });
   const page = await context.newPage();
   const networkRequests: string[] = [];
@@ -367,13 +370,98 @@ describe("standalone site build", () => {
 });
 
 describe("landing-page copy follows the shipped command surface", () => {
-  test("the version pin forces a re-audit, and the only install is the published package", () => {
+  test.each([
+    { format: "Artifact", width: 390 },
+    { format: "standalone", width: 1440 },
+  ])(
+    "$format install buttons copy one command for the labelled host",
+    async ({ format, width }) => {
+      const { context, page } = await loadPage({
+        width,
+        colorScheme: "light",
+        html: format === "Artifact" ? artifactDocument() : standalone,
+      });
+      try {
+        await page.evaluate(() => {
+          const clipboard = {
+            values: [] as string[],
+            writeText(text: string) {
+              this.values.push(text);
+              return Promise.resolve();
+            },
+          };
+          Object.defineProperty(navigator, "clipboard", { value: clipboard });
+        });
+        const commands = [
+          "/plugin marketplace add mattskilly/idiom",
+          "/plugin install idiom@idiom",
+          "codex plugin marketplace add mattskilly/idiom",
+          "codex plugin add idiom@idiom",
+          `npx playwright@${packageJson.dependencies.playwright} install chromium`,
+          `npm install -g https://github.com/mattskilly/idiom/releases/download/v${packageJson.version}/mattskilly-idiom-${packageJson.version}.tgz`,
+          "idiom quick http://localhost:3000",
+          "npx skills add mattskilly/idiom --skill idiom",
+        ];
+        const hero = [commands[0], commands[1], commands[4]] as string[];
+        for (const [section, expected] of [
+          [".hero", hero],
+          ["#install", commands],
+        ] as const) {
+          const items = page.locator(`${section} ol.cmds li`);
+          for (const [index, command] of expected.entries()) {
+            const item = items.nth(index);
+            await item.getByRole("button", { name: "Copy command" }).click();
+            expect(
+              await page.evaluate(() =>
+                (
+                  navigator.clipboard as Clipboard & { values: string[] }
+                ).values.at(-1),
+              ),
+            ).toBe(command);
+            expect(
+              await item
+                .locator("code")
+                .evaluate((code) => getComputedStyle(code, "::before").content),
+            ).toBe(command.startsWith("/") ? "none" : '"$ "');
+          }
+          expect(await items.count()).toBe(expected.length);
+        }
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  test("the version pin forces a re-audit, and marketplace and CLI installs stay current", () => {
     // Bump this literal deliberately at every release; the page must be
     // re-read against the shipped CLI each time.
-    expect(packageJson.version).toBe("0.15.0");
+    expect(packageJson.version).toBe("0.16.0");
     expect(source).toContain("npm install -g @mattskilly/idiom");
+    // While npm lags, the page installs the GitHub release tarball, which
+    // must name the current version.
+    const releaseUrl = `https://github.com/mattskilly/idiom/releases/download/v${packageJson.version}/mattskilly-idiom-${packageJson.version}.tgz`;
+    expect(source).toContain(`npm install -g ${releaseUrl}`);
     expect(source).not.toMatch(/git\+ssh|\bbun add\b/);
-    expect([...source.matchAll(/\bv\d+\.\d+\.\d+\b/g)]).toEqual([]);
+    for (const command of [
+      "/plugin marketplace add mattskilly/idiom",
+      "/plugin install idiom@idiom",
+    ]) {
+      expect(source.split(command).length - 1).toBeGreaterThanOrEqual(2);
+    }
+    for (const command of [
+      "codex plugin marketplace add mattskilly/idiom",
+      "codex plugin add idiom@idiom",
+    ])
+      expect(source).toContain(command);
+    for (const command of [
+      "/plugin marketplace update idiom",
+      "/plugin update idiom@idiom",
+      "codex plugin marketplace upgrade idiom",
+    ])
+      expect(source).toContain(command);
+    expect([
+      ...source.replaceAll(releaseUrl, "").matchAll(/\bv\d+\.\d+\.\d+\b/g),
+    ]).toEqual([]);
   });
 
   test("every showcased command and option exists", () => {
@@ -529,5 +617,15 @@ describe("landing-page presentation contract", () => {
       }
     },
     30_000,
+  );
+});
+
+test("the landing and docs describe severity-first ranking and within-tier ordering", async () => {
+  const findings = await readFile(join(root, "site/docs/findings.md"), "utf8");
+  expect(findings).toContain(
+    "within each tier, findings are ranked by salience × prominence",
+  );
+  expect(source).toContain(
+    "Ranks findings by severity first, then by how noticeable each is.",
   );
 });

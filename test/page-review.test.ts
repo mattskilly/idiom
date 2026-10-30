@@ -348,3 +348,90 @@ test("a page with no detected sections is critiqued as one whole-page section", 
     { id: "s0", role: "page", selector: "body" },
   ]);
 }, 60_000);
+
+test("page review honors the project fallback unless a provider is explicit", async () => {
+  const directory = await temporaryDirectory();
+  await mkdir(join(directory, ".idiom"), { recursive: true });
+  await writeFile(
+    join(directory, ".idiom", "project.json"),
+    JSON.stringify({
+      version: 1,
+      app: { name: "Launchpad", framework: "other" },
+      server: {
+        build: "",
+        start: "true",
+        readyUrl: `${origin}/`,
+        port: 1,
+        env: {},
+        startupTimeoutMs: 1000,
+      },
+      viewports: [{ name: "desktop", width: 1440, height: 900 }],
+      capture: {},
+      design: {},
+      model: {
+        provider: "claude-code",
+        model: "project-model",
+        fallback: { provider: "codex", model: "fallback-model" },
+      },
+    }),
+  );
+  const calls: Array<{ provider: string; model: string }> = [];
+  const createCritiqueAdapter = (options: {
+    provider: string;
+    model: string;
+  }) => {
+    calls.push({ provider: options.provider, model: options.model });
+    return {
+      async critique() {
+        if (options.provider === "claude-code")
+          throw new Error("claude unavailable");
+        return critiqueResult({ findings: [] });
+      },
+    };
+  };
+
+  const configured = await runPageReview({
+    url: `${origin}/after`,
+    cwd: directory,
+    deterministicOnly: false,
+    dependencies: { createCritiqueAdapter },
+  });
+  expect(configured.outcome).toEqual({
+    kind: "full",
+    fallback: {
+      from: "claude-code",
+      to: "codex",
+      reason: "claude unavailable",
+    },
+  });
+  expect(calls).toEqual([
+    { provider: "claude-code", model: "project-model" },
+    { provider: "codex", model: "fallback-model" },
+  ]);
+  expect(await readFile(configured.reportPath, "utf8")).toContain(
+    "Model layer completed using fallback provider codex after claude-code failed: claude unavailable.",
+  );
+
+  calls.length = 0;
+  const explicitCodex = await runPageReview({
+    url: `${origin}/after`,
+    cwd: directory,
+    provider: "codex",
+    dependencies: { createCritiqueAdapter },
+  });
+  expect(explicitCodex.outcome).toEqual({ kind: "full" });
+  expect(calls).toEqual([{ provider: "codex", model: "project-model" }]);
+
+  calls.length = 0;
+  const explicitClaude = await runPageReview({
+    url: `${origin}/after`,
+    cwd: directory,
+    provider: "claude-code",
+    dependencies: { createCritiqueAdapter },
+  });
+  expect(explicitClaude.outcome).toEqual({
+    kind: "degraded",
+    reason: "claude unavailable",
+  });
+  expect(calls).toEqual([{ provider: "claude-code", model: "project-model" }]);
+});

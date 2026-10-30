@@ -20,6 +20,7 @@ import {
   normalizeQuickUrls,
 } from "../src/quick/config.js";
 import { runQuick } from "../src/quick/run.js";
+import { comparePriority, salienceFor } from "../src/review/ranking.js";
 import { findingSchema } from "../src/schemas/finding.js";
 
 const temporaryDirectories: string[] = [];
@@ -617,4 +618,31 @@ test("quick CLI forwards --probe-budget and --no-probe and reports the probe", a
   ]);
   expect(conflict.code).toBe(1);
   expect(conflict.stderr).toContain("requires the probe");
+});
+
+test("uncapped quick projection keeps severity-first issues and neutral scoring inputs", async () => {
+  const directory = await temporaryDirectory();
+  const captures: BrowserTuple[] = [];
+  const result = await runQuick({
+    urls: ["https://example.com"],
+    cwd: directory,
+    materializeAllDeterministic: true,
+    dependencies: {
+      browserLauncher: browserLauncher(captures),
+      environment: {},
+    },
+  });
+  expect(result.issues).toBeDefined();
+  const issues = result.issues ?? [];
+  expect(issues.length).toBeGreaterThan(0);
+  expect(issues).toEqual([...issues].sort(comparePriority));
+  for (const issue of issues) {
+    expect(issue.salience).toBe(salienceFor(issue.category, issue.rules[0]));
+    expect(issue.score).toBe(issue.salience * issue.prominence);
+    expect(issue.explanation.geometryAvailable).toBe(false);
+  }
+  const stored = JSON.parse(
+    await readFile(join(result.runDirectory, "mcp-detail.json"), "utf8"),
+  );
+  expect(stored.issues).toEqual(issues);
 });

@@ -353,3 +353,15 @@ test("batch-landed sweep emits bounded proposals without promotion or acceptance
   expect(skill).toContain("without inventing accept/reject decisions");
   expect(skill).toContain("promote them, launch dispatch or implement cleanup");
 });
+
+test("check and sweep guidance preserve severity-first presentation with score inside each tier", async () => {
+  const skill = await readIdiomSkillTemplate();
+  for (const heading of ["Check", "Sweep"]) {
+    const section =
+      skill.split(`## ${heading} mode`)[1]?.split("\n## ")[0] ?? "";
+    expect(section).toMatch(/severity[- ]first/);
+    expect(section).toContain(
+      "prominence (salience × prominence) within a tier",
+    );
+  }
+});

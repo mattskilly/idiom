@@ -1,5 +1,12 @@
 import { isElementPainted, paintedGate } from "./painted.js";
-import { parseColor, px, ran, unavailable, verify } from "./shared.js";
+import {
+  notApplicable,
+  parseColor,
+  px,
+  ran,
+  unavailable,
+  verify,
+} from "./shared.js";
 import type { DeterministicCheck, ObservedElement } from "./types.js";
 
 /**
@@ -97,8 +104,12 @@ export function reportsInteractiveOverlap(
 export const responsiveBreakCheck: DeterministicCheck = {
   id: "responsive-break",
   run({ tuple, narrowViewport }) {
+    if (!narrowViewport)
+      return notApplicable(
+        this.id,
+        "evaluated only at the minimum captured CSS width",
+      );
     const gate = paintedGate(tuple, ["idiom:interactive-overlap"]);
-    if (!narrowViewport) return gate.result(ran(this.id, []));
     const observation = tuple.observations;
     if (observation === undefined)
       return unavailable(this.id, "observations.json is unavailable");

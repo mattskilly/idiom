@@ -5,7 +5,7 @@ const server = createServer((_request, response) => {
   response.writeHead(200, { "content-type": "text/plain" });
   response.end("ready");
 });
-server.listen(port, "127.0.0.1");
+server.listen(port, process.env.CAPTURE_TEST_HOST ?? "127.0.0.1");
 process.on("SIGTERM", () => {
   if (process.env.IGNORE_TERM !== "1") server.close(() => process.exit(0));
 });

@@ -73,6 +73,8 @@ export type ProbeOptions = CaptureHooks & {
   /** Replay on the supplied disposable page, including replacement pages. */
   restore: (page: Page) => Promise<void>;
   replacePage?: (() => Promise<Page>) | undefined;
+  /** Prepare real pages before guarded replay; dispose after action recording. */
+  preparePage?: ((page: Page) => Promise<() => Promise<void>>) | undefined;
   controlTimeoutMs?: number | undefined;
   stateTimeoutMs?: number | undefined;
   monotonicNow?: (() => number) | undefined;
@@ -1724,6 +1726,25 @@ export async function probeControls(
   let effects: Set<ProbeEffect> | undefined;
   const owned = new Set<Page>([options.page]);
   const protections = new Map<Page, () => Promise<void>>();
+  const preparations = new Map<Page, () => Promise<void>>();
+  const prepare = async (page: Page, deadline: Deadline) => {
+    if (!options.preparePage || options.enumerateOnly) return;
+    const pending = options.preparePage(page);
+    void pending.then(
+      async (dispose) => {
+        if (
+          deadline.signal.aborted ||
+          state.signal.aborted ||
+          page.isClosed()
+        ) {
+          await dispose();
+          void page.close().catch(() => undefined);
+        } else preparations.set(page, dispose);
+      },
+      () => undefined,
+    );
+    await deadline.run(() => pending);
+  };
   // Probe clicks must never change the application's data: requests other
   // than GET/HEAD/OPTIONS are blocked (and still count as a network effect),
   // except while the state's own declared steps are being replayed.
@@ -1841,6 +1862,8 @@ export async function probeControls(
   let retireAfterAttempt = false;
   const context = options.page.context();
   const close = (page: Page) => {
+    void preparations.get(page)?.();
+    preparations.delete(page);
     void protections.get(page)?.();
     protections.delete(page);
     void page.close({ runBeforeUnload: false }).then(
@@ -1965,6 +1988,7 @@ export async function probeControls(
         );
         current = await deadline.run(() => pending);
         await protect(current, deadline);
+        await prepare(current, deadline);
       } finally {
         creating = false;
       }
@@ -2767,16 +2791,15 @@ export async function probeControls(
     // remains in place so an earlier library caller's route cannot bypass it.
     await state.run(() => context.route("**/*", onContextRoute));
     await state.run(() => protect(options.page, state));
+    await prepare(options.page, state);
     const initial = deadlinePage(options.page, state);
     let candidates: Candidate[];
     let explanations: ExplanationCandidate[] = [];
     const explanationsByCandidate = new Map<Candidate, ExplanationCandidate>();
     try {
-      const motion = new MotionCollector(initial.page, options.motionSelectors);
-      initialMotion = motion;
-      await state.run(() => motion.initialize());
       // Visible mode samples every glyph control; the default samples only
-      // text glyphs such as "?", whose missing tooltip it reports.
+      // text glyphs such as "?", whose missing tooltip it reports. Identities
+      // come from the captured document, which observations already named.
       explanations = await state.run(() =>
         explanationCandidates(
           initial.page,
@@ -2784,6 +2807,13 @@ export async function probeControls(
         ),
       );
       explanationIdentities = explanations;
+      // Probe mode needs a fresh document: libraries measure the scrollbar
+      // during startup, and the first baseline must include its gutter.
+      if (options.preparePage && !options.enumerateOnly)
+        await state.run(() => restore(initial.page));
+      const motion = new MotionCollector(initial.page, options.motionSelectors);
+      initialMotion = motion;
+      await state.run(() => motion.initialize());
       candidates = await state.run(() =>
         enumerate(initial.page, options.skip, undefined, intent),
       );
@@ -3660,6 +3690,8 @@ export async function probeControls(
           a.index - b.index,
       )
       .map(({ result }) => result);
+    await Promise.all([...preparations.values()].map((dispose) => dispose()));
+    preparations.clear();
     context.off("page", onNewPage);
     // The capture page is reused for the next tuple, whose own steps may
     // submit forms: the mutation block must be gone before returning.

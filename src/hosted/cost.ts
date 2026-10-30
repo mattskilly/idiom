@@ -40,8 +40,14 @@ export function estimateCost(
       30 * PRICES.blobSimpleOperation,
   };
 }
-// $0.50 includes 128 individually metered <=3MiB responses, 8-attempt CAS,
-// <=10k-entry ledger I/O, lifecycle operations, snapshot amortisation and margin.
+// Historical local-run estimates above remain unchanged; they are not cloud measurements.
+// $0.50 reserves 128 page GETs, 384MiB PNGs, 1GiB actual delivery-ledger
+// reads and 4096 CAS attempts (preceding conflicts included, not multiplied
+// by the eight-attempt retry bound). Content/accounting is <=$0.373316 at
+// the documented rates, including both private delivery origin legs.
+// The remainder covers sandbox/review/admission/publication/lifecycle/snapshot
+// costs, delivery Function invocations/compute, CDN requests and margin.
+// Resource safeguards can exhaust before 128 complete large-report views.
 export const RUN_RESERVATION = 500_000;
 export function validPrices() {
   return (

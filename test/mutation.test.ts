@@ -369,7 +369,7 @@ describe("seed identity, ranking and measurement", () => {
     expect(matchingFingerprints(noise, expected).size).toBe(0);
   });
 
-  test("individual rank uses production salience × prominence before severity, preserving stable ties and all noise", () => {
+  test("individual rank uses severity before production salience × prominence, preserving stable ties and all noise", () => {
     const sample = capture([
       candidate({
         category: "contrast",
@@ -387,12 +387,12 @@ describe("seed identity, ranking and measurement", () => {
     const ranked = rankFindings(sample);
     expect(sample.findings[0]?.category).toBe("contrast");
     expect(ranked.map((item) => item.selector)).toEqual([
+      "#noise",
       "#seed",
       "#tie",
-      "#noise",
     ]);
     const context = buildIssueRankingContext(sample.tuples);
-    expect(ranked[0]?.score).toBe(
+    expect(ranked[1]?.score).toBe(
       scoreGroup(
         {
           category: "clipped-text",
@@ -406,7 +406,7 @@ describe("seed identity, ranking and measurement", () => {
     );
     expect(evaluateSeed(capture([]), sample, expected)).toMatchObject({
       caught: true,
-      rank: 1,
+      rank: 2,
       otherFindings: 2,
     });
     const duplicate = capture([candidate(), candidate()]);
@@ -466,11 +466,11 @@ describe("seed identity, ranking and measurement", () => {
     );
     const ranked = rankFindings(sample);
     expect(sample.findings[0]?.severity).toBe("blocker");
-    expect(ranked.map((item) => item.selector)).toEqual(["#seed", "#noise"]);
-    expect(ranked[0]?.prominence).toBeGreaterThan(2);
-    expect(ranked[1]?.prominence).toBe(1);
+    expect(ranked.map((item) => item.selector)).toEqual(["#noise", "#seed"]);
+    expect(ranked[1]?.prominence).toBeGreaterThan(2);
+    expect(ranked[0]?.prominence).toBe(1);
     const context = buildIssueRankingContext(sample.tuples);
-    expect(ranked[0]?.score).toBe(
+    expect(ranked[1]?.score).toBe(
       scoreGroup(
         {
           category: "clipped-text",
@@ -705,3 +705,19 @@ test("fourteen-case browser subset, isolation and Node launcher finish within on
   ).toBe(originalBaseline);
   expect(performance.now() - started).toBeLessThan(30_000);
 }, 30_000);
+
+test("recorded major contrast outranks minor spacing without changing any recorded score", async () => {
+  const { comparePriority } = await import("../src/review/ranking.js");
+  const rows = [
+    { severity: "minor" as const, score: 11.306179540418192 },
+    { severity: "minor" as const, score: 11.269221829007876 },
+    { severity: "minor" as const, score: 10.810429809565168 },
+    { severity: "major" as const, score: 6.271582297737618 },
+  ];
+  const original = structuredClone(rows);
+  expect([...rows].sort(comparePriority)).toEqual([
+    rows[3],
+    ...rows.slice(0, 3),
+  ]);
+  expect(rows).toEqual(original);
+});

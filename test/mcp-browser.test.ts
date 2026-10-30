@@ -13,6 +13,7 @@ import {
   takeFixSnapshot,
 } from "../src/fix/check.js";
 import { repairPrompt } from "../src/fix/prompt.js";
+import { comparePriority } from "../src/review/ranking.js";
 import type { Finding } from "../src/schemas/finding.js";
 import { baselineProject, commit, git } from "./baseline-support.js";
 import { fixture } from "./benchmark-support.js";
@@ -31,7 +32,12 @@ type Detail = {
 };
 type Check = {
   runId: string;
-  issues: Array<{ id: string; groups: string[] }>;
+  issues: Array<{
+    id: string;
+    groups: string[];
+    severity: Finding["severity"];
+    score: number;
+  }>;
   topIssues: Array<{ id: string; groups: string[]; representative: Detail }>;
   findings: Detail[];
   groups: Array<{ id: string; members: Array<{ id: string }> }>;
@@ -117,6 +123,9 @@ test("real benchmark quick/check/issue expose ranked complete findings and the a
   expect(quick.topIssues.length).toBeGreaterThan(0);
   expect(quick.topIssues.length).toBeLessThanOrEqual(5);
   expect(quick.counts.findings).toBeGreaterThan(5);
+  expect(quick.issues).toEqual([...quick.issues].sort(comparePriority));
+  expect(quick.topIssues).toEqual(quick.issues.slice(0, 5));
+
   expect(quick.counts.captures.total).toBe(2);
   expect(
     quick.findings.every(
@@ -176,6 +185,12 @@ test("real benchmark quick/check/issue expose ranked complete findings and the a
     }),
   );
   expect(response.counts.findings).toBeGreaterThan(5);
+  expect(response.issues).toEqual([...response.issues].sort(comparePriority));
+  expect(response.topIssues).toEqual(response.issues.slice(0, 5));
+  expect(new Set(response.issues.map((i) => i.severity)).size).toBeGreaterThan(
+    1,
+  );
+
   expect(response.coverage.selectedTuples).toBe(2);
   const stored = JSON.parse(
     await readFile(response.reports.findings, "utf8"),

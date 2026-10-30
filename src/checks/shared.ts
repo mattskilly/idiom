@@ -81,6 +81,16 @@ export function unavailable(
   return { coverage: { check, status: "unavailable", reason }, candidates: [] };
 }
 
+export function notApplicable(
+  check: DeterministicCheckId,
+  reason: string,
+): CheckResult {
+  return {
+    coverage: { check, status: "not-applicable", reason },
+    candidates: [],
+  };
+}
+
 export function ran(
   check: DeterministicCheckId,
   candidates: FindingCandidate[],

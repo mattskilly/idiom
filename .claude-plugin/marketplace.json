@@ -1,0 +1,17 @@
+{
+  "name": "idiom",
+  "owner": {
+    "name": "Matt Skilly"
+  },
+  "metadata": {
+    "description": "Design acceptance for AI-built software.",
+    "version": "0.16.0"
+  },
+  "plugins": [
+    {
+      "name": "idiom",
+      "source": "./",
+      "description": "Design acceptance tools, UI check reminders and the conversational Idiom skill."
+    }
+  ]
+}

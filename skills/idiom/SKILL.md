@@ -24,7 +24,7 @@ Report the verdict and evidence paths. Do not repair anything yourself.
 ## Check mode
 
 When `$ARGUMENTS` is `check <flow>`, run `idiom check <flow>`; present findings
-in its order with each `Evidence:` image. If asked, fix blockers and majors and
+in its order: severity first, then prominence (salience × prominence) within a tier, with each `Evidence:` image. If asked, fix blockers and majors and
 rerun until clean. Never decide, suppress or reword findings; ask the human.
 
 ## Init mode
@@ -58,7 +58,7 @@ When `$ARGUMENTS` starts with `sweep`, route it here, including `sweep --all`.
 After a batch of builds lands, run `idiom sweep --all --emit-tickets .autobuild/tickets/triage`
 (or MCP `idiom_sweep` with `{all:true,emitTickets:".autobuild/tickets/triage"}`).
 Use `--deterministic-only` without model credentials; `--max-tickets` defaults to 10.
-Inspect polish Markdown/HTML reports, omitted counts and probe/model coverage limits.
+Inspect polish Markdown/HTML reports in severity-first order, then prominence (salience × prominence) within a tier, omitted counts and probe/model coverage limits.
 Present bounded triage proposals without inventing accept/reject decisions. Never
 promote them, launch dispatch or implement cleanup. Groom manually; after repairs,
 run every ticket's printed verification-sidecar command for its flow and tuple.

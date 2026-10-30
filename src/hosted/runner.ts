@@ -11,6 +11,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { chromium, request } from "playwright";
 import { summarizeFinding } from "../baseline/summary.js";
 import { createBrowserLauncher } from "../capture/browser.js";
+import { scrollbarLaunchOptions } from "../capture/scrollbars.js";
 import type { CaptureActivity } from "../capture/types.js";
 import { tupleDesigns } from "../design/evidence.js";
 import { createQuickConfiguration } from "../quick/config.js";
@@ -67,7 +68,7 @@ export async function runWorker(
     const launcher = createBrowserLauncher({
       launch: () =>
         chromium.launch({
-          headless: true,
+          ...scrollbarLaunchOptions,
           proxy: { server: proxy.url, bypass: "<-loopback>" },
           args: [
             "--disable-quic",

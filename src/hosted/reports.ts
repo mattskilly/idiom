@@ -25,8 +25,25 @@ const manifestSchema = z
     deleteHash: z.string().regex(idPattern),
     deleted: z.boolean(),
     assets: z.array(z.string().regex(assetName)).max(LIMITS.assets),
+    assetSizes: z
+      .record(
+        z.string().regex(assetName),
+        z.number().int().positive().max(LIMITS.assetBytes),
+      )
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine((manifest) => {
+    if (new Set(manifest.assets).size !== manifest.assets.length) return false;
+    const sizes = manifest.assetSizes;
+    return (
+      sizes === undefined ||
+      (Object.keys(sizes).length === manifest.assets.length &&
+        manifest.assets.every((name) => Object.hasOwn(sizes, name)) &&
+        Object.values(sizes).reduce((sum, size) => sum + size, 0) <=
+          LIMITS.outputBytes)
+    );
+  });
 type Manifest = z.infer<typeof manifestSchema>;
 export function validatePng(bytes: Buffer) {
   if (
@@ -71,7 +88,7 @@ export function validateOutput(
 export class Reports {
   constructor(
     readonly store: PrivateStore,
-    readonly ledger: Pick<AdmissionLedger, "delivery">,
+    readonly ledger: Pick<AdmissionLedger, "delivery" | "assetDelivery">,
     readonly now: () => number = Date.now,
   ) {}
   async publish(
@@ -92,6 +109,9 @@ export class Reports {
       deleteHash: hash(deleteToken),
       deleted: false,
       assets: report.assets.map((a) => a.name),
+      assetSizes: Object.fromEntries(
+        [...assets].map(([name, bytes]) => [name, bytes.length]),
+      ),
     };
     const prefix = prefixFor(id);
     // Durable index first: interrupted/partial publications are sweepable.
@@ -157,16 +177,25 @@ export class Reports {
     const { manifest } = await this.manifest(id);
     return { report, expiresAt: manifest.expiresAt };
   }
-  async asset(id: string, name: string) {
+  async assetMetadata(id: string, name: string) {
     if (!assetName.test(name)) throw new HostedError("gone");
     const { manifest } = await this.manifest(id);
     if (!manifest.assets.includes(name)) throw new HostedError("gone");
-    await this.ledger.delivery(id);
-    const result = await this.store.get(
-      prefixFor(id) + name,
-      LIMITS.assetBytes,
-    );
+    return {
+      byteLength: manifest.assetSizes?.[name] ?? LIMITS.assetBytes,
+      exact: manifest.assetSizes !== undefined,
+    };
+  }
+  async asset(id: string, name: string) {
+    const { byteLength, exact } = await this.assetMetadata(id, name);
+    await this.ledger.assetDelivery(id, byteLength);
+    const result = await this.store.get(prefixFor(id) + name, byteLength);
     if (!result) throw new HostedError("gone");
+    if (
+      result.bytes.length > byteLength ||
+      (exact && result.bytes.length !== byteLength)
+    )
+      throw new HostedError("unavailable");
     await this.manifest(id);
     return result.bytes;
   }

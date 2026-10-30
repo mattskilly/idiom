@@ -1,11 +1,14 @@
-import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import { critiquePrompt } from "./prompt.js";
 import {
-  MalformedCritiqueError,
-  modelResponseJsonSchema,
-  parseModelResponse,
-} from "./schema.js";
+  type CritiqueProcessRequest,
+  type CritiqueProcessResult,
+  type CritiqueProcessRunner,
+  runCritiqueProcess,
+  sanitizeCritiqueDiagnostic,
+} from "./process.js";
+import { critiquePrompt } from "./prompt.js";
+import { modelResponseJsonSchema } from "./schema.js";
+import { critiqueWithRepair } from "./structured.js";
 import type {
   CritiqueAdapter,
   CritiqueInput,
@@ -13,41 +16,10 @@ import type {
 } from "./types.js";
 import { critiqueResult } from "./types.js";
 
-const MAX_PROCESS_OUTPUT_BYTES = 1024 * 1024;
-
-export type ClaudeCodeRunRequest = {
-  executable: string;
-  args: string[];
-  cwd: string;
-  environment: NodeJS.ProcessEnv;
-  stdin: string;
-};
-
-export type ClaudeCodeRunResult = {
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  signal: NodeJS.Signals | null;
-};
-
-export type ClaudeCodeRunner = (
-  request: ClaudeCodeRunRequest,
-) => Promise<ClaudeCodeRunResult>;
-
-export function sanitizeCritiqueDiagnostic(
-  value: unknown,
-  limit = 500,
-): string {
-  const source = value instanceof Error ? value.message : String(value);
-  return source
-    .replace(
-      /sk-ant-[A-Za-z0-9._~+/-]+|(?:api[_ -]?key(?!\s+is\s+not\s+set\b)|access[_ -]?token|authorization|bearer)(?:[=: ]+)(?:bearer[ ]+)?[A-Za-z0-9._~+/-]+/gi,
-      "[redacted]",
-    )
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, Math.max(0, limit));
-}
+export type ClaudeCodeRunRequest = CritiqueProcessRequest;
+export type ClaudeCodeRunResult = CritiqueProcessResult;
+export type ClaudeCodeRunner = CritiqueProcessRunner;
+export { sanitizeCritiqueDiagnostic };
 
 export class ClaudeCodeCritiqueError extends Error {
   readonly detail: string;
@@ -63,65 +35,7 @@ export class ClaudeCodeCritiqueError extends Error {
   }
 }
 
-export const runClaudeCode: ClaudeCodeRunner = (request) =>
-  new Promise((accept, reject) => {
-    const child = spawn(request.executable, request.args, {
-      cwd: request.cwd,
-      env: request.environment,
-      shell: false,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let outputFailure: Error | undefined;
-    let settled = false;
-
-    const fail = (error: unknown) => {
-      if (settled) return;
-      settled = true;
-      reject(error);
-    };
-    const collect =
-      (target: Buffer[], stream: "stdout" | "stderr") =>
-      (chunk: Buffer | string) => {
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        if (stream === "stdout") stdoutBytes += buffer.byteLength;
-        else stderrBytes += buffer.byteLength;
-        if (
-          stdoutBytes > MAX_PROCESS_OUTPUT_BYTES ||
-          stderrBytes > MAX_PROCESS_OUTPUT_BYTES
-        ) {
-          outputFailure = new Error(
-            `Claude Code ${stream} exceeded ${MAX_PROCESS_OUTPUT_BYTES} bytes`,
-          );
-          child.kill("SIGKILL");
-          return;
-        }
-        target.push(buffer);
-      };
-
-    child.once("error", fail);
-    child.stdout.on("data", collect(stdout, "stdout"));
-    child.stderr.on("data", collect(stderr, "stderr"));
-    child.stdin.once("error", fail);
-    child.once("close", (exitCode, signal) => {
-      if (settled) return;
-      settled = true;
-      if (outputFailure !== undefined) {
-        reject(outputFailure);
-        return;
-      }
-      accept({
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-        exitCode,
-        signal,
-      });
-    });
-    child.stdin.end(request.stdin);
-  });
+export const runClaudeCode: ClaudeCodeRunner = runCritiqueProcess;
 
 function pathManifest(input: CritiqueInput, projectDirectory: string) {
   return [
@@ -264,40 +178,10 @@ export class ClaudeCodeCritiqueAdapter implements CritiqueAdapter {
 
   async critique(input: CritiqueInput): Promise<CritiqueResult> {
     if (input.screenshots.length === 0) return critiqueResult({ findings: [] });
-    const prompt = completePrompt(input, this.projectDirectory);
-    const first = await this.invoke(prompt);
-    try {
-      return parseModelResponse(
-        JSON.stringify(first),
-        input.screenshots,
-        input.references,
-        input.screenshots,
-        input.designMd,
-        input.spec !== undefined,
-        input.page,
-        input.designImages,
-      );
-    } catch (error) {
-      if (!(error instanceof MalformedCritiqueError)) throw error;
-      const repairPrompt = [
-        prompt,
-        "## Rejected structured output",
-        JSON.stringify(first, null, 2),
-        "## Local validation issues",
-        error.issues.join("\n"),
-        "Return a complete replacement batch that fixes every issue. Re-read the same evidence; do not return a patch or explanation.",
-      ].join("\n\n");
-      const repaired = await this.invoke(repairPrompt);
-      return parseModelResponse(
-        JSON.stringify(repaired),
-        input.screenshots,
-        input.references,
-        input.screenshots,
-        input.designMd,
-        input.spec !== undefined,
-        input.page,
-        input.designImages,
-      );
-    }
+    return critiqueWithRepair({
+      input,
+      prompt: completePrompt(input, this.projectDirectory),
+      invoke: (prompt) => this.invoke(prompt),
+    });
   }
 }

@@ -415,11 +415,26 @@ export async function checkWithReview(
         for (const finding of symptom.findings)
           rootCauses.set(finding.id, { ...rest, symptoms: symptoms.length });
     }
+    const recordIds = new Set(records.map((record) => record.finding.id));
+    const issueScores = new Map<string, number>();
+    const groupsById = new Map(
+      (summary.groups ?? []).map((group) => [group.id, group]),
+    );
+    for (const issue of summary.issues ?? [])
+      for (const groupId of issue.groups)
+        for (const member of groupsById.get(groupId)?.members ?? []) {
+          if (!recordIds.has(member.id)) continue;
+          issueScores.set(
+            member.id,
+            Math.max(issueScores.get(member.id) ?? -Infinity, issue.score),
+          );
+        }
     summary.tickets = await emitClusterTickets({
       project: options.project,
       cwd: options.cwd,
       out: emitTickets,
       rootCauses,
+      issueScores,
       selection: { policy: "current-run", records },
     });
   }
