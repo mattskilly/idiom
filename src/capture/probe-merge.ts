@@ -90,7 +90,9 @@ export function mergePlannedProbe(options: {
       continue;
     }
     const owner = cached.state === state;
-    const { elapsedMs, timings, replayRequired, ...result } = cached.result;
+    const { elapsedMs, timings, replayRequired, revealed, ...result } =
+      cached.result;
+    // A revealed state is checked once: on the row of the state that opened it.
     artifact.results[position] = {
       ...result,
       selector: candidate.selector,
@@ -99,7 +101,7 @@ export function mergePlannedProbe(options: {
       repeated: candidate.repeated ? true : undefined,
       persistent: true,
       ...(owner
-        ? { elapsedMs, timings, replayRequired }
+        ? { elapsedMs, timings, replayRequired, revealed }
         : { reusedFrom: cached.state }),
     };
     // Nested items finished anywhere fill this state's unfinished rows.
@@ -119,6 +121,7 @@ export function mergePlannedProbe(options: {
               elapsedMs: undefined,
               timings: undefined,
               replayRequired: undefined,
+              revealed: undefined,
               reusedFrom: source,
             };
       const open = artifact.results.findIndex(same);
@@ -185,9 +188,14 @@ export function accumulateProbeRound(
         }
       : (previous.heldReplay ?? next.heldReplay);
   const failure = next.failureReplay ?? previous.failureReplay;
+  const selection = mergeSelectionTrials(
+    previous.selectionTrials,
+    next.selectionTrials,
+  );
   return {
     ...previous,
     results,
+    ...(selection ? { selectionTrials: selection } : {}),
     ...(explanations ? { explanations } : {}),
     ...(previous.candidates ? {} : { candidates: next.candidates }),
     ...(held ? { heldReplay: held } : {}),
@@ -223,6 +231,37 @@ export function accumulateProbeRound(
           },
         }
       : {}),
+  };
+}
+
+/** Both rounds' selection trials, one per selector, completed ones kept. */
+function mergeSelectionTrials(
+  previous: ProbeArtifact["selectionTrials"],
+  next: ProbeArtifact["selectionTrials"],
+): ProbeArtifact["selectionTrials"] {
+  if (!previous || !next) return previous ?? next;
+  const trials = [...previous.trials];
+  for (const trial of next.trials) {
+    const open = trials.findIndex((other) => other.selector === trial.selector);
+    if (open < 0) trials.push(trial);
+    else if (
+      trials[open]?.status !== "completed" &&
+      trial.status === "completed"
+    )
+      trials[open] = trial;
+  }
+  const reason = [
+    ...new Set([previous.reason, next.reason].filter(Boolean)),
+  ].join("; ");
+  return {
+    status:
+      previous.status === "partial" || next.status === "partial"
+        ? "partial"
+        : "ran",
+    ...(reason ? { reason } : {}),
+    limit: next.limit,
+    candidates: previous.candidates + next.candidates,
+    trials,
   };
 }
 

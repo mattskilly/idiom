@@ -29,4 +29,5 @@ Design skills tell your agent what good looks like before it builds. Idiom check
 
 - [Getting started](/docs/getting-started): install and run your first review in five minutes.
 - [Design QA for Claude Code](/docs/design-qa-for-claude-code): the full check, fix and verify loop with an agent.
+- [Design decision briefs](/docs/brief): decide a request's design questions before the ticket is written.
 - [Commands](/docs/commands): every command and flag.

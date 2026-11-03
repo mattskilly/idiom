@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Excluded subtrees</title>
+<style>
+  body { margin: 24px; font: 14px/1.4 system-ui, sans-serif; color: #1b1f24; }
+  form { display: flex; flex-direction: column; gap: 24px; max-width: 420px; }
+  .field { display: flex; flex-direction: column; }
+  /* Cramped: the label touches its input, the hint touches the input. */
+  .field label { margin: 0; }
+  .field input { margin: 0; padding: 4px 8px; border: 1px solid #8a9099; border-radius: 4px; }
+  .field small { margin: 0; color: #59606b; }
+  .off-scale { margin-top: 13px; padding: 7px 19px; }
+  .lazy { content-visibility: hidden; }
+  section { margin-top: 32px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Settings</h1>
+  <p class="off-scale" id="visible-note">Changes save automatically.</p>
+  <form>
+    <div class="field" id="visible-field">
+      <label for="name">Display name</label>
+      <input id="name" aria-describedby="name-hint">
+      <small id="name-hint">Shown on your profile.</small>
+    </div>
+  </form>
+  <section>
+    <details>
+      <summary>Advanced</summary>
+      <div class="field off-scale" id="details-field">
+        <label for="proxy">Proxy</label>
+        <input id="proxy" aria-describedby="proxy-hint">
+        <small id="proxy-hint">Leave empty to connect directly.</small>
+      </div>
+    </details>
+    <div hidden>
+      <div class="field off-scale" id="hidden-field">
+        <label for="token">Token</label>
+        <input id="token" aria-describedby="token-hint">
+        <small id="token-hint">Paste the token from your provider.</small>
+      </div>
+    </div>
+    <div inert>
+      <div class="field off-scale" id="inert-field">
+        <label for="region">Region</label>
+        <input id="region" aria-describedby="region-hint">
+        <small id="region-hint">Available after you connect.</small>
+      </div>
+    </div>
+    <div class="lazy">
+      <div class="field off-scale" id="lazy-field">
+        <label for="cache">Cache size</label>
+        <input id="cache" aria-describedby="cache-hint">
+        <small id="cache-hint">In megabytes.</small>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

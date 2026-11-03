@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Editor</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; }
+  main { padding: 24px; display: flex; gap: 240px; }
+  .anchor { position: relative; }
+  button { min-width: 32px; min-height: 32px; transition: none; }
+  [role=menu] { position: absolute; top: 36px; left: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #ccc; padding: 4px; width: 160px; }
+  [role=menu][hidden] { display: none; }
+  [role=menuitem] { all: unset; display: block; padding: 6px 8px; background: transparent; color: #222; transition: none; }
+  [role=menuitem][aria-disabled=true], [role=menuitem]:disabled { color: #999; }
+  [role=menuitem]:hover { background: #e8e8e8; }
+  [role=menuitem][aria-disabled=true]:hover, [role=menuitem]:disabled:hover { background: transparent; }
+</style></head>
+<body>
+<main>
+  <div class="anchor">
+    <button id="edit" aria-haspopup="menu" aria-expanded="false" onclick="toggle(this, 'edit-menu')">Edit</button>
+    <div role="menu" id="edit-menu" aria-label="Edit" hidden>
+      <button role="menuitem" onclick="closeAll()">Copy</button>
+      <button role="menuitem" aria-disabled="true">Paste</button>
+    </div>
+  </div>
+  <div class="anchor">
+    <button id="insert" aria-haspopup="menu" aria-expanded="false" onclick="toggle(this, 'insert-menu')">Insert</button>
+    <div role="menu" id="insert-menu" aria-label="Insert" hidden>
+      <button role="menuitem" onclick="closeAll()">Image</button>
+      <button role="menuitem" disabled>Video</button>
+    </div>
+  </div>
+</main>
+<script>
+  function closeAll() {
+    for (const menu of document.querySelectorAll('[role=menu]')) menu.hidden = true;
+    for (const button of document.querySelectorAll('[aria-haspopup]')) button.setAttribute('aria-expanded', 'false');
+  }
+  function toggle(trigger, id) {
+    const menu = document.getElementById(id);
+    const open = menu.hidden;
+    closeAll();
+    menu.hidden = !open;
+    trigger.setAttribute('aria-expanded', String(open));
+  }
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeAll(); });
+</script>
+</body></html>

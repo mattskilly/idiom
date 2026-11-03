@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
+import { formatCritiqueTimeout } from "../duration.js";
+import { redactCredentials } from "./redact.js";
 
 const DEFAULT_MAX_PROCESS_OUTPUT_BYTES = 1024 * 1024;
 
@@ -13,6 +16,13 @@ export type CritiqueProcessRequest = {
   label?: string | undefined;
   /** Stderr budget; defaults to the stdout budget of 1 MiB. */
   maxStderrBytes?: number | undefined;
+  /**
+   * Wall-clock bound; on expiry the child is SIGKILLed and the call rejects
+   * with `CritiqueProcessTimeoutError`. Unbounded when omitted.
+   */
+  timeoutMs?: number | undefined;
+  /** Sees each stdout chunk as it arrives, e.g. to count streamed events. */
+  onStdout?: ((chunk: string) => void) | undefined;
 };
 
 export type CritiqueProcessResult = {
@@ -26,16 +36,24 @@ export type CritiqueProcessRunner = (
   request: CritiqueProcessRequest,
 ) => Promise<CritiqueProcessResult>;
 
+export { formatCritiqueTimeout } from "../duration.js";
+
+export class CritiqueProcessTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(label: string, timeoutMs: number) {
+    super(`${label} did not finish within ${formatCritiqueTimeout(timeoutMs)}`);
+    this.name = "CritiqueProcessTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export function sanitizeCritiqueDiagnostic(
   value: unknown,
   limit = 500,
 ): string {
   const source = value instanceof Error ? value.message : String(value);
-  return source
-    .replace(
-      /sk-ant-[A-Za-z0-9._~+/-]+|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|(?:api[_ -]?key(?!\s+is\s+not\s+set\b)|access[_ -]?token|authorization|bearer)(?:[=: ]+)(?:bearer[ ]+)?[A-Za-z0-9._~+/-]+/gi,
-      "[redacted]",
-    )
+  return redactCredentials(source)
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, Math.max(0, limit));
@@ -62,8 +80,31 @@ export const runCritiqueProcess: CritiqueProcessRunner = (request) =>
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     const bytes = { stdout: 0, stderr: 0 };
+    // Keeps a multi-byte character split across chunks whole for onStdout.
+    const decoder = new StringDecoder("utf8");
     let outputFailure: Error | undefined;
     let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const timeoutMs = request.timeoutMs;
+    if (
+      timeoutMs !== undefined &&
+      Number.isFinite(timeoutMs) &&
+      timeoutMs > 0
+    ) {
+      timer = setTimeout(() => {
+        if (settled) return;
+        outputFailure ??= new CritiqueProcessTimeoutError(label, timeoutMs);
+        child.kill("SIGKILL");
+        // A grandchild holding the stdio pipes would delay `close` past the
+        // child's exit, so release the pipes once the child itself is gone.
+        const release = () => {
+          child.stdout.destroy();
+          child.stderr.destroy();
+        };
+        if (child.exitCode !== null || child.signalCode !== null) release();
+        else child.once("exit", release);
+      }, timeoutMs);
+    }
 
     const abort = () => {
       outputFailure ??= new Error(`${label} invocation aborted`);
@@ -71,6 +112,7 @@ export const runCritiqueProcess: CritiqueProcessRunner = (request) =>
     };
     request.signal?.addEventListener("abort", abort, { once: true });
     const fail = (error: unknown) => {
+      clearTimeout(timer);
       request.signal?.removeEventListener("abort", abort);
       if (settled) return;
       settled = true;
@@ -89,6 +131,7 @@ export const runCritiqueProcess: CritiqueProcessRunner = (request) =>
           return;
         }
         target.push(buffer);
+        if (stream === "stdout") request.onStdout?.(decoder.write(buffer));
       };
 
     child.once("error", fail);
@@ -96,6 +139,7 @@ export const runCritiqueProcess: CritiqueProcessRunner = (request) =>
     child.stderr.on("data", collect(stderr, "stderr"));
     child.stdin.once("error", fail);
     child.once("close", (exitCode, signal) => {
+      clearTimeout(timer);
       request.signal?.removeEventListener("abort", abort);
       if (settled) return;
       settled = true;

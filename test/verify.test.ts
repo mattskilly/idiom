@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   access,
   mkdir,
@@ -6,9 +7,8 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { PNG } from "pngjs";
 import { afterEach, expect, test, vi } from "vitest";
 import { runCapture } from "../src/capture/run.js";
@@ -21,10 +21,9 @@ import { runDeterministicChecks } from "../src/checks/registry.js";
 import type {
   CheckTuple,
   ObservationArtifact,
-  ObservedElement,
   ObservedElementV2,
-  ObservedStyles,
 } from "../src/checks/types.js";
+import { run } from "../src/cli.js";
 import { initProject } from "../src/commands/init.js";
 import { buildVerificationCoverage } from "../src/report/coverage.js";
 import { buildDeterministicDrafts } from "../src/review/findings.js";
@@ -32,6 +31,7 @@ import { type Finding, findingSchema } from "../src/schemas/finding.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
 import {
+  compositeArtifactName,
   createAttachmentManifest,
   validateAttachmentManifest,
   writeAttachmentManifest,
@@ -40,14 +40,26 @@ import { resolveBaseline } from "../src/verify/baseline.js";
 import { writeBeforeAfterComposite } from "../src/verify/compare.js";
 import { evaluateVerification } from "../src/verify/evaluate.js";
 import { renderVerificationHtmlReport } from "../src/verify/html-report.js";
-import { deriveVerificationLocus } from "../src/verify/locus.js";
+import {
+  compareFindingLocus,
+  deriveVerificationLocus,
+} from "../src/verify/locus.js";
 import {
   assertMaskAgreement,
+  bareTemporalComponent,
   buildSemanticProfile,
+  type SemanticProfile,
 } from "../src/verify/profile.js";
 import { renderVerificationReport } from "../src/verify/report.js";
 import { runVerify } from "../src/verify/run.js";
 import { parseFindingBlocks, selectFindingTuples } from "../src/verify/spec.js";
+import {
+  artifactV2,
+  freePort,
+  legacyElement,
+  png,
+  v2Element,
+} from "./verify-support.js";
 
 const directories: string[] = [];
 
@@ -59,24 +71,6 @@ afterEach(async () => {
       .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
-
-async function freePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((accept) => server.listen(0, "127.0.0.1", accept));
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("no port");
-  await new Promise<void>((accept, reject) =>
-    server.close((error) => (error === undefined ? accept() : reject(error))),
-  );
-  return address.port;
-}
-
-function png(width = 2, height = 2, value = 255): Buffer {
-  const image = new PNG({ width, height });
-  image.data.fill(value);
-  return PNG.sync.write(image);
-}
 
 function browserWithText(text: string, onLaunch?: () => void): BrowserLauncher {
   return async () => {
@@ -153,161 +147,6 @@ function finding(overrides: Partial<Finding> = {}): Finding {
     status: "open",
     ...overrides,
   });
-}
-
-const styles: ObservedStyles = {
-  color: "rgb(0, 0, 0)",
-  backgroundColor: "rgb(255, 255, 255)",
-  borderTopColor: "rgb(0, 0, 0)",
-  borderRightColor: "rgb(0, 0, 0)",
-  borderBottomColor: "rgb(0, 0, 0)",
-  borderLeftColor: "rgb(0, 0, 0)",
-  borderTopWidth: "0px",
-  borderRightWidth: "0px",
-  borderBottomWidth: "0px",
-  borderLeftWidth: "0px",
-  outlineColor: "rgb(0, 0, 0)",
-  outlineWidth: "0px",
-  outlineStyle: "none",
-  textOverflow: "clip",
-  fill: "rgb(0, 0, 0)",
-  stroke: "none",
-  borderTopLeftRadius: "0px",
-  borderTopRightRadius: "0px",
-  borderBottomRightRadius: "0px",
-  borderBottomLeftRadius: "0px",
-  overflowX: "visible",
-  overflowY: "visible",
-  position: "static",
-};
-
-function legacyElement(options: {
-  selector: string;
-  tag: string;
-  text?: string;
-  visible?: boolean;
-  ancestors?: string[];
-  y?: number;
-  height?: number;
-}): ObservedElement {
-  return {
-    selector: options.selector,
-    tag: options.tag,
-    text: options.text ?? "",
-    visible: options.visible ?? true,
-    interactive: false,
-    enabled: true,
-    rect: {
-      x: 0,
-      y: options.y ?? 0,
-      width: 100,
-      height: options.height ?? 20,
-    },
-    scrollWidth: 100,
-    scrollHeight: 20,
-    clientWidth: 100,
-    clientHeight: 20,
-    outOfFlow: false,
-    ancestorSelectors: options.ancestors ?? [],
-    authoredProperties: [],
-    styles,
-    hitTestWith: [],
-  };
-}
-
-function expandedStyles(): ObservedElementV2["styles"] {
-  return {
-    ...styles,
-    display: "block",
-    visibility: "visible",
-    opacity: "1",
-    fontFamily: "system-ui",
-    fontSize: "16px",
-    fontWeight: "400",
-    lineHeight: "24px",
-    letterSpacing: "normal",
-    textAlign: "start",
-    textDecorationLine: "none",
-    textTransform: "none",
-    whiteSpace: "normal",
-    wordBreak: "normal",
-    paddingTop: "0px",
-    paddingRight: "0px",
-    paddingBottom: "0px",
-    paddingLeft: "0px",
-    marginTop: "0px",
-    marginRight: "0px",
-    marginBottom: "0px",
-    marginLeft: "0px",
-    gap: "normal",
-    flexDirection: "row",
-    justifyContent: "normal",
-    alignItems: "normal",
-    gridTemplateColumns: "none",
-    boxShadow: "none",
-    transform: "none",
-    zIndex: "auto",
-  };
-}
-
-function v2Element(options: {
-  selector: string;
-  tag: string;
-  path: string;
-  text?: string;
-  visible?: boolean;
-  attributes?: Record<string, string>;
-  y?: number;
-}): ObservedElementV2 {
-  const base = legacyElement({
-    selector: options.selector,
-    tag: options.tag,
-    ...(options.text === undefined ? {} : { text: options.text }),
-    ...(options.visible === undefined ? {} : { visible: options.visible }),
-    ...(options.y === undefined ? {} : { y: options.y }),
-  });
-  return {
-    ...base,
-    structuralPath: options.path,
-    ...(base.visible ? { legacyRenderedPath: options.path } : {}),
-    directText: options.text ?? "",
-    attributes: options.attributes ?? {},
-    temporal: false,
-    stableIslandPath: "html[0]/body[0]",
-    relativeRect: base.rect,
-    styles: expandedStyles(),
-  };
-}
-
-function artifactV2(
-  text: string,
-  extras: ObservedElementV2[] = [],
-): ObservationArtifact {
-  return {
-    version: 2,
-    viewport: { width: 800, height: 600 },
-    document: {
-      scrollWidth: 800,
-      scrollHeight: 600,
-      clientWidth: 800,
-      clientHeight: 600,
-    },
-    elements: [
-      v2Element({ selector: "html", tag: "html", path: "html[0]" }),
-      v2Element({ selector: "body", tag: "body", path: "html[0]/body[0]" }),
-      v2Element({
-        selector: "main",
-        tag: "main",
-        path: "html[0]/body[0]/main[0]",
-        text,
-        attributes: { class: "surface" },
-      }),
-      ...extras,
-    ],
-    headings: [],
-    tokens: { status: "not-configured" },
-    maskMembership: [],
-  };
 }
 
 function spacingArtifact(clearances: number[]): ObservationArtifact {
@@ -754,6 +593,392 @@ test("v2 verification suppresses masked temporal content-derived fields", () => 
   });
 });
 
+type TemporalNode = {
+  selector: string;
+  path: string;
+  text?: string;
+  attributes?: Record<string, string>;
+  island?: string;
+  visible?: boolean;
+};
+
+function temporalTree(nodes: TemporalNode[]): ObservationArtifact {
+  const root = "html[0]/body[0]/main[0]";
+  const elements = nodes.map((node, index) => {
+    const tag = (node.path.split("/").at(-1) ?? "").replace(/\[\d+\]$/, "");
+    const element = v2Element({
+      selector: node.selector,
+      tag,
+      path: `${root}/${node.path}`,
+      y: index * 20,
+      ...(node.text === undefined ? {} : { text: node.text }),
+      ...(node.attributes === undefined ? {} : { attributes: node.attributes }),
+      ...(node.visible === undefined ? {} : { visible: node.visible }),
+    });
+    element.ancestorSelectors = [
+      ...nodes
+        .filter((other) => node.path.startsWith(`${other.path}/`))
+        .map(({ selector }) => selector)
+        .reverse(),
+      "main",
+    ];
+    if (node.island !== undefined)
+      element.stableIslandPath = `${root}/${node.island}`;
+    return element;
+  });
+  return artifactV2("", elements);
+}
+
+function temporalRecord(artifact: ObservationArtifact, selector: string) {
+  return buildSemanticProfile({ artifact, kind: "v2-full" }).records.find(
+    (record) => record.selector === selector,
+  );
+}
+
+function temporalVerdict(
+  baselineArtifact: ObservationArtifact,
+  current: ObservationArtifact,
+  selector: string,
+) {
+  const locus = deriveVerificationLocus(tuple(baselineArtifact), selector);
+  if (locus === undefined) throw new Error("expected locus");
+  return evaluateVerification({
+    findings: [finding({ verification: { kind: "recapture-visual", locus } })],
+    baseline: [tuple(baselineArtifact)],
+    currentA: [tuple(current)],
+    currentB: [tuple(structuredClone(current))],
+  });
+}
+
+test("bare temporal components are days of month or plausible years", () => {
+  for (const value of ["1", "12", "31", "12th", " 3 ", "1999", "2026"])
+    expect(bareTemporalComponent(value)).toBe(true);
+  for (const value of [
+    "0",
+    "32",
+    "42",
+    "123",
+    "1800",
+    "3 guests",
+    "",
+    "123456789",
+  ])
+    expect(bareTemporalComponent(value)).toBe(false);
+});
+
+test("v2 verification recognizes a date past the old inner-text sample", () => {
+  const lateDateArtifact = (
+    dateText: string,
+    gridTemplateColumns: string,
+    transform: string,
+    height: number,
+  ): ObservationArtifact => {
+    const filler = Array.from({ length: 20 }, (_, index) => ({
+      selector: `p.filler-${index}`,
+      path: `section[0]/p[${index}]`,
+      text: `Supporting paragraph ${index} with enough copy to push later text well past any sample window.`,
+    }));
+    const artifact = temporalTree([
+      { selector: "section.card", path: "section[0]" },
+      ...filler,
+      { selector: "p.when", path: "section[0]/p[20]", text: dateText },
+    ]);
+    if (artifact.version !== 2) throw new Error("fixture");
+    const card = artifact.elements.find(
+      ({ selector }) => selector === "section.card",
+    );
+    if (card === undefined) throw new Error("fixture");
+    card.styles.gridTemplateColumns = gridTemplateColumns;
+    card.styles.transform = transform;
+    card.rect.height = height;
+    card.relativeRect.height = height;
+    return artifact;
+  };
+  const baselineArtifact = lateDateArtifact(
+    "Wed Aug 12, 2:00 PM",
+    "145.672px 254.328px",
+    "matrix(1, 0, 0, 1, 145.672, 0)",
+    480,
+  );
+  const current = lateDateArtifact(
+    "Thu Sep 3, 11:15 AM",
+    "62.6719px 337.328px",
+    "matrix(1, 0, 0, 1, 62.6719, 0)",
+    520,
+  );
+  if (baselineArtifact.version !== 2) throw new Error("fixture");
+  expect(
+    baselineArtifact.elements.every(({ temporal }) => temporal === false),
+  ).toBe(true);
+  expect(
+    baselineArtifact.elements
+      .filter(({ selector }) => selector.startsWith("p."))
+      .reduce((total, { directText }) => total + directText.length, 0),
+  ).toBeGreaterThan(1000);
+  const profile = buildSemanticProfile({
+    artifact: baselineArtifact,
+    kind: "v2-full",
+  });
+  const cardRecord = profile.records.find(
+    ({ selector }) => selector === "section.card",
+  );
+  expect(cardRecord?.styles).not.toHaveProperty("gridTemplateColumns");
+  expect(cardRecord?.styles).not.toHaveProperty("transform");
+  expect(cardRecord).not.toHaveProperty("geometry");
+  expect(
+    profile.records.find(({ selector }) => selector === "p.when"),
+  ).not.toHaveProperty("text");
+  expect(
+    profile.records.find(({ selector }) => selector === "p.filler-3")?.text,
+  ).toContain("Supporting paragraph 3");
+  // main, section.card and p.when; body and html are excluded upstream.
+  expect(profile.reductions.textSuppressedTemporal).toBeGreaterThanOrEqual(3);
+  expect(temporalVerdict(baselineArtifact, current, "p.when")).toMatchObject({
+    passed: false,
+    calibrations: [{ negotiated: "v2-full" }],
+    findings: [{ status: "reproduced", locus: { changed: false } }],
+  });
+});
+
+test("v2 verification treats a calendar day as temporal through the grid label", () => {
+  const calendar = (day: string) =>
+    temporalTree([
+      {
+        selector: "table.calendar",
+        path: "table[0]",
+        attributes: { role: "grid", "aria-label": "October 2026" },
+      },
+      {
+        selector: "tbody.weeks",
+        path: "table[0]/tbody[0]",
+        island: "table[0]",
+      },
+      {
+        selector: "tr.week",
+        path: "table[0]/tbody[0]/tr[0]",
+        island: "table[0]",
+      },
+      {
+        selector: "td.cell",
+        path: "table[0]/tbody[0]/tr[0]/td[0]",
+        attributes: { role: "gridcell" },
+        island: "table[0]/tbody[0]/tr[0]/td[0]",
+      },
+      {
+        selector: "button.day",
+        path: "table[0]/tbody[0]/tr[0]/td[0]/button[0]",
+        text: day,
+        island: "table[0]/tbody[0]/tr[0]/td[0]",
+      },
+    ]);
+  const baselineArtifact = calendar("12");
+  const dayRecord = temporalRecord(baselineArtifact, "button.day");
+  expect(dayRecord).not.toHaveProperty("text");
+  expect(dayRecord).not.toHaveProperty("geometry");
+  expect(
+    temporalVerdict(baselineArtifact, calendar("3"), "button.day"),
+  ).toMatchObject({
+    passed: false,
+    findings: [{ status: "reproduced", locus: { changed: false } }],
+  });
+});
+
+test("v2 verification takes bare day or year context from own attributes or a parent's own text", () => {
+  const labelled = temporalTree([
+    {
+      selector: "button.day",
+      path: "button[0]",
+      text: "12",
+      attributes: { "aria-label": "Monday, October 12" },
+    },
+  ]);
+  expect(temporalRecord(labelled, "button.day")).not.toHaveProperty("text");
+
+  const renewal = (year: string) =>
+    temporalTree([
+      { selector: "p.renewal", path: "p[0]", text: "Renewal on Oct 30," },
+      { selector: "span.year", path: "p[0]/span[0]", text: year },
+    ]);
+  expect(temporalRecord(renewal("2026"), "span.year")).not.toHaveProperty(
+    "text",
+  );
+  expect(
+    buildSemanticProfile({ artifact: renewal("2026"), kind: "v2-full" })
+      .signature,
+  ).toBe(
+    buildSemanticProfile({ artifact: renewal("2027"), kind: "v2-full" })
+      .signature,
+  );
+
+  // A hidden wrapper takes one step of the walk but does not end it.
+  const wrapped = temporalTree([
+    { selector: "p.renewal", path: "p[0]", text: "Renewal on Oct 30," },
+    { selector: "span.wrap", path: "p[0]/span[0]", visible: false },
+    { selector: "span.year", path: "p[0]/span[0]/span[0]", text: "2026" },
+  ]);
+  expect(temporalRecord(wrapped, "span.year")).not.toHaveProperty("text");
+});
+
+test("v2 verification keeps a bare count beside a date in a shared island", () => {
+  const booking = (count: string) =>
+    temporalTree([
+      {
+        selector: "form.booking",
+        path: "form[0]",
+        attributes: { role: "form" },
+      },
+      { selector: "div.when", path: "form[0]/div[0]", island: "form[0]" },
+      {
+        selector: "p.when",
+        path: "form[0]/div[0]/p[0]",
+        text: "Oct 12",
+        island: "form[0]",
+      },
+      { selector: "div.stepper", path: "form[0]/div[1]", island: "form[0]" },
+      {
+        selector: "span.count",
+        path: "form[0]/div[1]/span[0]",
+        text: count,
+        island: "form[0]",
+      },
+    ]);
+  const baselineArtifact = booking("3");
+  const profile = buildSemanticProfile({
+    artifact: baselineArtifact,
+    kind: "v2-full",
+  });
+  expect(
+    profile.records.find(({ selector }) => selector === "span.count"),
+  ).toMatchObject({ text: "3" });
+  for (const selector of ["form.booking", "div.when", "p.when"])
+    expect(
+      profile.records.find((record) => record.selector === selector),
+    ).not.toHaveProperty("geometry");
+  expect(
+    profile.records.find(({ selector }) => selector === "form.booking")
+      ?.attributes,
+  ).toBeUndefined();
+  expect(
+    temporalVerdict(baselineArtifact, booking("4"), "span.count"),
+  ).toMatchObject({
+    passed: true,
+    findings: [{ status: "fixed", locus: { changed: true } }],
+  });
+});
+
+test("v2 verification leaves out-of-range, mixed and distant bare numbers rendered", () => {
+  const overRange = temporalTree([
+    { selector: "p.renewal", path: "p[0]", text: "Renewal on Oct 30," },
+    { selector: "span.count", path: "p[0]/span[0]", text: "42" },
+    { selector: "span.step", path: "p[0]/span[1]", text: "Step 2 of 4" },
+  ]);
+  expect(temporalRecord(overRange, "span.count")).toMatchObject({
+    text: "42",
+  });
+  expect(temporalRecord(overRange, "span.step")).toMatchObject({
+    text: "Step 2 of 4",
+  });
+
+  const distant = temporalTree([
+    { selector: "section.dated", path: "section[0]", text: "Oct 2026" },
+    { selector: "div.a", path: "section[0]/div[0]" },
+    { selector: "div.b", path: "section[0]/div[0]/div[0]" },
+    { selector: "div.c", path: "section[0]/div[0]/div[0]/div[0]" },
+    { selector: "div.d", path: "section[0]/div[0]/div[0]/div[0]/div[0]" },
+    {
+      selector: "span.day",
+      path: "section[0]/div[0]/div[0]/div[0]/div[0]/span[0]",
+      text: "12",
+    },
+  ]);
+  expect(temporalRecord(distant, "span.day")).toMatchObject({ text: "12" });
+
+  const bodyDated = temporalTree([
+    { selector: "span.day", path: "span[0]", text: "12" },
+  ]);
+  if (bodyDated.version !== 2) throw new Error("fixture");
+  const body = bodyDated.elements.find(({ tag }) => tag === "body");
+  if (body === undefined) throw new Error("fixture");
+  body.directText = "October 2026";
+  body.attributes = { "aria-label": "October 2026" };
+  expect(temporalRecord(bodyDated, "span.day")).toMatchObject({ text: "12" });
+});
+
+function contextualLegacy(
+  elements: Array<{
+    selector: string;
+    tag: string;
+    text: string;
+    ancestors: string[];
+  }>,
+): ObservationArtifact {
+  return {
+    version: 1,
+    viewport: { width: 800, height: 600 },
+    document: {
+      scrollWidth: 800,
+      scrollHeight: 600,
+      clientWidth: 800,
+      clientHeight: 600,
+    },
+    elements: [
+      legacyElement({ selector: "html", tag: "html" }),
+      legacyElement({ selector: "body", tag: "body" }),
+      legacyElement({ selector: "main", tag: "main" }),
+      ...elements.map((element, index) =>
+        legacyElement({ ...element, y: index * 20 }),
+      ),
+    ],
+    headings: [],
+    tokens: { status: "not-configured" },
+  };
+}
+
+test("v1 projection treats a bare day as temporal only through a parent's residual text", () => {
+  const dated = buildSemanticProfile({
+    artifact: contextualLegacy([
+      { selector: "p.when", tag: "p", text: "October 12", ancestors: ["main"] },
+      {
+        selector: "span.day",
+        tag: "span",
+        text: "12",
+        ancestors: ["p.when", "main"],
+      },
+    ]),
+    kind: "v1-compatible",
+  });
+  for (const selector of ["p.when", "span.day"]) {
+    const record = dated.records.find((entry) => entry.selector === selector);
+    expect(record).not.toHaveProperty("text");
+    expect(record).not.toHaveProperty("geometry");
+  }
+
+  const shared = buildSemanticProfile({
+    artifact: contextualLegacy([
+      { selector: "form", tag: "form", text: "Oct 12 3", ancestors: ["main"] },
+      {
+        selector: "p.when",
+        tag: "p",
+        text: "Oct 12",
+        ancestors: ["form", "main"],
+      },
+      {
+        selector: "div.count",
+        tag: "div",
+        text: "3",
+        ancestors: ["form", "main"],
+      },
+    ]),
+    kind: "v1-compatible",
+  });
+  expect(
+    shared.records.find(({ selector }) => selector === "div.count"),
+  ).toMatchObject({ text: "3" });
+  expect(
+    shared.records.find(({ selector }) => selector === "p.when"),
+  ).not.toHaveProperty("text");
+});
+
 test("v2 verification excludes temporal attribute values without hiding real changes", () => {
   const rebookArtifact = (
     ariaLabel: string,
@@ -943,7 +1168,10 @@ test("locus signatures ignore shifted ancestors but retain target changes", () =
     findings: [{ status: "reproduced", locus: { changed: false } }],
   });
 
-  const legacyAnchor = evaluateVerification({
+  // A stray selector in verification.params is a deterministic-check concern
+  // and never anchors a visual comparison: without a locus, the whole tuple is
+  // compared, so the unrelated banner counts as a change.
+  const strayParams = evaluateVerification({
     findings: [
       finding({
         verification: {
@@ -956,12 +1184,12 @@ test("locus signatures ignore shifted ancestors but retain target changes", () =
     currentA: [tuple(shifted)],
     currentB: [tuple(structuredClone(shifted))],
   });
-  expect(legacyAnchor).toMatchObject({
-    passed: false,
+  expect(strayParams).toMatchObject({
+    passed: true,
     findings: [
       {
-        status: "reproduced",
-        locus: { source: "legacy-evidence-anchor", changed: false },
+        status: "fixed",
+        locus: { source: "legacy-whole-tuple", changed: true },
       },
     ],
   });
@@ -979,6 +1207,40 @@ test("locus signatures ignore shifted ancestors but retain target changes", () =
   expect(fixed).toMatchObject({
     passed: true,
     findings: [{ status: "fixed", locus: { changed: true } }],
+  });
+});
+
+test("locus-less visual findings compare the whole tuple end to end", () => {
+  const baseline = tuple(artifactV2("Before"));
+  const reproduced = evaluateVerification({
+    findings: [finding()],
+    baseline: [baseline],
+    currentA: [tuple(artifactV2("Before"))],
+    currentB: [tuple(artifactV2("Before"))],
+  });
+  expect(reproduced).toMatchObject({
+    passed: false,
+    findings: [
+      {
+        status: "reproduced",
+        locus: { source: "legacy-whole-tuple", changed: false },
+      },
+    ],
+  });
+  const fixed = evaluateVerification({
+    findings: [finding()],
+    baseline: [baseline],
+    currentA: [tuple(artifactV2("After"))],
+    currentB: [tuple(artifactV2("After"))],
+  });
+  expect(fixed).toMatchObject({
+    passed: true,
+    findings: [
+      {
+        status: "fixed",
+        locus: { source: "legacy-whole-tuple", changed: true },
+      },
+    ],
   });
 });
 
@@ -1261,6 +1523,414 @@ test("v1 temporal suppression retains non-temporal sibling text and geometry", (
   });
 });
 
+type BoundaryBlock = {
+  selector: string;
+  tag: string;
+  text: string;
+  ancestors: string[];
+  path: string;
+  height?: number;
+};
+
+function boundaryPage(options: {
+  leading?: BoundaryBlock[];
+  targetText?: string | undefined;
+  detailText?: string;
+  noteText?: string;
+  detailHeight?: number;
+  regionPath?: string;
+}): BoundaryBlock[] {
+  const region = options.regionPath ?? "html[0]/body[0]/main[0]/div[0]";
+  return [
+    ...(options.leading ?? []),
+    {
+      selector: "div.region",
+      tag: "div",
+      text: "region",
+      ancestors: ["main"],
+      path: region,
+    },
+    ...(options.targetText === undefined
+      ? []
+      : [
+          {
+            selector: "p.target",
+            tag: "p",
+            text: options.targetText,
+            ancestors: ["div.region", "main"],
+            path: `${region}/p[0]`,
+          },
+          {
+            selector: "span.detail",
+            tag: "span",
+            text: options.detailText ?? "detail",
+            ancestors: ["p.target", "div.region", "main"],
+            path: `${region}/p[0]/span[0]`,
+            ...(options.detailHeight === undefined
+              ? {}
+              : { height: options.detailHeight }),
+          },
+        ]),
+    {
+      selector: "ul.note",
+      tag: "ul",
+      text: options.noteText ?? "note",
+      ancestors: ["div.region", "main"],
+      path: `${region}/ul[0]`,
+    },
+  ];
+}
+
+function boundaryV1(blocks: BoundaryBlock[]): ObservationArtifact {
+  return {
+    version: 1,
+    viewport: { width: 800, height: 600 },
+    document: {
+      scrollWidth: 800,
+      scrollHeight: 600,
+      clientWidth: 800,
+      clientHeight: 600,
+    },
+    elements: [
+      legacyElement({ selector: "html", tag: "html", text: "shell" }),
+      legacyElement({ selector: "body", tag: "body", text: "shell" }),
+      legacyElement({ selector: "main", tag: "main", text: "shell" }),
+      ...blocks.map((block) =>
+        legacyElement({
+          selector: block.selector,
+          tag: block.tag,
+          text: block.text,
+          ancestors: block.ancestors,
+          ...(block.height === undefined ? {} : { height: block.height }),
+        }),
+      ),
+    ],
+    headings: [],
+    tokens: { status: "not-configured" },
+  };
+}
+
+function boundaryV2(blocks: BoundaryBlock[]): ObservationArtifact {
+  const artifact = artifactV2(
+    "",
+    blocks.map((block) => {
+      const element = v2Element({
+        selector: block.selector,
+        tag: block.tag,
+        path: block.path,
+        text: block.text,
+        attributes: { class: block.selector.split(".")[1] ?? "" },
+      });
+      element.ancestorSelectors = block.ancestors;
+      if (block.height !== undefined) {
+        element.rect.height = block.height;
+        element.relativeRect.height = block.height;
+      }
+      return element;
+    }),
+  );
+  for (const element of artifact.elements)
+    if (["html", "body", "main"].includes(element.selector))
+      element.text = "shell";
+  return artifact;
+}
+
+function v1Profile(blocks: BoundaryBlock[]): SemanticProfile {
+  return buildSemanticProfile({
+    artifact: boundaryV1(blocks),
+    kind: "v1-compatible",
+  });
+}
+
+function boundaryLocusFinding(): Finding {
+  const signature = (tag: string, selector: string) =>
+    createHash("sha256").update(`${tag}\0${selector}`).digest("hex");
+  return finding({
+    verification: {
+      kind: "recapture-visual",
+      locus: {
+        version: 1,
+        target: { selector: "p.target", signature: signature("p", "p.target") },
+        region: {
+          selector: "div.region",
+          signature: signature("div", "div.region"),
+        },
+        relativePath: "p[0]",
+      },
+    },
+  });
+}
+
+function compareBoundary(
+  subject: Finding,
+  baseline: BoundaryBlock[],
+  current: BoundaryBlock[],
+) {
+  return compareFindingLocus({
+    finding: subject,
+    baseline: v1Profile(baseline),
+    currentA: v1Profile(current),
+    currentB: v1Profile(current),
+  });
+}
+
+const filler = (length: number, char = "x") => char.repeat(length);
+
+test("v1 profiles record which paths reached the text boundary", () => {
+  const profile = v1Profile(
+    boundaryPage({ targetText: filler(500), detailText: filler(499) }),
+  );
+  expect(profile.reductions.boundaryPaths).toEqual([
+    "html[0]/body[0]/main[0]/div[0]/p[0]",
+  ]);
+  expect(
+    profile.records.find(({ selector }) => selector === "span.detail")?.text,
+  ).toBe(filler(499));
+  const v2 = buildSemanticProfile({
+    artifact: boundaryV2(boundaryPage({ targetText: filler(500) })),
+    kind: "v2-full",
+  });
+  expect(v2.reductions.boundaryPaths).toEqual([]);
+});
+
+test("pair-level text suppression unions the boundary across compared sides", () => {
+  for (const subject of [boundaryLocusFinding()]) {
+    // Below the boundary on both sides: unchanged, nothing suppressed.
+    const same = compareBoundary(
+      subject,
+      boundaryPage({ targetText: filler(120) }),
+      boundaryPage({ targetText: filler(120) }),
+    );
+    expect(same).toMatchObject({
+      changed: false,
+      pairTextSuppression: {
+        paths: [],
+        historicalRecords: 0,
+        currentRecords: 0,
+      },
+    });
+    // A genuine below-threshold text change is still compared.
+    expect(
+      compareBoundary(
+        subject,
+        boundaryPage({ targetText: filler(120) }),
+        boundaryPage({ targetText: filler(130) }),
+      ),
+    ).toMatchObject({ changed: true, pairTextSuppression: { paths: [] } });
+
+    // At the boundary on both sides: each side already suppressed its own.
+    expect(
+      compareBoundary(
+        subject,
+        boundaryPage({ targetText: filler(500, "a") }),
+        boundaryPage({ targetText: filler(500, "b") }),
+      ),
+    ).toMatchObject({
+      changed: false,
+      pairTextSuppression: {
+        paths: ["."],
+        historicalRecords: 0,
+        currentRecords: 0,
+      },
+    });
+
+    // Crossing in either direction never decides the verdict on text alone.
+    expect(
+      compareBoundary(
+        subject,
+        boundaryPage({ targetText: filler(500, "a"), detailText: "d" }),
+        boundaryPage({ targetText: filler(499, "b"), detailText: "d" }),
+      ),
+    ).toMatchObject({
+      changed: false,
+      pairTextSuppression: {
+        paths: ["."],
+        historicalRecords: 0,
+        currentRecords: 1,
+      },
+    });
+    expect(
+      compareBoundary(
+        subject,
+        boundaryPage({ targetText: "t", detailText: filler(499, "a") }),
+        boundaryPage({ targetText: "t", detailText: filler(500, "b") }),
+      ),
+    ).toMatchObject({
+      changed: false,
+      pairTextSuppression: {
+        paths: ["span[0]"],
+        historicalRecords: 1,
+        currentRecords: 0,
+      },
+    });
+
+    // Only text is removed: a real non-text change still counts.
+    expect(
+      compareBoundary(
+        subject,
+        boundaryPage({ targetText: "t", detailText: filler(500) }),
+        boundaryPage({
+          targetText: "t",
+          detailText: filler(499),
+          detailHeight: 64,
+        }),
+      ),
+    ).toMatchObject({
+      changed: true,
+      pairTextSuppression: { paths: ["span[0]"] },
+    });
+  }
+});
+
+test("pair-level text suppression follows comparison roots, not absolute paths", () => {
+  const subject = boundaryLocusFinding();
+  const old: BoundaryBlock = {
+    selector: "div.old",
+    tag: "div",
+    text: filler(500),
+    ancestors: ["main"],
+    path: "html[0]/body[0]/main[0]/div[0]",
+  };
+  const inserted: BoundaryBlock = {
+    selector: "div.new",
+    tag: "div",
+    text: "inserted",
+    ancestors: ["main"],
+    path: "html[0]/body[0]/main[0]/div[0]",
+  };
+  const shiftedOld = { ...old, path: "html[0]/body[0]/main[0]/div[1]" };
+  const baseline = (detailText: string) =>
+    boundaryPage({
+      leading: [old],
+      targetText: "t",
+      detailText,
+      regionPath: "html[0]/body[0]/main[0]/div[1]",
+    });
+  const current = (detailText: string) =>
+    boundaryPage({
+      leading: [inserted, shiftedOld],
+      targetText: "t",
+      detailText,
+      regionPath: "html[0]/body[0]/main[0]/div[2]",
+    });
+  expect(
+    compareBoundary(subject, baseline(filler(120)), current(filler(120))),
+  ).toMatchObject({ changed: false, pairTextSuppression: { paths: [] } });
+  expect(
+    compareBoundary(subject, baseline(filler(500)), current(filler(499))),
+  ).toMatchObject({
+    changed: false,
+    pairTextSuppression: { paths: ["span[0]"], currentRecords: 1 },
+  });
+
+  // Target absent: the union is taken over the region roots.
+  const absent = compareBoundary(
+    subject,
+    boundaryPage({ targetText: "t", noteText: filler(500) }),
+    boundaryPage({ targetText: undefined, noteText: filler(499) }),
+  );
+  expect(absent).toMatchObject({
+    target: "target-absent",
+    pairTextSuppression: {
+      paths: ["ul[0]"],
+      historicalRecords: 0,
+      currentRecords: 1,
+    },
+  });
+
+  // Whole-tuple fallback keys the union by absolute path.
+  const below = compareBoundary(
+    finding(),
+    boundaryPage({ targetText: "t" }),
+    boundaryPage({ targetText: "t" }),
+  );
+  expect(below.beforeSignature).toBe(
+    v1Profile(boundaryPage({ targetText: "t" })).signature,
+  );
+  expect(
+    compareBoundary(
+      finding(),
+      boundaryPage({ targetText: "t", detailText: filler(500) }),
+      boundaryPage({ targetText: "t", detailText: filler(499) }),
+    ),
+  ).toMatchObject({
+    source: "legacy-whole-tuple",
+    changed: false,
+    pairTextSuppression: {
+      paths: ["html[0]/body[0]/main[0]/div[0]/p[0]/span[0]"],
+      historicalRecords: 0,
+      currentRecords: 1,
+    },
+  });
+});
+
+test("a v1 baseline crossing the text boundary reproduces and reports pair suppression", () => {
+  const subject = boundaryLocusFinding();
+  const evaluate = (current: BoundaryBlock[]) =>
+    evaluateVerification({
+      findings: [subject],
+      baseline: [
+        tuple(
+          boundaryV1(
+            boundaryPage({ targetText: "t", detailText: filler(500) }),
+          ),
+        ),
+      ],
+      currentA: [tuple(boundaryV2(current))],
+      currentB: [tuple(boundaryV2(current))],
+    });
+  const crossing = evaluate(
+    boundaryPage({ targetText: "t", detailText: filler(499) }),
+  );
+  expect(crossing.calibrations[0]?.negotiated).toBe("v1-compatible");
+  expect(crossing.findings[0]).toMatchObject({
+    status: "reproduced",
+    locus: { pairTextSuppression: { paths: ["span[0]"] } },
+  });
+  expect(crossing.findings[0]?.reason).toContain(
+    "pair-level text suppression on 1 path(s)",
+  );
+  const render = (evaluation: typeof crossing) => [
+    renderVerificationReport({
+      flow: "booking",
+      baselineRunId: "baseline",
+      currentRunA: "A",
+      currentRunB: "B",
+      manifest: createAttachmentManifest([]),
+      evaluation,
+    }),
+    renderVerificationHtmlReport({
+      flow: "booking",
+      baselineRunId: "baseline",
+      currentRunA: "A",
+      currentRunB: "B",
+      manifest: createAttachmentManifest([]),
+      evaluation,
+    }),
+  ];
+  const [markdown, html] = render(crossing);
+  expect(markdown).toContain("### Pair-level text suppression");
+  expect(markdown).toContain(
+    "- `IDM-run-0001` (declared-locus): text omitted on all compared sides for `span[0]` (500-character boundary reached on at least one side); historical records affected: 0, current: 1.",
+  );
+  expect(html).toContain(
+    "Pair-level text suppression: text omitted on all compared sides for span[0]",
+  );
+
+  const genuine = evaluateVerification({
+    findings: [subject],
+    baseline: [tuple(boundaryV1(boundaryPage({ targetText: filler(120) })))],
+    currentA: [tuple(boundaryV2(boundaryPage({ targetText: filler(130) })))],
+    currentB: [tuple(boundaryV2(boundaryPage({ targetText: filler(130) })))],
+  });
+  expect(genuine.findings[0]).toMatchObject({
+    status: "fixed",
+    locus: { pairTextSuppression: { paths: [] } },
+  });
+  for (const output of render(genuine))
+    expect(output).not.toContain("Pair-level text suppression");
+});
+
 test("mask calibration rejects current membership drift", () => {
   const first = artifactV2("Stable");
   const second = artifactV2("Stable");
@@ -1474,6 +2144,200 @@ test("only unique CSS hints persist a target plus durable region locus", () => {
   ).toBeUndefined();
 });
 
+function anchoredArtifact(options: {
+  regionTag: string;
+  regionClass: string;
+  regionAttributes?: Record<string, string>;
+  regionSelector?: string;
+  wrapperClass: string;
+  targetText: string;
+  extras?: ObservedElementV2[];
+}): ObservationArtifact {
+  const regionPath = `html[0]/body[0]/main[0]/${options.regionTag}[0]`;
+  const regionSelector =
+    options.regionSelector ??
+    `${options.regionTag}${options.regionClass
+      .split(" ")
+      .sort()
+      .map((name) => `.${name}`)
+      .join("")}`;
+  const region = v2Element({
+    selector: regionSelector,
+    tag: options.regionTag,
+    path: regionPath,
+    attributes: { ...options.regionAttributes, class: options.regionClass },
+  });
+  region.ancestorSelectors = ["main"];
+  const wrapperSelector = `div.${options.wrapperClass}`;
+  const wrapper = v2Element({
+    selector: wrapperSelector,
+    tag: "div",
+    path: `${regionPath}/div[0]`,
+    attributes: { class: options.wrapperClass },
+  });
+  wrapper.ancestorSelectors = [regionSelector, "main"];
+  const target = v2Element({
+    selector: "p.bad",
+    tag: "p",
+    path: `${regionPath}/div[0]/p[0]`,
+    text: options.targetText,
+    attributes: { class: "bad" },
+  });
+  target.ancestorSelectors = [wrapperSelector, regionSelector, "main"];
+  return artifactV2("Surface", [
+    region,
+    wrapper,
+    target,
+    ...(options.extras ?? []),
+  ]);
+}
+
+function decoySection(index: number): ObservedElementV2 {
+  const section = v2Element({
+    selector: `section.decoy-${index}`,
+    tag: "section",
+    path: `html[0]/body[0]/main[0]/section[${index}]`,
+    text: `Decoy ${index}`,
+    attributes: { class: `decoy-${index}` },
+  });
+  section.ancestorSelectors = ["main"];
+  return section;
+}
+
+test("a test-id ancestor anchors the region and survives a nearer class repair", () => {
+  const build = (wrapperClass: string, targetText: string) =>
+    anchoredArtifact({
+      regionTag: "section",
+      regionClass: "card",
+      regionAttributes: { "data-testid": "booking" },
+      regionSelector: 'section[data-testid="booking"]',
+      wrapperClass,
+      targetText,
+      extras: [decoySection(1), decoySection(2)],
+    });
+  const baselineArtifact = build("p-4", "Cramped supporting copy");
+  const locus = deriveVerificationLocus(tuple(baselineArtifact), ".bad");
+  expect(locus?.region.selector).toBe('section[data-testid="booking"]');
+  if (locus === undefined) throw new Error("expected locus");
+  const embedded = finding({
+    verification: { kind: "recapture-visual", locus },
+  });
+  const restyled = build("p-6", "Cramped supporting copy");
+  expect(
+    evaluateVerification({
+      findings: [embedded],
+      baseline: [tuple(baselineArtifact)],
+      currentA: [tuple(restyled)],
+      currentB: [tuple(structuredClone(restyled))],
+    }),
+  ).toMatchObject({
+    passed: false,
+    findings: [{ status: "reproduced", locus: { source: "declared-locus" } }],
+  });
+  // A repair that removes the target compares the durable region instead.
+  const repaired = build("p-6", "Cramped supporting copy");
+  repaired.elements = repaired.elements.filter(
+    (element) => element.selector !== "p.bad",
+  );
+  expect(
+    evaluateVerification({
+      findings: [embedded],
+      baseline: [tuple(baselineArtifact)],
+      currentA: [tuple(repaired)],
+      currentB: [tuple(structuredClone(repaired))],
+    }),
+  ).toMatchObject({
+    passed: true,
+    findings: [
+      {
+        status: "fixed",
+        locus: { source: "declared-locus", target: "target-absent" },
+      },
+    ],
+  });
+});
+
+test("a unique landmark anchors the region by tag across class changes on itself", () => {
+  const build = (regionClass: string) =>
+    anchoredArtifact({
+      regionTag: "form",
+      regionClass,
+      wrapperClass: "p-4",
+      targetText: "Cramped supporting copy",
+      extras: [decoySection(1)],
+    });
+  const baselineArtifact = build("grid gap-2");
+  const locus = deriveVerificationLocus(tuple(baselineArtifact), ".bad");
+  expect(locus?.region.selector).toBe("form");
+  if (locus === undefined) throw new Error("expected locus");
+  const restyled = build("grid gap-4");
+  restyled.elements = restyled.elements.filter(
+    (element) => element.selector !== "p.bad",
+  );
+  const profile = (artifact: ObservationArtifact) =>
+    buildSemanticProfile({ artifact, kind: "v2-full" });
+  expect(
+    compareFindingLocus({
+      finding: finding({ verification: { kind: "recapture-visual", locus } }),
+      baseline: profile(baselineArtifact),
+      currentA: profile(restyled),
+      currentB: profile(structuredClone(restyled)),
+    }),
+  ).toMatchObject({ source: "declared-locus", target: "target-absent" });
+
+  // A second visible form makes the landmark ambiguous: fail closed.
+  const secondForm = v2Element({
+    selector: "form.other",
+    tag: "form",
+    path: "html[0]/body[0]/main[0]/form[1]",
+    attributes: { class: "other" },
+  });
+  const ambiguous = build("grid gap-4");
+  ambiguous.elements.push(secondForm);
+  expect(() =>
+    compareFindingLocus({
+      finding: finding({ verification: { kind: "recapture-visual", locus } }),
+      baseline: profile(baselineArtifact),
+      currentA: profile(ambiguous),
+      currentB: profile(structuredClone(ambiguous)),
+    }),
+  ).toThrow("verification locus selector is ambiguous: form");
+});
+
+test("without a durable anchor the class-derived region still fails closed", () => {
+  const secondMain = v2Element({
+    selector: "main.aside",
+    tag: "main",
+    path: "html[0]/body[0]/main[1]",
+    text: "Second main",
+    attributes: { class: "aside" },
+  });
+  const build = (wrapperClass: string) =>
+    anchoredArtifact({
+      regionTag: "section",
+      regionClass: "shell",
+      wrapperClass,
+      targetText: "Cramped supporting copy",
+      extras: [decoySection(1), secondMain],
+    });
+  const baselineArtifact = build("p-4");
+  const locus = deriveVerificationLocus(tuple(baselineArtifact), ".bad");
+  // Neither section nor main is unique by tag, so no landmark anchors it.
+  expect(locus?.region.selector).toBe("div.p-4");
+  if (locus === undefined) throw new Error("expected locus");
+  const restyled = build("p-6");
+  expect(() =>
+    evaluateVerification({
+      findings: [
+        finding({ verification: { kind: "recapture-visual", locus } }),
+      ],
+      baseline: [tuple(baselineArtifact)],
+      currentA: [tuple(restyled)],
+      currentB: [tuple(structuredClone(restyled))],
+    }),
+  ).toThrow("current verification region is missing: div.p-4");
+});
+
 test("locus comparison accepts consistent target disappearance and ignores unrelated changes", () => {
   const target = v2Element({
     selector: "button.cta",
@@ -1602,6 +2466,70 @@ test("attachment manifests enforce unique canonical ordinals and report mapping"
   ).rejects.toThrow("not canonical");
 });
 
+test("composite artifact names keep ordinary ids and encode unsafe ones", () => {
+  expect(
+    compositeArtifactName({ state: "confirmed", viewport: "desktop" }),
+  ).toBe("before-after-confirmed-desktop.png");
+  expect(
+    compositeArtifactName({
+      state: "confirmed",
+      viewport: "desktop",
+      colorScheme: "dark",
+    }),
+  ).toBe("before-after-confirmed-desktop-dark.png");
+  expect(
+    compositeArtifactName({ state: "s", viewport: "v", combination: "a=b" }),
+  ).toBe("before-after-s-v-a-b.png");
+  const nested = compositeArtifactName({
+    state: "checkout/payment",
+    viewport: "desktop",
+  });
+  expect(nested).toMatch(
+    /^before-after-checkout-payment-[0-9a-f]{8}-desktop\.png$/,
+  );
+  for (const state of ["a\\b", "..", "../escape", "", "a b", "v1..2"]) {
+    const name = compositeArtifactName({ state, viewport: "desktop" });
+    expect(name).not.toMatch(/[/\\]/);
+    expect(name).not.toContain("..");
+    expect(basename(name)).toBe(name);
+  }
+  expect(compositeArtifactName({ state: "desktop", viewport: "a/b" })).not.toBe(
+    compositeArtifactName({ state: "desktop", viewport: "a-b" }),
+  );
+  expect(compositeArtifactName({ state: "a/b", viewport: "desktop" })).not.toBe(
+    compositeArtifactName({ state: "a-b", viewport: "desktop" }),
+  );
+  expect(compositeArtifactName({ state: "a/b", viewport: "desktop" })).toBe(
+    compositeArtifactName({ state: "a/b", viewport: "desktop" }),
+  );
+});
+
+test("attachment manifests write a state id containing a path separator as one file", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-attachments-"));
+  directories.push(directory);
+  const manifest = createAttachmentManifest([
+    { state: "checkout/payment", viewport: "desktop" },
+    { state: "confirmed", viewport: "desktop" },
+  ]);
+  expect(manifest.composites.map(({ state }) => state)).toEqual([
+    "checkout/payment",
+    "confirmed",
+  ]);
+  expect(manifest.composites[1]?.path).toBe(
+    "before-after-confirmed-desktop.png",
+  );
+  for (const composite of manifest.composites)
+    await writeFile(join(directory, composite.path), "png");
+  await writeFile(
+    join(directory, "before-after.md"),
+    manifest.composites.map(({ kind, path }) => `${kind} ${path}`).join("\n"),
+  );
+  await writeAttachmentManifest(directory, manifest);
+  await expect(
+    validateAttachmentManifest({ outputDirectory: directory, manifest }),
+  ).resolves.toEqual(manifest);
+});
+
 test("unequal PNG dimensions produce padded evidence without deciding the verdict", async () => {
   const directory = await mkdtemp(join(tmpdir(), "idiom-images-"));
   directories.push(directory);
@@ -1624,7 +2552,12 @@ test("unequal PNG dimensions produce padded evidence without deciding the verdic
   await expect(access(outputPath)).resolves.toBeUndefined();
 });
 
-test("finding verification owns two independent capture lifecycles and publishes paired evidence", async () => {
+async function verifyRunFixture(): Promise<{
+  projectDirectory: string;
+  baselineDirectory: string;
+  spec: string;
+  embedded: Finding;
+}> {
   const projectDirectory = await mkdtemp(join(tmpdir(), "idiom-verify-run-"));
   directories.push(projectDirectory);
   await initProject({ project: projectDirectory, yes: true });
@@ -1695,6 +2628,12 @@ test("finding verification owns two independent capture lifecycles and publishes
     spec,
     `# Fix\n\n\`\`\`idiom:finding\n${JSON.stringify(embedded)}\n\`\`\`\n`,
   );
+  return { projectDirectory, baselineDirectory, spec, embedded };
+}
+
+test("finding verification owns two independent capture lifecycles and publishes paired evidence", async () => {
+  const { projectDirectory, baselineDirectory, spec, embedded } =
+    await verifyRunFixture();
   let launches = 0;
   const localFetch = globalThis.fetch;
   const fetch = vi.fn(() => {
@@ -1759,6 +2698,102 @@ test("finding verification owns two independent capture lifecycles and publishes
       join(output, "current-b", "confirmed", "desktop", "observations.json"),
     ),
   ).resolves.toBeUndefined();
+});
+
+test("a nonzero verification still publishes validated paired evidence for the failing tuple", async () => {
+  const { projectDirectory, baselineDirectory, spec } =
+    await verifyRunFixture();
+  const output = join(projectDirectory, ".idiom", "reports", "regressed");
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const code = await run(
+    [
+      "node",
+      "idiom",
+      "verify",
+      "booking",
+      "--project",
+      projectDirectory,
+      "--spec",
+      spec,
+      "--against",
+      baselineDirectory,
+      "--out",
+      output,
+    ],
+    {
+      stdout: (message) => stdout.push(message),
+      stderr: (message) => stderr.push(message),
+      verify: {
+        gitTopology: async () => undefined,
+        capture: {
+          browserLauncher: browserWithText("Before"),
+          inheritedEnvironment: { PATH: process.env.PATH },
+          snapshotSource: async () => ({ commit: "def456", dirty: false }),
+        },
+      },
+    },
+  );
+  expect(code).not.toBe(0);
+  expect(stdout.join("")).toContain("Verified booking: failed");
+  expect(stderr.join("")).toContain("verification failed");
+  const manifest = JSON.parse(
+    await readFile(join(output, "attachments.json"), "utf8"),
+  );
+  await expect(
+    validateAttachmentManifest({ outputDirectory: output, manifest }),
+  ).resolves.toEqual(manifest);
+  expect(manifest.composites).toEqual([
+    {
+      ordinal: 1,
+      kind: "idiom-before-after-001",
+      state: "confirmed",
+      viewport: "desktop",
+      path: "before-after-confirmed-desktop.png",
+    },
+  ]);
+  await expect(
+    access(join(output, "before-after-confirmed-desktop.png")),
+  ).resolves.toBeUndefined();
+  const markdownReport = await readFile(
+    join(output, "before-after.md"),
+    "utf8",
+  );
+  for (const identity of [
+    "idiom-before-after-001",
+    "confirmed",
+    "desktop",
+    "before-after-confirmed-desktop.png",
+  ])
+    expect(markdownReport).toContain(identity);
+});
+
+test("a verification failure before any composite exists publishes no paired evidence", async () => {
+  const { projectDirectory, baselineDirectory, spec } =
+    await verifyRunFixture();
+  const output = join(projectDirectory, ".idiom", "reports", "no-evidence");
+  await expect(
+    runVerify({
+      flow: "booking",
+      spec,
+      project: projectDirectory,
+      against: baselineDirectory,
+      out: output,
+      dependencies: {
+        gitTopology: async () => undefined,
+        capture: {
+          browserLauncher: async () => {
+            throw new Error("browser unavailable");
+          },
+          inheritedEnvironment: { PATH: process.env.PATH },
+          snapshotSource: async () => ({ commit: "def456", dirty: false }),
+        },
+      },
+    }),
+  ).rejects.toThrow(
+    "capture failed to start: browser launch — browser unavailable",
+  );
+  await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 test("Electron finding verification uses two independent ordinary capture lifecycles", async () => {
@@ -1974,6 +3009,36 @@ test("Autobuild templates keep the literal verify command byte-identical and dis
   expect(skill).toContain("idiom-verify-report");
 });
 
+test("the Autobuild verifier clears stale output and attaches paired evidence on failure", async () => {
+  const skill = await readFile(
+    join(import.meta.dirname, "..", "templates", "ab-verify-idiom", "SKILL.md"),
+    "utf8",
+  );
+  const command = "idiom verify booking --spec .ab/spec.md --out .ab/idiom";
+  const clear = skill.indexOf("rm -rf .ab/idiom`");
+  expect(clear).toBeGreaterThan(-1);
+  expect(clear).toBeLessThan(skill.indexOf(command));
+  expect(skill).not.toMatch(/attach(es)? nothing/);
+  const nonzero = skill.slice(skill.indexOf("exited nonzero"));
+  const deposit = skill.indexOf(
+    "ab artifact put <kind> .ab/idiom/<path> --attach",
+  );
+  const report = skill.indexOf(
+    "ab artifact put idiom-verify-report .ab/idiom/before-after.md --attach",
+  );
+  expect(deposit).toBeGreaterThan(skill.indexOf(command));
+  expect(report).toBeGreaterThan(deposit);
+  expect(skill.indexOf("exited nonzero")).toBeGreaterThan(report);
+  expect(nonzero).toContain(
+    "ab verdict fail --report .ab/idiom/before-after.md",
+  );
+  expect(nonzero).toContain(
+    "Attaching the composites on failure is deliberate",
+  );
+  expect(nonzero).toContain("no paired visual evidence");
+  expect(nonzero).toContain("earlier verify cycle");
+});
+
 test("full-flow evaluation adds all-severity regressions without changing the standalone gate", () => {
   const before = tuple(artifactV2("Before"));
   const small = v2Element({
@@ -2151,6 +3216,35 @@ test("legacy deterministic acceptance keeps coordinate fingerprint verification"
     );
     expect(result.passed).toBe(fixed);
   }
+});
+
+test("deterministic findings with a params selector never enter locus comparison", () => {
+  const baseline = tuple(artifactV2("Before"));
+  if (!baseline.observations) throw new Error("missing fixture observations");
+  baseline.observations.document.scrollWidth = 900;
+  const item = buildDeterministicDrafts({
+    runId: "guard",
+    entries: runDeterministicChecks([baseline]).candidates,
+  })[0]?.finding;
+  if (!item) throw new Error("missing fixture finding");
+  const legacy = findingSchema.parse({
+    ...item,
+    basis: undefined,
+    basisDetails: undefined,
+    acceptance: item.acceptance.doneWhen,
+    verification: {
+      ...item.verification,
+      params: { ...item.verification.params, selector: "html" },
+    },
+  });
+  const result = evaluateVerification({
+    findings: [legacy],
+    baseline: [baseline],
+    currentA: [baseline],
+    currentB: [baseline],
+  });
+  expect(result.findings[0]?.locus).toBeUndefined();
+  expect(result.findings[0]?.reason).toMatch(/^legacy fingerprint evaluation/);
 });
 
 test("fixed mixed contracts pass without imposing executable proof on legacy or judged findings", () => {

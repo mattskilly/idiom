@@ -1,16 +1,33 @@
 import { MalformedCritiqueError, parseModelResponse } from "./schema.js";
-import type { CritiqueInput, CritiqueResult } from "./types.js";
+import type {
+  CritiqueInput,
+  CritiqueResult,
+  DesignImageRef,
+  ReferenceRef,
+  ScreenshotRef,
+} from "./types.js";
 
-function parse(output: unknown, input: CritiqueInput): CritiqueResult {
+/** The evidence one session actually saw, when it saw less than the whole run. */
+export type VisibleEvidence = {
+  screenshots: ScreenshotRef[];
+  references: ReferenceRef[];
+  designImages: DesignImageRef[];
+};
+
+function parse(
+  output: unknown,
+  input: CritiqueInput,
+  visible: VisibleEvidence | undefined,
+): CritiqueResult {
   return parseModelResponse(
     JSON.stringify(output),
-    input.screenshots,
-    input.references,
+    visible?.screenshots ?? input.screenshots,
+    visible?.references ?? input.references,
     input.screenshots,
     input.designMd,
     input.spec !== undefined,
     input.page,
-    input.designImages,
+    visible?.designImages ?? input.designImages,
   );
 }
 
@@ -22,10 +39,12 @@ export async function critiqueWithRepair(options: {
   input: CritiqueInput;
   prompt: string;
   invoke: (prompt: string) => Promise<unknown>;
+  /** Citations are checked against this; the whole input is the run universe. */
+  visible?: VisibleEvidence | undefined;
 }): Promise<CritiqueResult> {
   const first = await options.invoke(options.prompt);
   try {
-    return parse(first, options.input);
+    return parse(first, options.input, options.visible);
   } catch (error) {
     if (!(error instanceof MalformedCritiqueError)) throw error;
     const repairPrompt = [
@@ -36,6 +55,10 @@ export async function critiqueWithRepair(options: {
       error.issues.join("\n"),
       "Return a complete replacement batch that fixes every issue. Re-read the same evidence; do not return a patch or explanation.",
     ].join("\n\n");
-    return parse(await options.invoke(repairPrompt), options.input);
+    return parse(
+      await options.invoke(repairPrompt),
+      options.input,
+      options.visible,
+    );
   }
 }

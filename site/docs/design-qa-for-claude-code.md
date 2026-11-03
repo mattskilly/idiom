@@ -7,7 +7,7 @@ description: Give your coding agent a repeatable UI review: capture the intended
 
 Give your coding agent a repeatable UI review: capture the intended states, inspect the findings, repair the source and verify the same evidence.
 
-_For Idiom v0.16.1_
+_For Idiom v0.18.0_
 
 ## Start by looking
 
@@ -29,7 +29,7 @@ Repeat a **check–fix–verify** cycle after source edits. A check producing a 
 Install Node 20 or newer, then Idiom and its matching Playwright Chromium. The browser pin below matches this release's package metadata.
 
 ```sh example=shell
-npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz
+npm install -g @mattskilly/idiom
 npx playwright@1.62.1 install chromium
 idiom init --yes
 ```
@@ -131,7 +131,7 @@ idiom check settings
 idiom report
 ```
 
-A finding gate can make `check` exit nonzero after writing a valid report. Startup or capture errors need fixing before a clean UI claim. Read the report's coverage alongside the findings.
+A finding gate can make `check` exit 1 after writing a valid report. A run that cannot start (a server that never becomes ready, a dirty tree when recording a baseline) exits 2 early with its cause and a `Fix:` line; `idiom doctor settings` boots the server once and times each step. Startup or capture errors need fixing before a clean UI claim. Read the report's coverage alongside the findings.
 
 ## Connect
 
@@ -153,7 +153,7 @@ In Codex, the plugin supplies the portable skill and one more line adds the MCP 
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.18.0/mattskilly-idiom-0.18.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.
@@ -211,6 +211,20 @@ Or opt out of the reminders and their bookkeeping:
 ```
 
 Set a separate findings-completion policy in the agent's task instructions: blocking measured or observed findings must be resolved and verified, or explicitly waived by the human before UI work is declared complete. An acknowledgment of a reminder provides no repair evidence.
+
+## Before you spec UI
+
+**Settle the design call before the ticket exists.**
+
+Before writing a ticket, spec or code that adds or changes visible UI, the skill has Claude triage the request first:
+
+1. `idiom_brief_triage` with the request verbatim. `no design decision`: write the ticket as usual.
+2. `design decision`: `idiom_brief_plan` with the returned triage id, then research within its budget, citing every claim.
+3. `idiom_brief_record` with the filled shape. It returns the question to ask.
+4. Unless the result says the call is low-stakes and reversible, Claude asks you with AskUserQuestion, recommendation first.
+5. `idiom_brief_decide` with your choice. The decided brief at `.idiom/briefs/<slug>.md` becomes the ticket.
+
+`idiom init` and `idiom upgrade` also offer to add a two-line reminder to CLAUDE.md or AGENTS.md; they only write it when you say yes. See [design decision briefs](/docs/brief).
 
 ## Close the loop
 

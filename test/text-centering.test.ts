@@ -88,3 +88,19 @@ test("captures without visible-only geometry keep the previous measurement", asy
   // The hidden label is what the legacy measurement mistook for the label.
   expect(selectors).toContain("#send");
 });
+
+test("font-metric rounding under a lowered tolerance is not off-centre; a real offset is", async () => {
+  const html = await readFile(
+    join(import.meta.dirname, "fixtures/text-centering/subpixel.html"),
+    "utf8",
+  );
+  // A tolerance configured below 1.5px is raised to the 1.5px floor.
+  const found = centering(
+    await reviewFixture(browser, html, { checks: { centeringTolerance: 1 } }),
+  );
+  expect(found.map((c) => c.selectorHint)).toEqual(["#nudged"]);
+  expect(found[0]?.explanation).toContain("tolerance 1.5px");
+  expect(
+    centering(await reviewFixture(browser, html)).map((c) => c.selectorHint),
+  ).toEqual(["#nudged"]);
+});

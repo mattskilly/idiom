@@ -19,7 +19,9 @@ State coverage is reported next to rule coverage. `idiom coverage --states`, eac
 
 Every check reports coverage as well as findings. A check whose evidence is missing (an older capture, a capture path that cannot record it, or a probe that did not run) reports coverage `unavailable` rather than passing; recapture to measure it. A check you turn off reports `skipped`. A check that intentionally does not evaluate a tuple (`responsive-break` outside the minimum captured CSS width) reports `not-applicable`, shown as "not applicable" in review reports.
 
-Geometry, text and consistency rules judge only painted participants when the capture records that fact. An element is unpainted when it or an ancestor is CSS-hidden, inside a closed details disclosure outside its first summary, at cumulative opacity zero, without rendered area, or fully outside an ancestor's overflow clip. Partially clipped and below-fold elements remain eligible. The gate applies before grouping or majority selection, on both sides of comparisons, to `idiom:elements-overlap`, `idiom:interactive-overlap`, `idiom:text-clipped`, `idiom:element-content-clipped`, `idiom:label-off-centre`, `idiom:adjacent-elements-touch`, `idiom:mixed-label-casing`, `idiom:mixed-locale-spelling`, `idiom:orphan-word`, `idiom:line-too-long`, `idiom:scale-outlier`, `idiom:sibling-select-inconsistent`, `idiom:selected-state-invisible`, `idiom:image-distorted` and `idiom:dead-link-text`.
+Geometry, text and consistency rules judge only painted participants when the capture records that fact. An element is unpainted when it or an ancestor is CSS-hidden, inside a closed details disclosure outside its first summary, at cumulative opacity zero, without rendered area, or fully outside an ancestor's overflow clip. Partially clipped and below-fold elements remain eligible. The gate applies before grouping or majority selection, on both sides of comparisons, to `idiom:elements-overlap`, `idiom:interactive-overlap`, `idiom:text-clipped`, `idiom:element-content-clipped`, `idiom:label-off-centre`, `idiom:adjacent-elements-touch`, `idiom:mixed-label-casing`, `idiom:mixed-locale-spelling`, `idiom:orphan-word`, `idiom:line-too-long`, `idiom:scale-outlier`, `idiom:sibling-select-inconsistent`, `idiom:selected-state-invisible`, `idiom:image-distorted`, `idiom:dead-link-text`, `idiom:native-control-unstyled`, `idiom:popover-covers-control` and `idiom:nested-border`.
+
+Revealed states are checked too. The probe opens every `<details>`, `aria-haspopup` and `aria-expanded` disclosure it reaches and observes what it reveals in place; a menu item one step below a disclosure that switches it into a new mode (a field appears, a surface opens) is followed and observed the same way. `adjacent-gap`, `element-overlap`, `native-control`, `clipped-text` and `overflow-clip` run on each revealed state. Findings are attributed to the state that opened it as `<state> › <disclosure>` (or `<state> › <disclosure> › <item>`), and only what the reveal introduced is reported: a defect the page or the parent disclosure already shows is not repeated. `idiom coverage` lists the disclosures no state showed open and the probe never opened. `idiom coverage` and the report also list the lists, grids, tables, feeds and editors that were empty in every captured state, so you know which to seed.
 
 Coverage reports distinct elements skipped as not painted for each rule and tuple, including zero. This does not turn a running check into a skipped check. Artifacts without painted facts retain their previous findings and coverage. Axe, document overflow, font/link checks, console errors, expectation status and other branches of shared checks retain their existing domains. See [the observation contract](schemas.md) and [animation settling](configuration.md).
 
@@ -63,7 +65,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `target-size`
 
-- **Catches:** Interactive targets without a clickable region containing the required square: 24×24 CSS px for fine pointers, 44×44 for narrow or touch viewports. Native checkbox/radio targets include captured associated label fragments, excluding independent interactive descendants and nonclickable gaps. At the default fine-pointer minimum, undersized targets pass when their centered 24px circle overlaps neither another target nor another undersized target's circle; exact tangency passes.
+- **Catches:** Interactive targets without a clickable region containing the required square: 24×24 CSS px for fine pointers, 44×44 for narrow or touch viewports. Native checkbox/radio targets include captured associated label fragments, excluding independent interactive descendants and nonclickable gaps. At the default fine-pointer minimum, undersized targets pass when their centered 24px circle overlaps neither another target nor another undersized target's circle; exact tangency passes. Unpadded inline text links are exempt when their own rendered text sets their size (WCAG 2.5.8's inline exception); icon-only anchors, anchors whose image or inline-block child is taller than the text line, and anchors with a non-link role such as `role="button"` are evaluated like other targets, with no button-role exception. Captures made before this rule change need recapture before icon-only anchors are evaluated.
 - **Why it matters:** Small targets are hard to hit, especially by touch or with limited dexterity.
 - **Severity:** minor.
 - **Source:** WCAG 2.2 2.5.8 Target Size (Minimum) for the 24px figure; the 44px touch figure follows 2.5.5 Target Size (Enhanced) and Apple's Human Interface Guidelines.
@@ -79,7 +81,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `token-drift`
 
-- **Catches:** Rendered colours and radii on visible elements that do not resolve to a value declared in the project's design tokens.
+- **Catches:** Rendered colours and radii on visible elements that do not resolve to a value declared in the project's design tokens. Token values resolve in a separate blank page, so app styles cannot change them and the captured page is never touched. Colours are judged per colour-scheme context: inside a subtree that overrides `color-scheme`, a `light-dark()` token counts only with the value that applies there.
 - **Why it matters:** Off-token values drift from the design system one hard-coded colour at a time.
 - **Severity:** minor.
 - **Source:** Craft convention: rendered values should come from the declared design tokens.
@@ -91,7 +93,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 - **Why it matters:** Errors in the console usually mean something on screen is missing or broken, even when it looks fine.
 - **Severity:** major.
 - **Source:** Craft convention: a declared state should render without runtime errors.
-- **Configure or decide:** No settings; the expected load error of a state that declares a non-200 status is ignored, and other findings are decided with `idiom decide` or a `.idiom/rules.json` override.
+- **Configure or decide:** A flow's or state's `health.allow.console` patterns exempt expected messages, for route and page states as well as step states. Idiom's own capture scripts never run in sandboxed (opaque-origin) frames such as a `sandbox` srcdoc preview, so they add no errors of their own. For a state that declares a non-200 status, only the main-frame document's own load error is ignored (matched against the final document URL after redirects, ignoring any fragment). A subresource that fails with the same URL and status is still reported. Other findings are decided with `idiom decide` or a `.idiom/rules.json` override.
 
 ### `missing-state`
 
@@ -107,7 +109,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 - **Why it matters:** Inconsistent spacing around controls makes a layout feel careless and harder to scan.
 - **Severity:** minor.
 - **Source:** Craft convention: comparable controls should keep the same spacing rhythm.
-- **Configure or decide:** No settings; the rhythm is inferred from the run, so uniformly tight products are not judged, and findings are decided with `idiom decide` or a `.idiom/rules.json` override.
+- **Configure or decide:** No settings; the rhythm is inferred from the run, so uniformly tight products are not judged. A container edge with no padding or painted border that the measured control itself reaches is the control's own edge, so the clearance is measured past it (content between the control and that edge, such as a padded row, keeps the edge as the boundary); elements parked wholly off the page (a skip link at `left: -9999px` or `top: -40px`) and content in closed disclosures or hidden, inert or `content-visibility: hidden` subtrees are not measured. Findings are decided with `idiom decide` or a `.idiom/rules.json` override.
 
 ### `unexplained-control`
 
@@ -115,7 +117,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 - **Why it matters:** People cannot use a control whose meaning they have to guess.
 - **Severity:** major for enabled controls; minor for disabled ones and for probed single-glyph controls in the default mode.
 - **Source:** Craft convention: a control's purpose should be visible, not only exposed to assistive technology.
-- **Configure or decide:** In default mode, fully nameless icons belong to `axe:button-name` / `axe:link-name`; a glyph-only accessible name such as `aria-label="i"` belongs to this check. `checks.explanation` set to `"visible"` requires a visible explanation on hover and focus; `checks.probe` (on by default) supplies tooltip evidence and its `skip` list exempts controls; decide findings with `idiom decide`.
+- **Configure or decide:** In default mode, fully nameless icons belong to `axe:button-name` / `axe:link-name`; a glyph-only accessible name such as `aria-label="i"` belongs to this check, and a non-empty native `title` counts as the explanation (the browser shows it on hover after a delay no capture can observe). `checks.explanation` set to `"visible"` requires a visible explanation on hover and focus, so a native title alone is not enough; `checks.probe` (on by default) supplies tooltip evidence and its `skip` list exempts controls; decide findings with `idiom decide`.
 
 ### `text-centering`
 
@@ -123,7 +125,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 - **Why it matters:** Off-centre labels are a small misalignment people notice without knowing why.
 - **Severity:** minor.
 - **Source:** Craft convention: labels sit on their box's optical centre.
-- **Configure or decide:** `checks.centeringTolerance` sets the allowed offset (default 1.5px); filled or fully bordered shapes are still measured edge to edge. Decide findings with `idiom decide`.
+- **Configure or decide:** `checks.centeringTolerance` sets the allowed offset (default 1.5px). Values below 1.5px are raised to 1.5px, and large type allows 8% of its font size, because font metrics and pixel-snapped line boxes alone put a symmetric label up to about 1.4px off. Filled or fully bordered shapes are still measured edge to edge. Decide findings with `idiom decide`.
 
 ### `adjacent-gap`
 
@@ -131,7 +133,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 - **Why it matters:** Controls jammed together look like one control and are easy to mis-hit.
 - **Severity:** major when they touch or overlap (gap of 0.5px or less); minor otherwise.
 - **Source:** Craft convention: separate controls need visible separation.
-- **Configure or decide:** `checks.minGap` (default 3px) sets the minimum, and `checks.adjacentGap` takes extra flush `regions` and `indicatorMax` (default 16px); decide findings with `idiom decide`.
+- **Configure or decide:** `checks.minGap` (default 3px) sets the minimum, and `checks.adjacentGap` takes extra flush `regions` and `indicatorMax` (default 16px). Content in a closed `<details>` (outside its summary) or a `hidden`, `inert` or `content-visibility: hidden` subtree is not compared. Decide findings with `idiom decide`.
 
 ### `dead-affordance`
 
@@ -143,15 +145,15 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `dead-control`
 
-- **Catches:** Enabled buttons that change nothing observable when the probe clicks them.
+- **Catches:** Enabled buttons that change nothing observable when the probe clicks them. A request counts only when the click itself started it and either something visible follows or the request would change data (POST, PUT, PATCH or DELETE); background polling, analytics and keepalive traffic never excuse a control, and the finding lists them as "only background requests observed".
 - **Why it matters:** A button that does nothing looks like a broken product.
 - **Severity:** major.
 - **Source:** Craft convention: every enabled control should have an effect.
-- **Configure or decide:** Needs the interaction probe, on by default (`checks.probe`); exempt controls with `checks.probe.skip` and decide findings with `idiom decide`.
+- **Configure or decide:** Needs the interaction probe, on by default (`checks.probe`). The probe never clicks a control whose click is a no-op by design: a selected tab or option (`aria-selected`), a checked radio or menu radio (`aria-checked`, `:checked`, or the label of a checked radio) and the current item (`aria-current`). Switches and checkboxes toggle, so they are still probed. `checks.probe.respectControlIntent` additionally skips pressed toggles and drag handles. Exempt controls with `checks.probe.skip` and decide findings with `idiom decide`.
 
 ### `duplicate-entry`
 
-- **Catches:** Two or more persistent controls in different places that open the same panel or focus the same field, following one level of menus.
+- **Catches:** Two or more persistent controls in different places that open the same panel or focus the same field, following one level of menus, and two adjacent triggers (within 16px, in one toolbar, group or row) whose menus list identical items in the same order. Distant triggers with the same menu are not compared.
 - **Why it matters:** Duplicate entry points clutter the interface and make people wonder whether they do different things.
 - **Severity:** minor.
 - **Source:** Craft convention: one destination, one entry point.
@@ -191,9 +193,9 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `native-control`
 
-- **Catches:** Browser-default selects or checkboxes shown beside the product's own styled versions.
-- **Why it matters:** Mixing native and custom controls makes the interface look stitched together.
-- **Severity:** minor.
+- **Catches:** Browser-default selects or checkboxes shown beside the product's own styled versions (`idiom:native-control-beside-custom`), and a `file`, `date`, `color` or `range` input painting the browser's default chrome in the product with no styled replacement (`idiom:native-control-unstyled`): the raw "Choose file / No file chosen" control, a default date field, swatch or slider. An input hidden behind a styled label (zero opacity, visually hidden or unpainted) is not flagged. The first rule could never see a lone file input, since it fires only beside a styled sibling of the same kind; the second judges each input on its own, including inside opened menus.
+- **Why it matters:** Mixing native and custom controls makes the interface look stitched together, and a raw file input in product chrome reads as unfinished.
+- **Severity:** minor; major for a default file input.
 - **Source:** Craft convention: one control style per kind of control.
 - **Configure or decide:** No settings; decide findings with `idiom decide` or a `.idiom/rules.json` override.
 
@@ -263,11 +265,11 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `element-overlap`
 
-- **Catches:** Controls or text in the same layer whose boxes intersect, including partly visible elements, with both selectors and the overlap size.
+- **Catches:** Controls or text in the same layer whose boxes intersect, including partly visible elements, with both selectors and the overlap size (`idiom:elements-overlap`). The deliberate exception to keeping layers apart is `idiom:popover-covers-control`: an open overlay (a menu, listbox, popover, non-modal dialog, or a disclosure's positioned content) whose box covers a visible, enabled field outside it, or the control that opened it beyond a 4px anchor-edge allowance, confirmed by sampling the covered area with the browser's hit test. Tooltips and modal dialogs are excluded.
 - **Why it matters:** Overlapping elements hide each other and can make controls unclickable.
-- **Severity:** major when a control is involved or the overlap covers at least a quarter of the smaller element; minor otherwise, and always minor when no hit-test point could confirm it (below the fold, geometry only).
+- **Severity:** major when a control is involved or the overlap covers at least a quarter of the smaller element; minor otherwise, and always minor when no hit-test point could confirm it (below the fold, geometry only). A popover over a field is major when the hit test confirms it; over its own trigger, or geometry only, minor.
 - **Source:** Craft convention: elements in one layer should not collide.
-- **Configure or decide:** No settings; menus, dialogs, tooltips (including chart-library tooltip layers) and pointer-events:none overlays are kept apart from content beneath them, and findings are decided with `idiom decide`.
+- **Configure or decide:** No settings; menus, dialogs, tooltips (including chart-library tooltip layers) and pointer-events:none overlays are kept apart from content beneath them. A card's corner action is not an overlap: a control absolutely positioned inside the link that covers its card (at least 80% of it), and on top of that link where a pointer reaches it. A control stacked under the link, or over another card's link, still is. Findings are decided with `idiom decide`.
 
 ### `clipped-text`
 
@@ -285,7 +287,7 @@ The carousel-peek exemption examines only ancestors strictly inside the actual c
 - **Why it matters:** Cramped form groups make it unclear which label belongs to which field.
 - **Severity:** major when parts touch (0.5px or less); minor otherwise.
 - **Source:** Craft convention: related form parts sit together, separate groups sit apart.
-- **Configure or decide:** `checks.fieldGroups` sets `inner` (default 4px) and `between` (default 12px); decide findings with `idiom decide`.
+- **Configure or decide:** `checks.fieldGroups` sets `inner` (default 4px) and `between` (default 12px). Fields in a closed `<details>` (outside its summary) or a `hidden`, `inert` or `content-visibility: hidden` subtree are not measured. Decide findings with `idiom decide`.
 
 ### `scale-conformance`
 
@@ -293,7 +295,7 @@ The carousel-peek exemption examines only ancestors strictly inside the actual c
 - **Why it matters:** Values off the scale accumulate into a layout that never quite lines up.
 - **Severity:** minor.
 - **Source:** Craft convention: dimensions and colours come from a small, declared scale.
-- **Configure or decide:** `checks.scales` declares spacing, control heights, radii, border colours and role selectors; decide findings with `idiom decide`. Without a declared scale, a value is compared only with peers in the same viewport, colour scheme and role, and dividers split into heading rules, table borders and other rules. Borders on inline text (dotted underlines, abbreviations) are not dividers, and radius is judged only on boxes with a visible background, border or shadow. When one off-scale value repeats in one context, it becomes a single design-system question instead of separate findings (see below).
+- **Configure or decide:** `checks.scales` declares spacing, control heights, radii, border colours and role selectors; decide findings with `idiom decide`. Without a declared scale, a value is compared only with peers in the same viewport, colour scheme and role, and dividers split into heading rules, table borders and other rules. Borders on inline text (dotted underlines, abbreviations) are not dividers, and radius is judged only on boxes with a visible background, border or shadow. Spacing is not read from unpainted elements or from closed disclosures and hidden, inert or `content-visibility: hidden` subtrees. When one off-scale value repeats in one context, it becomes a single design-system question instead of separate findings (see below).
 
 When the same off-scale value keeps appearing in the same place, the system is probably missing a step rather than the page making the same mistake many times. In project runs (review, check, fix, baseline, verify), declared-scale drift (spacing, control heights, radii, border colours) is grouped by property, value and context. Values within 1px of each other count as one value, as do identical colours. The context is the nearest landmark, the component (the nearest `data-node-id`, the matching `checks.scales.roles` selector, the default role, or else the tag and its first class) and the viewport. A group needs at least `checks.scales.suggestAfter` occurrences (default 5) across at least two states or three distinct elements. Light and dark captures of an element count once, and two kinds of value never count toward a question: off-canvas content, such as a carousel's parked slides, and values that fall back from an unresolved custom property. A broken token is a defect, not a missing step. It then becomes one ruling question, for example "17px padding appears 34 times on .row-control in main at desktop, between your 16px and 24px steps. Add a step for this context, or keep reporting it as drift?". Reports and `idiom check` list it under "Design system questions" with the count, the nearest declared steps, a suggested token name and crops of three examples. Its occurrences are not counted as findings, so they never crowd the top issues.
 
@@ -517,7 +519,7 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 
 ### `interaction-shift`
 
-- **Catches:** Content displaced by at least 4px after a probe click or web step, without animation, because content was inserted, removed or resized, outside what the action changes (the control, its `aria-controls` targets, and a local container of what it inserted or removed). Content that arrives more than 500ms after input (async data, lazy images, banners) is reported even inside that region, because the reader had already started reading it. Not a shift: scrolling, sorting or filtering rows within a list, gradual (animated) movement, overlays that displace nothing, pinned content that stays put on screen, containers that collapse to nothing, movement entirely outside the viewport, and, within 500ms, the panel the control opens, closes or dismisses, including a recorded DOM ancestor whose control overflows its measured box or that the action hides without removing it, and a container beside the clicked one that the action collapses (a sidebar toggle), when the clicked container and its content close up exactly the space released (whether it snaps is the transition rules' concern). Descendants of newly inserted or removed and replaced content are new content even when their selectors are reused, and so are the members of a list whose results were taken out and re-rendered in the same batch (filtering, re-rendering). A placeholder swapped for content in its own slot (a spinner replaced by results) is not a re-rendered list: what it pushes is still reported. Attribution requires a cause that changes space in the direction of the movement and can account for its distance; a shrinking label cannot explain a downward jump. Inserted and removed slots allow for gap or margin outside their measured rectangle; resize deltas use tighter rounding slack. A chain of pushes, such as table columns widening one after another, is one finding named after the first cause. Probe clicks and replays measure real layout scrollbars while saved state captures keep their existing hidden-scrollbar environment. Scrollbar removal/addition attribution requires an actual gutter-width change and excludes stable gutters and right-side padding or margin compensation. Scrollbar-cause findings are currently withheld: the public precision gate (at least 80% with five findings) has not been met; measurements and attribution remain available in action timelines. This also prevents the same scrollbar movement from being attributed to an unrelated insertion. Each finding names the cause, the distance and direction, the time after input and up to five moved elements, ranked by area times distance, and its fix is generated from the measured size: reserve the height or aspect ratio, render a skeleton at the final size, overlay instead of pushing, or reserve the scrollbar's space.
+- **Catches:** Content displaced by at least 4px after a probe click or web step, without animation, because content was inserted, removed or resized, outside what the action changes (the control, its `aria-controls` targets, and a local container of what it inserted or removed). Content that arrives more than 500ms after input (async data, lazy images, banners) is reported even inside that region, because the reader had already started reading it. Not a shift: scrolling, sorting or filtering rows within a list, gradual (animated) movement, overlays that displace nothing, pinned content that stays put on screen, containers that collapse to nothing, movement entirely outside the viewport, and, within 500ms, the panel the control opens, closes or dismisses, including a recorded DOM ancestor whose control overflows its measured box or that the action hides without removing it, and a container beside the clicked one that the action collapses (a sidebar toggle), when the clicked container and its content close up exactly the space released (whether it snaps is the transition rules' concern). Also within 500ms: the region a control expanded (its `aria-expanded` went to true without `aria-controls`; the appeared element closest to it in the DOM, recorded only when that is unambiguous), and inline validation it raised (fields in its form marked `aria-invalid`, the messages they reference and the form's live regions). Anything else the same click inserts, such as a banner elsewhere, is still reported. Descendants of newly inserted or removed and replaced content are new content even when their selectors are reused, and so are the members of a list whose results were taken out and re-rendered in the same batch (filtering, re-rendering). A placeholder swapped for content in its own slot (a spinner replaced by results) is not a re-rendered list: what it pushes is still reported. Attribution requires a cause that changes space in the direction of the movement and can account for its distance; a shrinking label cannot explain a downward jump. Inserted and removed slots allow for gap or margin outside their measured rectangle; resize deltas use tighter rounding slack. A chain of pushes, such as table columns widening one after another, is one finding named after the first cause. Probe clicks and replays measure real layout scrollbars while saved state captures keep their existing hidden-scrollbar environment. Scrollbar removal/addition attribution requires an actual gutter-width change and excludes stable gutters and right-side padding or margin compensation. Scrollbar-cause findings are currently withheld: the public precision gate (at least 80% with five findings) has not been met; measurements and attribution remain available in action timelines. This also prevents the same scrollbar movement from being attributed to an unrelated insertion. Each finding names the cause, the distance and direction, the time after input and up to five moved elements, ranked by area times distance, and its fix is generated from the measured size: reserve the height or aspect ratio, render a skeleton at the final size, overlay instead of pushing, or reserve the scrollbar's space.
 - **Why it matters:** Content that jumps after you act makes you lose your place or click the wrong thing, and agents that only see static screenshots never notice it.
 - **Severity:** major (a "feel" law: content never moves under the reader).
 - **Source:** Craft law over the action timeline. Core Web Vitals deliberately exempts shifts within 500ms of input; this rule does not, because the shifts people complain about are the ones they cause.
@@ -563,3 +565,43 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 - **Severity:** major; enabled by default.
 - **Source:** Usability heuristic: user control and recovery from errors.
 - **Configure or decide:** Shares `checks.failure` and the bounded replay scheduler with `error-state-missing`. The default recovery deadline is 2000ms after the last injected response. Interrupted or truncated windows cannot prove absence. Old captures require recapture. Findings name the requests and stuck UI, with timeline/filmstrip evidence and a measured recovery fix. Use `idiom decide` or `.idiom/rules.json` overrides for decisions.
+
+### `nested-border`
+
+- **Catches:** An element with a visible border on all four sides that contains, within 4px on every side, exactly one descendant with its own visible border of a different corner radius or border style, with nothing else painted between them (no fill, border, shadow or text on the wrappers in between or beside it). Concentric corners (the outer radius less the gap) and two pills count as the same shape. Outlines and box shadows, including focus rings, are not borders, and borders coloured by a `:focus` or `:focus-within` rule are skipped.
+- **Why it matters:** Two frames that nearly coincide read as one doubled, mismatched edge, typically a wrapper rule (`.palette button { border: … }`) also matching a component that draws its own.
+- **Severity:** minor.
+- **Source:** Craft convention: one edge per surface.
+- **Configure or decide:** On by default; `checks.nestedBorder` sets `enabled`, and findings are decided with `idiom decide`. Border style is compared only in captures that record it; recapture older runs.
+
+### `parent-selection`
+
+- **Catches:** A button-like or link-like element (its own fill or four-sided border, link styling, or a pointer cursor) whose click marks an ancestor as selected (`aria-selected`, `aria-current`, `data-selected`, `data-current`, `data-state` `active` or `selected`, or a `selected`, `active` or `current` class) while neither selection nor focus moves to anything that matches the clicked element: an element with the same accessible name, or one that refers to it through `aria-controls`, `aria-labelledby`, `aria-describedby`, `aria-owns`, `aria-activedescendant` or `for`. Selection on the element itself or inside it, an element with its own selection role (tab, option, radio, checkbox, switch, tree item, grid cell, row), a click inside a `label`, a click that navigated or opened a popup, and a wrapper that holds nothing but the clicked element (`<li class="active"><a>`) and is less than twice its size are not reported. Besides the controls the probe clicks anyway, a selection pass clicks links and look-alike controls that sit inside a selectable container (a focusable block, or one carrying a selection attribute, `draggable` or a pointer, move or grab cursor), at most 12 per state, with link navigation suppressed after the page's own handlers ran. Like every probe click, it skips destructive names (delete, remove, publish, pay, …) and, with `respectControlIntent`, elements already selected or acting as drag handles. One finding per selected ancestor names the first clicked element and lists the others.
+- **Why it matters:** In a page editor, a navigation link or call to action that selects the whole navigation block looks like a working click, but the person cannot select or edit the thing they pointed at.
+- **Severity:** major.
+- **Source:** Craft convention: a click acts on what was clicked.
+- **Configure or decide:** Needs the interaction probe, on by default (`checks.probe`). Exempt elements with `checks.probe.skip` and decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `selection-outline`
+
+- **Catches:** A selection or focus ring drawn by a separate positioned frame (an absolutely or fixed positioned element with no text and no fill whose only paint is an outline, a zero-blur spread `box-shadow` or a border on all four sides, and whose box matches an element's within 8px) that runs across an open menu, listbox, popover, non-modal dialog, `aria-expanded` panel or open `<details>` panel more than 4px inside its edge, when the popover is stacked above the framed element and the frame is stacked above the popover. Stacking is read from hit testing where both elements are hit-testable, otherwise from the top layer and CSS stacking contexts; a case it cannot judge is left out and named in coverage. An element's own outline, ring or border is never reported: it paints beneath a popover stacked above the element. Rings of the control that opened the popover are left to `idiom:popover-covers-control`. Popovers the probe opens are judged in their revealed state.
+- **Why it matters:** A selection frame that cuts through an open dropdown draws a line across the menu's items, so the editor looks broken exactly where the person is choosing something.
+- **Severity:** major.
+- **Source:** Craft convention: an open popover sits above the surface it opened from, chrome included.
+- **Configure or decide:** On by default. Revealed states follow `checks.probe.disclosures`; decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `disabled-highlight`
+
+- **Catches:** A menu or listbox row marked disabled (`aria-disabled="true"`, a `disabled` attribute, or a disabled control inside the row) whose background or text colour changes under the pointer to exactly the highlight an enabled row in the same menu takes. The probe hovers up to three disabled rows and the first enabled row of each menu it opens, waiting at most 250ms for transitions; a disabled row with its own distinct highlight, or no highlight, is not reported. Pointer highlights that libraries set on hover (`data-highlighted`, `aria-activedescendant`) are covered; the pressed `:active` state is not sampled, so a disabled row is never pressed.
+- **Why it matters:** A row that lights up like the others looks clickable, so people try it and nothing happens.
+- **Severity:** minor.
+- **Source:** Craft convention: disabled rows don't respond.
+- **Configure or decide:** Needs the interaction probe (`checks.probe`, on by default); only menus the probe opens are sampled, not lists that are always visible. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `brief-mismatch`
+
+- **Catches:** A decided design brief's acceptance criteria that the built UI breaks. A criterion may carry assertions tied to a flow state and a selector: a size (`width`/`height` as pixels or a `{min,max}` range), the same size as a reference element (`sameSizeAs`), containment inside another element's rectangle (`within`), visible at rest on touch viewports (`visibleWithoutHover`), no layout shift outside the element when it is hovered (`stableOnHover`), or a minimum contrast ratio (`minContrast`). Each failing element is one finding naming the brief, the criterion and the measured values, for example `.drawer-item height 100, expected 56 (tolerance 1)` or `.drawer-item .pin extends 44px below .tile`. A subject, reference or container that matched nothing is a mismatch. An assertion that cannot be measured (a capture older than the brief, an invalid selector, no touch viewport, no hover probe reaching the element, no painted foreground) is not a finding; coverage lists it with the reason. Only decided briefs are judged, and not when the decision was "don't build it" or chose an option other than the one the criteria were written for.
+- **Why it matters:** The shipped UI contradicts what the requester decided. A build that doubles a drawer's height can pass every other check, and only the brief's own criteria would have failed it.
+- **Severity:** major.
+- **Source:** Project declaration: the assertions on a decided brief's acceptance criteria.
+- **Configure or decide:** Add assertions to criteria in `.idiom/briefs/<slug>.json` with `idiom brief record`; decide findings with `idiom decide`; re-decide or supersede the brief to change the contract. Recapture after recording a brief so its selectors are measured.

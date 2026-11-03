@@ -476,6 +476,25 @@ export function interactionShifts(
   const regions = regionSelectors.flatMap(
     (selector) => regionRect(action, selector) ?? [],
   );
+  // What the user asked for: the region the click expanded, and inline
+  // validation it raised. A cause inside one (never one merely containing
+  // it, such as body) is the requested effect; so is movement inside it.
+  const opened = action.effectRegion.opened;
+  const openedRect = opened ? regionRect(action, opened) : undefined;
+  const validatedRects = (action.effectRegion.validated ?? []).flatMap(
+    (selector) => regionRect(action, selector) ?? [],
+  );
+  if (openedRect) regions.push(openedRect);
+  regions.push(...validatedRects);
+  const requested = (cause: ShiftCause) =>
+    cause.kind !== "scrollbar" &&
+    ((opened !== undefined &&
+      (cause.selector === opened ||
+        cause.selector.startsWith(`${opened} > `))) ||
+      [...(openedRect ? [openedRect] : []), ...validatedRects].some(
+        (region) =>
+          contains(region, cause.rect) || contains(region, cause.final),
+      ));
   const ancestor = action.effectRegion.commonAncestor;
   if (ancestor && !root(ancestor)) {
     const start = journeys.find((entry) => entry.selector === ancestor)?.start;
@@ -601,7 +620,7 @@ export function interactionShifts(
     if (
       !late &&
       !scrollbar &&
-      (dismissed || toggled(cause) || carried(candidate))
+      (dismissed || toggled(cause) || requested(cause) || carried(candidate))
     )
       continue;
     const inside = (rect: Rect) =>

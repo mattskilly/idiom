@@ -10,16 +10,27 @@ kind = "agent"
 skill = "ab-verify-idiom"
 paths = ["apps/web/**", ".idiom/**", "PRODUCT.md", "DESIGN.md", "packages/design/**"]
 
-# Check protects against new findings by default. Initialize with a clean HEAD
-# check and commit .idiom/baselines; use idiom baseline accept booking after
-# intentional changes. This strict CI gate requires the committed baseline:
-#   in builds: idiom check booking --since-baseline --fail-on major
+# In builds, gate with idiom check --gate: it checks only the states the
+# change affects, at one viewport and scheme unless responsive or theme styles
+# changed, probes only controls that render differently, fits a time budget
+# (checks.gate.budgetMs, default 3 minutes) and exits 0 at once with
+# "no UI changes since <base>; skipped" when nothing the UI uses changed.
+# It prints its plan and estimate first and ends with a Timing: line. If it is
+# slow, read that line (or pass --budget); do not remove the step.
 # Add under the existing [commands] table:
-# idiom-check = "idiom check booking --since-baseline --fail-on major"
+# idiom-check = "idiom check --gate --fail-on major"
 # Append "idiom-check" to the existing [verify].steps array, then add:
 # [verify.idiom-check]
 # kind = "check"
 # command = "idiom-check"
+# Set "server": { "reuse": true } in .idiom/project.json (or pass
+# --reuse-server) when a dev server is already running at server.readyUrl.
+#
+# Full coverage moves to a scheduled run (nightly CI or cron), which also
+# refreshes the timing history and probe fingerprints the gate plans from:
+#   idiom check booking --since-baseline --fail-on major
+# Initialize it with a clean HEAD check and commit .idiom/baselines; use
+# idiom baseline accept booking after intentional changes.
 
 # Optional before/after composites for any two stored captures (for example
 # the build's capture against one taken at the merge base):
@@ -28,3 +39,10 @@ paths = ["apps/web/**", ".idiom/**", "PRODUCT.md", "DESIGN.md", "packages/design
 # contract (idiom-before-after-NNN composites, then the idiom-verify-report
 # report), so deposit each composite and then the report with --attach the same
 # way. Use its own --out so it never replaces the verify output in .ab/idiom.
+
+# Ticket lint: run idiom brief gate at the repository root when filing or
+# grooming tickets, before promoting them to [tickets].readyState:
+#   find .autobuild/tickets/triage .autobuild/tickets/ready -name '*.md' -exec idiom brief gate {} +
+# It is not a [verify] step: a check step runs in the build worktree with no
+# agent session, where the gitignored ticket file is absent, and after dispatch.
+# Add --strict to make it fail once the team trusts triage.

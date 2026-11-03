@@ -83,6 +83,11 @@ All unlisted rules within a known category use its category default.
 | `design-drift` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `loading-state-missing` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `double-submit` | All rules | 4 | General consistency, semantics or contextual quality. |
+| `nested-border` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
+| `parent-selection` | All rules | 9 | Broken behaviour or obstructed content. |
+| `selection-outline` | All rules | 9 | Broken behaviour or obstructed content. |
+| `disabled-highlight` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
+| `brief-mismatch` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `hierarchy` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `density` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `brand-alignment` | All rules | 4 | General consistency, semantics or contextual quality. |

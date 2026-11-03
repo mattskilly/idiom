@@ -9,6 +9,7 @@ import {
   chromium,
   type Page,
 } from "playwright";
+import { PNG } from "pngjs";
 import { expect, test, vi } from "vitest";
 import {
   captureReferenceUrl,
@@ -349,7 +350,7 @@ test("isolates each tuple, captures truthful artifacts, and reports every mismat
         location: () => ({ url: "local.js", lineNumber: 2, columnNumber: 3 }),
       } as never);
       handlers.get("pageerror")?.(new Error("page failure") as never);
-      return { status: () => 404 };
+      return { status: () => 404, url: () => "https://example.test/state" };
     }),
     waitForTimeout: vi.fn(async () => undefined),
     locator: vi.fn((selector: string) => ({
@@ -656,7 +657,10 @@ test("URL references reject non-success HTTP responses without taking a screensh
   if (viewport === undefined) throw new Error("missing viewport");
   const screenshot = vi.fn(async () => Buffer.from("png"));
   const page = withScrollbarSession({
-    goto: vi.fn(async () => ({ status: () => 404 })),
+    goto: vi.fn(async () => ({
+      status: () => 404,
+      url: () => "https://example.test/state",
+    })),
     waitForTimeout: vi.fn(async () => undefined),
     screenshot,
     close: vi.fn(async () => undefined),
@@ -690,7 +694,10 @@ test("turns screenshot exceptions into typed failures and still closes context",
   if (viewport === undefined) throw new Error("missing viewport");
   const page = withScrollbarSession({
     on: vi.fn(),
-    goto: async () => ({ status: () => 200 }),
+    goto: async () => ({
+      status: () => 200,
+      url: () => "https://example.test/state",
+    }),
     waitForTimeout: async () => undefined,
     locator: (selector: string) => ({
       innerText: async () => "Expected text",
@@ -736,7 +743,10 @@ test("URL references use flow capture context pins with a viewport-bounded scree
   if (viewport === undefined) throw new Error("missing viewport");
   const screenshot = vi.fn(async () => Buffer.from("png"));
   const page = withScrollbarSession({
-    goto: vi.fn(async () => ({ status: () => 200 })),
+    goto: vi.fn(async () => ({
+      status: () => 200,
+      url: () => "https://example.test/reference",
+    })),
     waitForTimeout: vi.fn(async () => undefined),
     screenshot,
     close: vi.fn(async () => undefined),
@@ -943,6 +953,10 @@ test.each([
         source: "theme.css",
         normalizedValues,
       });
+      expect(
+        capturedObservations.tokens.status === "configured" &&
+          capturedObservations.tokens.contexts,
+      ).toBeUndefined();
       for (const [selector, color] of Object.entries(renderedValues)) {
         expect(
           capturedObservations.elements.find(
@@ -1012,10 +1026,10 @@ test("fails capture when declared color tokens resolve to nothing even though ra
 
     await page.setContent("<body><p>x</p></body>");
     for (const attempt of [
-      normalizeTokenDeclarations(page, declarations),
-      observePage(page, declarations),
+      () => normalizeTokenDeclarations(page, declarations),
+      () => observePage(page, declarations),
     ]) {
-      const error = await attempt.then(
+      const error = await attempt().then(
         () => undefined,
         (caught: unknown) => caught,
       );
@@ -1055,6 +1069,314 @@ test("fails capture when declared color tokens resolve to nothing even though ra
   }
 }, 30_000);
 
+const tokenDriftFixture = join(import.meta.dirname, "fixtures", "token-drift");
+const probeObserver = readFile(join(tokenDriftFixture, "observer.js"), "utf8");
+
+test("token normalization leaves nothing an app observer can react to", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-token-observer-"));
+  const browser = await chromium.launch({ headless: true });
+  try {
+    await writeFile(
+      join(directory, "theme.css"),
+      ":root { --ink: rgb(20, 20, 20); --edge: var(--app-edge); --radius-card: 6px; }\n",
+    );
+    const declarations = await loadTokenDeclarations(directory, "theme.css", [
+      {
+        name: "--brand",
+        value: "#123456",
+        kind: "color",
+        source: { path: "DESIGN.md", key: "colors.brand" },
+      },
+    ]);
+    const page = await browser.newPage();
+    const messages: string[] = [];
+    page.on("console", (message) => messages.push(message.text()));
+    await page.setContent(
+      `<style>:root { --app-edge: rgb(9, 9, 9); } #warm { color: oklch(0.6 0.2 25); }</style>
+      <body><p id="warm">Warm</p><p>Plain</p><script>${await probeObserver}</script></body>`,
+    );
+    const rootStyle = await page.evaluate(
+      () => document.documentElement.style.cssText,
+    );
+    const contexts = browser.contexts().length;
+    const observed = await observePage(page, declarations);
+    await page.evaluate(
+      () =>
+        new Promise((settle) =>
+          setTimeout(() => requestAnimationFrame(() => settle(null)), 0),
+        ),
+    );
+    expect(
+      messages.filter((message) => message.startsWith("idiom-probe-observed")),
+    ).toEqual([]);
+    expect(await page.locator("#reaction").count()).toBe(0);
+    expect(
+      await page.evaluate(() => document.documentElement.style.cssText),
+    ).toBe(rootStyle);
+    expect(observed.tokens).toMatchObject({
+      status: "configured",
+      typedValues: expect.any(Array),
+    });
+    expect(
+      observed.elements.find((element) => element.selector === "#warm")?.styles
+        .color,
+    ).toMatch(/^rgb\(/);
+    expect(browser.contexts().length).toBe(contexts);
+
+    const newContext = vi.spyOn(browser, "newContext");
+    const untokenized = await observePage(page, { status: "not-configured" });
+    expect(untokenized.tokens).toEqual({ status: "not-configured" });
+    expect(newContext).not.toHaveBeenCalled();
+    expect(browser.contexts().length).toBe(contexts);
+  } finally {
+    await browser.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test("a captured tuple carries no reaction to token normalization", async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "idiom-token-observer-capture-"),
+  );
+  const runDirectory = join(temporaryDirectory, "run");
+  const port = await freePort();
+  const capturedProject = projectSchema.parse({
+    version: 1,
+    app: { name: "token-drift", framework: "other" },
+    server: {
+      build: "node -e 0",
+      start: `node ${JSON.stringify(join(tokenDriftFixture, "server.mjs"))}`,
+      readyUrl: `http://127.0.0.1:${port}/`,
+      port,
+      env: { PORT: String(port) },
+    },
+    viewports: [{ name: "phone", width: 390, height: 844 }],
+    capture: { colorScheme: "light", settleMs: 0 },
+    design: { tokensFile: "theme.css" },
+    checks: { probe: { enabled: false } },
+    model: { provider: "anthropic", model: "unused" },
+  });
+  const capturedFlow = flowSchema.parse({
+    id: "token-observer",
+    title: "Token observer",
+    intent: [],
+    setup: [],
+    states: [
+      {
+        id: "state",
+        description: "observed token fixture",
+        url: "/observed",
+        expect: { status: 200, textPresent: ["Foreground"] },
+      },
+    ],
+  });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const result = await runCapture({
+      projectDirectory: tokenDriftFixture,
+      project: capturedProject,
+      flow: capturedFlow,
+      out: runDirectory,
+      dependencies: {
+        browserLauncher: createBrowserLauncher({
+          launch: async () => browser,
+          createAxe: () => ({ analyze: async () => ({ violations: [] }) }),
+        }),
+        inheritedEnvironment: { PATH: process.env.PATH },
+        snapshotSource: async () => ({ commit: "abc123", dirty: false }),
+      },
+    });
+    expect(result.counts).toEqual({ passed: 1, failed: 0, total: 1 });
+    const tuple = join(runDirectory, "state", "phone");
+    expect(await readFile(join(tuple, "console.jsonl"), "utf8")).not.toContain(
+      "idiom-probe-observed",
+    );
+    const image = PNG.sync.read(await readFile(join(tuple, "screenshot.png")));
+    const centre =
+      (Math.floor(image.height / 2) * image.width +
+        Math.floor(image.width / 2)) *
+      4;
+    expect([...image.data.subarray(centre, centre + 3)]).not.toEqual([
+      255, 0, 0,
+    ]);
+  } finally {
+    if (browser.isConnected()) await browser.close();
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}, 30_000);
+
+function tokenDriftHints(observed: ObservationArtifact): string[] {
+  return runDeterministicChecks([
+    {
+      flow: "browser",
+      state: "state",
+      viewport: "phone",
+      width: 390,
+      height: 844,
+      metadataPath: "state/phone/metadata.json",
+      artifactPaths: ["state/phone/metadata.json"],
+      commit: "abc123",
+      createdAt: "2026-08-14T12:00:00.000Z",
+      observations: observed,
+      axe: { violations: [] },
+      console: [],
+      mismatches: [],
+    },
+  ])
+    .candidates.filter(({ candidate }) => candidate.category === "token-drift")
+    .map(({ candidate }) => candidate.selectorHint)
+    .sort();
+}
+
+test("an app !important colour rule cannot become a token value", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-token-cascade-"));
+  const browser = await chromium.launch({ headless: true });
+  try {
+    await writeFile(
+      join(directory, "theme.css"),
+      ":root { --ink: rgb(20, 20, 20); }\n",
+    );
+    const declarations = await loadTokenDeclarations(directory, "theme.css");
+    const page = await browser.newPage();
+    await page.setContent(
+      `<style>body span, span, * { color: rgb(201, 35, 61) !important; }</style>
+      <body><p id="override">Overridden</p></body>`,
+    );
+    const resolved = await normalizeTokenDeclarations(page, declarations);
+    expect(
+      resolved.status === "configured" && resolved.normalizedValues,
+    ).toEqual(["rgb(20, 20, 20)"]);
+    const observed = await observePage(page, declarations);
+    expect(observed.tokens).toMatchObject({
+      normalizedValues: ["rgb(20, 20, 20)"],
+    });
+    expect(tokenDriftHints(observed)).toContain("#override::color");
+  } finally {
+    await browser.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test("a subtree's colour-scheme override is judged against its own light-dark token values", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-token-scheme-"));
+  const browser = await chromium.launch({ headless: true });
+  try {
+    await writeFile(
+      join(directory, "theme.css"),
+      ":root { --direct: light-dark(rgb(44, 55, 66), rgb(210, 211, 212)); --fg: var(--primitive-fg); }\n",
+    );
+    const declarations = await loadTokenDeclarations(directory, "theme.css");
+    const page = await browser.newPage();
+    await page.setContent(
+      `<style>
+        :root { color-scheme: light; --primitive-fg: light-dark(rgb(16, 18, 16), rgb(235, 238, 235)); --direct: light-dark(rgb(44, 55, 66), rgb(210, 211, 212)); --fg: var(--primitive-fg); }
+        .card { color-scheme: dark; }
+        #root-direct, #card-direct { color: var(--direct); }
+        #root-fg, #card-fg { color: var(--fg); }
+        #card-light { color: rgb(44, 55, 66); }
+        #card-undeclared { color: rgb(201, 35, 61); }
+      </style>
+      <body>
+        <p id="root-direct">Root direct</p>
+        <p id="root-fg">Root foreground</p>
+        <section class="card">
+          <p id="card-direct">Card direct</p>
+          <p id="card-fg">Card foreground</p>
+          <p id="card-light">Card with the light value</p>
+          <p id="card-undeclared">Card undeclared</p>
+        </section>
+      </body>`,
+    );
+    const observed = observationArtifactSchema.parse(
+      await observePage(page, declarations),
+    );
+    const byId = (selector: string) =>
+      observed.elements.find((element) => element.selector === selector);
+    expect(observed.tokens).toMatchObject({
+      status: "configured",
+      normalizedValues: ["rgb(16, 18, 16)", "rgb(44, 55, 66)"],
+      contextProperties: ["--primitive-fg"],
+      contexts: [
+        {
+          colorScheme: "dark",
+          usedScheme: "dark",
+          normalizedValues: ["rgb(210, 211, 212)", "rgb(235, 238, 235)"],
+        },
+      ],
+    });
+    expect(byId("#card-direct")?.styles.color).toBe("rgb(210, 211, 212)");
+    expect(byId("#card-fg")?.styles.color).toBe("rgb(235, 238, 235)");
+    for (const selector of [
+      "#card-direct",
+      "#card-fg",
+      "#card-light",
+      "#card-undeclared",
+    ])
+      expect(byId(selector)?.tokenContext, selector).toBe(0);
+    expect(byId("#root-direct")?.tokenContext).toBeUndefined();
+    expect(tokenDriftHints(observed)).toEqual([
+      "#card-light::color",
+      "#card-undeclared::color",
+    ]);
+  } finally {
+    await browser.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test("with data-theme set, a subtree's colour-scheme still decides its inline light-dark token values", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-token-theme-scheme-"));
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const declarations = await loadTokenDeclarations(directory, undefined, [
+      {
+        name: "--fg",
+        value: "light-dark(#2c3742, #d2d3d4)",
+        kind: "color",
+        source: { path: "DESIGN.md", key: "colors.fg" },
+      },
+    ]);
+    const page = await browser.newPage({ colorScheme: "light" });
+    await page.setContent(
+      `<html data-theme="brand"><style>
+        :root { color-scheme: light dark; --fg: light-dark(#2c3742, #d2d3d4); }
+        .card { color-scheme: dark; }
+        #root-fg, #card-fg { color: var(--fg); }
+        #card-light { color: rgb(44, 55, 66); }
+      </style>
+      <body>
+        <p id="root-fg">Root foreground</p>
+        <section class="card">
+          <p id="card-fg">Card foreground</p>
+          <p id="card-light">Card with the light value</p>
+        </section>
+      </body></html>`,
+    );
+    const observed = observationArtifactSchema.parse(
+      await observePage(page, declarations),
+    );
+    const byId = (selector: string) =>
+      observed.elements.find((element) => element.selector === selector);
+    expect(byId("#card-fg")?.styles.color).toBe("rgb(210, 211, 212)");
+    expect(byId("#card-fg")?.tokenContext).toBe(0);
+    expect(observed.tokens).toMatchObject({
+      typedValues: [expect.objectContaining({ value: "rgb(44, 55, 66)" })],
+      contexts: [
+        {
+          usedScheme: "dark",
+          typedValues: [
+            expect.objectContaining({ value: "rgb(210, 211, 212)" }),
+          ],
+        },
+      ],
+    });
+    expect(tokenDriftHints(observed)).toEqual(["#card-light::color"]);
+  } finally {
+    await browser.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 30_000);
+
 test("collects stable live observations and makes 320px defects appear and disappear", async () => {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 320, height: 600 } });
@@ -1066,6 +1388,13 @@ test("collects stable live observations and makes 320px defects appear and disap
           input.small-input { box-sizing: border-box; width: 40px; height: 40px; }
           a.padded-link { padding: 4px; }
           a.block-link { display: block; width: 40px; }
+          .visually-hidden-label {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+          }
           .hidden { display: none; }
           .overlap { margin-left: -24px; }
           .card {
@@ -1139,11 +1468,24 @@ test("collects stable live observations and makes 320px defects appear and disap
         <div class="inactive-supports">Inactive supports rule</div>
         <div class="container"><div class="inactive-container">Inactive container rule</div></div>
         <div class="layered">Layered rule</div>
+        <div class="adopted-only">Adopted rule</div>
+        <div class="adopted-inactive">Adopted inactive media</div>
         <main class="flattened-wrappers" style="position: absolute; left: 1000px; top: 0">
           <div class="wrapper-a" style="display: contents"><p class="wrapped-a">Alpha</p></div>
           <div class="wrapper-b" style="display: contents"><p class="wrapped-b">Beta</p></div>
         </main>
+        <p>Open <a class="icon-link" href="/settings"><svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16"/></svg></a> settings.</p>
+        <p>Open <a class="labelled-icon-link" href="/help"><svg width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16"/></svg><span class="visually-hidden-label">Help</span></a> help.</p>
+        <p>Please <a class="button-link" role="button" href="#retry">retry</a> now.</p>
+        <p>See the <a class="docs-link" href="/docs">docs <svg width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10"/></svg></a> for more.</p>
       `);
+    await page.evaluate(() => {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(
+        ".adopted-only { color: #ff0000; } @media (min-width: 9999px) { .adopted-inactive { color: #ff0000; } }",
+      );
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    });
     const axe = {
       violations: [
         {
@@ -1157,7 +1499,7 @@ test("collects stable live observations and makes 320px defects appear and disap
       status: "configured" as const,
       source: "theme.css",
       declarations: { "--ink": "#111827" },
-      normalizedValues: ["rgb(17, 24, 39)"],
+      values: ["#111827"],
     };
     const observed = await observePage(page, capturedTokens, axe, [
       ".card",
@@ -1293,6 +1635,16 @@ test("collects stable live observations and makes 320px defects appear and disap
       observed.elements.find((element) => element.selector === "div.layered")
         ?.authoredProperties,
     ).toContain("color");
+    const adoptedOnly = observed.elements.find(
+      (element) => element.selector === "div.adopted-only",
+    );
+    expect(adoptedOnly?.authoredProperties).toContain("color");
+    expect(adoptedOnly?.styleSources?.color?.sheet).toBe("adopted[0]");
+    expect(
+      observed.elements.find(
+        (element) => element.selector === "div.adopted-inactive",
+      )?.authoredProperties,
+    ).not.toContain("color");
     expect(
       observed.elements.find((element) => element.selector === "a.sr-only"),
     ).toMatchObject({
@@ -1314,6 +1666,25 @@ test("collects stable live observations and makes 320px defects appear and disap
     ).toBe(true);
     expect(
       observed.elements.find((element) => element.selector === "a.footer-link")
+        ?.inlineTextTarget,
+    ).toBe(true);
+    expect(
+      observed.elements.find((element) => element.selector === "a.icon-link")
+        ?.inlineTextTarget,
+    ).toBe(false);
+    expect(
+      observed.elements.find(
+        (element) => element.selector === "a.labelled-icon-link",
+      )?.inlineTextTarget,
+    ).toBe(false);
+    // The field records content only; the button role is the check's concern.
+    expect(
+      observed.elements.find(
+        (element) => element.selector === 'a[role="button"]',
+      )?.inlineTextTarget,
+    ).toBe(true);
+    expect(
+      observed.elements.find((element) => element.selector === "a.docs-link")
         ?.inlineTextTarget,
     ).toBe(true);
     expect(
@@ -1373,6 +1744,9 @@ test("collects stable live observations and makes 320px defects appear and disap
       "a.padded-link",
       "a.block-link",
       'input[aria-label="Short code"]',
+      "a.icon-link",
+      "a.labelled-icon-link",
+      'a[role="button"]',
     ]);
     expect(
       degraded.candidates.filter(
@@ -1389,6 +1763,7 @@ test("collects stable live observations and makes 320px defects appear and disap
         "div.trailing-declaration::color",
         "div.grouped::color",
         "div.layered::color",
+        "div.adopted-only::color",
       ]),
     );
     expect(
@@ -1396,7 +1771,8 @@ test("collects stable live observations and makes 320px defects appear and disap
         ({ candidate }) =>
           candidate.selectorHint === "div.inactive-media::color" ||
           candidate.selectorHint === "div.inactive-supports::color" ||
-          candidate.selectorHint === "div.inactive-container::color",
+          candidate.selectorHint === "div.inactive-container::color" ||
+          candidate.selectorHint === "div.adopted-inactive::color",
       ),
     ).toBe(false);
     expect(
@@ -1407,6 +1783,7 @@ test("collects stable live observations and makes 320px defects appear and disap
           candidate.selectorHint === "div.ellipsis" ||
           candidate.selectorHint === "a.terms-link" ||
           candidate.selectorHint === "a.privacy-link" ||
+          candidate.selectorHint === "a.docs-link" ||
           candidate.selectorHint === "a.footer-link" ||
           candidate.selectorHint === "a.drawer-link",
       ),
@@ -1414,7 +1791,7 @@ test("collects stable live observations and makes 320px defects appear and disap
 
     await page.addStyleTag({
       content:
-        "button, input.small-input { width: 44px; height: 44px; } a.padded-link, a.block-link { box-sizing: border-box; display: inline-block; min-width: 44px; min-height: 44px; }",
+        "button, input.small-input { width: 44px; height: 44px; } a.padded-link, a.block-link, a.icon-link, a.labelled-icon-link, a.button-link { box-sizing: border-box; display: inline-block; min-width: 44px; min-height: 44px; }",
     });
     const restored = review(await observePage(page, capturedTokens, axe));
     expect(
@@ -1476,8 +1853,25 @@ test("observes declarations authored in applicable imported stylesheets", async 
       status: "configured",
       source: "theme.css",
       declarations: { "--ink": "#111827" },
+      values: ["#111827"],
+    });
+    // Raw declarations in; the captured page normalizes them.
+    expect(observed.tokens).toEqual({
+      status: "configured",
+      source: "theme.css",
+      declarations: { "--ink": "#111827" },
       normalizedValues: ["rgb(17, 24, 39)"],
     });
+    // observePage only accepts raw declarations, never pre-normalized tokens.
+    const rejectsNormalized = () =>
+      observePage(page, {
+        status: "configured",
+        source: "x",
+        declarations: {},
+        // @ts-expect-error normalized tokens are not an observePage input
+        normalizedValues: [],
+      });
+    void rejectsNormalized;
     if (observed.version !== 2) throw new Error("expected version 2");
     const element = (selector: string) => {
       const found = observed.elements.find(
@@ -1524,6 +1918,35 @@ test("observes declarations authored in applicable imported stylesheets", async 
     expect(tokenDrift.map(({ candidate }) => candidate.selectorHint)).toContain(
       `${element("p.imported").selector}::color`,
     );
+  } finally {
+    await page.close();
+    await browser.close();
+  }
+}, 30_000);
+
+test("skips inaccessible adopted stylesheet rules without failing observation", async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  try {
+    await page.setContent(
+      '<style>.doc { color: #ff0000; }</style><div class="doc">Document rule</div>',
+    );
+    await page.evaluate(() => {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(".doc { background-color: #ff0000; }");
+      Object.defineProperty(sheet, "cssRules", {
+        get() {
+          throw new DOMException("blocked", "SecurityError");
+        },
+      });
+      document.adoptedStyleSheets = [sheet];
+    });
+    const observed = await observePage(page, { status: "not-configured" });
+    const doc = observed.elements.find(
+      (element) => element.selector === "div.doc",
+    );
+    expect(doc?.authoredProperties).toContain("color");
+    expect(doc?.authoredProperties).not.toContain("backgroundColor");
   } finally {
     await page.close();
     await browser.close();
@@ -2693,5 +3116,211 @@ test("native target labels capture only associated exposed clickable fragments",
     expect(await page.locator("#multiple").isChecked()).toBe(true);
   } finally {
     await browser.close();
+  }
+}, 30_000);
+
+test("an expected 404 document and its same-URL script keep distinct request provenance", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-console-provenance-"));
+  const port = await freePort();
+  try {
+    await initProject({ project: directory, yes: true });
+    const html =
+      '<!doctype html><html lang="en"><title>Missing</title><main><h1>Not found</h1></main><script src="/missing"></script></html>';
+    const script = join(directory, "server.mjs");
+    await writeFile(
+      script,
+      `import { createServer } from 'node:http'; createServer((req,res)=>{res.writeHead(req.url==='/'?200:404,{'content-type':'text/html'});res.end(${JSON.stringify(html)})}).listen(Number(process.env.PORT),'127.0.0.1');`,
+    );
+    const capturedProject = projectSchema.parse({
+      ...project,
+      server: {
+        build: "node -e 0",
+        start: `node '${script}'`,
+        readyUrl: `http://127.0.0.1:${port}/`,
+        port,
+        env: { PORT: String(port) },
+      },
+      capture: { ...project.capture, settleMs: 0 },
+    });
+    const flow = flowSchema.parse({
+      id: "missing",
+      title: "Missing",
+      setup: [],
+      intent: [],
+      states: [
+        {
+          id: "missing",
+          description: "Missing page",
+          url: "/missing",
+          expect: { status: 404 },
+        },
+      ],
+    });
+    const browser = await chromium.launch({ headless: true });
+    const capture = await runCapture({
+      projectDirectory: directory,
+      project: capturedProject,
+      flow,
+      dependencies: {
+        snapshotSource: async () => ({ commit: "fixture", dirty: false }),
+        browserLauncher: createBrowserLauncher({
+          launch: async () => browser,
+          createAxe: () => ({ analyze: async () => ({ violations: [] }) }),
+        }),
+      },
+    });
+    expect(capture.counts.failed).toBe(0);
+    const tupleDirectory = join(capture.runDirectory, "missing", "phone");
+    const documentUrl = `http://127.0.0.1:${port}/missing`;
+    const text =
+      "Failed to load resource: the server responded with a status of 404 (Not Found)";
+    const records = (
+      await readFile(join(tupleDirectory, "console.jsonl"), "utf8")
+    )
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    const failed = records.filter((record) => record.text === text);
+    expect(failed).toHaveLength(2);
+    for (const record of failed) {
+      expect(record.type).toBe("error");
+      expect(record.location).toEqual({
+        url: documentUrl,
+        lineNumber: 0,
+        columnNumber: 0,
+      });
+    }
+    expect(
+      failed
+        .map((record) => record.request)
+        .sort((a, b) => a.resourceType.localeCompare(b.resourceType)),
+    ).toEqual([
+      { resourceType: "document", mainFrame: true },
+      { resourceType: "script", mainFrame: true },
+    ]);
+    const metadata = JSON.parse(
+      await readFile(join(tupleDirectory, "metadata.json"), "utf8"),
+    );
+    expect(metadata.consoleProvenance).toBe(true);
+    const loaded = await loadCaptureRun({
+      runDirectory: capture.runDirectory,
+      expectedFlow: "missing",
+      expectedStatusByState: new Map([["missing", 404]]),
+    });
+    const [tuple] = loaded.tuples;
+    expect(tuple?.consoleProvenance).toBe(true);
+    const reported = runDeterministicChecks(tuple ? [tuple] : [])
+      .candidates.filter(
+        ({ candidate }) => candidate.category === "console-error",
+      )
+      .map(({ candidate }) => candidate);
+    expect(reported).toHaveLength(1);
+    expect(reported[0]?.selectorHint).toBe(
+      `error | ${documentUrl}:0:0 | ${text}`,
+    );
+    expect(reported[0]?.explanation).not.toContain("recorded");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("expected-status documents record their final, fragment-free response URL", async () => {
+  const server = createHttpServer((request, response) => {
+    if (request.url === "/old") {
+      response.writeHead(302, { Location: "/gone" });
+      response.end();
+      return;
+    }
+    response.writeHead(404, { "Content-Type": "text/html" });
+    response.end(
+      '<main><h1>Not found</h1><script>console.error("Unrelated failure")</script></main>',
+    );
+  });
+  await new Promise<void>((accept) => server.listen(0, "127.0.0.1", accept));
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("no port");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const session = await createBrowserLauncher({
+    createAxe: () => ({ analyze: async () => ({ violations: [] }) }),
+  })();
+  const cases = [
+    { url: "/old", final: "/gone", steps: [] },
+    {
+      url: "/old",
+      final: "/gone",
+      steps: [{ action: "waitFor", selector: "h1", state: "visible" }],
+    },
+    { url: "/plain#details", final: "/plain", steps: [] },
+  ];
+  try {
+    for (const { url, final, steps } of cases) {
+      const expected = flowSchema.parse({
+        id: "missing",
+        title: "Missing",
+        intent: [],
+        setup: [],
+        states: [
+          {
+            id: "missing",
+            description: "Missing",
+            url,
+            expect: { status: 404 },
+            steps,
+          },
+        ],
+      }).states[0];
+      if (expected === undefined) throw new Error("missing state");
+      const result = await session.capture({
+        project,
+        state: expected,
+        viewport: { name: "phone", width: 390, height: 844 },
+        navigationUrl: `${origin}${url}`,
+      });
+      expect(result.ok).toBe(true);
+      expect(result.status).toBe(404);
+      expect(result.documentUrl).toBe(`${origin}${final}`);
+      // Chromium reports the failed document at the final URL, but keeps the
+      // navigation's fragment there, which the response URL never carries.
+      const documentError = result.console.find(({ text }) =>
+        text.startsWith("Failed to load resource"),
+      );
+      expect(documentError?.location?.url.split("#")[0]).toBe(
+        result.documentUrl,
+      );
+      const findings = runDeterministicChecks([
+        {
+          flow: "missing",
+          state: "missing",
+          viewport: "phone",
+          width: 390,
+          height: 844,
+          metadataPath: "metadata.json",
+          artifactPaths: ["console.jsonl"],
+          commit: "abc123",
+          createdAt: "2026-10-30T00:00:00.000Z",
+          console: result.console,
+          documentResponse: {
+            url: `${origin}${url}`,
+            ...(result.documentUrl === undefined
+              ? {}
+              : { finalUrl: result.documentUrl }),
+            actualStatus: 404,
+            expectedStatus: 404,
+          },
+          mismatches: [],
+        },
+      ]).candidates.filter(
+        ({ candidate }) => candidate.category === "console-error",
+      );
+      expect(findings.map(({ candidate }) => candidate.consoleExcerpt)).toEqual(
+        ["Unrelated failure"],
+      );
+    }
+  } finally {
+    await session.close();
+    await new Promise<void>((accept, reject) =>
+      server.close((error) => (error ? reject(error) : accept())),
+    );
   }
 }, 30_000);

@@ -101,6 +101,19 @@ test("coverage lists the app-builder dashboard routes no flow captures (#42)", a
   const text = renderCoverage(summary);
   expect(text).toContain("5 found, 2 captured, 3 uncaptured");
   expect(text).toContain('"routes": ["/", "/create", "/leads"]');
+  // No capture yet: disclosure coverage says so instead of passing silently.
+  expect(summary.disclosures).toEqual([
+    {
+      flow: "studio-lab",
+      coverage: {
+        status: "unavailable",
+        reason: "not captured yet; run idiom capture studio-lab",
+      },
+    },
+  ]);
+  expect(text).toContain(
+    "Disclosures never opened:\nstudio-lab: Disclosures: unavailable (not captured yet; run idiom capture studio-lab).",
+  );
 });
 
 test("a flow's routes become capturable states", () => {
@@ -165,6 +178,8 @@ test.each([
       ...routeCoverage([{ route, source: "app/editor/page.tsx" }], [flow]),
       discoveredFrom: "test",
       excluded: [],
+      disclosures: [],
+      emptyContainers: [],
     };
     expect(summary.routes[0]?.capturedBy).toEqual([
       { flow: "editor", state: "empty" },

@@ -73,6 +73,8 @@ type TimelineWindow = Window & {
  * mutates the document, dispatches input or changes emulation.
  */
 function timelineRecorder(config: RecorderConfig): void {
+  // Opaque-origin frames (sandboxed srcdoc) block callbacks and some APIs.
+  if (window !== window.top && self.origin === "null") return;
   type Rect = { x: number; y: number; width: number; height: number };
   type Point = { x: number; y: number };
   type Frame = RawTimeline["frames"][number];
@@ -866,8 +868,12 @@ function timelineRecorder(config: RecorderConfig): void {
     controls: Element[];
     /** Targets of animations already running when the action began. */
     running: Element[];
+    /** The trigger's aria-expanded when the action began. */
+    expanded: string | null;
   };
   let start: Start | undefined;
+  /** Set by visibleChanges: the topmost elements the action made appear. */
+  let appearedRootElements: Element[] = [];
   const snapshotStart = () => {
     if (config.load || !document.body) return;
     const visible = new Map<Element, Rect>();
@@ -901,6 +907,7 @@ function timelineRecorder(config: RecorderConfig): void {
         : [];
     });
     start = {
+      expanded: trigger?.getAttribute("aria-expanded") ?? null,
       running,
       fromUrl: location.pathname,
       reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -976,6 +983,7 @@ function timelineRecorder(config: RecorderConfig): void {
     const appearedRoots = [...appeared].filter(
       ([element]) => !lineage(element).some((a) => appeared.has(a)),
     );
+    appearedRootElements = appearedRoots.map(([element]) => element);
     // Disappeared: visible at the start, detached or hidden now.
     const gone = new Set<Element>();
     for (const element of before.visible.keys())
@@ -1576,6 +1584,78 @@ function timelineRecorder(config: RecorderConfig): void {
     if (scope.__idiomTimeline?.token === config.token)
       delete scope.__idiomTimeline;
   };
+  // The region the click expanded: its trigger went to aria-expanded="true"
+  // without naming the region (aria-controls would). Of what appeared, the
+  // one whose common ancestor with the trigger is uniquely deepest in the
+  // DOM; a tie, or several candidates meeting only at the body, is
+  // ambiguous and names nothing.
+  const openedRegion = (): string | undefined => {
+    if (
+      !trigger?.isConnected ||
+      controls.length > 0 ||
+      start === undefined ||
+      (start.expanded !== null && start.expanded !== "false") ||
+      trigger.getAttribute("aria-expanded") !== "true"
+    )
+      return undefined;
+    const depth = (element: Element) => {
+      let count = 0;
+      for (let p = element.parentElement; p; p = p.parentElement) count += 1;
+      return count;
+    };
+    const scored = appearedRootElements
+      .filter(
+        (element) =>
+          element.isConnected &&
+          !element.contains(trigger) &&
+          !trigger.contains(element),
+      )
+      .map((element) => {
+        let ancestor = element.parentElement;
+        while (ancestor && !ancestor.contains(trigger))
+          ancestor = ancestor.parentElement;
+        return { element, ancestor, depth: ancestor ? depth(ancestor) : -1 };
+      });
+    const deepest = Math.max(...scored.map((entry) => entry.depth));
+    const best = scored.filter((entry) => entry.depth === deepest);
+    const [only] = best;
+    if (best.length !== 1 || only === undefined || only.ancestor === null)
+      return undefined;
+    if (
+      scored.length > 1 &&
+      (only.ancestor === document.body ||
+        only.ancestor === document.documentElement)
+    )
+      return undefined;
+    return selectorFor(only.element);
+  };
+  // Inline validation the click raised: invalid fields in its form (or the
+  // trigger itself), the messages they reference, and the form's live regions.
+  const validatedRegions = (): string[] => {
+    if (!trigger?.isConnected) return [];
+    const form =
+      (trigger as Element & { form?: HTMLFormElement | null }).form ??
+      trigger.closest("form");
+    const invalid = form
+      ? [...form.querySelectorAll('[aria-invalid="true"]')]
+      : trigger.getAttribute("aria-invalid") === "true"
+        ? [trigger]
+        : [];
+    if (invalid.length === 0) return [];
+    const regions = new Set<Element>(invalid);
+    for (const field of invalid)
+      for (const name of ["aria-describedby", "aria-errormessage"])
+        for (const id of (field.getAttribute(name) ?? "")
+          .split(/\s+/)
+          .filter(Boolean)) {
+          const message = document.getElementById(id);
+          if (message) regions.add(message);
+        }
+    if (form)
+      for (const live of form.querySelectorAll("[role=alert], [aria-live]"))
+        regions.add(live);
+    return [...regions].slice(0, 20).map(selectorFor);
+  };
   const commonAncestor = (): string | undefined => {
     const connected = [...anchors].filter((element) => element.isConnected);
     let common: Element | null = connected[0] ?? null;
@@ -1601,6 +1681,8 @@ function timelineRecorder(config: RecorderConfig): void {
           `visible changes unavailable: ${String(error).split("\n")[0]}`,
         );
       }
+      const opened = changes ? openedRegion() : undefined;
+      const validated = validatedRegions();
       dispose();
       return {
         url: location.pathname,
@@ -1621,6 +1703,8 @@ function timelineRecorder(config: RecorderConfig): void {
           ...(control ? { control } : {}),
           controls,
           ...(ancestor ? { commonAncestor: ancestor } : {}),
+          ...(opened ? { opened } : {}),
+          ...(validated.length ? { validated } : {}),
         },
       };
     },

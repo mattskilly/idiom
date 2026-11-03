@@ -5,12 +5,12 @@
   },
   "metadata": {
     "description": "Design acceptance for AI-built software.",
-    "version": "0.16.1"
+    "version": "0.18.0"
   },
   "plugins": [
     {
       "name": "idiom",
-      "source": "./",
+      "source": "./plugins/claude",
       "description": "Design acceptance tools, UI check reminders and the conversational Idiom skill."
     }
   ]

@@ -1,4 +1,11 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
@@ -11,12 +18,27 @@ import {
   readBaselineFile,
 } from "../baseline/store.js";
 import { summarizeFinding } from "../baseline/summary.js";
+import { renderAsk } from "../brief/ask.js";
+import { renderBriefPlan } from "../brief/plan.js";
+import { MAX_TRIAGE_REQUEST_BYTES } from "../brief/triage.js";
 import { selectColorSchemes, selectViewports } from "../capture/resolve.js";
 import type { CaptureDependencies } from "../capture/run.js";
 import {
   baselineRecordCommand,
   renderBaselineRecord,
 } from "../commands/baseline.js";
+import {
+  type BriefDependencies,
+  briefDecideCommand,
+  briefDecideJson,
+  briefRecordJson,
+  recordBriefInput,
+  renderBriefDecide,
+  renderTriageRun,
+  runBriefPlan,
+  runBriefTriage,
+  triageJson,
+} from "../commands/brief.js";
 import { type CheckSummary, checkWithReview } from "../commands/check.js";
 import {
   checkChanged,
@@ -30,6 +52,7 @@ import {
 } from "../commands/coverage.js";
 import { decideCommand } from "../commands/decide.js";
 import { addDesignCommand } from "../commands/design.js";
+import { renderDoctorReport, runDoctor } from "../commands/doctor.js";
 import { initProject, initSummaryLines } from "../commands/init.js";
 import { rulingCommand } from "../commands/ruling.js";
 import { renderSweepSummary, sweepCommand } from "../commands/sweep.js";
@@ -51,6 +74,11 @@ import { loadRunTuples } from "../review/artifacts.js";
 import type { CatalogFinding } from "../review/catalog.js";
 import type { ReviewDependencies, ReviewRunResult } from "../review/run.js";
 import { projectIssueSummary } from "../review/summary.js";
+import {
+  BRIEF_TRIAGE_MAX_QUESTIONS,
+  briefSlugSchema,
+  briefTriageIdSchema,
+} from "../schemas/brief.js";
 import { type Finding, findingSchema } from "../schemas/finding.js";
 import {
   emitClusterTickets,
@@ -75,6 +103,8 @@ export type McpDependencies = {
   review?: Omit<ReviewDependencies, "capture"> | undefined;
   /** Test seam: offline site-flow generation for idiom_init. */
   init?: { generateFlows?: GenerateFlow | undefined } | undefined;
+  /** Test seam: the triage model call and clock for the brief tools. */
+  brief?: BriefDependencies | undefined;
 };
 const identifier = z
   .string()
@@ -396,7 +426,7 @@ export function registerIdiomTools(
     });
     const questions = summary.designSystemQuestions ?? [];
     return result(
-      `Check ${flowId}: ${summary.findings.length} new/live occurrences, ${issues.length} issues; ${summary.preExisting ?? 0} pre-existing, ${summary.fixed?.length ?? 0} fixed. ${summary.baselineRecorded ? "Automatically recorded the initial baseline; commit its file. " : ""}${questions.length === 0 ? "" : `Design system questions (${questions.length}), held instead of findings; answer with idiom_decide add-step|drift: ${questions.map((question) => `${question.id} — ${question.question}`).join(" ")} `}Report: ${summary.reportPath}`,
+      `Check ${flowId}: ${summary.findings.length} new/live occurrences, ${issues.length} issues; ${summary.preExisting ?? 0} pre-existing, ${summary.fixed?.length ?? 0} fixed. ${summary.baselineRecorded ? "Automatically recorded the initial baseline; commit its file. " : ""}${questions.length === 0 ? "" : `Design system questions (${questions.length}), held instead of findings; answer with idiom_decide add-step|drift: ${questions.map((question) => `${question.id} — ${question.question}`).join(" ")} `}${summary.coverage?.probeCoverage?.warning === undefined ? "" : `Probe warning: ${summary.coverage.probeCoverage.warning} `}Report: ${summary.reportPath}`,
       {
         flow: flowId,
         ...(questions.length === 0 ? {} : { designSystemQuestions: questions }),
@@ -471,6 +501,12 @@ export function registerIdiomTools(
         .describe(
           "Return full live findings and bypass baseline bootstrap/comparison",
         ),
+      isolatedRegistry: z
+        .boolean()
+        .optional()
+        .describe(
+          "Ignore the primary checkout's finding names (throwaway worktrees); defaults to findingNames.isolatedRegistry",
+        ),
     }),
     false,
     async (args, execution) => {
@@ -480,6 +516,7 @@ export function registerIdiomTools(
           flow: args.flow,
           changed: args.changed,
           all: args.all,
+          isolatedRegistry: args.isolatedRegistry,
           scope: {
             states: args.states?.join(","),
             viewports: args.viewports?.join(","),
@@ -518,6 +555,7 @@ export function registerIdiomTools(
         ...configured,
         flow: args.flow,
         all: args.all,
+        isolatedRegistry: args.isolatedRegistry,
         scope: {
           states: args.states?.join(","),
           viewports: args.viewports?.join(","),
@@ -821,6 +859,14 @@ export function registerIdiomTools(
               "Autobuild detected: run idiom init interactively (CLI-only) to review and approve verification wiring.",
             ]
           : []),
+        ...(output.briefInstruction.some(
+          (outcome) =>
+            outcome.kind === "available" || outcome.kind === "no-agent-file",
+        )
+          ? [
+              "Optional: ask the human whether to add the brief instruction (shown in briefInstruction) to CLAUDE.md or AGENTS.md.",
+            ]
+          : []),
       ];
       const lines = initSummaryLines(output).map((line) =>
         line === "Next: idiom validate site; idiom capture site"
@@ -838,6 +884,7 @@ export function registerIdiomTools(
         unchanged: output.unchanged,
         skipped: output.skipped,
         autobuild: output.autobuild,
+        briefInstruction: output.briefInstruction,
         systemLearning: output.systemLearning,
         flows: flowOutcome,
         notes,
@@ -956,6 +1003,7 @@ export function registerIdiomTools(
         createdPaths: output.createdPaths,
         outcomes: output.outcomes,
         ineligible: output.ineligible,
+        malformed: output.malformed,
       });
     },
   );
@@ -1159,6 +1207,32 @@ export function registerIdiomTools(
     },
   );
   register(
+    "idiom_doctor",
+    "Boot the application server once, exactly as a capture would, and diagnose why a run could not start: validates config and the finding-name registry, notes a dirty tree, binds the port, runs setup and server.build, starts server.start, loads server.readyUrl and shuts down. Returns pass/fail per step with timings and a fix for known causes (pinned port, missing server.env variable, port in use, wrong readiness URL). Runs project commands; captures nothing.",
+    z.strictObject({
+      flow: identifier
+        .optional()
+        .describe(
+          "Configured flow ID; runs its setup steps and skips Electron flows",
+        ),
+    }),
+    false,
+    async ({ flow }, execution) => {
+      const dependencies = capture(execution);
+      const report = await runDoctor({
+        ...configured,
+        cwd: root,
+        flow,
+        signal: execution.signal,
+        dependencies: {
+          process: dependencies.process,
+          inheritedEnvironment: dependencies.inheritedEnvironment,
+        },
+      });
+      return result(renderDoctorReport(report).trimEnd(), report);
+    },
+  );
+  register(
     "idiom_baseline",
     "Show or record a flow's compact deterministic finding baseline. show reads recorded commits and which record applies at HEAD; record captures (or reuses from/latest) a clean committed HEAD and writes the baseline file. Commit that file deliberately, only after intentional changes. Never changes Git.",
     z
@@ -1250,6 +1324,163 @@ export function registerIdiomTools(
           commitGuidance,
         },
       );
+    },
+  );
+  const triageRequest = z
+    .string()
+    .refine((value) => value.trim().length > 0, "Request must not be blank")
+    .refine(
+      (value) => Buffer.byteLength(value) <= MAX_TRIAGE_REQUEST_BYTES,
+      "Request must be at most 64 KB",
+    );
+  register(
+    "idiom_brief_triage",
+    "Call before writing a ticket, spec or code that adds or changes visible UI, or when a request involves a design decision. Returns no design decision (proceed) or design decision with open questions and a triage id; then call idiom_brief_plan with that id. One bounded model call via the project's review provider, stored under .idiom/briefs/triage/; noModel returns the rubric for you to apply instead. Pass the request verbatim, or a draft ticket file.",
+    z.strictObject({
+      request: triageRequest
+        .optional()
+        .describe("The request or draft ticket text, verbatim"),
+      file: relativePath
+        .optional()
+        .describe("A draft ticket file inside the bound project root"),
+      noModel: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Return the rubric and answer shape instead of calling a model",
+        ),
+    }),
+    false,
+    async ({ request, file, noModel }) => {
+      if ((request === undefined) === (file === undefined))
+        throw new IdiomError("Supply exactly one of request or file");
+      let text = request;
+      if (file !== undefined) {
+        const path = await insideRoot(root, file, "Draft ticket");
+        const info = await stat(path).catch(() => undefined);
+        if (info?.isFile() !== true)
+          throw new IdiomError(`No draft ticket file at ${file}`);
+        if (info.size > MAX_TRIAGE_REQUEST_BYTES)
+          throw new IdiomError("Draft ticket must be at most 64 KB");
+        text = await readFile(path, "utf8");
+        if (text.trim() === "")
+          throw new IdiomError(`Draft ticket ${file} is empty`);
+      }
+      const warnings: string[] = [];
+      const run = await runBriefTriage({
+        ...configured,
+        cwd: root,
+        request: text as string,
+        noModel,
+        // stderr belongs to the host; fallbacks go in the result.
+        onFallback: (fallback) =>
+          warnings.push(
+            `Warning: triage used fallback provider ${fallback.to} after ${fallback.from} failed: ${fallback.reason}`,
+          ),
+        dependencies: dependencies.brief,
+      });
+      return result([...warnings, renderTriageRun(run)].join("\n"), {
+        ...(triageJson(run) as object),
+        warnings,
+      });
+    },
+  );
+  register(
+    "idiom_brief_plan",
+    "Research instructions for a design decision: the open questions, the project's reference products by tier, what to check (hover, touch, keyboard, small screen, empty and error states), standards to look for, a time budget and the exact input idiom_brief_record accepts. Follow it within its budget, then call idiom_brief_record. Pass the triage id from idiom_brief_triage, or the request with your own questions.",
+    z.strictObject({
+      triage: briefTriageIdSchema
+        .optional()
+        .describe("Triage id from idiom_brief_triage"),
+      request: triageRequest
+        .optional()
+        .describe("The request verbatim, when there is no triage id"),
+      questions: z
+        .array(z.string().trim().min(1))
+        .min(1)
+        .max(BRIEF_TRIAGE_MAX_QUESTIONS)
+        .optional()
+        .describe(
+          "With request: the open questions to research; omitted runs a model triage first",
+        ),
+      minutes: z
+        .number()
+        .int()
+        .min(1)
+        .max(60)
+        .optional()
+        .describe("Research time budget in minutes (default 10)"),
+    }),
+    false,
+    async ({ triage, request, questions, minutes }) => {
+      if ((triage === undefined) === (request === undefined))
+        throw new IdiomError("Supply exactly one of triage or request");
+      if (triage !== undefined && questions !== undefined)
+        throw new IdiomError("A triage id already carries its questions");
+      const plan = await runBriefPlan({
+        ...configured,
+        cwd: root,
+        target: triage,
+        request,
+        questions,
+        minutes,
+        dependencies: dependencies.brief,
+      });
+      return result(renderBriefPlan(plan), plan);
+    },
+  );
+  register(
+    "idiom_brief_record",
+    "Validate your research and options and store the decision brief as .idiom/briefs/<slug>.json and a ticket-ready .md. Returns every validation issue as path: message so you can fix them in one round. On success returns ask: unless ask.proceed.allowed, ask the human with ask.askUserQuestion verbatim (AskUserQuestion; ask.text where that tool is absent), then call idiom_brief_decide.",
+    z.strictObject({
+      brief: z
+        .record(z.string(), z.unknown())
+        .describe("The brief input, in the shape idiom_brief_plan returns"),
+    }),
+    false,
+    async ({ brief }) => {
+      const recorded = await recordBriefInput({
+        ...configured,
+        cwd: root,
+        input: brief,
+        dependencies: dependencies.brief,
+      });
+      const data = briefRecordJson(recorded);
+      return result(
+        [
+          `Recorded brief ${recorded.slug} (${recorded.outcome}, ${recorded.brief.status}) — ${recorded.markdownRelative}`,
+          ...(recorded.ask === undefined
+            ? []
+            : ["", renderAsk(recorded.ask, recorded.slug)]),
+        ].join("\n"),
+        data,
+      );
+    },
+  );
+  register(
+    "idiom_brief_decide",
+    "Record the human's choice on a decision brief and regenerate its ticket-ready Markdown. Call only with the human's explicit choice, or with the recommendation when ask.proceed.allowed was true and you told them so. Then use .idiom/briefs/<slug>.md as the ticket, unless the result warns that it is not ticket-ready.",
+    z.strictObject({
+      slug: briefSlugSchema.describe("Brief slug from idiom_brief_record"),
+      option: briefSlugSchema.describe("The chosen option id"),
+      by: z
+        .string()
+        .trim()
+        .min(1)
+        .optional()
+        .describe("Who decided (default requester)"),
+    }),
+    false,
+    async ({ slug, option, by }) => {
+      const decided = await briefDecideCommand({
+        ...configured,
+        cwd: root,
+        slug,
+        option,
+        by,
+        dependencies: dependencies.brief,
+      });
+      return result(renderBriefDecide(decided), briefDecideJson(decided));
     },
   );
 }

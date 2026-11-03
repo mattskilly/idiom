@@ -1,0 +1,113 @@
+{
+  "title": "Pinned group in the Add drawer",
+  "request": "Add a default Pinned group at the top of the Add drawer that users can customize.",
+  "decision": "How does a user pin an item in the Add drawer without making every tile bigger?",
+  "requestNamedIdea": true,
+  "research": [
+    {
+      "question": "How do established tools let users pin items in a dense grid?",
+      "findings": [
+        {
+          "claim": "A small pin icon in the tile corner, outlined when off and filled when on, appears on hover.",
+          "source": "https://example.com/pinning-patterns",
+          "verified": "hands-on"
+        },
+        {
+          "claim": "Hover-only controls fail on touch, so touch needs a visible fallback.",
+          "source": "https://example.com/hover-on-touch",
+          "verified": "read"
+        }
+      ]
+    },
+    {
+      "question": "Do adaptive most-used menus beat fixed ones?",
+      "findings": [
+        {
+          "claim": "Adaptive menus are slower than fixed ones (Findlater & McGrenere).",
+          "source": "https://example.com/findlater-mcgrenere",
+          "verified": "read"
+        }
+      ]
+    },
+    {
+      "question": "Is right-click pinning discoverable?",
+      "findings": "nothing found"
+    }
+  ],
+  "options": [
+    {
+      "id": "sibling-button",
+      "title": "A pin button beside every tile",
+      "summary": "A full-size sibling button, visible without hover and keyboard reachable.",
+      "kind": "requester",
+      "cost": {
+        "space": "roughly doubles the drawer's height",
+        "steps": "one click",
+        "concepts": "pinning",
+        "code": "small"
+      },
+      "rejectedBecause": "it doubles the drawer's height for a secondary action"
+    },
+    {
+      "id": "corner-pin",
+      "title": "A small corner pin icon inside the tile",
+      "summary": "An outline pin in the tile corner on hover and focus, always visible on touch, filled when pinned.",
+      "kind": "alternative",
+      "cost": {
+        "space": "none; sits inside the tile",
+        "steps": "one click",
+        "concepts": "pinning",
+        "code": "small"
+      }
+    },
+    {
+      "id": "context-menu",
+      "title": "Pin from a right-click menu",
+      "summary": "A Pin item in the tile's context menu.",
+      "kind": "alternative",
+      "cost": {
+        "space": "none",
+        "steps": "two",
+        "concepts": "pinning, context menus",
+        "code": "medium"
+      },
+      "rejectedBecause": "undiscoverable, and absent on touch"
+    },
+    {
+      "id": "dont-build",
+      "title": "Keep the drawer as it is",
+      "summary": "No pinned group.",
+      "kind": "dont-build",
+      "cost": {
+        "space": "none",
+        "steps": "none",
+        "concepts": "none",
+        "code": "none"
+      },
+      "rejectedBecause": "the requester wants quicker access to frequent items"
+    }
+  ],
+  "recommendation": {
+    "option": "corner-pin",
+    "reason": "Established pattern, no added height, works on touch and keyboard."
+  },
+  "acceptanceCriteria": [
+    {
+      "kind": "geometry",
+      "statement": "The pin icon is at most 20px square and tile height is unchanged."
+    },
+    {
+      "kind": "input-states",
+      "statement": "On touch the pin is visible without hover; with a keyboard it appears on focus."
+    },
+    {
+      "kind": "contrast",
+      "statement": "The outline icon meets 3:1 against the tile background."
+    },
+    {
+      "kind": "behaviour",
+      "statement": "Pinning a tile adds it to the end of the Pinned group."
+    }
+  ],
+  "outOfScope": ["Reordering pinned items"]
+}

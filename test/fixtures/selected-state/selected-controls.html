@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<title>Already-selected controls</title>
+<style>button, label { margin: 4px; padding: 8px; }</style>
+<main aria-label="Editor">
+  <h1>Layout</h1>
+  <!-- Clicking the selected member of a set does nothing, by design. -->
+  <div role="tablist" aria-label="Panels">
+    <button id="tab" role="tab" aria-selected="true">Design</button>
+    <button id="glyph-tab" role="tab" aria-selected="true" aria-label="Grid view">≡</button>
+  </div>
+  <div role="radiogroup" aria-label="Density">
+    <button id="role-radio" role="radio" aria-checked="true">Compact</button>
+  </div>
+  <div role="listbox" aria-label="Format">
+    <button id="option" role="option" aria-selected="true">PNG</button>
+  </div>
+  <nav aria-label="Sections"><button id="current" aria-current="page">Home</button></nav>
+  <label id="checked-label"><input type="radio" name="view" checked> Grid</label>
+  <!-- Controls whose click should do something, and does not. -->
+  <button id="dead">Apply layout</button>
+  <button id="switch" role="switch" aria-checked="true">Snap to grid</button>
+  <button id="checkbox" role="checkbox" aria-checked="true">Show rulers</button>
+</main>
+</html>

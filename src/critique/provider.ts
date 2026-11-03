@@ -7,8 +7,10 @@ import {
 import { CodexCritiqueAdapter, CodexCritiqueError } from "./codex.js";
 import {
   type CritiqueProcessRunner,
+  formatCritiqueTimeout,
   sanitizeCritiqueDiagnostic,
 } from "./process.js";
+import { MISSING_ANTHROPIC_API_KEY_MESSAGE } from "./redact.js";
 import type {
   CritiqueAdapter,
   CritiqueInput,
@@ -232,8 +234,22 @@ export function claudeCodeDegradationReason(
   const fallbackClause =
     environment.ANTHROPIC_API_KEY === undefined ||
     environment.ANTHROPIC_API_KEY.trim() === ""
-      ? "ANTHROPIC_API_KEY is not set for the explicit direct-API fallback, or configure model.fallback"
+      ? `${MISSING_ANTHROPIC_API_KEY_MESSAGE} for the explicit direct-API fallback, or configure model.fallback`
       : 'select model.provider: "anthropic" to use the explicit direct-API fallback, or configure model.fallback';
+  if (error instanceof ClaudeCodeCritiqueError && error.timeoutMs !== undefined)
+    return cliDegradationReason(
+      `Claude Code critique did not finish within ${formatCritiqueTimeout(error.timeoutMs)} and was stopped`,
+      "",
+      [
+        "configure model.fallback to continue with another provider when a session stalls",
+      ],
+    );
+  if (error instanceof ClaudeCodeCritiqueError && error.kind === "execution")
+    return cliDegradationReason(
+      "Claude Code ran but the critique session failed",
+      error.detail,
+      [fallbackClause],
+    );
   return cliDegradationReason(
     "Claude Code CLI is unavailable or not authenticated; install or update Claude Code and run `claude auth login`",
     error instanceof ClaudeCodeCritiqueError ? error.detail : error,

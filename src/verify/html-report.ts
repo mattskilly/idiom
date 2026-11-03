@@ -13,7 +13,8 @@ import {
   renderHtmlDocument,
 } from "../report/html.js";
 import type { AttachmentManifest } from "./attachments.js";
-import type { VerificationEvaluation } from "./evaluate.js";
+import type { FindingVerdict, VerificationEvaluation } from "./evaluate.js";
+import { TEXT_BOUNDARY } from "./profile.js";
 
 export type VerificationHtmlOptions = {
   flow: string;
@@ -28,6 +29,12 @@ export type VerificationHtmlOptions = {
   reportCoverage?: ReportCoverage | undefined;
   filmstripImages?: ReadonlyMap<string, string> | undefined;
 };
+
+function pairSuppressionHtml(verdict: FindingVerdict): string {
+  const suppression = verdict.locus?.pairTextSuppression;
+  if (suppression === undefined || suppression.paths.length === 0) return "";
+  return `<p class="meta">Pair-level text suppression: text omitted on all compared sides for ${suppression.paths.map(escapeHtml).join(", ")} (${TEXT_BOUNDARY}-character boundary reached on at least one side); historical records affected: ${suppression.historicalRecords}, current: ${suppression.currentRecords}.</p>`;
+}
 
 function attachments(options: VerificationHtmlOptions): string {
   if (options.manifest.composites.length === 0) return "";
@@ -81,7 +88,7 @@ export function renderVerificationHtmlReport(
       : `<section><h2>Finding verdicts</h2>${evaluation.findings
           .map(
             (verdict) =>
-              `<article class="finding"><h3>${escapeHtml(verdict.finding.id)}</h3><div class="summary">${badge(verdict.status, verdict.status === "fixed" ? "good" : verdict.status)}</div><p class="meta">${escapeHtml(verdict.finding.state)} / ${escapeHtml(verdict.finding.viewport)}${verdict.finding.colorScheme === undefined ? "" : ` / ${escapeHtml(verdict.finding.colorScheme)}`} · ${escapeHtml(verdict.locus?.source ?? verdict.finding.verification.kind)}${verdict.locus?.target === undefined ? "" : ` · ${escapeHtml(verdict.locus.target)}`}</p><p>${escapeHtml(verdict.reason)}</p><p><strong>Basis:</strong> ${escapeHtml(basisDescription(verdict.finding))}</p><p><strong>Acceptance: ${escapeHtml(verdict.acceptance.status)}</strong> — ${escapeHtml(verdict.acceptance.reason)}</p><p>${escapeHtml(acceptanceDescription(verdict.acceptance.contract))}</p><ul>${acceptanceText(
+              `<article class="finding"><h3>${escapeHtml(verdict.finding.id)}</h3><div class="summary">${badge(verdict.status, verdict.status === "fixed" ? "good" : verdict.status)}</div><p class="meta">${escapeHtml(verdict.finding.state)} / ${escapeHtml(verdict.finding.viewport)}${verdict.finding.colorScheme === undefined ? "" : ` / ${escapeHtml(verdict.finding.colorScheme)}`} · ${escapeHtml(verdict.locus?.source ?? verdict.finding.verification.kind)}${verdict.locus?.target === undefined ? "" : ` · ${escapeHtml(verdict.locus.target)}`}</p><p>${escapeHtml(verdict.reason)}</p>${pairSuppressionHtml(verdict)}<p><strong>Basis:</strong> ${escapeHtml(basisDescription(verdict.finding))}</p><p><strong>Acceptance: ${escapeHtml(verdict.acceptance.status)}</strong> — ${escapeHtml(verdict.acceptance.reason)}</p><p>${escapeHtml(acceptanceDescription(verdict.acceptance.contract))}</p><ul>${acceptanceText(
                 verdict.finding,
               )
                 .map((text) => `<li>Done when: ${escapeHtml(text)}</li>`)

@@ -20,10 +20,10 @@ import {
 
 const guide = await readIdiomSkillFile("init.md");
 
-test("the distributed Idiom skill has valid manual-invocation front matter", async () => {
+test("the distributed Idiom skill has valid model-invocable front matter", async () => {
   const skill = await readIdiomSkillTemplate();
   const lines = skill.split("\n");
-  expect(lines.length).toBeLessThanOrEqual(120);
+  expect(lines.length).toBeLessThanOrEqual(140);
   expect(lines[0]).toBe("---");
   expect(skill).toMatch(/^---\nname: idiom\n/);
   expect(skill).toMatch(/\ndescription: \S[^\n]+\n/);
@@ -39,7 +39,11 @@ test("the distributed Idiom skill has valid manual-invocation front matter", asy
   ]) {
     expect(description).toContain(route);
   }
-  expect(skill).toContain("disable-model-invocation: true");
+  expect(description).toContain(
+    "before writing a ticket, spec or code that adds or changes UI, or when a request involves a design decision",
+  );
+  expect(skill).not.toContain("disable-model-invocation");
+  expect(skill).toContain("\n## Before you spec UI\n");
   expect(skill.indexOf("\n---\n", 4)).toBeGreaterThan(0);
 });
 
@@ -61,16 +65,19 @@ test("portable skill has standard discovery metadata and stays generated from th
   ])
     expect(frontmatter.description).toContain(trigger);
   expect(portable).toBe(
-    canonical
-      .replace("\ndisable-model-invocation: true", "")
-      .replace(
-        "`init.md` beside this file",
-        "`references/init.md` relative to this file",
-      ),
+    canonical.replace(
+      "`init.md` beside this file",
+      "`references/init.md` relative to this file",
+    ),
   );
   expect(
     await readFile(join(root, "skills/idiom/references/init.md"), "utf8"),
   ).toBe(guide);
+  // The Claude plugin root carries an identical copy.
+  for (const file of ["SKILL.md", "references/init.md"])
+    expect(
+      await readFile(join(root, "plugins/claude/skills/idiom", file), "utf8"),
+    ).toBe(await readFile(join(root, "skills/idiom", file), "utf8"));
   await promisify(execFile)(
     process.execPath,
     ["scripts/generate-skill.mjs", "--check"],
@@ -125,6 +132,20 @@ test("check-only skill generation detects drift without repairing it", async () 
       ),
     });
     expect(await readFile(path, "utf8")).toBe("stale reference\n");
+    await writeFile(
+      path,
+      await readFile(join(root, "skills/idiom/references/init.md")),
+    );
+    const claude = join(directory, "plugins/claude/skills/idiom/SKILL.md");
+    await rm(claude);
+    await expect(
+      exec(process.execPath, [script, "--check"]),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        "Portable skill drift: plugins/claude/skills/idiom/SKILL.md",
+      ),
+    });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

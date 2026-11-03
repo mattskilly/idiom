@@ -1,6 +1,16 @@
 import type { ProductionBuild } from "../capture/types.js";
 import { coverageStatusText, paintedCoverageText } from "../checks/painted.js";
 import type { CheckCoverage, CheckTuple } from "../checks/types.js";
+import { describeEvidenceLimits } from "../critique/claude-code-sessions.js";
+import {
+  type DeterministicContextLimit,
+  deterministicContextSentence,
+} from "../critique/deterministic-bound.js";
+import {
+  type TruncatedReference,
+  truncatedReferencesSentence,
+} from "../critique/reference-bound.js";
+import type { CritiqueEvidenceLimits } from "../critique/types.js";
 import { tupleDesigns } from "../design/evidence.js";
 import type { LoadedDesign } from "../design/types.js";
 import {
@@ -27,6 +37,7 @@ import { describeSpread, type FindingGroup, isRepeated } from "./groups.js";
 import { orderFindings } from "./presentation-order.js";
 import { buildIssueRankingContext } from "./ranking.js";
 import {
+  degradedReasonSentence,
   designSourceTitle,
   fallbackSentence,
   groupCrop,
@@ -34,6 +45,15 @@ import {
   pageFindingEvidence,
   type ReviewOutcome,
 } from "./report.js";
+
+function deferredDecisionLabel(
+  finding: Finding,
+  targets: ReadonlySet<string> | undefined,
+): string {
+  return targets?.has(finding.id) === true
+    ? `${badge("decision target", "good")} <code>${escapeHtml(`idiom decide --finding ${finding.id}`)}</code>`
+    : `${badge("report-only")} not an <code>idiom decide --finding</code> target`;
+}
 
 export type ReviewHtmlOptions = {
   flow: string;
@@ -51,8 +71,16 @@ export type ReviewHtmlOptions = {
   outcome: ReviewOutcome;
   page?: PageReviewScope | undefined;
   advisory?: AdvisoryReview | undefined;
+  /** Text references the model saw in bounded form. */
+  truncatedReferences?: TruncatedReference[] | undefined;
+  /** Prompts whose deterministic findings context was bounded. */
+  deterministicContextLimits?: DeterministicContextLimit[] | undefined;
+  /** Set when the Claude Code critique split or left out evidence. */
+  critiqueEvidenceLimits?: CritiqueEvidenceLimits | undefined;
   suppressed?: SuppressedFinding[] | undefined;
   deferred?: Finding[] | undefined;
+  /** Deferred ids `idiom decide --finding` accepts; absent means all are report-only. */
+  deferredDecisionTargets?: ReadonlySet<string> | undefined;
   groups?: FindingGroup[] | undefined;
   severityOverrides?:
     | Array<{
@@ -248,7 +276,7 @@ function advisorySection(review: AdvisoryReview | undefined): string {
   return `<section><h2>Advisory design review</h2><p>A model pass told each declared pattern's intent, asked only for spacing, hierarchy and coherence problems. These results do not gate: they never fail idiom check and are not counted as actionable findings.</p>${review.outcome.kind === "degraded" ? `<p><strong>Incomplete:</strong> ${escapeHtml(review.outcome.reason)}</p>` : ""}${review.outcome.kind === "full" && review.outcome.fallback !== undefined ? `<p>${escapeHtml(fallbackSentence(review.outcome.fallback))}</p>` : ""}${review.patterns
     .map(
       (pattern) =>
-        `<article class="panel"><h3>${escapeHtml(pattern.id)}</h3><p><strong>Intent:</strong> ${escapeHtml(pattern.intent)}</p><p class="meta">Reference: ${escapeHtml(pattern.reference ?? "none")} · Status: ${escapeHtml(pattern.status)}${pattern.reason === undefined ? "" : ` (${escapeHtml(pattern.reason)})`}</p>${
+        `<article class="panel"><h3>${escapeHtml(pattern.id)}</h3><p><strong>Intent:</strong> ${escapeHtml(pattern.intent)}</p><p class="meta">Reference: ${escapeHtml(pattern.reference ?? "none")} · Status: ${escapeHtml(pattern.status)}${pattern.reason === undefined ? "" : ` (${escapeHtml(pattern.reason)})`}</p>${(pattern.truncatedReferences ?? []).length === 0 ? "" : `<p class="meta">${escapeHtml(truncatedReferencesSentence(pattern.truncatedReferences ?? []))}</p>`}${pattern.deterministicContextLimit === undefined ? "" : `<p class="meta">${escapeHtml(deterministicContextSentence([pattern.deterministicContextLimit]))}</p>`}${
           pattern.status === "ok" && pattern.findings.length === 0
             ? "<p>No advisory findings.</p>"
             : pattern.findings
@@ -290,7 +318,22 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
           : fallbackSentence(options.outcome.fallback)
         : options.outcome.kind === "deterministic-only"
           ? "Model layer skipped by choice (--deterministic-only)."
-          : `Model layer did not run: ${options.outcome.reason} Deterministic findings remain available.`;
+          : `Model layer did not run: ${degradedReasonSentence(options.outcome.reason)} Deterministic findings remain available.`;
+  const truncatedReferences =
+    (options.outcome.kind === "full" || options.outcome.kind === "degraded") &&
+    (options.truncatedReferences ?? []).length > 0
+      ? `<p>${escapeHtml(truncatedReferencesSentence(options.truncatedReferences ?? []))}</p>`
+      : "";
+  const deterministicContext =
+    (options.outcome.kind === "full" || options.outcome.kind === "degraded") &&
+    (options.deterministicContextLimits ?? []).length > 0
+      ? `<p>${escapeHtml(deterministicContextSentence(options.deterministicContextLimits ?? []))}</p>`
+      : "";
+  const evidenceLimits =
+    options.outcome.kind === "full" &&
+    options.critiqueEvidenceLimits !== undefined
+      ? `<p>${escapeHtml(describeEvidenceLimits(options.critiqueEvidenceLimits))}</p>`
+      : "";
   const rankedFindings = orderFindings(
     options.findings,
     buildIssueRankingContext(options.tuples),
@@ -330,19 +373,23 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
   const deferredSection = `<section><h2>Evaluated but not selected</h2><p>${options.outcome.kind === "quick" ? "Eligible findings outside the five-finding material cap." : "Eligible findings outside the configured material-finding cap."}</p>${
     deferred.length === 0
       ? "<p>None.</p>"
-      : `<ul>${deferred
+      : `<p>Each entry is marked: ${badge("decision target", "good")} ids already have a catalog lineage and can be passed to <code>idiom decide --finding &lt;id&gt;</code>; ${badge("report-only")} ids name the finding in this report only and are not <code>idiom decide --finding</code> targets.</p>${options.outcome.kind === "quick" || options.page !== undefined ? "" : "<p>Actionable findings above are recorded in findings.json and can be passed to <code>idiom decide --finding &lt;id&gt;</code>.</p>"}<ul>${deferred
           .map((finding) => {
             const severityOverride = options.severityOverrides?.find(
               (item) => item.fingerprint === finding.fingerprint,
             );
+            const decisionLabel = deferredDecisionLabel(
+              finding,
+              options.deferredDecisionTargets,
+            );
             if (finding.evidence.designDrift)
-              return findingCard(
+              return `<p class="meta">${escapeHtml(finding.id)}: ${decisionLabel}</p>${findingCard(
                 finding,
                 options.severityOverrides,
                 options.page,
                 options.screenshots,
-              );
-            return `<li><strong>${escapeHtml(finding.id)}</strong> (${escapeHtml(finding.severity)}, ${escapeHtml(finding.layer)}) — ${escapeHtml(finding.flow)} / ${escapeHtml(finding.state)} / ${escapeHtml(finding.viewport)}${finding.colorScheme === undefined ? "" : ` / ${escapeHtml(finding.colorScheme)}`}${finding.combination === undefined ? "" : ` [${escapeHtml(finding.combination)}]`} — ${escapeHtml(basisDescription(finding))} — ${escapeHtml(finding.explanation)}${severityOverride === undefined ? "" : ` — Severity override: ${escapeHtml(severityOverride.original)} → ${escapeHtml(severityOverride.effective)} by rule ${escapeHtml(severityOverride.override.id)} (${escapeHtml(severityOverride.override.reason)})`}</li>`;
+              )}`;
+            return `<li><strong>${escapeHtml(finding.id)}</strong> ${decisionLabel} (${escapeHtml(finding.severity)}, ${escapeHtml(finding.layer)}) — ${escapeHtml(finding.flow)} / ${escapeHtml(finding.state)} / ${escapeHtml(finding.viewport)}${finding.colorScheme === undefined ? "" : ` / ${escapeHtml(finding.colorScheme)}`}${finding.combination === undefined ? "" : ` [${escapeHtml(finding.combination)}]`} — ${escapeHtml(basisDescription(finding))} — ${escapeHtml(finding.explanation)}${severityOverride === undefined ? "" : ` — Severity override: ${escapeHtml(severityOverride.original)} → ${escapeHtml(severityOverride.effective)} by rule ${escapeHtml(severityOverride.override.id)} (${escapeHtml(severityOverride.override.reason)})`}</li>`;
           })
           .join("")}</ul>`
   }</section>`;
@@ -356,7 +403,7 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
       : `<section><h2>Page-review scope</h2><ul><li>Page: ${escapeHtml(options.page.url)}</li><li>Brief: ${escapeHtml(options.page.brief ?? "not supplied")}</li><li>Art direction: ${escapeHtml(options.page.direction ?? "not supplied")}</li><li>Focus areas: ${escapeHtml(options.page.focus.length === 0 ? "none" : options.page.focus.join(", "))}</li></ul><p>Only the brief is the source of truth for the offer and every statistic; claims were not fact-checked against the web.</p></section>`;
   return renderHtmlDocument({
     title: `${heading} review: ${options.flow}`,
-    body: `<header><h1>${escapeHtml(heading)} review: ${escapeHtml(options.flow)}</h1><p class="meta">${options.outcome.kind === "quick" ? "Source commit" : "Captured commit"}: ${escapeHtml(options.commit)}${options.outcome.kind === "quick" ? " (live URL capture; no Git source identity)" : ""}</p>${options.build === undefined ? "" : `<p class="meta">Production build: ${escapeHtml(options.build.id)}</p>`}<div class="summary">${badge(`${options.findings.length} actionable finding${options.findings.length === 1 ? "" : "s"}`)}${options.outcome.kind === "quick" || options.page !== undefined ? "" : ` ${badge(`${modelDecisionCount} unruled decision${modelDecisionCount === 1 ? "" : "s"}`)}`}${questionCount === 0 ? "" : ` ${badge(`${questionCount} design system question${questionCount === 1 ? "" : "s"}`)}`} ${badge(options.outcome.kind, options.outcome.kind === "full" ? "good" : "neutral")}</div><p>${escapeHtml(outcome)}</p><p class="muted">${options.outcome.kind === "quick" || options.page !== undefined ? "Each finding is reported independently." : "Findings and unruled decisions are independent. Findings are decided through idiom decide; rulings are recorded only through idiom ruling."}</p></header>${repeatedSection(options)}${options.reportCoverage === undefined ? "" : renderCoverageHtml(options.reportCoverage)}${pageScope}${designSystemSection(options)}${unruledSection(options)}${stateSections}${suppressedSection(options.suppressed ?? [])}${deferredSection}${coverageTable(options)}${advisorySection(options.advisory)}${quickLimits}`,
+    body: `<header><h1>${escapeHtml(heading)} review: ${escapeHtml(options.flow)}</h1><p class="meta">${options.outcome.kind === "quick" ? "Source commit" : "Captured commit"}: ${escapeHtml(options.commit)}${options.outcome.kind === "quick" ? " (live URL capture; no Git source identity)" : ""}</p>${options.build === undefined ? "" : `<p class="meta">Production build: ${escapeHtml(options.build.id)}</p>`}<div class="summary">${badge(`${options.findings.length} actionable finding${options.findings.length === 1 ? "" : "s"}`)}${options.outcome.kind === "quick" || options.page !== undefined ? "" : ` ${badge(`${modelDecisionCount} unruled decision${modelDecisionCount === 1 ? "" : "s"}`)}`}${questionCount === 0 ? "" : ` ${badge(`${questionCount} design system question${questionCount === 1 ? "" : "s"}`)}`} ${badge(options.outcome.kind, options.outcome.kind === "full" ? "good" : "neutral")}</div><p>${escapeHtml(outcome)}</p>${truncatedReferences}${deterministicContext}${evidenceLimits}<p class="muted">${options.outcome.kind === "quick" || options.page !== undefined ? "Each finding is reported independently." : "Findings and unruled decisions are independent. Findings are decided through idiom decide; rulings are recorded only through idiom ruling."}</p></header>${repeatedSection(options)}${options.reportCoverage === undefined ? "" : renderCoverageHtml(options.reportCoverage)}${pageScope}${designSystemSection(options)}${unruledSection(options)}${stateSections}${suppressedSection(options.suppressed ?? [])}${deferredSection}${coverageTable(options)}${advisorySection(options.advisory)}${quickLimits}`,
     printable: true,
   });
 }

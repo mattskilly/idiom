@@ -553,6 +553,8 @@ export async function runQuick(options: {
       tuples: loaded.tuples,
       coverage: reviewed.coverage,
       captureCoverage: reviewed.captureCoverage,
+      // No deferredDecisionTargets: quick ids never enter the catalog, so every
+      // deferred entry is report-only.
       deferred: deferred,
       ...(reviewed.narrowWidth === undefined
         ? {}

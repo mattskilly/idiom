@@ -318,7 +318,30 @@ const absent = (
 
 test("default mode reports a named text glyph only when hover and focus showed no tooltip", () => {
   const sampled = [absent("hover"), absent("focus")];
-  expect(check({}, sampled, "default").unexplained.candidates).toMatchObject([
+  // A native title explains the glyph by default; visible mode still judges it.
+  expect(check({}, sampled, "default").unexplained.candidates).toEqual([]);
+  expect(check({}, sampled, "visible").unexplained.candidates).toMatchObject([
+    { severity: "major", rule: "idiom:unexplained-control" },
+  ]);
+  const named = (overrides: Parameters<typeof check>[0] = {}) => ({
+    ...overrides,
+    signals: {
+      name: "Help topics",
+      explanation: {
+        controlId: "fixture-control",
+        visibleText: "?",
+        descriptions: [],
+      },
+      ...overrides.signals,
+    },
+  });
+  expect(
+    check(named({ signals: { title: "  " } }), sampled, "default").unexplained
+      .candidates,
+  ).toHaveLength(1);
+  expect(
+    check(named(), sampled, "default").unexplained.candidates,
+  ).toMatchObject([
     {
       severity: "minor",
       rule: "idiom:unexplained-control",
@@ -342,7 +365,9 @@ test("default mode reports a named text glyph only when hover and focus showed n
       absent("focus", { status: "unavailable", reason: "x", tooltips: [] }),
     ],
   ])
-    expect(check({}, records, "default").unexplained.candidates).toEqual([]);
+    expect(check(named(), records, "default").unexplained.candidates).toEqual(
+      [],
+    );
   expect(
     check(
       {

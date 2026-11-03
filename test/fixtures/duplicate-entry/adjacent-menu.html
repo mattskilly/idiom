@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Editor</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; }
+  main { padding: 24px; }
+  [role=toolbar] { display: flex; gap: 4px; align-items: center; position: relative; }
+  button { min-width: 32px; min-height: 32px; transition: none; }
+  [role=menu] { position: absolute; top: 36px; left: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #ccc; padding: 4px; }
+  [role=menu][hidden] { display: none; }
+</style></head>
+<body>
+<main>
+  <h1>Block editor</h1>
+  <div role="toolbar" aria-label="Block">
+    <button id="grip" aria-label="Block options" aria-haspopup="menu" aria-expanded="false" onclick="toggle(this)">⠿</button>
+    <button id="more" aria-label="More options" aria-haspopup="menu" aria-expanded="false" onclick="toggle(this)">⋯</button>
+    <div role="menu" id="block-menu" aria-label="Block actions" hidden>
+      <button role="menuitem" onclick="done()">Cut</button>
+      <button role="menuitem" onclick="done()">Copy</button>
+      <button role="menuitem" onclick="done()">Paste</button>
+    </div>
+  </div>
+  <p id="out">Ready</p>
+</main>
+<script>
+  const menu = document.getElementById('block-menu');
+  function done() {
+    menu.hidden = true;
+    for (const button of document.querySelectorAll('[aria-haspopup]')) button.setAttribute('aria-expanded', 'false');
+  }
+  function toggle(trigger) {
+    const open = trigger.getAttribute('aria-expanded') !== 'true';
+    done();
+    menu.hidden = !open;
+    trigger.setAttribute('aria-expanded', String(open));
+  }
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') done(); });
+</script>
+</body></html>

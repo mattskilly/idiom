@@ -3,7 +3,7 @@
   "name": "io.github.mattskilly/idiom",
   "title": "Idiom",
   "description": "Design acceptance for UI: capture flows, inspect findings, plan repairs and verify fixes.",
-  "version": "0.16.1",
+  "version": "0.18.0",
   "websiteUrl": "https://idiom.build",
   "repository": {
     "url": "https://github.com/mattskilly/idiom",
@@ -14,7 +14,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@mattskilly/idiom",
-      "version": "0.16.1",
+      "version": "0.18.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -89,6 +89,26 @@
         {
           "name": "idiom_baseline",
           "description": "Show or record a deterministic flow baseline without changing Git."
+        },
+        {
+          "name": "idiom_doctor",
+          "description": "Boot the app server once and diagnose why a run could not start."
+        },
+        {
+          "name": "idiom_brief_triage",
+          "description": "Before a UI ticket or change, decide whether the request holds a design decision."
+        },
+        {
+          "name": "idiom_brief_plan",
+          "description": "Return research instructions for a design decision's open questions."
+        },
+        {
+          "name": "idiom_brief_record",
+          "description": "Store a cited decision brief and return the question to ask the requester."
+        },
+        {
+          "name": "idiom_brief_decide",
+          "description": "Record the requester's choice and regenerate the ticket-ready brief."
         }
       ]
     }

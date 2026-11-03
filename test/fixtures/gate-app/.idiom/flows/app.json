@@ -1,0 +1,48 @@
+{
+  "id": "app",
+  "title": "Gate fixture app",
+  "setup": [],
+  "intent": [],
+  "states": [
+    {
+      "id": "catalog",
+      "description": "Catalog page",
+      "url": "/catalog",
+      "expect": {
+        "textPresent": ["Catalog"]
+      }
+    },
+    {
+      "id": "orders",
+      "description": "Orders page",
+      "url": "/orders",
+      "expect": {
+        "textPresent": ["Orders"]
+      }
+    },
+    {
+      "id": "customers",
+      "description": "Customers page",
+      "url": "/customers",
+      "expect": {
+        "textPresent": ["Customers"]
+      }
+    },
+    {
+      "id": "settings",
+      "description": "Settings page",
+      "url": "/settings",
+      "expect": {
+        "textPresent": ["Settings"]
+      }
+    },
+    {
+      "id": "team",
+      "description": "Team page",
+      "url": "/team",
+      "expect": {
+        "textPresent": ["Team"]
+      }
+    }
+  ]
+}

@@ -30,6 +30,10 @@
     "productFile": "PRODUCT.md",
     "designFile": "DESIGN.md"
   },
+  "brief": {
+    "$comment": "references: the products that set the bar for this project's UI, read by idiom brief. Each entry is { \"name\", \"tier\", \"note\" }; tiers: bar (match or beat it), always (always compare against it), floor (never fall below it). ticketTemplate.sections optionally changes the brief's headings; see docs/brief.md.",
+    "references": []
+  },
   "model": {
     "provider": "claude-code",
     "model": "claude-sonnet-5-5",

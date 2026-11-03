@@ -251,6 +251,7 @@ async function artifactTree(
           artifact.timings.build.ms = 0;
           artifact.timings.start.ms = 0;
           artifact.timings.probe.ms = 0;
+          if (artifact.timings.capture) artifact.timings.capture.ms = 0;
           for (const tuple of artifact.timings.tuples) {
             tuple.total.ms = 0;
             tuple.probe.ms = 0;

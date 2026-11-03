@@ -60,6 +60,8 @@ export async function collectPageEvidence(options: {
   statusExpectation?: number | undefined;
   reachStage: "navigation" | "state";
   reach: () => Promise<number | null>;
+  /** Final URL of the document response `reach` navigated to, after redirects. */
+  documentUrl?: (() => string | undefined) | undefined;
   healthGuard?: StepHealthGuard | undefined;
   assertDestination?: (() => void) | undefined;
   createAxe: AxeFactory;
@@ -532,6 +534,8 @@ export async function collectPageEvidence(options: {
         ),
       )
     : undefined;
+  // Read after reach either way: a reach that throws after goto still navigated.
+  const documentUrl = options.documentUrl?.();
   if (failure !== undefined) {
     return {
       ok: false,
@@ -539,6 +543,7 @@ export async function collectPageEvidence(options: {
       stage,
       message: errorMessage(failure),
       status,
+      ...(documentUrl === undefined ? {} : { documentUrl }),
       dom,
       screenshot,
       console: records,
@@ -555,6 +560,7 @@ export async function collectPageEvidence(options: {
     ok: true,
     probeMs,
     status: status ?? null,
+    ...(documentUrl === undefined ? {} : { documentUrl }),
     dom: dom as string,
     screenshot: screenshot as Buffer,
     screenshotGeometry,

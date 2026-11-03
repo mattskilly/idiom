@@ -14,6 +14,16 @@ import {
   stateChainLabel,
 } from "../schemas/flow.js";
 import type { Project } from "../schemas/project.js";
+import {
+  computeDisclosureCoverage,
+  type DisclosureCoverage,
+  disclosureCoverageLines,
+} from "./disclosures.js";
+import {
+  computeEmptyContainerCoverage,
+  type EmptyContainerCoverage,
+  emptyContainerCoverageLines,
+} from "./empty-containers.js";
 
 export type StateDimensionKind =
   | "viewport"
@@ -63,6 +73,10 @@ export type FlowStateCoverage = Totals & {
   /** Flow-level: the empty, one, many, and error data states. */
   data: StateDimension[];
   missing: StateCoverageGap[];
+  /** Disclosures on captured surfaces that no state showed open or the probe opened. */
+  disclosures?: DisclosureCoverage | undefined;
+  /** Lists, tables, feeds and editors that were empty in every captured state. */
+  emptyContainers?: EmptyContainerCoverage | undefined;
 };
 
 export type StateCoverageSummary = { flows: FlowStateCoverage[] };
@@ -472,6 +486,9 @@ export function computeFlowStateCoverage(options: {
     };
   });
 
+  const labels = Object.fromEntries(
+    flow.states.map((state) => [state.id, stateChainLabel(state)]),
+  );
   return {
     flow: flow.id,
     ...(options.runId === undefined
@@ -482,6 +499,14 @@ export function computeFlowStateCoverage(options: {
     data,
     ...totals([...states.flatMap((entry) => entry.dimensions), ...data]),
     missing: gaps(states, data),
+    disclosures: computeDisclosureCoverage(
+      options.tuples.filter(succeeded),
+      labels,
+    ),
+    emptyContainers: computeEmptyContainerCoverage(
+      options.tuples.filter(succeeded),
+      labels,
+    ),
   };
 }
 
@@ -608,6 +633,10 @@ export function renderStateCoverage(summary: StateCoverageSummary): string {
           ", ",
         )}${flow.data.every((d) => d.status === "not-applicable") ? ` (${flow.data[0]?.reason ?? "not applicable"}; add "data" to a state to declare them)` : ""}.`,
     );
+    if (flow.disclosures !== undefined)
+      lines.push("", ...disclosureCoverageLines(flow.disclosures));
+    if (flow.emptyContainers !== undefined)
+      lines.push("", ...emptyContainerCoverageLines(flow.emptyContainers));
     if (flow.missing.length > 0) {
       lines.push("", "To cover:");
       const all = flow.states.length;

@@ -7,6 +7,7 @@ import {
   runClaudeCode,
   sanitizeCritiqueDiagnostic,
 } from "../critique/claude-code.js";
+import { subscriptionAuthEnvironment } from "../critique/subscription-environment.js";
 import { IdiomError } from "../errors.js";
 import {
   parseCandidatesWithRepair,
@@ -85,8 +86,9 @@ export class ClaudeCodeExplorationAdapter implements ExplorationAdapter {
   }) {
     this.model = options.model;
     this.runner = options.runner ?? runClaudeCode;
-    this.environment = { ...(options.environment ?? process.env) };
-    delete this.environment.ANTHROPIC_API_KEY;
+    this.environment = subscriptionAuthEnvironment(
+      options.environment ?? process.env,
+    );
   }
 
   private async invoke(options: {

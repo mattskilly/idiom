@@ -515,7 +515,10 @@ test("failure artifacts load as failed coverage and blockers; later states still
 function mockPage(action: () => Promise<unknown> = async () => undefined) {
   const emitter = new EventEmitter();
   const page = Object.assign(emitter, {
-    goto: vi.fn(async () => ({ status: () => 200 })),
+    goto: vi.fn(async () => ({
+      status: () => 200,
+      url: () => "http://fixture/",
+    })),
     locator: vi.fn(() => ({ click: vi.fn(action) })),
     screenshot: vi.fn(async () => Buffer.from("failure screenshot")),
   });

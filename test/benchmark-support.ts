@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { AxeBuilder } from "@axe-core/playwright";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { PNG } from "pngjs";
+import { type BriefCheck, briefSelectorsFor } from "../src/brief/assertions.js";
 import {
   ExplanationCollector,
   mergeExplanations,
@@ -14,6 +15,10 @@ import { sampleMediaFrames } from "../src/capture/media-bands.js";
 import { mergeMotion } from "../src/capture/motion.js";
 import { probeControls } from "../src/capture/probe.js";
 import { createProbeLedger } from "../src/capture/probe-ledger.js";
+import {
+  revealedObserver,
+  revealedProbeOptions,
+} from "../src/capture/revealed.js";
 import {
   mergeTimelines,
   TimelineCollector,
@@ -43,7 +48,11 @@ import {
   invariantSchema,
 } from "../src/schemas/invariant.js";
 import type { ColorScheme } from "../src/schemas/project.js";
-import { checkMarks, checksConfigSchema } from "../src/schemas/project.js";
+import {
+  briefMarks,
+  checkMarks,
+  checksConfigSchema,
+} from "../src/schemas/project.js";
 
 const directory = fileURLToPath(
   new URL("fixtures/benchmark/", import.meta.url),
@@ -104,6 +113,8 @@ export type ReviewOptions = {
   prepareContext?: (context: BrowserContext) => Promise<void>;
   /** Ask design-system questions, as a project run does. */
   scaleQuestions?: ChecksConfig["scaleQuestions"];
+  /** Decided design briefs: their selectors are marked and brief-mismatch judges them. */
+  decidedBriefs?: BriefCheck[];
 };
 
 /**
@@ -240,7 +251,16 @@ export async function reviewStates(
               { id: state },
             ),
             fresh: options.fresh,
-            marks: checkMarks(settings),
+            marks: [
+              ...checkMarks(settings),
+              ...briefMarks(
+                briefSelectorsFor(
+                  options.decidedBriefs ?? [],
+                  "studio-lab",
+                  state,
+                ),
+              ),
+            ],
             ...(options.images === true ? { images: true } : {}),
             emptyState: settings.emptyState,
             mediaFill: settings.mediaFill,
@@ -313,6 +333,13 @@ export async function reviewStates(
             respectControlIntent: settings.probe.respectControlIntent,
             maxControls: settings.probe.maxControls,
             waitMs: 150,
+            ...revealedProbeOptions(
+              settings.probe,
+              revealedObserver({
+                tokens: { status: "not-configured" },
+                marks: checkMarks(settings),
+              }),
+            ),
             motionSelectors: settings.motion.selectors,
             motionMinExtentPx: settings.motion.minExtentPx,
             reducedMotion: options.reducedMotion !== false,
@@ -380,6 +407,8 @@ export async function reviewStates(
     config.page = { ...config.page, brief: { text: options.brief } };
   if (options.scaleQuestions !== undefined)
     config.scaleQuestions = options.scaleQuestions;
+  if (options.decidedBriefs !== undefined)
+    config.briefs = options.decidedBriefs;
   const checked = runDeterministicChecks(tuples, undefined, config);
   for (const draft of buildDeterministicDrafts({
     runId: "benchmark-contract",

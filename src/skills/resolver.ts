@@ -6,6 +6,7 @@ import {
   runClaudeCode,
   sanitizeCritiqueDiagnostic,
 } from "../critique/claude-code.js";
+import { subscriptionAuthEnvironment } from "../critique/subscription-environment.js";
 import { validateProjectConfiguration } from "../validation.js";
 import { type Merge, resolutionJsonSchema, resolutionSchema } from "./merge.js";
 
@@ -70,7 +71,6 @@ export function createResolver(
       const prompt = resolutionPrompt(input);
       let proposal: unknown;
       if (project.model.provider === "claude-code") {
-        delete environment.ANTHROPIC_API_KEY;
         const result = await (dependencies.runner ?? runClaudeCode)({
           executable: "claude",
           args: [
@@ -90,7 +90,7 @@ export function createResolver(
             "--no-chrome",
           ],
           cwd: input.projectDirectory,
-          environment,
+          environment: subscriptionAuthEnvironment(environment),
           stdin: prompt,
           signal: controller.signal,
         });

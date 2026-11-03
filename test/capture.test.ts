@@ -142,6 +142,7 @@ async function normalizedArtifactTree(
           record.timings.build.ms = 0;
           record.timings.start.ms = 0;
           record.timings.probe.ms = 0;
+          if (record.timings.capture) record.timings.capture.ms = 0;
           for (const tuple of record.timings.tuples) {
             tuple.total.ms = 0;
             tuple.probe.ms = 0;
@@ -490,6 +491,7 @@ test("setup-derived private URLs are redacted from every textual browser artifac
       `<form action="/book/jane/private-slug"></form><script>{"url":"${navigationUrl}","params":{"code":"private-slug"}}</script>`,
     ),
     filmstrips,
+    documentUrl: navigationUrl,
     console: [
       {
         type: "log",
@@ -532,6 +534,7 @@ test("setup-derived private URLs are redacted from every textual browser artifac
     healthAllowed: true,
     location: { url: setupPath, lineNumber: 1 },
   });
+  expect(result.documentUrl).toBe(metadataUrl.template);
   expect(result.axe).toMatchObject({
     nested: [{ [setupPath]: setupPath, count: 3, enabled: true, empty: null }],
   });

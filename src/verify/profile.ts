@@ -17,6 +17,9 @@ export const NON_CONTENT_TAGS: ReadonlySet<string> = new Set([
 const TEMPORAL =
   /\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)(?:day)?\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:uary|ruary|ch|il|e|y|ust|tember|ober|ember)?\b|\b\d{1,4}[/-]\d{1,2}[/-]\d{1,4}\b|\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]m)?\b|\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/gi;
 
+/** Capture caps subtree text here; a v1 record reaching it has unknown text. */
+export const TEXT_BOUNDARY = 500;
+
 export type ProfileKind = "v2-full" | "v1-compatible";
 
 export type ProfileRecord = {
@@ -32,6 +35,8 @@ export type ProfileRecord = {
 export type ProfileReductions = {
   excludedNonRendered: number;
   textSuppressedBoundary: number;
+  /** Paths whose text this side suppressed at the boundary (v1 only). */
+  boundaryPaths: string[];
   textSuppressedTemporal: number;
   textSuppressedMask: number;
   geometrySuppressed: number;
@@ -57,6 +62,60 @@ export function containsTemporal(value: string): boolean {
   const result = TEMPORAL.test(value);
   TEMPORAL.lastIndex = 0;
   return result;
+}
+
+const BARE_TEMPORAL_COMPONENT =
+  /^(?:(\d{1,2})(?:st|nd|rd|th)?|(?:19|20)\d{2})$/i;
+
+/**
+ * A bare day of month (1–31, optional ordinal) or 19xx/20xx year. Alone it is
+ * not temporal: callers require a dated context before classifying it.
+ */
+export function bareTemporalComponent(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 8) return false;
+  const match = BARE_TEMPORAL_COMPONENT.exec(trimmed);
+  if (match === null) return false;
+  const day = match[1];
+  if (day === undefined) return true;
+  const date = Number(day);
+  return date >= 1 && date <= 31;
+}
+
+/**
+ * Temporal classification has a bounded cost on any amount of text. Each
+ * element's own text is tested once (linear in captured text, no sample
+ * window), and a temporal source marks its ancestors into a set, stopping at
+ * the first prefix already marked. A bare day or year counts only when the
+ * element itself, or one of its nearest CONTEXT_DEPTH ancestors (never body or
+ * html), carries a date or time in its *own* text or attributes, or is a
+ * `<time>`: an anchored match on short text plus at most CONTEXT_DEPTH
+ * lookups, never a subtree scan. Own facts only, because subtree context let a
+ * date anywhere in a shared form make a sibling count temporal. Known limit: a
+ * calendar whose only date signal is a sibling heading, with no label on the
+ * grid or day buttons, is not recognized.
+ */
+const CONTEXT_DEPTH = 4;
+
+function parentPath(path: string): string | undefined {
+  const index = path.lastIndexOf("/");
+  return index === -1 ? undefined : path.slice(0, index);
+}
+
+function attributesTemporal(attributes: Record<string, string>): boolean {
+  return Object.values(attributes).some(containsTemporal);
+}
+
+function markAncestors(sources: Iterable<string>): Set<string> {
+  const marked = new Set<string>();
+  for (const source of sources) {
+    let path: string | undefined = source;
+    while (path !== undefined && !marked.has(path)) {
+      marked.add(path);
+      path = parentPath(path);
+    }
+  }
+  return marked;
 }
 
 function stableAttributes(
@@ -88,6 +147,23 @@ function signature(records: ProfileRecord[]): string {
       ),
     )
     .digest("hex");
+}
+
+/**
+ * The profile signature with text omitted at `paths`, so a compared pair can
+ * share boundary suppression. Equals `profile.signature` for an empty set.
+ */
+export function signatureWithoutText(
+  profile: SemanticProfile,
+  paths: ReadonlySet<string>,
+): string {
+  return signature(
+    profile.records.map((record) => {
+      if (!paths.has(record.path)) return record;
+      const { text: _text, ...rest } = record;
+      return rest;
+    }),
+  );
 }
 
 function beneath(path: string, root: string): boolean {
@@ -139,6 +215,7 @@ function baseReductions(): ProfileReductions {
   return {
     excludedNonRendered: 0,
     textSuppressedBoundary: 0,
+    boundaryPaths: [],
     textSuppressedTemporal: 0,
     textSuppressedMask: 0,
     geometrySuppressed: 0,
@@ -153,11 +230,52 @@ function v2MaskPaths(artifact: ObservationArtifactV2): string[] {
 function buildV2(artifact: ObservationArtifactV2): SemanticProfile {
   const reductions = baseReductions();
   const masks = v2MaskPaths(artifact);
-  const volatile = artifact.elements.filter((element) => {
-    const path = element.legacyRenderedPath ?? element.structuralPath;
-    const temporal = element.temporal || containsTemporal(element.directText);
-    return affectedByMask(path, masks) || temporal;
-  });
+  type Element = ObservationArtifactV2["elements"][number];
+  const pathOf = (element: Element) =>
+    element.legacyRenderedPath ?? element.structuralPath;
+  const byStructural = new Map(
+    artifact.elements.map((element) => [element.structuralPath, element]),
+  );
+  const contentful = (element: Element) =>
+    element.visible && !NON_CONTENT_TAGS.has(element.tag);
+  const ownContext = (element: Element) =>
+    element.tag === "time" || attributesTemporal(element.attributes);
+  const contextual = (element: Element): boolean => {
+    if (!bareTemporalComponent(element.directText)) return false;
+    if (ownContext(element)) return true;
+    let path = parentPath(element.structuralPath);
+    for (let step = 0; step < CONTEXT_DEPTH && path !== undefined; step += 1) {
+      const ancestor = byStructural.get(path);
+      if (
+        ancestor === undefined ||
+        ancestor.tag === "body" ||
+        ancestor.tag === "html"
+      )
+        return false;
+      if (
+        contentful(ancestor) &&
+        (ownContext(ancestor) || containsTemporal(ancestor.directText))
+      )
+        return true;
+      path = parentPath(path);
+    }
+    return false;
+  };
+  const temporalSet = markAncestors(
+    artifact.elements
+      .filter(
+        (element) =>
+          contentful(element) &&
+          (element.temporal ||
+            containsTemporal(element.directText) ||
+            contextual(element)),
+      )
+      .map(pathOf),
+  );
+  const isTemporal = (element: Element) => temporalSet.has(pathOf(element));
+  const volatile = artifact.elements.filter(
+    (element) => affectedByMask(pathOf(element), masks) || isTemporal(element),
+  );
   reductions.maskStatus = artifact.maskMembership.map((entry) => ({
     selector: entry.selector,
     status: entry.paths.length === 0 ? "temporal-mask-fallback" : "exact",
@@ -170,7 +288,7 @@ function buildV2(artifact: ObservationArtifactV2): SemanticProfile {
     }
     const path = element.legacyRenderedPath ?? element.structuralPath;
     const masked = affectedByMask(path, masks);
-    const temporal = element.temporal || containsTemporal(element.directText);
+    const temporal = isTemporal(element);
     const volatileRecord = masked || temporal;
     let text: string | undefined = normalizedText(element.directText);
     if (masked) {
@@ -316,12 +434,50 @@ function buildV1(
   reductions.excludedNonRendered = artifact.elements.length - nodes.length;
   reductions.maskStatus = transferMasks(nodes, maskMembership);
   const masks = reductions.maskStatus.flatMap(({ paths }) => paths);
+  const children = new Map<LegacyNode, LegacyNode[]>();
+  for (const node of nodes) {
+    if (node.parent === undefined) continue;
+    const siblings = children.get(node.parent) ?? [];
+    siblings.push(node);
+    children.set(node.parent, siblings);
+  }
+  // v1 text is subtree innerText; removing each child's text approximates the
+  // node's own text. Capped text is unknown, so it gives no context.
+  const ownTexts = new Map<LegacyNode, string>();
+  const ownText = (node: LegacyNode): string => {
+    const known = ownTexts.get(node);
+    if (known !== undefined) return known;
+    let text = node.element.text;
+    if (text.length === TEXT_BOUNDARY) text = "";
+    else
+      for (const child of children.get(node) ?? []) {
+        if (child.element.text.length > 0)
+          text = text.replace(child.element.text, "");
+      }
+    ownTexts.set(node, text);
+    return text;
+  };
+  const contextual = (node: LegacyNode): boolean => {
+    if (!bareTemporalComponent(node.element.text)) return false;
+    let ancestor = node.parent;
+    for (
+      let step = 0;
+      step < CONTEXT_DEPTH && ancestor !== undefined;
+      step += 1
+    ) {
+      if (ancestor.element.tag === "body" || ancestor.element.tag === "html")
+        return false;
+      if (
+        ancestor.element.tag === "time" ||
+        containsTemporal(ownText(ancestor))
+      )
+        return true;
+      ancestor = ancestor.parent;
+    }
+    return false;
+  };
   const temporalPaths = nodes
-    .filter(({ element }) => {
-      const result = TEMPORAL.test(element.text);
-      TEMPORAL.lastIndex = 0;
-      return result;
-    })
+    .filter((node) => containsTemporal(node.element.text) || contextual(node))
     .map(({ path }) => path);
   const volatileNodes = nodes.filter(
     ({ path }) =>
@@ -329,7 +485,7 @@ function buildV1(
       temporalPaths.some((temporal) => beneath(temporal, path)),
   );
   const records = nodes.map(({ element, parent, path }): ProfileRecord => {
-    const boundary = element.text.length === 500;
+    const boundary = element.text.length === TEXT_BOUNDARY;
     const maskAffected = affectedByMask(path, masks);
     const temporalAffected = temporalPaths.some((temporal) =>
       beneath(temporal, path),
@@ -337,6 +493,7 @@ function buildV1(
     let text: string | undefined = normalizedText(element.text);
     if (boundary) {
       reductions.textSuppressedBoundary += 1;
+      reductions.boundaryPaths.push(path);
       text = undefined;
     } else if (maskAffected) {
       reductions.textSuppressedMask += 1;

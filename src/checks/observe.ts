@@ -23,6 +23,10 @@ import {
 } from "./explanation-dom.js";
 import { type LayoutShiftEntry, layoutShiftScore } from "./layout-shift.js";
 import { sampleLiveness } from "./liveness-dom.js";
+import {
+  createIsolatedTokenSession,
+  type IsolatedTokenSession,
+} from "./token-resolver.js";
 import type {
   BandEdgeObservation,
   ChecksConfig,
@@ -37,7 +41,10 @@ import type {
   MediaFrameObservation,
   ObservationArtifact,
   Rect,
+  RepeatedContainerObservation,
+  SelectionOutlineObservation,
   SelectorMark,
+  TokenContext,
   TokenObservation,
   WordBreakObservation,
   WordFragment,
@@ -155,19 +162,178 @@ export function extractAxeHeadingTargets(value: unknown): string[] {
   return [...targets].sort();
 }
 
-async function normalizeInlineTokens(
-  page: Page,
+type TokenEnvironmentRead = {
+  prefersDark: boolean;
+  meta?: string | undefined;
+  theme: string | null;
+  rootFontSize: number;
+  bodyFontSize: number;
+  root: { colorScheme: string; environment: Record<string, string> };
+  others: Array<{ colorScheme: string; environment: Record<string, string> }>;
+};
+
+const MAX_TOKEN_CONTEXTS = 16;
+
+/** App custom properties the declared token values reference. */
+function referencedTokenProperties(
   tokens: Extract<TokenDeclarations, { status: "configured" }>,
-) {
-  const context = await page.evaluate(() => ({
-    rootFontSize: Number.parseFloat(
-      getComputedStyle(document.documentElement).fontSize,
+): string[] {
+  const declared = new Set(Object.keys(tokens.declarations));
+  return [
+    ...new Set(
+      [...Object.values(tokens.declarations), ...tokens.values].flatMap(
+        (value) =>
+          [...value.matchAll(/var\(\s*(--[\w-]+)/g)].map(
+            (match) => match[1] ?? "",
+          ),
+      ),
     ),
-    theme: document.documentElement.getAttribute("data-theme"),
-    scheme: matchMedia("(prefers-color-scheme: dark)").matches
-      ? ("dark" as const)
-      : ("light" as const),
-  }));
+  ]
+    .filter((name) => name !== "" && !declared.has(name))
+    .sort();
+}
+
+/**
+ * Reads, never writes, what token values depend on in the captured page: the
+ * body's colour scheme and referenced custom properties, every other distinct
+ * pair (a subtree that overrides either), font sizes and the scheme inputs.
+ */
+function readTokenEnvironment(
+  page: Page,
+  names: string[],
+): Promise<TokenEnvironmentRead> {
+  return page.evaluate(
+    ({ names, limit }) => {
+      const body = document.body ?? document.documentElement;
+      const contextOf = (style: CSSStyleDeclaration) => {
+        const values = names.map((name) => style.getPropertyValue(name).trim());
+        return {
+          key: JSON.stringify([style.colorScheme, ...values]),
+          colorScheme: style.colorScheme,
+          environment: Object.fromEntries(
+            names.flatMap((name, index) =>
+              values[index] ? [[name, values[index] as string]] : [],
+            ),
+          ),
+        };
+      };
+      const bodyStyle = getComputedStyle(body);
+      const root = contextOf(bodyStyle);
+      const seen = new Set([root.key]);
+      const others: Array<{
+        colorScheme: string;
+        environment: Record<string, string>;
+      }> = [];
+      for (const element of document.querySelectorAll("*")) {
+        if (others.length >= limit) break;
+        const context = contextOf(getComputedStyle(element));
+        if (seen.has(context.key)) continue;
+        seen.add(context.key);
+        others.push({
+          colorScheme: context.colorScheme,
+          environment: context.environment,
+        });
+      }
+      const meta = document
+        .querySelector('meta[name="color-scheme"]')
+        ?.getAttribute("content");
+      return {
+        prefersDark: matchMedia("(prefers-color-scheme: dark)").matches,
+        ...(meta == null ? {} : { meta }),
+        theme: document.documentElement.getAttribute("data-theme"),
+        rootFontSize: Number.parseFloat(
+          getComputedStyle(document.documentElement).fontSize,
+        ),
+        bodyFontSize: Number.parseFloat(bodyStyle.fontSize),
+        root: { colorScheme: root.colorScheme, environment: root.environment },
+        others,
+      };
+    },
+    { names, limit: MAX_TOKEN_CONTEXTS },
+  );
+}
+
+/**
+ * The declared values' rendered colours and radii under one context, probed
+ * in the isolated page: the probe parent carries the context's custom
+ * properties and colour scheme, the page the captured font sizes.
+ */
+function probeTokenValues(
+  isolated: Page,
+  input: {
+    declarations: Record<string, string>;
+    values: string[];
+    environment: Record<string, string>;
+    colorScheme: string;
+    rootFontSize: number;
+    bodyFontSize: number;
+  },
+) {
+  return isolated.evaluate((tokenInput) => {
+    const documentRoot = document.documentElement;
+    documentRoot.style.fontSize = `${tokenInput.rootFontSize}px`;
+    const host = document.createElement("div");
+    for (const [name, value] of Object.entries(tokenInput.environment))
+      host.style.setProperty(name, value);
+    // `normal` inherits the isolated root, which follows the copied meta and
+    // emulated preference the way the app root does.
+    if (tokenInput.colorScheme !== "normal")
+      host.style.setProperty("color-scheme", tokenInput.colorScheme);
+    host.style.fontSize = `${tokenInput.bodyFontSize}px`;
+    document.body.append(host);
+    const createProbe = (parentColor: string) => {
+      const parent = document.createElement("span");
+      parent.style.color = parentColor;
+      const probe = document.createElement("span");
+      for (const [name, value] of Object.entries(tokenInput.declarations))
+        probe.style.setProperty(name, value);
+      parent.append(probe);
+      host.append(parent);
+      return { parent, probe };
+    };
+    const first = createProbe("rgb(1, 2, 3)");
+    const second = createProbe("rgb(4, 5, 6)");
+    const colors = new Set<string>();
+    const radii = new Set<string>();
+    for (const value of tokenInput.values) {
+      first.probe.style.color = "";
+      second.probe.style.color = "";
+      first.probe.style.color = value;
+      second.probe.style.color = value;
+      if (first.probe.style.color !== "" && second.probe.style.color !== "") {
+        const firstColor = getComputedStyle(first.probe).color;
+        const secondColor = getComputedStyle(second.probe).color;
+        if (firstColor === secondColor) colors.add(firstColor);
+      }
+      first.probe.style.borderTopLeftRadius = "";
+      first.probe.style.borderTopLeftRadius = value;
+      if (first.probe.style.borderTopLeftRadius !== "") {
+        const radius = getComputedStyle(first.probe).borderTopLeftRadius;
+        if (radius !== "0px") radii.add(radius);
+      }
+    }
+    const scheme = document.createElement("span");
+    scheme.style.color = "light-dark(rgb(0, 0, 0), rgb(255, 255, 255))";
+    host.append(scheme);
+    const usedScheme =
+      getComputedStyle(scheme).color === "rgb(255, 255, 255)"
+        ? ("dark" as const)
+        : ("light" as const);
+    host.remove();
+    documentRoot.style.removeProperty("font-size");
+    return { colors: [...colors].sort(), radii: [...radii].sort(), usedScheme };
+  }, input);
+}
+
+async function normalizeInlineTokens(
+  isolated: Page,
+  tokens: Extract<TokenDeclarations, { status: "configured" }>,
+  context: {
+    rootFontSize: number;
+    theme: string | null;
+    scheme: "light" | "dark";
+  },
+) {
   const inlineIds = new Set((tokens.inline ?? []).map(tokenIdentity));
   const allTokens = [
     ...(tokens.fileTokens ?? []).filter(
@@ -195,7 +361,7 @@ async function normalizeInlineTokens(
     for (const t of allTokens)
       if (t.theme === theme && !t.reason && t.name.startsWith("--"))
         contextEnvironment[t.name] = t.resolved ?? t.value;
-  const normalized = await page.evaluate(
+  const normalized = await isolated.evaluate(
     normalizeCssValues,
     applicable.map((t) => ({
       value: t.resolved ?? t.value,
@@ -239,44 +405,33 @@ function declaredColorTokenNames(
 export async function normalizeTokenDeclarations(
   page: Page,
   tokens: TokenDeclarations,
+  session?: IsolatedTokenSession,
 ): Promise<TokenObservation> {
   if (tokens.status === "not-configured") return tokens;
-  const { colors, radii } = await page.evaluate((tokenInput) => {
-    const createProbe = (parentColor: string) => {
-      const parent = document.createElement("span");
-      parent.style.color = parentColor;
-      const probe = document.createElement("span");
-      for (const [name, value] of Object.entries(tokenInput.declarations))
-        probe.style.setProperty(name, value);
-      parent.append(probe);
-      document.body.append(parent);
-      return { parent, probe };
-    };
-    const first = createProbe("rgb(1, 2, 3)");
-    const second = createProbe("rgb(4, 5, 6)");
-    const colors = new Set<string>();
-    const radii = new Set<string>();
-    for (const value of tokenInput.values) {
-      first.probe.style.color = "";
-      second.probe.style.color = "";
-      first.probe.style.color = value;
-      second.probe.style.color = value;
-      if (first.probe.style.color !== "" && second.probe.style.color !== "") {
-        const firstColor = getComputedStyle(first.probe).color;
-        const secondColor = getComputedStyle(second.probe).color;
-        if (firstColor === secondColor) colors.add(firstColor);
-      }
-      first.probe.style.borderTopLeftRadius = "";
-      first.probe.style.borderTopLeftRadius = value;
-      if (first.probe.style.borderTopLeftRadius !== "") {
-        const radius = getComputedStyle(first.probe).borderTopLeftRadius;
-        if (radius !== "0px") radii.add(radius);
-      }
+  if (session === undefined) {
+    const owned = createIsolatedTokenSession(page);
+    try {
+      return await normalizeTokenDeclarations(page, tokens, owned);
+    } finally {
+      await owned.close();
     }
-    first.parent.remove();
-    second.parent.remove();
-    return { colors: [...colors].sort(), radii: [...radii].sort() };
-  }, tokens);
+  }
+  const names = referencedTokenProperties(tokens);
+  const read = await readTokenEnvironment(page, names);
+  const isolated = await session.get({
+    colorScheme: read.prefersDark ? "dark" : "light",
+    meta: read.meta,
+  });
+  const probe = (context: TokenEnvironmentRead["root"]) =>
+    probeTokenValues(isolated, {
+      declarations: tokens.declarations,
+      values: tokens.values,
+      environment: context.environment,
+      colorScheme: context.colorScheme,
+      rootFontSize: read.rootFontSize,
+      bodyFontSize: read.bodyFontSize,
+    });
+  const { colors, radii, usedScheme } = await probe(read.root);
   const normalizedValues = [...new Set([...colors, ...radii])].sort();
   // Resolved radii must not mask a color theme whose var() or light-dark()
   // values failed to resolve: that would yield an empty color allow-list.
@@ -296,17 +451,51 @@ export async function normalizeTokenDeclarations(
       `design.tokensFile ${JSON.stringify(tokens.source)} contains no usable custom-property color or radius values`,
     );
   }
+  const rootScheme = read.prefersDark ? ("dark" as const) : ("light" as const);
+  // Typed coverage is opt-in through confirmed inline declarations. File-only
+  // projects retain the full legacy declaration surface, including media and
+  // arbitrary selectors that source learning cannot resolve unconditionally.
+  const typedValues = tokens.inline?.length
+    ? await normalizeInlineTokens(isolated, tokens, {
+        rootFontSize: read.rootFontSize,
+        theme: read.theme,
+        scheme: rootScheme,
+      })
+    : undefined;
+  const contexts: TokenContext[] = [];
+  for (const other of read.others) {
+    const resolved = await probe(other);
+    // A context that resolves every colour as the body does changes nothing.
+    if (
+      resolved.usedScheme === usedScheme &&
+      resolved.colors.join("\n") === colors.join("\n")
+    )
+      continue;
+    contexts.push({
+      colorScheme: other.colorScheme,
+      usedScheme: resolved.usedScheme,
+      environment: other.environment,
+      normalizedValues: resolved.colors,
+      ...(typedValues === undefined
+        ? {}
+        : {
+            // data-theme picks the token set; the subtree's used scheme still
+            // decides how light-dark() resolves within it.
+            typedValues: await normalizeInlineTokens(isolated, tokens, {
+              rootFontSize: read.rootFontSize,
+              theme: read.theme,
+              scheme: resolved.usedScheme,
+            }),
+          }),
+    });
+  }
   return {
     status: "configured",
     source: tokens.source,
     declarations: tokens.declarations,
     normalizedValues,
-    // Typed coverage is opt-in through confirmed inline declarations. File-only
-    // projects retain the full legacy declaration surface, including media and
-    // arbitrary selectors that source learning cannot resolve unconditionally.
-    ...(tokens.inline?.length
-      ? { typedValues: await normalizeInlineTokens(page, tokens) }
-      : {}),
+    ...(typedValues === undefined ? {} : { typedValues }),
+    ...(contexts.length === 0 ? {} : { contextProperties: names, contexts }),
   };
 }
 
@@ -358,6 +547,12 @@ export type ObserveOptions = {
   marks?: Array<{ purpose: SelectorMark["purpose"]; selector: string }>;
   /** Record every `<img>` (published flows only). */
   images?: boolean | undefined;
+  /**
+   * A probe-opened disclosure: its revealed root and the control that opened
+   * it (probe paths). The root counts as an overlay when it is positioned.
+   */
+  revealedRoot?: string | undefined;
+  revealedTrigger?: string | undefined;
   /** Regions judged by the empty-state check (resolved at capture time). */
   emptyState?:
     | {
@@ -370,7 +565,7 @@ export type ObserveOptions = {
 
 export async function observePage(
   page: Page,
-  tokens: TokenDeclarations | TokenObservation,
+  tokens: TokenDeclarations,
   axe?: unknown,
   masks: string[] = [],
   observeOptions: ObserveOptions = {},
@@ -397,10 +592,33 @@ export async function observePage(
   const liveness = observeOptions.liveness
     ? await sampleLiveness(page, observeOptions.liveness)
     : undefined;
-  const normalizedTokens =
-    tokens.status === "not-configured" || "normalizedValues" in tokens
-      ? tokens
-      : await normalizeTokenDeclarations(page, tokens);
+  // Token values resolve in an isolated page shared by declaration
+  // normalization and the element-colour conversion; opened only if needed.
+  const tokenSession = createIsolatedTokenSession(page);
+  try {
+    return await observeWithTokens(
+      page,
+      await normalizeTokenDeclarations(page, tokens, tokenSession),
+      tokenSession,
+      axe,
+      masks,
+      observeOptions,
+      liveness,
+    );
+  } finally {
+    await tokenSession.close();
+  }
+}
+
+async function observeWithTokens(
+  page: Page,
+  normalizedTokens: TokenObservation,
+  tokenSession: IsolatedTokenSession,
+  axe: unknown,
+  masks: string[],
+  observeOptions: ObserveOptions,
+  liveness: Awaited<ReturnType<typeof sampleLiveness>> | undefined,
+): Promise<ObservationArtifact> {
   const axeHeadingTargets = extractAxeHeadingTargets(axe);
   await ensureExplanationDom(page);
   await ensureVisibilityDom(page);
@@ -424,6 +642,7 @@ export async function observePage(
       mediaInput,
       collectionInput,
       menuTriggerSource,
+      revealedInput,
     }) => {
       const generatedClass = (value: string): boolean =>
         /__[A-Za-z0-9_-]{5,}$/.test(value) ||
@@ -628,6 +847,20 @@ export async function observePage(
           collectRules(sheet.cssRules, sheetLabel(sheet, `<style>[${index}]`));
         } catch {
           // Cross-origin stylesheets cannot be inspected safely.
+        }
+      }
+      // Constructable sheets follow document sheets in cascade order.
+      let adoptedSheets: CSSStyleSheet[] = [];
+      try {
+        adoptedSheets = [...(document.adoptedStyleSheets ?? [])];
+      } catch {
+        // Engines without constructable stylesheets expose nothing to observe.
+      }
+      for (const [index, sheet] of adoptedSheets.entries()) {
+        try {
+          collectRules(sheet.cssRules, `adopted[${index}]`);
+        } catch {
+          // Inaccessible adopted stylesheets are skipped like cross-origin ones.
         }
       }
       const createAuthoredRuleIndex = globalThis.__idiomAuthoredRuleIndex;
@@ -2178,6 +2411,81 @@ export async function observePage(
           .toLowerCase()
           .slice(0, 120);
       };
+      // Browser defaults for the native controls that paint their own chrome,
+      // measured once per colour scheme on an unstyled copy in a closed
+      // shadow root (page styles cannot reach it).
+      const nativeControlTypes = ["file", "date", "color", "range"] as const;
+      type NativeControlType = (typeof nativeControlTypes)[number];
+      // A border that follows the text colour, or paints nothing, says
+      // nothing about whether the control was styled.
+      const nativeStyleKey = (style: CSSStyleDeclaration) =>
+        [
+          style.backgroundColor,
+          style.borderTopStyle,
+          ...(style.borderTopStyle === "none"
+            ? []
+            : [
+                style.borderTopWidth,
+                style.borderTopColor === style.color
+                  ? "currentcolor"
+                  : style.borderTopColor,
+              ]),
+          style.borderTopLeftRadius,
+          style.paddingTop,
+          style.paddingLeft,
+        ].join("|");
+      const nativeReferences = new Map<
+        string,
+        Map<NativeControlType, string>
+      >();
+      // The file input's box is often restyled while its button keeps the
+      // browser default, so a file input is judged by ::file-selector-button,
+      // whose computed style Chromium exposes.
+      const nativeStyleOf = (element: Element, type: NativeControlType) =>
+        nativeStyleKey(
+          type === "file"
+            ? getComputedStyle(element, "::file-selector-button")
+            : getComputedStyle(element),
+        );
+      const nativeReference = (type: NativeControlType, scheme: string) => {
+        let references = nativeReferences.get(scheme);
+        if (references === undefined) {
+          references = new Map();
+          const host = document.createElement("div");
+          host.style.cssText = "all: initial";
+          host.style.colorScheme = scheme;
+          const shadow = host.attachShadow({ mode: "closed" });
+          try {
+            document.documentElement.append(host);
+            for (const each of nativeControlTypes) {
+              const input = document.createElement("input");
+              input.type = each;
+              shadow.append(input);
+              references.set(each, nativeStyleOf(input, each));
+            }
+          } finally {
+            host.remove();
+          }
+          nativeReferences.set(scheme, references);
+        }
+        return references.get(type);
+      };
+      const nativeControlOf = (
+        element: Element,
+        styles: CSSStyleDeclaration,
+      ) => {
+        if (!(element instanceof HTMLInputElement)) return undefined;
+        const type = nativeControlTypes.find((each) => each === element.type);
+        if (type === undefined) return undefined;
+        return {
+          type,
+          // A file input computes appearance none even unstyled.
+          defaultStyled:
+            (type === "file" || styles.appearance !== "none") &&
+            nativeStyleOf(element, type) ===
+              nativeReference(type, styles.colorScheme || "normal"),
+        };
+      };
       const signalsFor = (element: Element, rect: DOMRect) => {
         const styles = getComputedStyle(element);
         const px = (value: string) => Number.parseFloat(value) || 0;
@@ -2187,7 +2495,9 @@ export async function observePage(
         const controls = element.getAttribute("aria-controls") ?? undefined;
         const haspopup = element.getAttribute("aria-haspopup") ?? undefined;
         const nodeId = element.getAttribute("data-node-id") ?? undefined;
+        const nativeControl = nativeControlOf(element, styles);
         return {
+          ...(nativeControl === undefined ? {} : { nativeControl }),
           role: implicitRole(element),
           name: accessibleName(element),
           described: describedElsewhere(element),
@@ -2499,6 +2809,72 @@ export async function observePage(
         Element,
         ReturnType<typeof window.__idiomVisibility.painted>
       >();
+      const spacingExclusion = (element: Element) => {
+        const reason = window.__idiomVisibility.excluded(element);
+        return reason === undefined ? {} : { spacingExcluded: reason };
+      };
+      // WCAG 2.5.8's inline exception: the anchor's own rendered text, not an
+      // icon, atomic child or block descendant, has to set its size.
+      const textConstrainedInline = (element: Element, rect: DOMRect) => {
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        let rendersText = false;
+        for (let node = walker.nextNode(); node !== null; ) {
+          if (/\S/.test(node.textContent ?? "")) {
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            if (
+              [...range.getClientRects()].some(
+                (box) => box.width > 0 && box.height > 0,
+              )
+            ) {
+              rendersText = true;
+              break;
+            }
+          }
+          node = walker.nextNode();
+        }
+        if (!rendersText) return false;
+        const replaced = new Set([
+          "img",
+          "svg",
+          "picture",
+          "video",
+          "canvas",
+          "iframe",
+          "object",
+          "embed",
+        ]);
+        const formControls = new Set(["input", "select", "textarea", "button"]);
+        const atomic = new Set([
+          "inline-block",
+          "inline-flex",
+          "inline-grid",
+          "inline-table",
+        ]);
+        for (const descendant of element.querySelectorAll("*")) {
+          const tag = descendant.tagName.toLowerCase();
+          if (formControls.has(tag)) return false;
+          // SVG internals lay out inside their svg, which is measured itself.
+          if (
+            descendant instanceof SVGElement &&
+            !(descendant instanceof SVGSVGElement)
+          )
+            continue;
+          // Boxless descendants (inside display:none, or contents) size nothing.
+          if (descendant.getClientRects().length === 0) continue;
+          const display = getComputedStyle(descendant).display;
+          if (replaced.has(tag) || atomic.has(display)) {
+            if (
+              display !== "none" &&
+              descendant.getBoundingClientRect().height > rect.height + 0.5
+            )
+              return false;
+            continue;
+          }
+          if (!["inline", "contents", "none"].includes(display)) return false;
+        }
+        return true;
+      };
       const paintedOf = (element: Element) => {
         let fact = paintedFacts.get(element);
         if (fact === undefined) {
@@ -2640,6 +3016,39 @@ export async function observePage(
               { selector: selectorFor(label), rects: [...unique.values()] },
             ];
           });
+      };
+      // Elements inside a subtree that overrides colour-scheme or a referenced
+      // custom property are judged against that subtree's token values. The
+      // fingerprint serializer matches the token environment read's.
+      const tokenContextProperties =
+        tokenInput.status === "configured"
+          ? (tokenInput.contextProperties ?? [])
+          : [];
+      const tokenContexts = new Map(
+        (tokenInput.status === "configured"
+          ? (tokenInput.contexts ?? [])
+          : []
+        ).map((context, index) => [
+          JSON.stringify([
+            context.colorScheme,
+            ...tokenContextProperties.map(
+              (name) => context.environment[name] ?? "",
+            ),
+          ]),
+          index,
+        ]),
+      );
+      const tokenContextOf = (styles: CSSStyleDeclaration) => {
+        if (tokenContexts.size === 0) return {};
+        const index = tokenContexts.get(
+          JSON.stringify([
+            styles.colorScheme,
+            ...tokenContextProperties.map((name) =>
+              styles.getPropertyValue(name).trim(),
+            ),
+          ]),
+        );
+        return index === undefined ? {} : { tokenContext: index };
       };
       const observed = all.map((element) => {
         const html = element as HTMLElement;
@@ -2840,6 +3249,7 @@ export async function observePage(
               .slice(0, 500),
             visible,
             painted: paintedOf(element),
+            ...spacingExclusion(element),
             interactive,
             enabled:
               !(html as HTMLButtonElement).disabled &&
@@ -2868,9 +3278,11 @@ export async function observePage(
                 styles.paddingRight,
                 styles.paddingBottom,
                 styles.paddingLeft,
-              ].every((padding) => Number.parseFloat(padding) === 0),
+              ].every((padding) => Number.parseFloat(padding) === 0) &&
+              textConstrainedInline(element, rect),
             ancestorSelectors: ancestors,
             authoredProperties: [...authoredProperties].sort(),
+            ...tokenContextOf(styles),
             ...(Object.keys(styleSources).length === 0 ? {} : { styleSources }),
             structuralPath,
             ...(legacyRenderedPath === undefined ? {} : { legacyRenderedPath }),
@@ -2898,6 +3310,10 @@ export async function observePage(
               borderRightWidth: styles.borderRightWidth,
               borderBottomWidth: styles.borderBottomWidth,
               borderLeftWidth: styles.borderLeftWidth,
+              borderTopStyle: styles.borderTopStyle,
+              borderRightStyle: styles.borderRightStyle,
+              borderBottomStyle: styles.borderBottomStyle,
+              borderLeftStyle: styles.borderLeftStyle,
               outlineColor: styles.outlineColor,
               outlineWidth: styles.outlineWidth,
               outlineStyle: styles.outlineStyle,
@@ -3185,6 +3601,11 @@ export async function observePage(
           const style = getComputedStyle(current);
           if (passive !== undefined && style.pointerEvents !== "none")
             return passive;
+          // A declared popup (an expanded control's positioned target, or the
+          // root the probe revealed) is an overlay like a menu; what it covers
+          // is reported by the popover-cover rule instead. Open details
+          // content stays in the page layer: it collides like inline content.
+          if (popupLayers.has(current)) return current;
           const position = style.position;
           const box = current.getBoundingClientRect();
           // Large absolute panels are commonly stacked illustration cards or
@@ -3228,6 +3649,100 @@ export async function observePage(
         }
         return passive ?? document.documentElement;
       };
+      // Open overlays: menus, listboxes, popovers, non-modal dialogs and
+      // positioned disclosure content, each with the control that opened it
+      // when one is known. Tooltips and modal dialogs are not overlays here.
+      const queryOne = (selector: string | undefined) => {
+        if (selector === undefined) return null;
+        try {
+          return document.querySelector(selector);
+        } catch {
+          return null;
+        }
+      };
+      const revealedRootElement = queryOne(revealedInput.root);
+      const revealedTriggerElement = queryOne(revealedInput.trigger);
+      const positioned = (element: Element) =>
+        ["absolute", "fixed"].includes(getComputedStyle(element).position);
+      const modalOverlay = (element: Element) => {
+        try {
+          if (element.matches("dialog:modal")) return true;
+        } catch {
+          // :modal is unsupported; aria-modal still answers.
+        }
+        return element.getAttribute("aria-modal") === "true";
+      };
+      const popoverOverlays = new Map<Element, Element | null>();
+      const popupLayers = new Set<Element>();
+      const addOverlay = (element: Element, trigger: Element | null) => {
+        if (
+          element === document.body ||
+          element === document.documentElement ||
+          element.getAttribute("role") === "tooltip" ||
+          modalOverlay(element) ||
+          !isVisibleContent(element)
+        )
+          return;
+        const known = popoverOverlays.get(element);
+        popoverOverlays.set(element, trigger ?? known ?? null);
+      };
+      for (const element of document.querySelectorAll(
+        "[role=menu], [role=listbox], dialog[open], [role=dialog]",
+      ))
+        addOverlay(element, null);
+      try {
+        for (const element of document.querySelectorAll(":popover-open"))
+          addOverlay(element, null);
+      } catch {
+        // :popover-open is unsupported; popovers fall back to role.
+      }
+      const expandedTriggers = [
+        ...document.querySelectorAll("[aria-expanded=true][aria-controls]"),
+      ];
+      for (const trigger of expandedTriggers)
+        for (const id of (trigger.getAttribute("aria-controls") ?? "").split(
+          /\s+/,
+        )) {
+          const target = id === "" ? null : document.getElementById(id);
+          if (target !== null && positioned(target)) {
+            addOverlay(target, trigger);
+            popupLayers.add(target);
+          }
+        }
+      for (const details of document.querySelectorAll("details[open]")) {
+        const summary = details.querySelector(":scope > summary");
+        for (const child of details.children)
+          if (child !== summary && positioned(child))
+            addOverlay(child, summary);
+      }
+      if (revealedRootElement !== null && positioned(revealedRootElement)) {
+        addOverlay(revealedRootElement, revealedTriggerElement);
+        popupLayers.add(revealedRootElement);
+      }
+      // The outermost overlay speaks for any nested in it.
+      for (const overlay of [...popoverOverlays.keys()])
+        for (const other of popoverOverlays.keys())
+          if (other !== overlay && other.contains(overlay)) {
+            popoverOverlays.delete(overlay);
+            break;
+          }
+      for (const [overlay, trigger] of popoverOverlays) {
+        if (trigger !== null) continue;
+        const owner =
+          (overlay.id === ""
+            ? undefined
+            : expandedTriggers.find((candidate) =>
+                (candidate.getAttribute("aria-controls") ?? "")
+                  .split(/\s+/)
+                  .includes(overlay.id),
+              )) ??
+          (overlay === revealedRootElement ? revealedTriggerElement : null) ??
+          overlay.parentElement
+            ?.closest("details[open]")
+            ?.querySelector(":scope > summary") ??
+          null;
+        popoverOverlays.set(overlay, owner);
+      }
       // Overlaps: the interactive hit test above, widened to text, sampled
       // across the intersection and bounded by what is actually visible.
       // pointer-events:none text never hit-tests, so its overlaps go
@@ -3306,6 +3821,76 @@ export async function observePage(
       overlapCandidates.sort((a, b) => a.bounds.left - b.bounds.left);
       const holds = (owner: Element, hits: Element[]) =>
         hits.some((hit) => hit === owner || owner.contains(hit));
+      // A card's corner action: a control absolutely positioned inside the
+      // card's own link, layered on top of it so both stay clickable.
+      const cornerActionOverCardLink = (
+        action: OverlapCandidate,
+        link: OverlapCandidate,
+      ) => {
+        if (
+          action.kind !== "interactive" ||
+          link.kind !== "interactive" ||
+          !link.element.matches("a[href], [role=link]")
+        )
+          return false;
+        const actionBox = action.element.getBoundingClientRect();
+        const linkBox = link.element.getBoundingClientRect();
+        if (
+          actionBox.left < linkBox.left - 1 ||
+          actionBox.top < linkBox.top - 1 ||
+          actionBox.right > linkBox.right + 1 ||
+          actionBox.bottom > linkBox.bottom + 1
+        )
+          return false;
+        let card = action.element.parentElement;
+        while (card !== null && !card.contains(link.element))
+          card = card.parentElement;
+        if (card === null) return false;
+        // The action, or a passive wrapper below the card that holds it.
+        let positioned = false;
+        for (
+          let current: Element | null = action.element;
+          current !== null && current !== card;
+          current = current.parentElement
+        ) {
+          if (current !== action.element && interactiveElements.has(current))
+            return false;
+          if (getComputedStyle(current).position === "absolute") {
+            positioned = true;
+            break;
+          }
+        }
+        if (!positioned) return false;
+        // The card's own link covers the card, not some link inside it.
+        const cardBox = card.getBoundingClientRect();
+        const cardArea = cardBox.width * cardBox.height;
+        if (
+          cardArea <= 0 ||
+          areaOf(intersectEdges(edgesOf(linkBox), edgesOf(cardBox))) <
+            0.8 * cardArea
+        )
+          return false;
+        // The action must be on top, where a pointer reaches it.
+        const x = actionBox.left + actionBox.width / 2;
+        const y = actionBox.top + actionBox.height / 2;
+        if (
+          x >= 0 &&
+          y >= 0 &&
+          x < document.documentElement.clientWidth &&
+          y < document.documentElement.clientHeight
+        ) {
+          const stack = document.elementsFromPoint(x, y);
+          const above = stack.findIndex((hit) => holds(action.element, [hit]));
+          const below = stack.findIndex((hit) => holds(link.element, [hit]));
+          return above !== -1 && (below === -1 || above < below);
+        }
+        // Below the fold: a positioned action without a negative z-index
+        // paints over an unpositioned link.
+        return (
+          getComputedStyle(link.element).position === "static" &&
+          !(Number.parseInt(getComputedStyle(action.element).zIndex, 10) < 0)
+        );
+      };
       const overlaps: Array<{
         a: string;
         b: string;
@@ -3329,7 +3914,9 @@ export async function observePage(
             (left.element instanceof HTMLLabelElement &&
               left.element.control === right.element) ||
             (right.element instanceof HTMLLabelElement &&
-              right.element.control === left.element)
+              right.element.control === left.element) ||
+            cornerActionOverCardLink(left, right) ||
+            cornerActionOverCardLink(right, left)
           )
             continue;
           let best: Edges | undefined;
@@ -3393,6 +3980,611 @@ export async function observePage(
       overlaps.sort((x, y) =>
         x.a === y.a ? (x.b < y.b ? -1 : 1) : x.a < y.a ? -1 : 1,
       );
+      // Overlay covers: a field outside an overlay, or the overlay's own
+      // trigger past its anchor edge, under the overlay's box. A 3×3 hit-test
+      // grid confirms the overlay paints on top.
+      const enabledField = (element: Element) =>
+        !(element as HTMLInputElement).disabled &&
+        !element.closest("[inert]") &&
+        element.getAttribute("aria-disabled") !== "true";
+      const fields = [
+        ...document.querySelectorAll(
+          "input:not([type=hidden]), textarea, select, [contenteditable=true], [contenteditable='']",
+        ),
+      ].filter(
+        (element) =>
+          isVisibleContent(element) &&
+          enabledField(element) &&
+          element.parentElement?.closest("[contenteditable=true]") === null,
+      );
+      const outside = (edges: Edges) =>
+        edges.left < viewportEdges.left - 1 ||
+        edges.top < viewportEdges.top - 1 ||
+        edges.right > viewportEdges.right + 1 ||
+        edges.bottom > viewportEdges.bottom + 1;
+      const popoverCovers: Array<{
+        overlay: string;
+        target: string;
+        targetRole: "field" | "trigger";
+        rect: Rect;
+        samples: number;
+        hits: number;
+        partial: string[];
+      }> = [];
+      for (const [overlay, trigger] of popoverOverlays) {
+        const overlayEdges = edgesOf(overlay.getBoundingClientRect());
+        if (areaOf(overlayEdges) <= 0) continue;
+        const targets: Array<{
+          element: Element;
+          role: "field" | "trigger";
+        }> = fields
+          .filter(
+            (field) =>
+              field !== trigger &&
+              !overlay.contains(field) &&
+              !field.contains(overlay),
+          )
+          .map((element) => ({ element, role: "field" as const }));
+        if (
+          trigger !== null &&
+          !overlay.contains(trigger) &&
+          isVisibleContent(trigger)
+        )
+          targets.push({ element: trigger, role: "trigger" });
+        for (const { element, role } of targets) {
+          const targetEdges = edgesOf(element.getBoundingClientRect());
+          // The anchor-edge allowance: a menu may abut or slightly overlap
+          // the control that opened it.
+          const judged =
+            role === "trigger"
+              ? {
+                  left: targetEdges.left + 4,
+                  top: targetEdges.top + 4,
+                  right: targetEdges.right - 4,
+                  bottom: targetEdges.bottom - 4,
+                }
+              : targetEdges;
+          const covered = intersectEdges(overlayEdges, judged);
+          const width = covered.right - covered.left;
+          const height = covered.bottom - covered.top;
+          const minimum = role === "trigger" ? 4 : 6;
+          if (width < minimum || height < minimum) continue;
+          if (
+            role === "field" &&
+            areaOf(covered) < 0.2 * Math.max(1, areaOf(targetEdges))
+          )
+            continue;
+          const onScreen = intersectEdges(covered, viewportEdges);
+          const sampled = areaOf(onScreen) > 0 ? onScreen : undefined;
+          let samples = 0;
+          let hits = 0;
+          if (sampled !== undefined)
+            for (let column = 0; column < 3; column += 1)
+              for (let row = 0; row < 3; row += 1) {
+                const x =
+                  sampled.left +
+                  ((sampled.right - sampled.left) * (column + 0.5)) / 3;
+                const y =
+                  sampled.top +
+                  ((sampled.bottom - sampled.top) * (row + 0.5)) / 3;
+                samples += 1;
+                const top = document.elementFromPoint(x, y);
+                if (top !== null && overlay.contains(top)) hits += 1;
+              }
+          if (samples > 0 && hits < Math.ceil(samples / 2)) continue;
+          popoverCovers.push({
+            overlay: selectorFor(overlay),
+            target: selectorFor(element),
+            targetRole: role,
+            rect: rectOf(sampled ?? covered),
+            samples,
+            hits,
+            partial: [
+              ...(outside(overlayEdges) ? [selectorFor(overlay)] : []),
+              ...(outside(targetEdges) ? [selectorFor(element)] : []),
+            ],
+          });
+        }
+      }
+      // Selection outlines: a ring drawn by a separate positioned frame over
+      // an element (an editor's selection overlay) that runs across an open
+      // popover stacked above the element. An element's own outline paints
+      // beneath a popover stacked above it, so only overlay painters can
+      // cross one visibly; the frame must also sit above the popover.
+      const selectionOutlines =
+        ((): GeometryScan<SelectionOutlineObservation> => {
+          const records: SelectionOutlineObservation[] = [];
+          const reasons: string[] = [];
+          const scanned = () =>
+            reasons.length === 0
+              ? { status: "ran" as const, records }
+              : {
+                  status: "partial" as const,
+                  reason: [...new Set(reasons)].join("; "),
+                  records,
+                };
+          if (popoverOverlays.size === 0) return scanned();
+          const ringAlpha = (color: string) => {
+            if (color === "transparent") return 0;
+            const slash = color.match(/\/\s*([\d.]+%?)\s*\)$/);
+            if (slash?.[1] !== undefined)
+              return slash[1].endsWith("%")
+                ? Number.parseFloat(slash[1]) / 100
+                : Number.parseFloat(slash[1]);
+            const rgba = color.match(/^rgba\((.*)\)$/);
+            if (rgba?.[1] !== undefined)
+              return Number.parseFloat(rgba[1].split(",").at(-1) ?? "1");
+            return 1;
+          };
+          type Ring = {
+            kind: SelectionOutlineObservation["kind"];
+            outer: Edges;
+            inner: Edges;
+          };
+          const grow = (edges: Edges, by: number): Edges => ({
+            left: edges.left - by,
+            top: edges.top - by,
+            right: edges.right + by,
+            bottom: edges.bottom + by,
+          });
+          const ringsOf = (element: Element): Ring[] => {
+            const style = getComputedStyle(element);
+            const box = edgesOf(element.getBoundingClientRect());
+            const rings: Ring[] = [];
+            const outlineWidth = pxOf(style.outlineWidth);
+            if (
+              !["none", "hidden"].includes(style.outlineStyle) &&
+              outlineWidth >= 1 &&
+              ringAlpha(style.outlineColor) > 0
+            ) {
+              const offset = pxOf(style.outlineOffset);
+              rings.push({
+                kind: "outline",
+                outer: grow(box, offset + outlineWidth),
+                inner: grow(box, offset),
+              });
+            }
+            if (style.boxShadow !== "none")
+              for (const layer of topLevelLayers(style.boxShadow)) {
+                const color =
+                  layer.match(
+                    /(?:rgba?|hsla?|color|oklch|oklab|lab|lch)\([^)]*\)/,
+                  )?.[0] ?? "";
+                const lengths = layer
+                  .replace(color, " ")
+                  .split(/\s+/)
+                  .filter((part) => /^-?[\d.]+(?:px)?$/.test(part))
+                  .map((part) => Number.parseFloat(part));
+                const [x = 0, y = 0, blur = 0, spread = 0] = lengths;
+                if (
+                  x !== 0 ||
+                  y !== 0 ||
+                  blur !== 0 ||
+                  spread < 1 ||
+                  color === "" ||
+                  ringAlpha(color) <= 0
+                )
+                  continue;
+                rings.push(
+                  /\binset\b/.test(layer)
+                    ? {
+                        kind: "box-shadow",
+                        outer: box,
+                        inner: grow(box, -spread),
+                      }
+                    : {
+                        kind: "box-shadow",
+                        outer: grow(box, spread),
+                        inner: box,
+                      },
+                );
+              }
+            const sides = ["Top", "Right", "Bottom", "Left"] as const;
+            if (
+              sides.every(
+                (side) =>
+                  pxOf(style[`border${side}Width`]) >= 1 &&
+                  !["none", "hidden"].includes(style[`border${side}Style`]) &&
+                  ringAlpha(style[`border${side}Color`]) > 0,
+              )
+            )
+              rings.push({
+                kind: "border",
+                outer: box,
+                inner: {
+                  left: box.left + pxOf(style.borderLeftWidth),
+                  top: box.top + pxOf(style.borderTopWidth),
+                  right: box.right - pxOf(style.borderRightWidth),
+                  bottom: box.bottom - pxOf(style.borderBottomWidth),
+                },
+              });
+            return rings;
+          };
+          const selectedClass =
+            /(?:^|[-_:])(?:selected|active|current)(?:$|[-_])/i;
+          const ownerState = (
+            element: Element,
+          ): SelectionOutlineObservation["ownerState"] => {
+            const on = (name: string) => {
+              const value = element.getAttribute(name);
+              return value !== null && value !== "false";
+            };
+            if (
+              element.getAttribute("aria-selected") === "true" ||
+              on("aria-current") ||
+              on("data-selected") ||
+              on("data-active") ||
+              on("data-current") ||
+              ["active", "selected"].includes(
+                element.getAttribute("data-state") ?? "",
+              ) ||
+              [...element.classList].some((token) => selectedClass.test(token))
+            )
+              return "selected";
+            try {
+              if (element.matches(":focus-visible, :focus-within"))
+                return "focused";
+            } catch {
+              // :focus-visible is unsupported; focus is not judged.
+            }
+            return "framed";
+          };
+          const ownerName = (element: Element) =>
+            (
+              element.getAttribute("aria-label") ||
+              (element.getAttribute("aria-labelledby") ?? "")
+                .split(/\s+/)
+                .map((id) => document.getElementById(id)?.textContent ?? "")
+                .join(" ") ||
+              `${element.getAttribute("role") ?? element.tagName.toLowerCase()}`
+            )
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 60);
+          // Paint order without touching the page: the top layer, then CSS
+          // stacking contexts compared under the nearest common ancestor.
+          type Order = {
+            order: "above" | "below" | "unknown";
+            topLayer: boolean;
+          };
+          const topLayerRoot = (element: Element) => {
+            try {
+              return element.closest("[popover]:popover-open, dialog:modal");
+            } catch {
+              return null;
+            }
+          };
+          const threeD = (element: Element) => {
+            const style = getComputedStyle(element);
+            return (
+              style.transform.startsWith("matrix3d") ||
+              style.transformStyle === "preserve-3d"
+            );
+          };
+          const formsContext = (element: Element) => {
+            if (element === document.documentElement) return true;
+            const style = getComputedStyle(element);
+            const parent = element.parentElement;
+            const parentDisplay =
+              parent === null ? "" : getComputedStyle(parent).display;
+            return (
+              ["fixed", "sticky"].includes(style.position) ||
+              (style.position !== "static" && style.zIndex !== "auto") ||
+              (/flex|grid/.test(parentDisplay) && style.zIndex !== "auto") ||
+              Number(style.opacity) < 1 ||
+              style.transform !== "none" ||
+              style.filter !== "none" ||
+              style.perspective !== "none" ||
+              style.clipPath !== "none" ||
+              (style.mask !== undefined &&
+                style.mask !== "" &&
+                style.mask !== "none") ||
+              (style.backdropFilter !== undefined &&
+                style.backdropFilter !== "none") ||
+              style.isolation === "isolate" ||
+              style.mixBlendMode !== "normal" ||
+              /\b(?:paint|layout|strict|content)\b/.test(style.contain) ||
+              /\b(?:transform|opacity|filter|perspective|clip-path|mask|isolation|z-index)\b/.test(
+                style.willChange,
+              )
+            );
+          };
+          const stackOrder = (a: Element, b: Element): Order => {
+            const unknown: Order = { order: "unknown", topLayer: false };
+            const topA = topLayerRoot(a);
+            const topB = topLayerRoot(b);
+            if (topA !== topB) {
+              if (topA !== null && topB === null)
+                return { order: "above", topLayer: true };
+              if (topB !== null && topA === null)
+                return { order: "below", topLayer: true };
+              return unknown;
+            }
+            const chain = (element: Element) => {
+              const list: Element[] = [];
+              for (
+                let current: Element | null = element;
+                current !== null;
+                current = current.parentElement
+              )
+                list.push(current);
+              return list;
+            };
+            const chainA = chain(a);
+            const chainB = chain(b);
+            if (chainA.length > 64 || chainB.length > 64) return unknown;
+            if ([...chainA, ...chainB].some(threeD)) return unknown;
+            if (a.contains(b)) return { order: "below", topLayer: false };
+            if (b.contains(a)) return { order: "above", topLayer: false };
+            const shared = new Set(chainB);
+            const common = chainA.find((element) => shared.has(element));
+            if (common === undefined) return unknown;
+            // The element that represents each side in the common context:
+            // its outermost stacking context below the common ancestor, else
+            // its outermost positioned box, else itself.
+            const entry = (path: Element[]) => {
+              for (let index = path.length - 1; index >= 0; index -= 1) {
+                const element = path[index];
+                if (element !== undefined && formsContext(element))
+                  return element;
+              }
+              for (let index = path.length - 1; index >= 0; index -= 1) {
+                const element = path[index];
+                if (
+                  element !== undefined &&
+                  getComputedStyle(element).position !== "static"
+                )
+                  return element;
+              }
+              return path[0];
+            };
+            const entryA = entry(chainA.slice(0, chainA.indexOf(common)));
+            const entryB = entry(chainB.slice(0, chainB.indexOf(common)));
+            if (entryA === undefined || entryB === undefined) return unknown;
+            const key = (element: Element) => {
+              const style = getComputedStyle(element);
+              const z = Number.parseInt(style.zIndex, 10);
+              return [
+                formsContext(element) && Number.isFinite(z) ? z : 0,
+                style.position === "static" ? 0 : 1,
+              ] as const;
+            };
+            const [zA, positionedA] = key(entryA);
+            const [zB, positionedB] = key(entryB);
+            const later =
+              entryA.compareDocumentPosition(entryB) &
+              Node.DOCUMENT_POSITION_FOLLOWING;
+            const above =
+              zA !== zB
+                ? zA > zB
+                : positionedA !== positionedB
+                  ? positionedA > positionedB
+                  : !later;
+            return { order: above ? "above" : "below", topLayer: false };
+          };
+          const centre = (edges: Edges) => ({
+            x: (edges.left + edges.right) / 2,
+            y: (edges.top + edges.bottom) / 2,
+          });
+          const hitIndex = (stack: Element[], element: Element) =>
+            stack.findIndex((hit) => element === hit || element.contains(hit));
+          let inspected = 0;
+          for (const painter of document.body?.querySelectorAll("*") ?? []) {
+            if (records.length >= 50) {
+              reasons.push("Selection outline record limit (50) reached");
+              break;
+            }
+            inspected += 1;
+            if (inspected > 4000) {
+              reasons.push("Selection outline element limit (4000) reached");
+              break;
+            }
+            const style = getComputedStyle(painter);
+            if (!["absolute", "fixed"].includes(style.position)) continue;
+            const painterBox = edgesOf(painter.getBoundingClientRect());
+            if (areaOf(painterBox) <= 0 || style.visibility === "hidden")
+              continue;
+            if (!painter.checkVisibility({ checkOpacity: true })) continue;
+            if ((painter.textContent ?? "").trim() !== "") continue;
+            if (
+              style.backgroundImage !== "none" ||
+              ringAlpha(style.backgroundColor) > 0
+            )
+              continue;
+            const rings = ringsOf(painter);
+            if (rings.length === 0) continue;
+            const point = centre(painterBox);
+            const owner = document
+              .elementsFromPoint(point.x, point.y)
+              .find((element) => {
+                if (
+                  element === document.body ||
+                  element === document.documentElement ||
+                  painter.contains(element)
+                )
+                  return false;
+                const box = edgesOf(element.getBoundingClientRect());
+                return (
+                  Math.abs(box.left - painterBox.left) <= 8 &&
+                  Math.abs(box.top - painterBox.top) <= 8 &&
+                  Math.abs(box.right - painterBox.right) <= 8 &&
+                  Math.abs(box.bottom - painterBox.bottom) <= 8
+                );
+              });
+            if (owner === undefined) continue;
+            for (const [popover, trigger] of popoverOverlays) {
+              if (
+                popover.contains(owner) ||
+                popover.contains(painter) ||
+                owner === trigger
+              )
+                continue;
+              const popoverBox = edgesOf(popover.getBoundingClientRect());
+              const interior = grow(popoverBox, -4);
+              for (const ring of rings) {
+                const { outer, inner } = ring;
+                const strips: Edges[] = [
+                  { ...outer, bottom: inner.top },
+                  { ...outer, top: inner.bottom },
+                  {
+                    left: outer.left,
+                    top: inner.top,
+                    right: inner.left,
+                    bottom: inner.bottom,
+                  },
+                  {
+                    left: inner.right,
+                    top: inner.top,
+                    right: outer.right,
+                    bottom: inner.bottom,
+                  },
+                ]
+                  .map((strip) => intersectEdges(strip, interior))
+                  .filter(
+                    (strip) =>
+                      strip.right - strip.left > 0 &&
+                      strip.bottom - strip.top > 0,
+                  );
+                const largest = strips.sort((x, y) => areaOf(y) - areaOf(x))[0];
+                if (largest === undefined) continue;
+                // 1. The popover is above the ring's owner.
+                let stacking:
+                  | SelectionOutlineObservation["stacking"]
+                  | undefined;
+                const shared = intersectEdges(
+                  edgesOf(owner.getBoundingClientRect()),
+                  popoverBox,
+                );
+                if (areaOf(shared) > 0) {
+                  const at = centre(shared);
+                  const stack = document.elementsFromPoint(at.x, at.y);
+                  const popoverAt = hitIndex(stack, popover);
+                  const ownerAt = stack.indexOf(owner);
+                  if (popoverAt >= 0 && ownerAt >= 0) {
+                    if (popoverAt > ownerAt) continue;
+                    stacking = "hit-test";
+                  }
+                }
+                if (stacking === undefined) {
+                  const order = stackOrder(popover, owner);
+                  if (order.order === "unknown") {
+                    reasons.push(
+                      `Stacking of ${selectorFor(popover)} over ${selectorFor(owner)} is unknown`,
+                    );
+                    continue;
+                  }
+                  if (order.order !== "above") continue;
+                  stacking = order.topLayer ? "top-layer" : "stack-order";
+                }
+                // 2. The ring's painter is above the popover where it crosses.
+                const at = centre(largest);
+                let painterAbove: boolean | undefined;
+                if (style.pointerEvents !== "none") {
+                  const stack = document.elementsFromPoint(at.x, at.y);
+                  const painterAt = hitIndex(stack, painter);
+                  const popoverAt = hitIndex(stack, popover);
+                  if (painterAt >= 0 && popoverAt >= 0)
+                    painterAbove = painterAt < popoverAt;
+                }
+                if (painterAbove === undefined) {
+                  const order = stackOrder(painter, popover);
+                  if (order.order === "unknown") {
+                    reasons.push(
+                      `Stacking of the frame ${selectorFor(painter)} is unknown`,
+                    );
+                    continue;
+                  }
+                  painterAbove = order.order === "above";
+                }
+                if (!painterAbove) continue;
+                const crossing = strips.reduce((box, strip) => ({
+                  left: Math.min(box.left, strip.left),
+                  top: Math.min(box.top, strip.top),
+                  right: Math.max(box.right, strip.right),
+                  bottom: Math.max(box.bottom, strip.bottom),
+                }));
+                records.push({
+                  owner: selectorFor(owner),
+                  ownerName: ownerName(owner),
+                  ownerState: ownerState(owner),
+                  painter: selectorFor(painter),
+                  kind: ring.kind,
+                  ring: rectOf(outer),
+                  popover: selectorFor(popover),
+                  popoverRole:
+                    popover.getAttribute("role") ??
+                    popover.tagName.toLowerCase(),
+                  popoverRect: rectOf(popoverBox),
+                  crossing: rectOf(crossing),
+                  stacking,
+                });
+                break;
+              }
+            }
+          }
+          return scanned();
+        })();
+      // Disclosure inventory: every painted control that opens something,
+      // with the probe's path so coverage can match what the probe opened.
+      const probePathFor = (element: Element): string => {
+        const parts: string[] = [];
+        let current: Element | null = element;
+        while (current !== null && current !== document.documentElement) {
+          const parent: Element | null = current.parentElement;
+          const tag = current.tagName.toLowerCase();
+          if (parent === null) {
+            parts.unshift(tag);
+            break;
+          }
+          const index =
+            [...parent.children]
+              .filter((child) => child.tagName === current?.tagName)
+              .indexOf(current) + 1;
+          parts.unshift(`${tag}:nth-of-type(${index})`);
+          current = parent;
+        }
+        return `html > ${parts.join(" > ")}`;
+      };
+      const disclosures: Array<{
+        selector: string;
+        path: string;
+        id?: string;
+        name: string;
+        kind: "details" | "popup" | "expanded";
+        open: boolean;
+      }> = [];
+      for (const element of document.querySelectorAll(
+        "details > summary, [aria-haspopup], [aria-expanded]",
+      )) {
+        const parent = element.parentElement;
+        const summary =
+          element.tagName.toLowerCase() === "summary" &&
+          parent instanceof HTMLDetailsElement &&
+          parent.querySelector(":scope > summary") === element;
+        const haspopup = element.getAttribute("aria-haspopup");
+        const popup = haspopup !== null && haspopup !== "false";
+        const expanded = element.hasAttribute("aria-expanded");
+        if (!summary && !popup && !expanded) continue;
+        if (
+          element.closest("[aria-hidden=true], [inert]") !== null ||
+          !element.checkVisibility() ||
+          !isVisibleContent(element)
+        )
+          continue;
+        disclosures.push({
+          selector: selectorFor(element),
+          path: probePathFor(element),
+          ...(element.id ? { id: `#${CSS.escape(element.id)}` } : {}),
+          name: accessibleName(element)
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 120),
+          kind: summary ? "details" : popup ? "popup" : "expanded",
+          open: summary
+            ? (parent as HTMLDetailsElement).open
+            : element.getAttribute("aria-expanded") === "true",
+        });
+      }
       // Clipped text: painted lines that run past a box which hides them for
       // good, with no ellipsis or line clamp to say so.
       const wordCharacter = /[\p{L}\p{N}]/u;
@@ -4187,6 +5379,8 @@ export async function observePage(
           !renderedPaths.has(control) ||
           !isVisibleContent(control) ||
           !isVisibleContent(label) ||
+          window.__idiomVisibility.excluded(control) !== undefined ||
+          window.__idiomVisibility.excluded(label) !== undefined ||
           ["checkbox", "radio", "switch"].includes(implicitRole(control)) ||
           (control instanceof HTMLInputElement &&
             ["checkbox", "radio", "hidden"].includes(control.type))
@@ -4204,6 +5398,7 @@ export async function observePage(
             !target.contains(control) &&
             renderedPaths.has(target) &&
             isVisibleContent(target) &&
+            window.__idiomVisibility.excluded(target) === undefined &&
             !helpers.some(
               (helper) => helper.contains(target) || target.contains(helper),
             )
@@ -5058,12 +6253,15 @@ export async function observePage(
       }
       const selectorMarks = markMatches.map(({ mark, elements, invalid }) => ({
         ...mark,
+        // A brief judges hidden matches too (a pin shown only on hover).
         matches: elements
-          .filter((element) => renderedPaths.has(element))
+          .filter(
+            (element) => mark.purpose === "brief" || renderedPaths.has(element),
+          )
           .map((element) => selectorFor(element)),
         ...(invalid ? { invalid } : {}),
       }));
-      const emptyRegions = (() => {
+      const { emptyRegions, repeatedContainers } = (() => {
         const matchesSafely = (element: Element, selector: string) => {
           try {
             return element.matches(selector);
@@ -5225,9 +6423,9 @@ export async function observePage(
           }
           return { selector, matched: matches.length };
         });
+        const excluded =
+          "nav, menu, header, footer, dialog:not([open]), [hidden], [aria-hidden=true], [aria-live]:not([aria-live=off]), [role=status], [role=log], [role=alert], [role=menu], [role=menubar], [role=tablist], [role=listbox], [role=tree], [role=toolbar], [role=navigation]";
         if (emptyInput.auto) {
-          const excluded =
-            "nav, menu, header, footer, dialog:not([open]), [hidden], [aria-hidden=true], [aria-live]:not([aria-live=off]), [role=status], [role=log], [role=alert], [role=menu], [role=menubar], [role=tablist], [role=listbox], [role=tree], [role=toolbar], [role=navigation]";
           const kinds: Array<{
             source: "list" | "table" | "feed";
             selector: string;
@@ -5318,7 +6516,173 @@ export async function observePage(
             }
           }
         }
-        return { configured, auto: emptyInput.auto, regions };
+        // Every rendered repeated-content container and its item count, with
+        // no size floor, so coverage can name the ones only ever seen empty.
+        const repeatedContainers: RepeatedContainerObservation[] = [];
+        const recorded = new Set<Element>();
+        const clean = (text: string | null | undefined) =>
+          (text ?? "").replace(/\s+/g, " ").trim();
+        const headingLike = "h1, h2, h3, h4, h5, h6, legend, [role=heading]";
+        const containerName = (region: Element): string => {
+          const labelledBy = region.getAttribute("aria-labelledby");
+          const own =
+            clean(region.getAttribute("aria-label")) ||
+            (labelledBy
+              ? clean(labelledBy.split(/\s+/).map(textOf).join(" "))
+              : "") ||
+            clean(
+              region.querySelector(":scope > caption, :scope > legend")
+                ?.textContent,
+            );
+          if (own) return own.slice(0, 80);
+          let current: Element | null = region;
+          for (let depth = 0; current && depth < 4; depth += 1) {
+            for (
+              let sibling = current.previousElementSibling;
+              sibling !== null;
+              sibling = sibling.previousElementSibling
+            ) {
+              const heading = sibling.matches(headingLike)
+                ? sibling
+                : [...sibling.querySelectorAll(headingLike)].at(-1);
+              const text = clean(heading?.textContent);
+              if (text) return text.slice(0, 80);
+            }
+            current = current.parentElement;
+            const legend = current?.querySelector(":scope > legend");
+            if (legend) return clean(legend.textContent).slice(0, 80);
+          }
+          return "";
+        };
+        const record = (
+          region: Element,
+          kind: RepeatedContainerObservation["kind"],
+          items: number,
+          selector = selectorFor(region),
+        ) => {
+          if (repeatedContainers.length >= 100) return;
+          recorded.add(region);
+          repeatedContainers.push({
+            selector,
+            kind,
+            name: containerName(region),
+            items,
+          });
+        };
+        const present = (region: Element) =>
+          configuredRendered(region) && !ignored(region);
+        for (const { selector, items } of emptyInput.regions)
+          for (const region of (queryAll(document, selector) ?? []).filter(
+            present,
+          )) {
+            const found = queryAll(region, items);
+            if (found !== undefined)
+              record(region, "configured", found.filter(renderedItem).length);
+          }
+        for (const { selector } of collectionInput) {
+          const matches = queryAll(document, selector);
+          if (matches === undefined) continue;
+          if (repeatedContainers.length >= 100) break;
+          repeatedContainers.push({
+            selector,
+            kind: "configured",
+            name: "",
+            items: matches.filter((item) => renderedPaths.has(item)).length,
+          });
+        }
+        const repeatedKinds: Array<{
+          kind: "list" | "table" | "grid" | "feed";
+          selector: string;
+          items: (region: Element) => number;
+        }> = [
+          {
+            kind: "list",
+            selector: "ul, ol, [role=list]",
+            items: (region) =>
+              [...region.querySelectorAll("li, [role=listitem]")].filter(
+                (item) =>
+                  renderedItem(item) &&
+                  item.parentElement?.closest("ul, ol, [role=list]") === region,
+              ).length,
+          },
+          ...(["table", "grid"] as const).map((kind) => ({
+            kind,
+            selector:
+              kind === "table"
+                ? "table, [role=table]"
+                : "[role=grid], [role=treegrid]",
+            items: (region: Element) =>
+              [...region.querySelectorAll("tr, [role=row]")].filter(
+                (row) =>
+                  renderedItem(row) &&
+                  row.closest("thead") === null &&
+                  [...row.children].some((cell) =>
+                    cell.matches(
+                      "td, [role=cell], [role=gridcell], [role=rowheader]",
+                    ),
+                  ),
+              ).length,
+          })),
+          {
+            kind: "feed",
+            selector: "[role=feed]",
+            items: (region) =>
+              [...region.querySelectorAll("article, [role=article]")].filter(
+                renderedItem,
+              ).length,
+          },
+        ];
+        const autoCandidate = (region: Element) =>
+          !recorded.has(region) &&
+          present(region) &&
+          region.closest(excluded) === null &&
+          !region.parentElement?.closest("li, [role=listitem], tr, [role=row]");
+        for (const { kind, selector, items } of repeatedKinds)
+          for (const region of document.querySelectorAll(selector))
+            if (autoCandidate(region)) record(region, kind, items(region));
+        // Editors: a group whose only content is an "Add …" control.
+        const addName = /^\s*(\+\s*)?(add|new|create|insert)\b/i;
+        const editorSelector =
+          "fieldset, [role=group], [role=region], section, form, dialog, [role=dialog]";
+        const contentSelector =
+          "a[href], button, input, select, textarea, [role=button], [role=link], [role=checkbox], [role=radio], [tabindex], img, svg, canvas, video, li, [role=listitem], tr, [role=row], article";
+        for (const control of document.querySelectorAll(
+          "button, [role=button], input[type=button], input[type=submit]",
+        )) {
+          if (!renderedPaths.has(control)) continue;
+          if (
+            control.matches(":disabled") ||
+            control.getAttribute("aria-disabled") === "true"
+          )
+            continue;
+          const name = accessibleName(control);
+          if (!(addName.test(name) || name.trim() === "+")) continue;
+          const editor = control.parentElement?.closest(editorSelector);
+          if (!editor || !autoCandidate(editor)) continue;
+          const items = [...editor.querySelectorAll("*")].filter((element) => {
+            if (control.contains(element) || element.contains(control))
+              return false;
+            if (!renderedItem(element)) return false;
+            if (element.matches(contentSelector)) return true;
+            const style = getComputedStyle(element);
+            const transparent = (color: string) =>
+              color === "transparent" || /rgba\(.*,\s*0\)$/.test(color);
+            return (
+              !transparent(style.backgroundColor) ||
+              (["Top", "Right", "Bottom", "Left"] as const).some(
+                (side) =>
+                  Number.parseFloat(style[`border${side}Width`]) > 0 &&
+                  style[`border${side}Style`] !== "none" &&
+                  !transparent(style[`border${side}Color`]),
+              )
+            );
+          }).length;
+          record(editor, "editor", items);
+        }
+        return {
+          emptyRegions: { configured, auto: emptyInput.auto, regions },
+          repeatedContainers,
+        };
       })();
       // Gallery frames: the visible box of media inside a repeated card. Pixels
       // are sampled later from the screenshot; only geometry is read here.
@@ -8137,11 +9501,15 @@ export async function observePage(
         selectionGroups,
         dialogs,
         overlaps,
+        disclosures,
+        popoverCovers,
+        selectionOutlines,
         clippedText,
         ...(bandEdges === undefined ? {} : { bandEdges }),
         ...(wordBreaks === undefined ? {} : { wordBreaks }),
         fieldGroups,
         emptyRegions,
+        repeatedContainers,
         ...(components.length === 0 ? {} : { components }),
         ...(mediaFrames === undefined ? {} : { mediaFrames }),
         ...(collections === undefined ? {} : { collections }),
@@ -8191,6 +9559,10 @@ export async function observePage(
       },
       collectionInput: observeOptions.collections ?? [],
       menuTriggerSource: menuTriggerPattern.source,
+      revealedInput: {
+        root: observeOptions.revealedRoot,
+        trigger: observeOptions.revealedTrigger,
+      },
     },
   );
   if (
@@ -8219,7 +9591,7 @@ export async function observePage(
       ),
     ];
     if (values.length) {
-      const converted = await page.evaluate(
+      const converted = await (await tokenSession.get()).evaluate(
         normalizeCssValues,
         values.map((value) => ({ value, kind: "color" as const })),
       );

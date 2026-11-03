@@ -1,8 +1,10 @@
 import { execFile, execFileSync } from "node:child_process";
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { projectSchema } from "../src/schemas/project.js";
+import { readIdiomSkillTemplate } from "../src/templates.js";
 import { IDIOM_VERSION } from "../src/version.js";
 
 const repositoryRoot = join(import.meta.dirname, "..");
@@ -24,12 +26,13 @@ async function invoke(
   entry: string,
   args: string[],
   closeStdin = false,
+  cwd = repositoryRoot,
 ): Promise<Invocation> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       process.execPath,
       [entry, ...args],
-      { cwd: repositoryRoot, ...(closeStdin ? { timeout: 5000 } : {}) },
+      { cwd, ...(closeStdin ? { timeout: 5000 } : {}) },
       (error, stdout, stderr) => {
         if (error === null) {
           resolve({ code: 0, stdout, stderr });
@@ -129,3 +132,50 @@ test.each(["direct", "linked"])(
   },
   15_000,
 );
+
+test("linked init --yes writes the project scaffold", async () => {
+  const project = await mkdtemp(join(tmpdir(), "idiom-cli-entry-project-"));
+  try {
+    const result = await invoke(
+      linkedEntry,
+      ["init", "--project", project, "--yes"],
+      false,
+      project,
+    );
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain(`Initialized ${project}: 11 created`);
+
+    for (const name of ["PRODUCT.md", "DESIGN.md"]) {
+      expect(await readFile(join(project, name), "utf8"), name).not.toBe("");
+    }
+    const parsed = projectSchema.parse(
+      JSON.parse(
+        await readFile(join(project, ".idiom", "project.json"), "utf8"),
+      ),
+    );
+    expect(parsed.app.name).toBe(basename(project));
+    expect(await readFile(join(project, ".idiom", ".gitignore"), "utf8")).toBe(
+      "reports/\n/agent-hooks/\n",
+    );
+    for (const directory of [
+      "flows",
+      "references",
+      "anti-references",
+      "reports",
+    ]) {
+      expect(
+        (await stat(join(project, ".idiom", directory))).isDirectory(),
+        directory,
+      ).toBe(true);
+    }
+    expect(
+      await readFile(
+        join(project, ".agents", "skills", "idiom", "SKILL.md"),
+        "utf8",
+      ),
+    ).toBe(await readIdiomSkillTemplate());
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+}, 60_000);

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Focus</title>
+    <style>
+      body { font: 16px/1.4 system-ui, sans-serif; margin: 32px; color: #222; }
+      .field { border: 2px solid transparent; border-radius: 12px; padding: 2px; display: inline-block; }
+      .field:focus-within { border-color: #2563eb; }
+      input { border: 1px solid #888; border-radius: 4px; padding: 8px; font: inherit; }
+      input:focus { outline: 2px solid #2563eb; outline-offset: 2px; }
+    </style>
+  </head>
+  <body>
+    <h1>Search</h1>
+    <label for="q">Query</label>
+    <div class="field"><input id="q" autofocus value="tea" /></div>
+  </body>
+</html>

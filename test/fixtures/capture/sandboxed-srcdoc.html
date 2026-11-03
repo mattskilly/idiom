@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><title>Sandboxed embed</title><link rel="icon" href="data:,"></head>
+<body>
+<main>
+  <h1>Embedded preview</h1>
+  <p>An opaque-origin preview frame that cannot run scripts.</p>
+  <iframe title="Preview" sandbox="" srcdoc="<!doctype html><html lang=en><body><p>Preview body</p></body></html>"></iframe>
+  <button id="go" type="button">Go</button>
+</main>
+<script>
+  if (new URLSearchParams(location.search).has("fail")) console.error("top document failure");
+  document.querySelector("#go").onclick = () => { document.body.dataset.went = "yes"; };
+</script>
+</body>
+</html>

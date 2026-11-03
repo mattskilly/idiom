@@ -12,11 +12,13 @@ Anyone building UI with AI coding agents such as Claude Code, Codex or Cursor. I
 
 1. **Check**: `idiom check <flow>` renders every state you declare at each viewport and colour scheme (`idiom quick <url>` does the same for the pages you name, with no setup) and runs more than 60 measured checks: contrast, broken links and images, fonts that fail to load, missing focus styles, controls that do nothing, duplicate entry points, content that jumps when you act, actions with no loading state or that can be submitted twice, failures with no error message or no way to retry, changes that snap with no transition, spacing, alignment, sizes off your design system and more ([docs/rules.md](docs/rules.md)). Top issues come first, ranked by severity first, then prominence as measured by salience × prominence within each tier ([ranking](docs/ranking.md)); symptoms that share one cause are grouped into one issue. Capture waits for entrance animations to finish, then only what is actually on screen is judged: content in a closed menu or collapsed section, and hidden, fully transparent or clipped-away elements are skipped and counted in the report, not measured.
 2. **Fix**: every finding names the element, the measurement and when it counts as fixed, with a cropped screenshot. It also says how Idiom knows: measured by a rule, observed during an interaction, or judged by the model critique. Measured and observed findings gate by default; judged ones only with `--fail-on-judged`. `idiom verify` reports each finding's acceptance check as passed, failed or not re-checkable. `idiom fix <flow>` hands the top findings to Claude Code or Codex, then recaptures to verify each repair.
-3. **Guard**: `idiom check --changed` checks only the states your Git changes affect, following routes and imports, and lists the states it skipped. The first `idiom check` on a committed HEAD records today's findings as a baseline. After that, checks and the GitHub Action fail only on new findings. On a pull request, the Action posts one comment that sorts new findings into Blocks merge, Should fix and Opportunities, each with its fix and how to confirm it, and links the full HTML report. Accept and reject decisions are stored in the repo, so a settled finding stays settled.
+3. **Guard**: `idiom check --changed` checks only the states your Git changes affect, following routes and imports, and lists the states it skipped. `idiom check --gate` is the build gate: it checks only what the change affects within a budget (3 minutes by default), skips docs-, test- and config-only changes in under a second, and lists anything it cut. Every check ends with a `Timing:` line saying where the time went. The first `idiom check` on a committed HEAD records today's findings as a baseline. After that, checks and the GitHub Action fail only on new findings. On a pull request, the Action posts one comment that sorts new findings into Blocks merge, Should fix and Opportunities, each with its fix and how to confirm it, and links the full HTML report. Accept and reject decisions are stored in the repo, so a settled finding stays settled.
 
-To find out whether controls work, Idiom probes them within coverage and time budgets, reuses equivalent results across states, and captures states concurrently. Probes restore the state between interactions. Idiom blocks every request that could change data (anything but GET, HEAD and OPTIONS), except the setup steps you declare. `idiom quick` probes too, more strictly, within 45 seconds per page (`--no-probe` to skip).
+To find out whether controls work, Idiom probes them within coverage and time budgets, reuses equivalent results across states, and captures states concurrently. Probes restore the state between interactions. The probe also opens menus, popovers and disclosures and checks what they reveal, such as a popover that covers its own field or an unstyled native file input, and the check summary says how many controls it completed, timed out on or never reached. Idiom blocks every request that could change data (anything but GET, HEAD and OPTIONS), except the setup steps you declare. `idiom quick` probes too, more strictly, within 45 seconds per page (`--no-probe` to skip).
 
 Screenshots only show the states either side of an action, so Idiom also records what happens during it. Every page load, web step and probe click gets a timeline: layout shifts (including those right after input), elements that moved and when, content inserted or removed, animations and transitions, and the requests the action started. Actions that send requests are replayed with the responses held, as a slow network would, to see what the user waits through, and again with the request failing (answered locally, never reaching your server) to see whether the user is told and can retry. Findings that happen between states come with a filmstrip, a contact sheet of frames showing what the user saw.
+
+A build can pass every check and still be rejected on sight, because its ticket quietly chose a control, a placement or a density nobody had decided. `idiom brief triage "<request>"` says in seconds whether a request holds a design decision, and names the open questions. Your agent researches them (or `idiom brief "<request>" --research` does it through your review provider), `idiom brief record` validates and stores the options, and `idiom brief decide` records the choice as a ticket-ready brief under `.idiom/briefs/`. `idiom brief gate <ticket.md>` warns when a ticket adds a design decision without a decided brief. A brief's acceptance criteria can carry measurable assertions, and `idiom check` reports any element that breaks one as `brief-mismatch`. See [design decision briefs](docs/brief.md).
 
 Under the hood the loop is Learn → Render → Critique → Repair → Verify → Remember.
 
@@ -57,12 +59,10 @@ For Codex, run in your shell:
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.18.0/mattskilly-idiom-0.18.0.tgz idiom mcp
 ```
 
-The Claude Code plugin bundles fifteen MCP tools over stdio, the Idiom skill and UI-edit and stop reminders. In Codex the plugin supplies the skill and `codex mcp add` registers the tools, because Codex starts a plugin's own MCP server in the plugin directory rather than your project. No global Idiom install is needed for the plugin. You need Node 20 or newer, npm/npx and the matching browser: `npx playwright@1.62.1 install chromium`. The first MCP launch downloads the exact GitHub release named by the plugin, independently of the npm registry's current version.
-
-Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom`, rerun the `codex mcp add` line above with the new release (it replaces the entry), and start a new session.
+The Claude Code plugin bundles twenty MCP tools over stdio, the Idiom skill and UI-edit and stop reminders. In Codex the plugin supplies the skill and `codex mcp add` registers the tools, because Codex starts a plugin's own MCP server in the plugin directory rather than your project. No global Idiom install is needed for the plugin. You need Node 20 or newer, npm/npx and the matching browser: `npx playwright@1.62.1 install chromium`. The first MCP launch downloads the exact GitHub release named by the plugin, independently of the npm registry's current version. Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom`, rerun the `codex mcp add` line above with the new release (it replaces the entry), and start a new session.
 
 [docs/mcp.md](docs/mcp.md) covers standalone MCP for Cursor and Claude Desktop, timeouts, credentials, and local plugin development with `claude --plugin-dir /path/to/checkout`. When switching from standalone MCP, remove the duplicate registration with `claude mcp remove idiom`.
 
@@ -86,16 +86,14 @@ These are Idiom's benchmark fixture pages in `test/fixtures/benchmark/`, a recon
 
 ## Install
 
-You need Node 20 or newer. Install the current release, 0.16.1, from its GitHub release:
+You need Node 20 or newer. Install the current release:
 
 ```sh
-npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz
+npm install -g @mattskilly/idiom
 idiom --version
 ```
 
-The npm registry still serves 0.12.0 until 0.16.1 is published there. After that, `npm install -g @mattskilly/idiom` (or `bun add -g @mattskilly/idiom`) installs the current release.
-
-The version command prints `<version> (<short source commit>)`, for example `0.16.1 (00663e4)`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz` now, or `bun add -d --exact @mattskilly/idiom@0.16.1` once 0.16.1 is on npm.
+`bun add -g @mattskilly/idiom` works too. The version command prints `<version> (<short source commit>)`, for example `0.18.0 (00663e4)`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D --save-exact @mattskilly/idiom@0.18.0` or `bun add -d --exact @mattskilly/idiom@0.18.0`. Every release's tarball is also attached to its [GitHub release](https://github.com/mattskilly/idiom/releases).
 
 ### Browser setup
 
@@ -144,6 +142,7 @@ Quick review is the entry point, not the coverage ceiling. `idiom coverage --sta
 idiom init --yes          # scaffold PRODUCT.md, DESIGN.md and .idiom/
 idiom init --flows        # draft flows from your routes (real HTML pages only)
 idiom validate home       # after defining .idiom/flows/home.json
+idiom doctor home         # boot the server once and diagnose setup
 idiom check home          # every deterministic finding; records the baseline
 idiom review home         # deterministic + model critique
 ```
@@ -158,8 +157,7 @@ Known setup-derived URLs, pathnames and standalone route tokens are replaced in 
 ## Update Idiom
 
 ```sh
-npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz
-# once 0.16.1 is on npm: npm install -g @mattskilly/idiom@latest
+npm install -g @mattskilly/idiom@latest
 idiom --version
 ```
 

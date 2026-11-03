@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Editor</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; }
+  main { padding: 24px; }
+  .anchor { position: relative; }
+  button { min-width: 32px; min-height: 32px; transition: none; }
+  [role=menu] { position: absolute; top: 36px; left: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #ccc; padding: 4px; width: 160px; }
+  [role=menu][hidden] { display: none; }
+  [role=menuitem] { all: unset; display: block; padding: 6px 8px; background: transparent; color: #222; transition: none; }
+  [role=menuitem][aria-disabled=true] { color: #999; }
+  [role=menuitem]:hover { background: #e8e8e8; }
+</style></head>
+<body>
+<main>
+  <h1>Block editor</h1>
+  <div class="anchor">
+    <button id="edit" aria-haspopup="menu" aria-expanded="false" onclick="toggle(this)">Edit</button>
+    <div role="menu" id="edit-menu" aria-label="Edit" hidden>
+      <button role="menuitem" onclick="closeMenu()">Copy</button>
+      <button role="menuitem" aria-disabled="true">Paste</button>
+    </div>
+  </div>
+</main>
+<script>
+  const menu = document.getElementById('edit-menu');
+  function closeMenu() { menu.hidden = true; document.getElementById('edit').setAttribute('aria-expanded', 'false'); }
+  function toggle(trigger) { const open = menu.hidden; menu.hidden = !open; trigger.setAttribute('aria-expanded', String(open)); }
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeMenu(); });
+</script>
+</body></html>

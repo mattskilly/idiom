@@ -5,7 +5,9 @@ import {
   referenceImageLimitIssue,
 } from "../references/limits.js";
 import type { DecisionObservation } from "../schemas/ruling.js";
+import { sanitizeCritiqueDiagnostic } from "./process.js";
 import { critiquePrompt } from "./prompt.js";
+import { MISSING_ANTHROPIC_API_KEY_MESSAGE } from "./redact.js";
 import { MalformedCritiqueError, parseModelResponse } from "./schema.js";
 import type {
   CritiqueAdapter,
@@ -73,15 +75,17 @@ function responseText(response: unknown): string {
     .join("");
 }
 
-function sanitized(error: unknown): string {
-  const source = error instanceof Error ? error.message : String(error);
-  return source
-    .replace(
-      /(?:sk-ant-|api[_ -]?key(?!\s+is\s+not\s+set\b)[=: ]+)[A-Za-z0-9._-]+/gi,
-      "[redacted]",
-    )
-    .replace(/\s+/g, " ")
-    .slice(0, 500);
+// Stop reasons meaning the model hit a limit before finishing; retrying the
+// same request would hit it again, so these are never sent for repair.
+const LIMIT_STOP_REASONS = new Set([
+  "max_tokens",
+  "model_context_window_exceeded",
+]);
+
+function stopReason(response: unknown): string | undefined {
+  if (response === null || typeof response !== "object") return undefined;
+  const reason = (response as { stop_reason?: unknown }).stop_reason;
+  return typeof reason === "string" ? reason : undefined;
 }
 
 export class AnthropicCritiqueError extends Error {
@@ -91,12 +95,26 @@ export class AnthropicCritiqueError extends Error {
   }
 }
 
+export class TruncatedCritiqueError extends AnthropicCritiqueError {
+  readonly stopReason: string;
+  readonly maxTokens: number;
+
+  constructor(model: string, stopReason: string, maxTokens: number) {
+    super(
+      `Anthropic model ${JSON.stringify(model)} stopped at its token limit (stop_reason ${stopReason}, max_tokens ${maxTokens}) before finishing the critique; models with adaptive or extended thinking on by default spend this budget on thinking too — choose a model with thinking off by default, or see docs/architecture.md`,
+    );
+    this.name = "TruncatedCritiqueError";
+    this.stopReason = stopReason;
+    this.maxTokens = maxTokens;
+  }
+}
+
 export function requireAnthropicApiKey(
   environment: NodeJS.ProcessEnv = process.env,
 ): string {
   const apiKey = environment.ANTHROPIC_API_KEY;
   if (apiKey === undefined || apiKey.trim() === "") {
-    throw new AnthropicCritiqueError("ANTHROPIC_API_KEY is not set");
+    throw new AnthropicCritiqueError(MISSING_ANTHROPIC_API_KEY_MESSAGE);
   }
   return apiKey;
 }
@@ -278,6 +296,13 @@ function batches(images: LoadedImage[]): LoadedImage[][] {
   return groups;
 }
 
+function completedText(response: unknown, model: string): string {
+  const reason = stopReason(response);
+  if (reason !== undefined && LIMIT_STOP_REASONS.has(reason))
+    throw new TruncatedCritiqueError(model, reason, MAX_TOKENS);
+  return responseText(response);
+}
+
 function request(
   model: string,
   content: Array<ImageBlock | TextBlock>,
@@ -357,16 +382,17 @@ export class AnthropicCritiqueAdapter implements CritiqueAdapter {
           ),
         },
       ];
-      let raw: string;
+      let response: unknown;
       try {
-        raw = responseText(
-          await this.client.messages.create(request(this.model, content)),
+        response = await this.client.messages.create(
+          request(this.model, content),
         );
       } catch (error) {
         throw new AnthropicCritiqueError(
-          `Anthropic model ${JSON.stringify(this.model)} failed: ${sanitized(error)}`,
+          `Anthropic model ${JSON.stringify(this.model)} failed: ${sanitizeCritiqueDiagnostic(error)}`,
         );
       }
+      const raw = completedText(response, this.model);
       try {
         const parsed = parseModelResponse(
           raw,
@@ -383,7 +409,7 @@ export class AnthropicCritiqueAdapter implements CritiqueAdapter {
         discardedDecisionObservations += parsed.discardedDecisionObservations;
       } catch (error) {
         if (!(error instanceof MalformedCritiqueError)) throw error;
-        let repaired: string;
+        let repairResponse: unknown;
         const repairInstruction = `Return a corrected JSON object only. Validation issues: ${error.issues.join("; ")}`;
         try {
           const repairRequest =
@@ -396,14 +422,13 @@ export class AnthropicCritiqueAdapter implements CritiqueAdapter {
                   { role: "assistant", content: raw },
                   { role: "user", content: repairInstruction },
                 ]);
-          repaired = responseText(
-            await this.client.messages.create(repairRequest),
-          );
+          repairResponse = await this.client.messages.create(repairRequest);
         } catch (repairError) {
           throw new AnthropicCritiqueError(
-            `Anthropic model ${JSON.stringify(this.model)} repair failed: ${sanitized(repairError)}`,
+            `Anthropic model ${JSON.stringify(this.model)} repair failed: ${sanitizeCritiqueDiagnostic(repairError)}`,
           );
         }
+        const repaired = completedText(repairResponse, this.model);
         const parsed = parseModelResponse(
           repaired,
           screenshotRefs,

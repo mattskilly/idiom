@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type Browser, chromium, type Page } from "playwright";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
-import { probeControls } from "../src/capture/probe.js";
+import { probeControls, recordClickRequests } from "../src/capture/probe.js";
 import { observationArtifactSchema } from "../src/checks/artifact-schema.js";
 import { deadControlCheck } from "../src/checks/dead-control.js";
 import { observePage } from "../src/checks/observe.js";
@@ -233,10 +233,7 @@ test.each([undefined, false])(
         "desktop",
         "light",
         "default",
-        "colors",
-        "home",
         "move",
-        "menu-light",
         "date-open",
         "color-open",
       ])
@@ -247,9 +244,19 @@ test.each([undefined, false])(
       expect(
         artifact.results.find((entry) => entry.selector === "#upload")?.effects,
       ).toContain("filechooser");
-      expect(
-        artifact.results.every((entry) => entry.skipped === undefined),
-      ).toBe(true);
+      // Selection skips always apply: a selected tab, current item or
+      // checked menu radio is a no-op by design. Pressed toggles, a
+      // role-less aria-checked and drag handles stay opt-in.
+      const skipped = Object.fromEntries(
+        artifact.results
+          .filter((entry) => entry.skipped !== undefined)
+          .map((entry) => [entry.selector, entry.skipped]),
+      );
+      expect(skipped).toEqual({
+        "#colors": "already selected: aria-selected",
+        "#home": "already selected: aria-current",
+        "#menu-light": "already selected: aria-checked",
+      });
       for (const id of ["radio", "live-radio", "role-tab", "role-radio"])
         expect(
           artifact.results.find((entry) => entry.selector === `#${id}`),
@@ -705,3 +712,145 @@ test("probe clicks never send mutating requests; declared restore steps still ma
     await new Promise((resolve) => server.close(resolve));
   }
 }, 30_000);
+
+test("background requests never excuse a dead control; requests the click starts do", async () => {
+  const { createServer } = await import("node:http");
+  const methods: string[] = [];
+  const server = createServer((request, response) => {
+    if (request.url !== "/") methods.push(`${request.method} ${request.url}`);
+    response.setHeader("content-type", "text/html");
+    response.end(
+      request.url === "/"
+        ? `<p id="out"></p>
+           <button id="name-version" onclick="window.draft = ''">Name this version</button>
+           <button id="load" onclick="fetch('/api/item').then((r) => r.text()).then((t) => { document.getElementById('out').textContent = t; })">Load item</button>
+           <button id="save" onclick="fetch('/api/save',{method:'POST'}).catch(() => {})">Save</button>
+           <button id="save-async" onclick="(async () => { await Promise.resolve(); fetch('/api/save',{method:'POST'}).catch(() => {}); })()">Save later</button>
+           <button id="track" onclick="navigator.sendBeacon('/api/track')">Track</button>
+           <script>
+             setInterval(() => fetch('/api/poll?t=' + Date.now()).catch(() => {}), 40);
+             setInterval(() => fetch('/api/autosave', { method: 'POST' }).catch(() => {}), 60);
+           </script>`
+        : request.url === "/api/item"
+          ? "Item loaded"
+          : "ok",
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  const origin = `http://127.0.0.1:${port}`;
+  const page = await browser.newPage();
+  try {
+    await page.goto(`${origin}/`);
+    const artifact = await probeControls({
+      page,
+      skip: [],
+      maxControls: 80,
+      waitMs: 100,
+      respectControlIntent: true,
+      restore: async (target) => {
+        await target.goto(`${origin}/`);
+      },
+    });
+    const result = (id: string) =>
+      artifact.results.find((entry) => entry.selector === `#${id}`);
+    expect(result("name-version")).toMatchObject({ effects: [] });
+    expect(result("name-version")?.backgroundRequests).toContain(
+      "GET /api/poll",
+    );
+    expect(
+      result("name-version")?.backgroundRequests?.some((label) =>
+        label.includes("?"),
+      ),
+    ).toBe(false);
+    expect(result("load")?.effects).toEqual(
+      expect.arrayContaining(["dom", "network"]),
+    );
+    expect(result("save")?.effects).toContain("network");
+    expect(result("save-async")?.effects).toContain("network");
+    expect(result("track")?.effects).toEqual([]);
+    const observation = observationArtifactSchema.parse({
+      ...observations,
+      elements: [],
+      probe: artifact,
+    });
+    const candidates = deadControlCheck.run({
+      tuple: { observations: observation },
+    } as Parameters<typeof deadControlCheck.run>[0]).candidates;
+    const dead = (id: string) =>
+      candidates.find((candidate) => candidate.selectorHint === `#${id}`);
+    expect(dead("name-version")?.rule).toBe("idiom:control-does-nothing");
+    expect(dead("name-version")?.explanation).toContain(
+      "only background requests observed",
+    );
+    expect(dead("track")?.rule).toBe("idiom:control-does-nothing");
+    for (const id of ["load", "save", "save-async"])
+      expect(dead(id), id).toBeUndefined();
+    expect(
+      methods.filter((entry) => entry.startsWith("POST /api/save")),
+    ).toEqual([]);
+  } finally {
+    await page.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}, 60_000);
+
+test("a click is attributed through a fetch reference the app captured at load", async () => {
+  const { createServer } = await import("node:http");
+  const methods: string[] = [];
+  const server = createServer((request, response) => {
+    if (request.url !== "/") methods.push(`${request.method} ${request.url}`);
+    response.setHeader("content-type", "text/html");
+    response.end(
+      request.url === "/"
+        ? `<button id="save" onclick="client.insert()">Save</button>
+           <button id="rename" onclick="window.draft = ''">Name this version</button>
+           <script>
+             // A client that resolves fetch once, as supabase-js does.
+             const client = {
+               fetch: window.fetch.bind(window),
+               insert() {
+                 return this.fetch('/rest/items', { method: 'POST' })
+                   .then(() => ({ error: null }), (error) => ({ error }))
+                   .then(({ error }) => { if (error) console.warn(error); });
+               },
+             };
+             const poll = window.fetch;
+             setInterval(() => poll('/api/poll').catch(() => {}), 40);
+           </script>`
+        : "ok",
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  const origin = `http://127.0.0.1:${port}`;
+  // As capture arms a probe context, before the first document loads.
+  const context = await browser.newContext();
+  await context.addInitScript(recordClickRequests);
+  const page = await context.newPage();
+  try {
+    await page.goto(`${origin}/`);
+    const artifact = await probeControls({
+      page,
+      skip: [],
+      maxControls: 80,
+      waitMs: 100,
+      respectControlIntent: true,
+      restore: async (target) => {
+        await target.goto(`${origin}/`);
+      },
+    });
+    const result = (id: string) =>
+      artifact.results.find((entry) => entry.selector === `#${id}`);
+    expect(result("save")?.effects).toContain("network");
+    expect(result("save")?.primary).toBe(true);
+    expect(result("rename")).toMatchObject({ effects: [] });
+    expect(result("rename")?.backgroundRequests).toContain("GET /api/poll");
+    expect(
+      methods.filter((entry) => entry.startsWith("POST /rest/items")),
+    ).toEqual([]);
+  } finally {
+    await context.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}, 60_000);

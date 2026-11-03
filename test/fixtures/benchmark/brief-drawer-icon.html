@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Add drawer</title>
+<style>
+body { margin: 0; font: 14px/1.4 system-ui, sans-serif; color: #111; background: #fff; }
+.drawer { display: grid; grid-template-columns: repeat(3, 120px); gap: 12px; padding: 16px; width: 384px; }
+.tile { position: relative; box-sizing: border-box; height: 56px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; background: #f6f6f6; }
+.pin { position: absolute; top: 4px; right: 4px; box-sizing: border-box; width: 24px; height: 24px; padding: 0; margin: 0; border: 0; border-radius: 4px; background: transparent; color: #333; font: 12px/24px system-ui, sans-serif; }
+</style>
+<body><main><h1>Add</h1><section class="drawer" aria-label="Add drawer">
+<div class="drawer-item"><div class="tile">Heading<button class="pin" type="button" aria-label="Pin Heading" title="Pin Heading"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg></button></div></div>
+<div class="drawer-item"><div class="tile">Text<button class="pin" type="button" aria-label="Pin Text" title="Pin Text"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg></button></div></div>
+<div class="drawer-item"><div class="tile">Image<button class="pin" type="button" aria-label="Pin Image" title="Pin Image"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg></button></div></div>
+</section></main></body></html>

@@ -33,6 +33,7 @@ export async function runProductSweep(
     ids.add(flow.id);
   }
   // Fatal project/tracker/decision data errors must happen before capture.
+  // A malformed tracker ticket is not fatal: emission reports it per ticket.
   await readDecisionLog(project.projectDirectory);
   if (options.emitTickets !== undefined) {
     const target = await resolveTicketTarget({

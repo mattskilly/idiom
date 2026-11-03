@@ -7,7 +7,7 @@ import {
   resolveContext,
   snapshot,
   type UISnapshot,
-} from "../../hooks/lib.mjs";
+} from "../../plugins/claude/hooks/lib.mjs";
 import type { CaptureScope } from "../capture/scope.js";
 import { resolveProjectArgument } from "../project.js";
 import type { ReportCoverage } from "../report/coverage.js";

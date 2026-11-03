@@ -13,8 +13,13 @@ import type {
 import { jsonRecord } from "./json.js";
 import { settingsHash, stable } from "./settings.js";
 
+/**
+ * Decided briefs are left out: recording or deciding a brief must not void
+ * every other rule's acceptance.
+ */
 export function settingsIdentity(config?: ChecksConfig): string {
-  return settingsHash({ ...checksConfigFrom(), ...config });
+  const { briefs: _briefs, ...settings } = config ?? {};
+  return settingsHash({ ...checksConfigFrom(), ...settings });
 }
 export function coordinate(tuple: CheckTuple) {
   return {
@@ -213,6 +218,8 @@ export function buildRuleContract(
             "spacing-rhythm",
             "overflow-clip",
             "adjacent-gap",
+            "nested-border",
+            "selection-outline",
           ].includes(candidate.category)
             ? { units: { distance: "CSS px" } }
             : {}),

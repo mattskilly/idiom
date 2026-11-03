@@ -34,7 +34,9 @@ import { type LoadingServer, startLoadingServer } from "./loading-support.js";
  * a predicate over findings. A release scores "found / 7" on before.html and
  * must report none of them, and no new-check noise, on after.html.
  * Both the original explicit settings and zero-config defaults plus DESIGN.md
- * exercise the full CLI retention paths.
+ * exercise the full CLI retention paths. Defect #1 (a "?" whose only
+ * explanation is a native title) is a defect only under the configured
+ * `explanation: "visible"`; by default a native title counts as explaining it.
  */
 const benchmarkModes = ["configured", "defaults"] as const;
 type BenchmarkMode = (typeof benchmarkModes)[number];
@@ -67,6 +69,8 @@ type Defect = {
   id: number;
   name: string;
   found: (findings: BenchmarkFinding[]) => boolean;
+  /** Modes where it is a defect; every mode when absent. */
+  modes?: readonly BenchmarkMode[];
 };
 
 const has = (
@@ -84,6 +88,7 @@ const defects: Defect[] = [
   {
     id: 1,
     name: 'bare "?" beside the Layers heading',
+    modes: ["configured"],
     found: (f) =>
       has(
         f,
@@ -151,6 +156,9 @@ const defects: Defect[] = [
       ),
   },
 ];
+
+const defectsIn = (mode: BenchmarkMode) =>
+  defects.filter((defect) => defect.modes?.includes(mode) ?? true);
 
 const newCategories = new Set<string>(signalChecks.map((check) => check.id));
 /** Expected after the fix: Matt asked for a visible placeholder over dead text. */
@@ -258,7 +266,12 @@ test.each(benchmarkModes)(
     const before = normalized(
       await review("before.html", new Set(), retained, mode),
     );
+    const defects = defectsIn(mode);
     expect(defects.filter((defect) => !defect.found(before))).toEqual([]);
+    if (mode === "defaults")
+      expect(
+        has(before, "unexplained-control", (t) => t.includes("summary")),
+      ).toBe(false);
     const { project, configPath } = await baselineProject({
       states: ["editor", "composer-focused"],
       viewports: [{ name: "desktop", width: 1440, height: 900 }],
@@ -437,7 +450,7 @@ test.each(benchmarkModes)(
         };
       });
       console.info(
-        `benchmark CLI retention (${mode}): 7/7 JSON, 7/7 all text; ${rows.filter((r) => r.top5).length}/7 Top 5\n${JSON.stringify(rows, null, 2)}`,
+        `benchmark CLI retention (${mode}): ${rows.length}/${rows.length} JSON, ${rows.length}/${rows.length} all text; ${rows.filter((r) => r.top5).length}/${rows.length} Top 5\n${JSON.stringify(rows, null, 2)}`,
       );
       console.info(
         [
@@ -1143,7 +1156,29 @@ test("layout shift: names the promo that arrived late in load; a reserved slot i
   expect(shifts(after, "layout-shift")).toEqual([]);
 }, 60_000);
 
-test("interaction shift: scrolling, the effect region, sorting, filtering, overlays and off-screen movement are not shifts", async () => {
+test("interaction shift: a panel the click expanded is exempt, an unrelated banner in the same click is not", async () => {
+  const { findings, tuples } = await reviewStates(
+    browser,
+    [
+      {
+        state: "canvas",
+        html: await fixture(
+          "interaction-shift-exclusions/expanded-plus-banner.html",
+        ),
+      },
+    ],
+    { probe: true },
+  );
+  expect(shifts(findings).map((finding) => finding.selectorHint)).toEqual([
+    'div[role="status"]',
+  ]);
+  const click = tuples
+    .flatMap((tuple) => tuple.timelines?.actions ?? [])
+    .find((action) => action.source === "probe-click");
+  expect(click?.effectRegion.opened).toBe('aside[aria-label="Inspector"]');
+}, 60_000);
+
+test("interaction shift: scrolling, the effect region, sorting, filtering, overlays, off-screen movement, an expanded panel and inline validation are not shifts", async () => {
   for (const name of [
     "scroll",
     "effect-region",
@@ -1153,6 +1188,8 @@ test("interaction shift: scrolling, the effect region, sorting, filtering, overl
     "offscreen",
     "scroll-lock-compensated",
     "scroll-lock-short",
+    "docked-panel",
+    "inline-validation",
   ]) {
     const findings = await reviewFixture(
       browser,

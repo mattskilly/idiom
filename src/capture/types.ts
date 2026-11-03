@@ -69,17 +69,23 @@ export type ConsoleRecord = {
   text: string;
   healthAllowed?: boolean;
   location?: { url: string; lineNumber: number; columnNumber: number };
+  /** Network provenance for browser resource-load records; absent for script-originated records and older captures. */
+  request?: { resourceType: string; mainFrame: boolean } | undefined;
 };
 
 export type TupleCapture = {
   ok: true;
   probeMs?: number | undefined;
   status: number | null;
+  /** Final URL of the navigation's document response (after redirects); the URL `status` describes. */
+  documentUrl?: string | undefined;
   dom: string;
   screenshot: Buffer;
   /** How `screenshot` was taken; absent when a reused shot carried none. */
   screenshotGeometry?: ScreenshotGeometry | undefined;
   console: ConsoleRecord[];
+  /** True when capture recorded request provenance for network console records. */
+  consoleProvenance?: boolean | undefined;
   axe: unknown;
   observations?: ObservationArtifact | undefined;
   /** Action timelines; written to timelines.json, never into observations. */
@@ -109,10 +115,13 @@ export type TupleFailure = {
   stage: TupleFailureStage;
   message: string;
   status?: number | null | undefined;
+  /** Final URL of the navigation's document response (after redirects); the URL `status` describes. */
+  documentUrl?: string | undefined;
   dom?: string | undefined;
   screenshot?: Buffer | undefined;
   screenshotGeometry?: ScreenshotGeometry | undefined;
   console: ConsoleRecord[];
+  consoleProvenance?: boolean | undefined;
   axe?: unknown;
   observations?: ObservationArtifact | undefined;
   timelines?: ActionTimelineArtifact | undefined;
@@ -138,11 +147,15 @@ export type BrowserTuple = CaptureHooks & {
   reuseScreenshot?: Buffer | undefined;
   reuseScreenshotGeometry?: ScreenshotGeometry | undefined;
   invariants?: EffectiveInvariant[] | undefined;
+  /** Decided brief assertion selectors for this state, resolved as marks. */
+  briefSelectors?: string[] | undefined;
   project: Project;
   state: FlowState;
   viewport: SelectedViewport;
   colorScheme?: SelectedColorScheme | undefined;
   navigationUrl: string;
+  /** Flow-resolved `hideWebdriver`; falls back to `capture.hideWebdriver`. */
+  hideWebdriver?: boolean | undefined;
   health?: import("./web-steps.js").ResolvedWebHealth | undefined;
   tokens?: TokenDeclarations | undefined;
   /** Component sizes inferred from DESIGN.md, resolved to selectors in observe. */
@@ -150,6 +163,10 @@ export type BrowserTuple = CaptureHooks & {
   probe?: boolean | undefined;
   enumerateProbe?: boolean | undefined;
   probeBudget?: import("./probe-budget.js").ProbeBudgetLease | undefined;
+  /** No flow target (`flowBudgetMs: 0`): per-state time fractions are off. */
+  probeUnbounded?: boolean | undefined;
+  /** The build gate's changed region for this tuple (`idiom check --gate`). */
+  probeRegion?: import("./probe.js").ProbeRegion | undefined;
   /**
    * Flow-scoped probe results: a control already probed at an earlier state
    * is reused instead of clicked again.
@@ -198,6 +215,8 @@ export type BrowserLauncher = (
 export type ElectronTuple = CaptureHooks & {
   shell?: string | undefined;
   invariants?: EffectiveInvariant[] | undefined;
+  /** Decided brief assertion selectors for this state, resolved as marks. */
+  briefSelectors?: string[] | undefined;
   project: Project;
   state: ElectronFlowState;
   viewport: SelectedViewport;

@@ -13,9 +13,10 @@ const root = join(import.meta.dirname, "..");
 const exporter = join(root, "scripts/public-snapshot.mjs");
 const snapshot = existsSync(exporter) ? await import(exporter) : null;
 const directories: string[] = [];
+const claude = "plugins/claude/.claude-plugin/plugin.json";
 const manifests = [
   "package.json",
-  ".claude-plugin/plugin.json",
+  claude,
   ".claude-plugin/marketplace.json",
   "plugin.json",
   ".agents/plugins/marketplace.json",
@@ -31,10 +32,12 @@ async function fixture() {
     "templates/idiom/init.md",
     "skills/idiom/SKILL.md",
     "skills/idiom/references/init.md",
-    "hooks/hooks.json",
-    "hooks/lib.mjs",
-    "hooks/post-tool-use.mjs",
-    "hooks/stop.mjs",
+    "plugins/claude/skills/idiom/SKILL.md",
+    "plugins/claude/skills/idiom/references/init.md",
+    "plugins/claude/hooks/hooks.json",
+    "plugins/claude/hooks/lib.mjs",
+    "plugins/claude/hooks/post-tool-use.mjs",
+    "plugins/claude/hooks/stop.mjs",
   ]) {
     await mkdir(dirname(join(path, file)), { recursive: true });
     await cp(join(root, file), join(path, file));
@@ -89,11 +92,12 @@ test("committed metadata and a coherent second release both pass", async () => {
 test.each([
   ["package.json", "version", "01.2.3"],
   ["package.json", "name", "another-package"],
-  [".claude-plugin/plugin.json", "version", "0.0.1"],
+  [claude, "version", "0.0.1"],
   ["plugin.json", "version", "0.0.1"],
   [".claude-plugin/marketplace.json", "metadata.version", "0.0.1"],
   [".claude-plugin/marketplace.json", "plugins.0.version", "0.0.1"],
   [".claude-plugin/marketplace.json", "plugins.0.source", "./elsewhere"],
+  [".claude-plugin/marketplace.json", "plugins.0.source", "./"],
   [".claude-plugin/marketplace.json", "plugins.0.name", "other"],
   [".claude-plugin/marketplace.json", "owner.name", ""],
   [".agents/plugins/marketplace.json", "name", "other"],
@@ -111,11 +115,11 @@ test.each([
   ],
   ["plugin.json", "$schema", "https://example.com/wrong"],
   ["plugin.json", "extensions.com.openai.hooks", {}],
-  [".claude-plugin/plugin.json", "name", "other"],
+  [claude, "name", "other"],
   ["plugin.json", "name", "other"],
-  [".claude-plugin/plugin.json", "mcpServers.idiom.command", "idiom"],
-  [".claude-plugin/plugin.json", "mcpServers.idiom.type", "sse"],
-  [".claude-plugin/plugin.json", "mcpServers.idiom.cwd", "./"],
+  [claude, "mcpServers.idiom.command", "idiom"],
+  [claude, "mcpServers.idiom.type", "sse"],
+  [claude, "mcpServers.idiom.cwd", "./"],
 ])("rejects drift in %s %s", async (file, field, value) => {
   const path = await fixture();
   await mutate(path, file, field, value);
@@ -125,7 +129,7 @@ test.each([
   expect(result.stderr).toContain(`${file}:`);
 });
 
-test.each([".claude-plugin/plugin.json"])(
+test.each([claude])(
   "rejects every URL/version and argument drift in %s",
   async (file) => {
     const path = await fixture();
@@ -186,24 +190,73 @@ test.each([
   "skills/idiom/SKILL.md",
   "templates/idiom/init.md",
   "skills/idiom/references/init.md",
-  "hooks/stop.mjs",
+  "plugins/claude/skills/idiom/SKILL.md",
+  "plugins/claude/skills/idiom/references/init.md",
+  "plugins/claude/hooks/hooks.json",
+  "plugins/claude/hooks/stop.mjs",
 ])("missing required %s fails", async (file) => {
   const path = await fixture();
   await rm(join(path, file));
   expect(checkPlugins(path).join("\n")).toContain(`${file}:`);
 });
 
-test.each([".claude-plugin/plugin.json", "plugin.json"])(
+test.each([
+  "package.json",
+  "bun.lock",
+  "bun.lockb",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "node_modules",
+])(
+  "%s in the Claude plugin directory fails because Claude Code would install dependencies",
+  async (name) => {
+    const path = await fixture();
+    if (name === "node_modules")
+      await mkdir(join(path, "plugins/claude", name));
+    else
+      await cp(join(root, "package.json"), join(path, "plugins/claude", name));
+    expect(checkPlugins(path).join("\n")).toContain(
+      `plugins/claude/${name}: file must be absent`,
+    );
+    expect(cli(path, "scripts/check-plugins.mjs", []).status).toBe(1);
+  },
+);
+
+test("a root Claude plugin manifest fails so the marketplace root is never a plugin", async () => {
+  const path = await fixture();
+  await mkdir(join(path, ".claude-plugin"), { recursive: true });
+  await cp(join(root, claude), join(path, ".claude-plugin/plugin.json"));
+  expect(checkPlugins(path).join("\n")).toContain(
+    ".claude-plugin/plugin.json: file must be absent",
+  );
+});
+
+test.each([
+  ["lib.mjs", 'import { z } from "zod";\n'],
+  ["stop.mjs", 'const lib = await import("../../../dist/cli.js");\n'],
+])("a hook importing a non-built-in from %s fails", async (file, line) => {
+  const path = await fixture();
+  const target = join(path, "plugins/claude/hooks", file);
+  await writeFile(target, line + (await readFile(target, "utf8")));
+  expect(checkPlugins(path).join("\n")).toContain(
+    `plugins/claude/hooks/${file}: import`,
+  );
+});
+
+test.each([
+  [claude, "../../templates/idiom"],
+  ["plugin.json", "./templates/idiom"],
+])(
   "an explicit skills field in %s fails even when it names the default tree",
-  async (file) => {
-    for (const skills of [["./templates/idiom"], ["./skills/idiom"]]) {
+  async (file, templates) => {
+    for (const skills of [[templates], ["./skills/idiom"]]) {
       const path = await fixture();
       await mutate(path, file, "skills", skills);
       const errors = checkPlugins(path).join("\n");
       expect(errors).toContain(`${file}: skills must be absent`);
-      if (skills[0] === "./templates/idiom")
+      if (skills[0] === templates)
         expect(errors).toContain(
-          `${file}: skills must resolve to exactly one "idiom" skill (found: skills/idiom, templates/idiom)`,
+          `${file}: skills must resolve to exactly one "idiom" skill (found: skills/idiom, ${templates.replace(/^\.\//, "")})`,
         );
       const result = cli(path, "scripts/check-plugins.mjs", []);
       expect(result.status).toBe(1);
@@ -212,31 +265,46 @@ test.each([".claude-plugin/plugin.json", "plugin.json"])(
   },
 );
 
-test("a second discoverable idiom skill fails for both plugins", async () => {
-  const path = await fixture();
-  await mkdir(join(path, "skills/idiom-copy"), { recursive: true });
-  await cp(
-    join(path, "skills/idiom/SKILL.md"),
-    join(path, "skills/idiom-copy/SKILL.md"),
-  );
-  const errors = checkPlugins(path).join("\n");
-  for (const file of [".claude-plugin/plugin.json", "plugin.json"])
+test.each([
+  [claude, "plugins/claude", "plugin.json"],
+  ["plugin.json", ".", claude],
+])(
+  "a second discoverable idiom skill fails for %s only",
+  async (file, base, other) => {
+    const path = await fixture();
+    await mkdir(join(path, base, "skills/idiom-copy"), { recursive: true });
+    await cp(
+      join(path, base, "skills/idiom/SKILL.md"),
+      join(path, base, "skills/idiom-copy/SKILL.md"),
+    );
+    const errors: string[] = checkPlugins(path);
     expect(errors).toContain(
       `${file}: skills must resolve to exactly one "idiom" skill (found: skills/idiom, skills/idiom-copy)`,
     );
-  expect(cli(path, "scripts/check-plugins.mjs", []).status).toBe(1);
-});
+    expect(
+      errors.filter((error) => error.startsWith(`${other}: skills`)),
+    ).toEqual([]);
+    expect(cli(path, "scripts/check-plugins.mjs", []).status).toBe(1);
+  },
+);
 
-test("removing the portable skill tree leaves no idiom skill", async () => {
-  const path = await fixture();
-  await rm(join(path, "skills"), { force: true, recursive: true });
-  const errors = checkPlugins(path).join("\n");
-  expect(errors).toContain("skills/idiom/SKILL.md: required plugin file");
-  for (const file of [".claude-plugin/plugin.json", "plugin.json"])
+test.each([
+  [claude, "plugins/claude"],
+  ["plugin.json", "."],
+])(
+  "removing the skill tree of %s leaves it no idiom skill",
+  async (file, base) => {
+    const path = await fixture();
+    await rm(join(path, base, "skills"), { force: true, recursive: true });
+    const errors = checkPlugins(path).join("\n");
+    expect(errors).toContain(
+      `${join(base, "skills/idiom/SKILL.md")}: required plugin file`,
+    );
     expect(errors).toContain(
       `${file}: skills must resolve to exactly one "idiom" skill (found: none)`,
     );
-});
+  },
+);
 
 test.skipIf(!snapshot)(
   "public selection admits only the Codex catalog from internal agent files",
@@ -244,7 +312,8 @@ test.skipIf(!snapshot)(
     const allowed = [
       ...manifests,
       "dist/cli.js",
-      "hooks/hooks.json",
+      "plugins/claude/hooks/hooks.json",
+      "plugins/claude/skills/idiom/SKILL.md",
       "skills/idiom/SKILL.md",
       "skills/idiom/references/init.md",
       "scripts/check-plugins.mjs",

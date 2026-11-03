@@ -74,6 +74,8 @@ function arm(config: {
   kind: string;
   selector?: string | undefined;
 }): void {
+  // Opaque-origin frames (sandboxed srcdoc) block callbacks and some APIs.
+  if (window !== window.top && self.origin === "null") return;
   const scope = window as MarkWindow;
   scope.__idiomFilmstripArm?.dispose();
   if (config.source === "load") {

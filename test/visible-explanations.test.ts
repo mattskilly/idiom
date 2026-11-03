@@ -62,7 +62,7 @@ test("default mode delegates nameless SVG controls to axe and judges a glyph-onl
   );
 });
 
-test("default mode reports disabled navigation, and the named glyph only with probe evidence (dogfooding request #55)", async () => {
+test("default mode reports disabled navigation, and counts the glyph's native title as its explanation", async () => {
   const html = await fixture("before.html");
   const shapes = (found: ReturnType<typeof relevant>) =>
     found.map((c) => `${c.rule} ${c.selectorHint} ${c.severity}`).sort();
@@ -74,8 +74,31 @@ test("default mode reports disabled navigation, and the named glyph only with pr
   );
   expect(
     shapes(relevant(await reviewFixture(browser, html, { probe: true }))),
-  ).toEqual([...navigation, "idiom:unexplained-control #layers-help minor"]);
+  ).toEqual(navigation);
 });
+
+test("a native title explains a glyph in default mode, not in visible mode", async () => {
+  const html = await fixture("native-title.html");
+  const shapes = (found: ReturnType<typeof relevant>) =>
+    found.map((c) => `${c.rule} ${c.selectorHint} ${c.severity}`).sort();
+  // The named glyph without a title still needs probe evidence of no tooltip.
+  expect(
+    shapes(relevant(await reviewFixture(browser, html, { probe: true }))),
+  ).toEqual(["idiom:unexplained-control #named minor"]);
+  expect(
+    shapes(
+      relevant(
+        await reviewFixture(browser, html, {
+          probe: true,
+          checks: { explanation: "visible" },
+        }),
+      ),
+    ),
+  ).toEqual([
+    "idiom:unexplained-control #named major",
+    "idiom:unexplained-control #titled major",
+  ]);
+}, 60000);
 
 test("visible mode finds the real shapes and clears their repairs", async () => {
   const before = relevant(
@@ -540,7 +563,7 @@ test("controls below the first viewport keep both visible-mode rules", async () 
 
 test("the default probe samples text glyphs only, not icon buttons", async () => {
   const html = `<!doctype html><main>
-    <button id="q" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button>
+    <button id="q" aria-label="Keyboard shortcuts">?</button>
     <button id="icon" aria-label="Close panel"><svg width="16" height="16"><path d="M0 0L16 16"/></svg></button>
     </main>`;
   let selectors: string[] = [];

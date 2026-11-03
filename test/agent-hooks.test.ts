@@ -30,7 +30,7 @@ import {
   resolveContext,
   snapshot,
   validGlob,
-} from "../hooks/lib.mjs";
+} from "../plugins/claude/hooks/lib.mjs";
 import { initProject } from "../src/commands/init.js";
 import { projectSchema } from "../src/schemas/project.js";
 import { commit, git } from "./baseline-support.js";
@@ -132,7 +132,7 @@ async function hook(
     (accept, reject) => {
       const child = execFile(
         process.execPath,
-        [join(import.meta.dirname, `../hooks/${entry}.mjs`)],
+        [join(import.meta.dirname, `../plugins/claude/hooks/${entry}.mjs`)],
         { cwd: root, env },
         (error, stdout, stderr) =>
           error ? reject(error) : accept({ stdout, stderr }),
@@ -556,7 +556,7 @@ test("a hook killed while holding its mutation lock cannot disable later Stop re
   const root = await fixture();
   await writeFile(join(root, "src/components/Card.tsx"), "unchecked");
   const runtime = pathToFileURL(
-    join(import.meta.dirname, "../hooks/lib.mjs"),
+    join(import.meta.dirname, "../plugins/claude/hooks/lib.mjs"),
   ).href;
   await expect(
     exec(process.execPath, [

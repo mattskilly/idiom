@@ -402,6 +402,42 @@ test("real offline history adopts legacy copies and reports honest candidate rel
   );
 });
 
+test("an untouched v0.16.1 install upgrades to the model-invocable skill with Before you spec UI", async () => {
+  const history = await readHistory();
+  const incoming = await readDistribution();
+  const root = await temporary();
+  const release = history.releases.find((entry) => entry.version === "0.16.1");
+  expect(release).toBeDefined();
+  const { templatesDirectory } = await import("../src/templates.js");
+  const { readFile } = await import("node:fs/promises");
+  for (const key of ["idiom/SKILL.md", "idiom/init.md"]) {
+    const hash = release?.files[key] as string;
+    await put(
+      root,
+      `.agents/skills/${key}`,
+      await readFile(
+        join(templatesDirectory(), "skill-history/blobs", `${hash}.md`),
+        "utf8",
+      ),
+    );
+  }
+  expect(await read(root, live)).toContain("disable-model-invocation: true");
+  const report = await upgradeSkills(
+    { projectDirectory: root, agent: false },
+    { distribution: incoming, history },
+  );
+  const entry = report.files.find(
+    (file) => file.skill === "idiom" && file.path.endsWith("SKILL.md"),
+  );
+  expect(entry?.action).toBe("adopted");
+  const upgraded = await read(root, live);
+  expect(upgraded).toContain("\n## Before you spec UI\n");
+  expect(upgraded).not.toContain("disable-model-invocation");
+  expect((await metadata(root)).files["idiom/SKILL.md"]?.version).toBe(
+    incoming.version,
+  );
+});
+
 test("verifier is opt-in, tracked missing verifier restores, both skills merge", async () => {
   const root = await temporary();
   const dist = distribution("1.0.0");

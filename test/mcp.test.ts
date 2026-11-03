@@ -41,18 +41,23 @@ const call = (
   args: Record<string, unknown> = {},
 ) => client.callTool({ name, arguments: args }) as Promise<CallToolResult>;
 
-test("uninitialized server advertises exactly fifteen described strict schemas and survives tool errors", async () => {
+test("uninitialized server advertises exactly twenty described strict schemas and survives tool errors", async () => {
   const directory = await root();
   const client = await connect({ project: directory });
   const { tools } = await client.listTools();
   expect(tools.map((tool) => tool.name).sort()).toEqual([
     "idiom_baseline",
+    "idiom_brief_decide",
+    "idiom_brief_plan",
+    "idiom_brief_record",
+    "idiom_brief_triage",
     "idiom_check",
     "idiom_choose",
     "idiom_context",
     "idiom_coverage",
     "idiom_decide",
     "idiom_design_add",
+    "idiom_doctor",
     "idiom_fix_plan",
     "idiom_flows",
     "idiom_init",
@@ -227,7 +232,7 @@ test.each([
         ? "npx playwright install chromium"
         : "Free the configured port",
     );
-    expect((await client.listTools()).tools).toHaveLength(15);
+    expect((await client.listTools()).tools).toHaveLength(20);
   },
 );
 
@@ -305,7 +310,7 @@ test("a persistent SDK session cancels active and queued work, closes late launc
   ).toBe(true);
   const error = await call(client, "idiom_flows");
   expect(error.isError).toBe(true);
-  expect((await client.listTools()).tools).toHaveLength(15);
+  expect((await client.listTools()).tools).toHaveLength(20);
   expect(
     await readFile(join(directory, "missing"), "utf8").catch(() => "absent"),
   ).toBe("absent");

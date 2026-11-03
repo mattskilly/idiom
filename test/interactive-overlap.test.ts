@@ -63,3 +63,39 @@ test("an input group's 1px shared border is quiet; real overlaps are still repor
     ),
   ).toEqual(["idiom:interactive-overlap major"]);
 });
+
+test("a card's corner action over its own link is not an overlap; unrelated overlaps still are", async () => {
+  const html = await readFile(
+    join(
+      import.meta.dirname,
+      "fixtures/interactive-overlap/card-corner-action.html",
+    ),
+    "utf8",
+  );
+  const { findings } = await reviewStates(browser, [{ state: "cards", html }]);
+  const pairs = findings
+    .map(({ candidate }) => candidate)
+    .filter((candidate) => candidate.rule === "idiom:elements-overlap")
+    .map((candidate) => candidate.selectorHint)
+    .sort();
+  expect(pairs).toEqual([
+    // Stacked under its card link, so it cannot be clicked.
+    "#beta-link",
+    // Over the neighbouring card's link, and past its own card's edge.
+    "#delta-link",
+    "#gamma-link",
+    // Two overlapping buttons.
+    "#publish",
+    // Below the fold: still stacked under its link.
+    "#zeta-link",
+  ]);
+  expect(
+    findings.some(
+      ({ candidate }) =>
+        candidate.category.endsWith("overlap") &&
+        ["#alpha-menu", "#epsilon-menu"].some((selector) =>
+          candidate.explanation.includes(selector),
+        ),
+    ),
+  ).toBe(false);
+});

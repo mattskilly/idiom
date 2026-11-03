@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Page editor</title>
+    <style>
+      body { margin: 0; font: 14px/1.4 system-ui, sans-serif; display: flex; }
+      aside { width: 280px; border-right: 1px solid #ddd; padding: 12px; }
+      h2 { font-size: 12px; text-transform: uppercase; color: #555; margin: 16px 0 8px; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+      .tile { border: 1px solid #ccc; border-radius: 6px; padding: 10px 4px; text-align: center; background: #fff; }
+      main { flex: 1; padding: 24px; background: #f6f6f6; }
+    </style>
+  </head>
+  <body>
+    <aside aria-label="Add drawer">
+      <input type="search" placeholder="Search blocks" aria-label="Search blocks" />
+      <h2>Basic</h2>
+      <div class="grid">
+        <button type="button" class="tile">Heading</button>
+        <button type="button" class="tile">Text</button>
+        <button type="button" class="tile">Button</button>
+        <button type="button" class="tile">Image</button>
+        <button type="button" class="tile">Video</button>
+        <button type="button" class="tile">Divider</button>
+      </div>
+      <h2>Forms</h2>
+      <div class="grid">
+        <button type="button" class="tile">Form</button>
+        <button type="button" class="tile">Email field</button>
+        <button type="button" class="tile">Checkbox</button>
+      </div>
+      <h2>Layout</h2>
+      <div class="grid">
+        <button type="button" class="tile">Section</button>
+        <button type="button" class="tile">Columns</button>
+        <button type="button" class="tile">Spacer</button>
+      </div>
+    </aside>
+    <main aria-label="Canvas"></main>
+  </body>
+</html>

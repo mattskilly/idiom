@@ -26,6 +26,20 @@ const labelOf = (element: SignalledElement) =>
  * A rule above or below an open label is decoration: the label belongs to
  * the content space between that rule and the opposite edge.
  */
+/**
+ * Ink centres come from fractional font metrics while line boxes snap to
+ * device pixels, so a symmetric box can measure up to about 1.4px off. The
+ * configured tolerance is raised to 1.5px, and to 8% of the font size for
+ * large type, where the same rounding grows.
+ */
+export function centeringToleranceFor(configured: number, fontSize: number) {
+  return Math.max(
+    configured,
+    1.5,
+    Number.isFinite(fontSize) ? 0.08 * fontSize : 0,
+  );
+}
+
 function measuredBox(element: SignalledElement) {
   const { rect, styles } = element;
   const top = px(styles.borderTopWidth) > 0 && isPainted(styles.borderTopColor);
@@ -75,6 +89,7 @@ export const textCenteringCheck: DeterministicCheck = {
       string,
       {
         offset: number;
+        tolerance: number;
         selectors: string[];
         text: string;
         height: number;
@@ -118,7 +133,11 @@ export const textCenteringCheck: DeterministicCheck = {
       if (box.height <= 0) continue;
       const centre = box.top + box.height / 2;
       const offset = label.inkCenterY - centre;
-      if (Math.abs(offset) <= config.centeringTolerance) continue;
+      const tolerance = centeringToleranceFor(
+        config.centeringTolerance,
+        px(element.styles.fontSize),
+      );
+      if (Math.abs(offset) <= tolerance) continue;
       const key = [
         element.tag,
         element.styles.fontSize,
@@ -135,6 +154,7 @@ export const textCenteringCheck: DeterministicCheck = {
       if (group === undefined)
         groups.set(key, {
           offset,
+          tolerance,
           selectors: [element.selector],
           text,
           height: box.height,
@@ -162,13 +182,13 @@ export const textCenteringCheck: DeterministicCheck = {
         severity: "minor",
         rule: "idiom:label-off-centre",
         selectorHint: first,
-        explanation: `The label "${group.text}" in ${first} sits ${round(Math.abs(group.offset))}px ${direction} the vertical centre of its ${Math.round(group.height)}px ${boxDescription} (tolerance ${config.centeringTolerance}px)${more}.`,
+        explanation: `The label "${group.text}" in ${first} sits ${round(Math.abs(group.offset))}px ${direction} the vertical centre of its ${Math.round(group.height)}px ${boxDescription} (tolerance ${round(group.tolerance)}px)${more}.`,
         acceptance: [
-          `The label's ink centre in ${first} is within ${config.centeringTolerance}px of the ${acceptanceBox}'s vertical centre (balance padding-top/bottom or line-height).`,
+          `The label's ink centre in ${first} is within ${round(group.tolerance)}px of the ${acceptanceBox}'s vertical centre (balance padding-top/bottom or line-height).`,
         ],
         verification: verify(this.id, {
           selector: first,
-          tolerance: config.centeringTolerance,
+          tolerance: group.tolerance,
         }),
       });
     }

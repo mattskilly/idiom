@@ -85,6 +85,9 @@ type StoredMetadata = {
   colorSchemeAxis?: boolean;
   timestamps: { startedAt: string };
   status?: number | null;
+  consoleProvenance?: boolean;
+  /** Final URL of the document response after redirects; absent in older runs. */
+  documentUrl?: string;
   url?:
     | { kind: "literal"; origin: string; url: string; canonicalOrigin?: string }
     | {
@@ -189,6 +192,9 @@ function metadata(value: unknown, path: string): StoredMetadata {
     typeof item.timestamps?.startedAt !== "string" ||
     ("status" in raw &&
       !(typeof raw.status === "number" || raw.status === null)) ||
+    ("consoleProvenance" in raw &&
+      typeof raw.consoleProvenance !== "boolean") ||
+    ("documentUrl" in raw && typeof raw.documentUrl !== "string") ||
     ("url" in raw && !validStoredUrl(raw.url)) ||
     !Array.isArray(item.expectations?.mismatches) ||
     (item.platform !== undefined &&
@@ -221,6 +227,16 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+function validConsoleRequest(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  const request = value as Record<string, unknown>;
+  return (
+    typeof request.resourceType === "string" &&
+    request.resourceType.length > 0 &&
+    typeof request.mainFrame === "boolean"
+  );
+}
+
 function parseConsole(source: string, path: string): ConsoleRecord[] {
   return source
     .split(/\r?\n/)
@@ -235,6 +251,16 @@ function parseConsole(source: string, path: string): ConsoleRecord[] {
           typeof record.healthAllowed !== "boolean"
         ) {
           throw new Error("healthAllowed must be a boolean");
+        }
+        if (
+          record !== null &&
+          typeof record === "object" &&
+          "request" in record &&
+          !validConsoleRequest(record.request)
+        ) {
+          throw new Error(
+            "request must be { resourceType: string, mainFrame: boolean }",
+          );
         }
         return record;
       } catch (error) {
@@ -361,7 +387,9 @@ export async function findLatestCapture(options: {
 }
 
 /** Stored capture run names under `reports`, newest first. */
-async function storedRunsNewestFirst(reports: string): Promise<string[]> {
+export async function storedRunsNewestFirst(
+  reports: string,
+): Promise<string[]> {
   let entries: Dirent[];
   try {
     entries = await readdir(reports, { withFileTypes: true });
@@ -757,6 +785,7 @@ export async function loadCaptureRun(options: {
           ? []
           : parseConsole(await readFile(consolePath, "utf8"), consolePath),
       consoleAvailable: consolePath !== undefined,
+      ...(record.consoleProvenance === true ? { consoleProvenance: true } : {}),
       ...(typeof record.status === "number" &&
       expectedStatus !== undefined &&
       url !== undefined
@@ -765,6 +794,9 @@ export async function loadCaptureRun(options: {
               url,
               actualStatus: record.status,
               expectedStatus,
+              ...(typeof record.documentUrl === "string"
+                ? { finalUrl: record.documentUrl }
+                : {}),
             },
           }
         : {}),

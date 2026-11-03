@@ -1,6 +1,6 @@
 # Idiom tools for coding agents
 
-`idiom mcp` exposes fifteen tools over stdio using the official TypeScript MCP SDK. It works with Claude Code, Codex, Cursor, Claude Desktop and other local MCP clients. No HTTP service or repair agent is required. Only model-enabled `idiom_sweep` needs model credentials, and only Figma references need `FIGMA_TOKEN`; both come from the server's environment, never from tool arguments (see [Credentials](#credentials)).
+`idiom mcp` exposes twenty tools over stdio using the official TypeScript MCP SDK. It works with Claude Code, Codex, Cursor, Claude Desktop and other local MCP clients. No HTTP service or repair agent is required. Only model-enabled `idiom_sweep` needs model credentials, and only Figma references need `FIGMA_TOKEN`; both come from the server's environment, never from tool arguments (see [Credentials](#credentials)).
 
 Install Node 20 or newer and the matching Playwright Chromium browser. Run `npx playwright@1.62.1 install chromium`. The application must be reachable for quick review; configured flows use their normal setup/build/server settings.
 
@@ -29,7 +29,7 @@ For Codex (see [plugin packaging and marketplaces](https://developers.openai.com
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.18.0/mattskilly-idiom-0.18.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.
@@ -133,13 +133,18 @@ Every input is a strict JSON object. Lists, when present, must be nonempty and d
 | `idiom_context` | `{}` | Bounded design brief: tokens, scales, rules, craft checks, prohibitions and accepted work. |
 | `idiom_flows` | `{}` | Sorted validated flows with ordered states, selected viewports and schemes; suggests `idiom_init` with `flows:true` if empty. |
 | `idiom_decide` | `{"id":"finding-1","decision":"accept","reason":"Intentional product choice"}` or `{"id":"ruling-3","decision":"add-step","token":"space-row","reason":"Dense rows"}` | Accept/reject counts and decision log path. Reason must be nonblank and is preserved verbatim; instance scope only. For a design system question from `idiom_check`, `add-step` records the step in the design file (`token` is optional and defaults to the suggestion), and `drift` keeps it reported as one grouped finding. |
-| `idiom_init` | `{"flows":false,"surface":"web"}`; both optional | Non-interactive `idiom init`: files created/replaced/unchanged/preserved, Autobuild and design-token learning availability, the generated site-flow outcome with `flows:true`, and next steps. Never overwrites changed files or wires Autobuild. |
+| `idiom_init` | `{"flows":false,"surface":"web"}`; both optional | Non-interactive `idiom init`: files created/replaced/unchanged/preserved, Autobuild and design-token learning availability, `briefInstruction` (the brief instruction offer for CLAUDE.md or AGENTS.md, reported but never written), the generated site-flow outcome with `flows:true`, and next steps. Never overwrites changed files, wires Autobuild or edits agent files. |
 | `idiom_design_add` | `{"state":"cart","source":"https://www.figma.com/design/…?node-id=1-2","flow":"checkout","name":"figma","viewport":"desktop"}`; flow/name/viewport optional | Same as `idiom design add`: the flow manifest written, whether it changed, the stored source and whether it is Figma. Figma sources without `FIGMA_TOKEN` in the server env fail before writing. |
 | `idiom_choose` | `{"id":"finding-3","reference":"figma","reason":"Figma is the source of truth"}` | Same as `idiom decide --choose`: records the human's chosen reference for one `idiom:design-decision` finding. Reason preserved verbatim; groups and quick evidence are refused. |
 | `idiom_tickets` | `{"findings":["finding-1"],"out":"tickets/triage"}`; both optional | Same as `idiom tickets --cluster`: accepted findings clustered into triage proposals, absolute created paths and per-finding outcomes. Never writes to ready. |
 | `idiom_sweep` | `{"flow":"checkout","latest":false,"emitTickets":".autobuild/tickets/triage"}`; from/latest/emitTickets optional | Same as `idiom sweep`: every ranked deterministic and model finding, per-surface status, report paths, optional ticket outcomes and `degraded` with the reason when the critique could not run. Choose exactly one of optional `flow` or `all:true`. `deterministicOnly:true` skips model credentials; `maxTickets` is a positive safe integer (default 10). All-mode makes fresh captures and rejects `from`/`latest`; its typed `scope:"all"` result includes flow/probe/check coverage, bounded cross-flow root-cause proposals, omission counts and Markdown/HTML/JSON polish paths. |
 | `idiom_coverage` | `{"crawl":"http://localhost:3000"}` or `{"states":true}`; both optional | Same as `idiom coverage`: every discovered route with the flows/states that capture it, exclusions and unmatched runtime-URL states, plus `states` (each flow's state coverage, as `idiom coverage --states --json`) and one state-coverage line per flow. `states:true` returns only the state coverage and skips route discovery. |
+| `idiom_doctor` | `{"flow":"checkout"}`; flow optional | Same as `idiom doctor`: boots the server once and returns `ok`, every step (`config`, `registry`, `tree`, `port`, `setup`, `build`, `start`, `ready`, `shutdown`) with status, milliseconds, detail and fix, and the first `failure`. A failed step is a result, not a tool error. |
 | `idiom_baseline` | `{"action":"show","flow":"checkout"}`; `{"action":"record","flow":"checkout","latest":true}` | `show`: recorded commits with counts and which record applies at HEAD. `record`: same as `idiom baseline record`, with the file path and the deliberate-commit guidance. |
+| `idiom_brief_triage` | `{"request":"Add a pinned group to the Add drawer"}` or `{"file":"tickets/draft.md"}`; `noModel` optional | Same as `idiom brief triage --json`: `{id, verdict, reason, questions}` plus `warnings`, stored under `.idiom/briefs/triage/`. With `noModel:true`, the rubric, context and answer shape instead, and nothing is stored. Call it before writing a ticket, spec or code that adds or changes visible UI. |
+| `idiom_brief_plan` | `{"triage":"triage-0123abcdef"}` or `{"request":"…","questions":["How large is the pin?"]}`; `minutes` optional (1–60, default 10) | Same as `idiom brief plan --json`: open questions with per-input checks, reference products by tier, standards to look for, the time budget, the research rules and the exact record shape. A request without questions runs (and stores) a model triage first. |
+| `idiom_brief_record` | `{"brief":{…}}` | Same as `idiom brief record --json`: `{slug, outcome, status, markdownPath, ask}`. Invalid input is a tool error listing every `path: message`. `ask.askUserQuestion` is ready for AskUserQuestion; `ask.proceed` says whether you may proceed without asking. |
+| `idiom_brief_decide` | `{"slug":"pinned-group","option":"corner-pin","by":"requester"}`; `by` optional | Same as `idiom brief decide --json`: the chosen and recommended option ids, who decided, the Markdown path and a `warning` when the choice differs from the recommendation. |
 
 Changed checking accepts `changed:true` for the default merge base or a nonempty base string. Omit `flow` to consider every validated flow. `states` requires a named flow and intersects the inferred scope. Selection, Git bases, import/global fallbacks, no-op behavior and baseline rules match [the CLI](commands.md#check-only-changed-states). Each checked flow returns its ordinary top issues, counts, baseline comparison, coverage, report paths and verification references; not-checked flows register no evidence. Partial checking never records a new baseline or marks omitted findings fixed. A zero selection or failed/aborted batch does not acknowledge hook success.
 
@@ -153,7 +158,9 @@ flows remain explicit coverage limitations. Partial results are degraded, never 
 clean-product claim. Use every printed sidecar verify command after repairs.
 The tool never promotes tickets, dispatches builds or accepts findings for you.
 
-Captures, fix-plan, verify, sweep and baseline record write reports and may start the configured app. Decide and choose write judgment; init, design add and tickets write project files; context/flows/issue/coverage and baseline show are read-only. None changes Git or launches a coding agent.
+Before writing a ticket, spec or code that adds or changes visible UI, call `idiom_brief_triage` with the request verbatim. On `design decision`, call `idiom_brief_plan` with the returned id and follow it within its budget, then `idiom_brief_record` with the filled shape. Unless `ask.proceed.allowed`, ask the human with `ask.askUserQuestion` verbatim, then record their choice with `idiom_brief_decide` and use `.idiom/briefs/<slug>.md` as the ticket. See [brief](brief.md).
+
+Captures, fix-plan, verify, sweep and baseline record write reports and may start the configured app; doctor starts it once and writes nothing. Brief triage and plan may make one model call and store the triage. Decide, choose and brief decide write judgment; init, design add, tickets and brief record write project files; context/flows/issue/coverage and baseline show are read-only. None changes Git or launches a coding agent.
 
 ## Repair sequence
 
@@ -163,7 +170,7 @@ Captures, fix-plan, verify, sweep and baseline record write reports and may star
 4. Edit the application source as requested. The caller owns repairs and human judgment.
 5. Pass the returned `next.arguments` to `idiom_verify`. Verification resolves original records from that exact run even if another check has happened. It never accepts caller-authored finding bodies. Scoped/incomplete or failed source coverage must be replaced by a full successful check/fix-plan first.
 
-Reproduced/unverifiable targets and introduced findings are completed verification results, not tool execution errors. `success` requires every target fixed and no introduced finding at any severity. Failed calibration yields no claim of regression freedom (`regressionFree:null`). Capture/startup/invalid-input failures return MCP tool errors with recovery instructions; the next call can still run. Report the error instead of silently rerunning via the CLI.
+Reproduced/unverifiable targets and introduced findings are completed verification results, not tool execution errors. `success` requires every target fixed and no introduced finding at any severity. Failed calibration yields no claim of regression freedom (`regressionFree:null`). Capture/startup/invalid-input failures return MCP tool errors with recovery instructions (a run that could not happen also carries `structuredContent.failure` with its stage, cause and hint); the next call can still run. Report the error instead of silently rerunning via the CLI.
 
 When a flow's states declare a Figma frame, `idiom_check`, `idiom_fix_plan` and `idiom_verify` compare against it like any other design reference. When Figma's own MCP server is connected, use it to read the frame for intent and context, and pass the frame URL (with `node-id`) to Idiom for the measured comparison through `idiom_design_add`; never transcribe Figma values by hand. The first fetch needs `FIGMA_TOKEN` in the server's environment; later runs reuse the pinned cache. When references disagree, ask the human which one is intended and record it with `idiom_choose` and their reason. See the [design comparison guide](design-compare.md) for all reference sources, attachment, auth and a worked example; MCP `idiom_quick` has no design input.
 
@@ -181,7 +188,7 @@ Every CLI command is either reachable as an MCP tool or deliberately CLI-only. A
 
 | CLI command | MCP tool | Reason |
 | --- | --- | --- |
-| `init` | `idiom_init` | Non-interactive; Autobuild wiring and design-token learning need the interactive CLI. |
+| `init` | `idiom_init` | Non-interactive; Autobuild wiring, design-token learning and adding the brief instruction need the interactive CLI. |
 | `upgrade` | CLI-only | Maintaining the agent’s vendored skills is an explicit project maintenance operation, separate from design checks. |
 | `mcp` | CLI-only | It is the MCP server itself. |
 | `quick` | `idiom_quick` | `--design` and `--out` are CLI-only; MCP writes under the bound root. |
@@ -203,12 +210,21 @@ Every CLI command is either reachable as an MCP tool or deliberately CLI-only. A
 | `compare` | CLI-only | Writes composites between two stored captures for a human to look at. |
 | `report` | CLI-only | Opens a report in a browser; MCP tools return report paths. |
 | `decide` | `idiom_decide`, `idiom_choose` | The interactive walk, `--list` and rule-scope rejections are CLI-only. |
+| `brief` | CLI-only | `idiom brief "<request>" --research` runs research through the review provider for CLI and CI use; an agent researches with its own tools from `brief plan` and calls `brief record`. |
+| `brief triage` | `idiom_brief_triage` | `request` or a draft-ticket `file` inside the bound root; `noModel` returns the rubric. Fallback warnings go in the result, not stderr. |
+| `brief plan` | `idiom_brief_plan` | |
+| `brief gate` | CLI-only | A ticket-lint and pre-commit gate for scripts and hooks; agents call `idiom_brief_triage` before writing the ticket. |
+| `brief record` | `idiom_brief_record` | The brief is passed as a JSON object instead of a file or stdin. |
+| `brief decide` | `idiom_brief_decide` | |
+| `brief list` | CLI-only | Read-only views; agents read `.idiom/briefs/<slug>.md` or use the CLI. |
+| `brief show` | CLI-only | Read-only views; agents read `.idiom/briefs/<slug>.md` or use the CLI. |
 | `ruling` | CLI-only | Records a design-law ruling after interactive human confirmation. |
 | `learn` | CLI-only | Proposes rules as a diff a human confirms interactively. |
 | `instruction` | CLI-only | Produces a paste-ready handoff for a human. |
 | `tickets` | `idiom_tickets` | Clustered proposals only; per-finding tickets are CLI-only. |
 | `context` | `idiom_context` | |
 | `system` | CLI-only | Opens the design-system page in a browser and learns interactively. |
+| `doctor` | `idiom_doctor` | `--port` is CLI-only. |
 | `validate` | `idiom_flows` | `idiom_flows` lists validated manifests; every configured tool validates first and returns validation errors as tool errors. |
 
 ## Local plugin development

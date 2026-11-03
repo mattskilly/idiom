@@ -25,6 +25,11 @@ export type ChangedSelection = {
   selected: StateIdentity[];
   skipped: StateIdentity[];
   fallbackFiles: string[];
+  /**
+   * Whether the import graph accounts for every route module's edges. Only a
+   * complete graph lets the build gate treat an unreached module as non-UI.
+   */
+  graph?: { complete: boolean; reasons: string[] } | undefined;
 };
 export const stateKey = (state: StateIdentity) =>
   `${state.flow}\0${state.state}`;
@@ -110,6 +115,26 @@ export async function selectChangedStates(
         if (resolve(project, entry.source) === source)
           suspectRoutes.add(entry.route);
   }
+  // Reasons name modules repository-relative, like the file mappings.
+  const repository = await realpath(changes.repository).catch(
+    () => changes.repository,
+  );
+  const relativeReason = (reason: string) => {
+    for (const root of [repository, project])
+      if (reason.startsWith(`${root}${sep}`))
+        return reason.slice(root.length + 1).replaceAll(sep, "/");
+    return reason;
+  };
+  const graphReasons = [
+    ...(topology.entries.length ? [] : ["no route entries"]),
+    ...[...graph.uncertainModules.values()].flat().map(relativeReason),
+    ...globalUncertainties.map(relativeReason),
+    ...(unmappable.length ? [`${unmappable.length} unmappable state(s)`] : []),
+  ];
+  result.graph = {
+    complete: graphReasons.length === 0,
+    reasons: [...new Set(graphReasons)],
+  };
   const suspectStates = routeCoverage(
     [...suspectRoutes].map((route) => ({ route, source: "" })),
     flows,

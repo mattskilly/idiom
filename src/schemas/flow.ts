@@ -477,6 +477,11 @@ const flowFields = {
       }
     })
     .optional(),
+  /**
+   * Make navigator.webdriver read false during this flow's capture, for apps
+   * that turn motion off under automation. Overrides capture.hideWebdriver.
+   */
+  hideWebdriver: z.boolean().optional(),
 };
 
 const routeSchema = z

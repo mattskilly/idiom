@@ -11,19 +11,46 @@ import {
   baselineStaleWarning,
   renderBaselineComparison,
 } from "./baseline/render.js";
+import { renderAsk } from "./brief/ask.js";
+import { gateJson, renderGate } from "./brief/gate.js";
+import {
+  briefInstructionLines,
+  offerBriefInstruction,
+} from "./brief/instruction.js";
 import { parsePort } from "./capture/port.js";
 import type { CaptureDependencies } from "./capture/run.js";
-import { renderTimings } from "./capture/timings.js";
+import {
+  combineCheckTimings,
+  renderTimingLine,
+  renderTimings,
+} from "./capture/timings.js";
 import {
   baselineRecordCommand,
   renderBaselineRecord,
 } from "./commands/baseline.js";
+import {
+  type BriefDependencies,
+  briefDecideCommand,
+  briefDecideJson,
+  briefGateCommand,
+  briefListCommand,
+  briefPlanCommand,
+  briefRecordCommand,
+  briefRecordJson,
+  briefResearchCommand,
+  briefShowCommand,
+  briefTriageCommand,
+  renderBriefDecide,
+  renderBriefList,
+  renderBriefResearch,
+} from "./commands/brief.js";
 import { captureCommand } from "./commands/capture.js";
 import { checkCommand, renderCheckSummary } from "./commands/check.js";
 import {
   checkChanged,
   renderChangedSelection,
 } from "./commands/check-changed.js";
+import { checkGate } from "./commands/check-gate.js";
 import { compareCommand } from "./commands/compare.js";
 import {
   type ContextDependencies,
@@ -36,6 +63,7 @@ import {
 } from "./commands/coverage.js";
 import { type DecideDependencies, decideCommand } from "./commands/decide.js";
 import { addDesignCommand } from "./commands/design.js";
+import { renderDoctorReport, runDoctor } from "./commands/doctor.js";
 import {
   type ExploreDependencies,
   exploreCommand,
@@ -44,6 +72,7 @@ import { exploreResolveCommand } from "./commands/explore-resolve.js";
 import { fixCommand } from "./commands/fix.js";
 import {
   type Confirmation,
+  defaultConfirmation,
   initProject,
   initSummaryLines,
 } from "./commands/init.js";
@@ -69,7 +98,7 @@ import {
 import { validateCommand } from "./commands/validate.js";
 import { verifyCommand } from "./commands/verify.js";
 import { renderStateCoverage } from "./coverage/states.js";
-import { IdiomError } from "./errors.js";
+import { IdiomError, RUN_FAILURE_EXIT_CODE, RunFailure } from "./errors.js";
 import { severityGateEligible } from "./findings/gate.js";
 import { renderFixSummary } from "./fix/report.js";
 import type { FixDependencies } from "./fix/run.js";
@@ -100,6 +129,7 @@ export type ProgramDependencies = {
   reference?: ReferenceDependencies;
   review?: ReviewDependencies;
   decide?: DecideDependencies;
+  brief?: BriefDependencies;
   explore?: ExploreDependencies;
   ruling?: RulingDependencies;
   learn?: LearnDependencies;
@@ -119,6 +149,34 @@ function lineWriter(
   write: (message: string) => void,
 ): (message: string) => void {
   return (message) => write(message.endsWith("\n") ? message : `${message}\n`);
+}
+
+/**
+ * With --json, a run that could not happen still prints machine-readable
+ * output on stdout; the failure is then rethrown for stderr and the exit code.
+ */
+async function withFailureJson<T>(
+  json: boolean | undefined,
+  flow: string | undefined,
+  writeOut: (message: string) => void,
+  work: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (json === true && error instanceof RunFailure)
+      writeOut(
+        JSON.stringify(
+          {
+            ...(flow === undefined ? {} : { flow }),
+            failure: error.failureJson(),
+          },
+          null,
+          2,
+        ),
+      );
+    throw error;
+  }
 }
 
 /** --focus values, space- or comma-separated, checked against the known areas. */
@@ -153,6 +211,38 @@ function parsePositiveInt(value: string): number {
   if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed) || parsed < 1)
     throw new InvalidArgumentError("must be a positive integer");
   return parsed;
+}
+
+function parseNonNegativeInt(value: string): number {
+  const parsed = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed))
+    throw new InvalidArgumentError("must be a non-negative integer");
+  return parsed;
+}
+
+/** `90s`, `3m`, `2m30s`, `180000ms`, or bare milliseconds; always positive. */
+export function parseDuration(value: string): number {
+  const trimmed = value.trim();
+  let ms: number;
+  if (/^\d+$/.test(trimmed)) ms = Number(trimmed);
+  else {
+    const match = /^(?:(\d+)h)?(?:(\d+)m(?!s))?(?:(\d+)s)?(?:(\d+)ms)?$/.exec(
+      trimmed,
+    );
+    if (!match || trimmed === "")
+      throw new InvalidArgumentError(
+        "must be a duration such as 90s, 3m, 2m30s or 180000ms",
+      );
+    const [, hours, minutes, seconds, millis] = match;
+    ms =
+      Number(hours ?? 0) * 3_600_000 +
+      Number(minutes ?? 0) * 60_000 +
+      Number(seconds ?? 0) * 1000 +
+      Number(millis ?? 0);
+  }
+  if (!Number.isSafeInteger(ms) || ms < 1)
+    throw new InvalidArgumentError("must be a positive duration");
+  return ms;
 }
 
 function parsePortOption(value: string): number {
@@ -258,9 +348,22 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         },
         dependencies.upgrade,
       );
-      writeOut(
-        options.json ? JSON.stringify(report, null, 2) : renderUpgrade(report),
-      );
+      const briefInstruction = await offerBriefInstruction({
+        projectDirectory: report.projectDirectory,
+        interactive:
+          options.dryRun !== true &&
+          options.json !== true &&
+          (dependencies.confirm !== undefined || process.stdin.isTTY === true),
+        confirm: dependencies.confirm ?? defaultConfirmation,
+      });
+      if (options.json)
+        writeOut(JSON.stringify({ ...report, briefInstruction }, null, 2));
+      else
+        writeOut(
+          [renderUpgrade(report), ...briefInstructionLines(briefInstruction)]
+            .filter((text) => text !== "")
+            .join("\n"),
+        );
       if (upgradeFailed(report))
         throw new CommanderError(
           1,
@@ -531,6 +634,10 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         "--out <directory>",
         "write JSON and pixel baselines to this directory",
       )
+      .option(
+        "--isolated-registry",
+        "ignore the primary checkout's finding names (throwaway worktrees)",
+      )
       .option("--json", "print machine-readable record metadata")
       .action(
         async (
@@ -542,26 +649,36 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
             latest?: boolean;
             json?: boolean;
             out?: string;
+            isolatedRegistry?: boolean;
           },
           command: Command,
         ) => {
           const shared = command.optsWithGlobals<SharedOptions>();
-          const result = await baselineRecordCommand({
+          const result = await withFailureJson(
+            options.json,
             flow,
-            out: options.out,
-            project: shared.project,
-            cwd: dependencies.cwd,
-            prod: options.prod,
-            port: options.port,
-            from: options.from,
-            latest: options.latest,
-            dependencies: reviewDependencies,
-          });
+            writeOut,
+            () =>
+              baselineRecordCommand({
+                flow,
+                out: options.out,
+                project: shared.project,
+                cwd: dependencies.cwd,
+                prod: options.prod,
+                port: options.port,
+                from: options.from,
+                latest: options.latest,
+                isolatedRegistry: options.isolatedRegistry,
+                dependencies: reviewDependencies,
+              }),
+          );
           writeOut(
             options.json === true
               ? JSON.stringify(result, null, 2)
               : renderBaselineRecord(result),
           );
+          if ("findingNameWarning" in result)
+            writeErr(result.findingNameWarning);
         },
       );
   }
@@ -633,6 +750,10 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       "with --page, material findings to report (default 10)",
     )
     .option(
+      "--isolated-registry",
+      "ignore the primary checkout's finding names (throwaway worktrees)",
+    )
+    .option(
       "--refresh-design",
       "refetch pinned Figma frames instead of reusing .idiom/designs",
     )
@@ -641,6 +762,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         flow: string | undefined,
         options: {
           refreshDesign?: boolean;
+          isolatedRegistry?: boolean;
           from?: string;
           latest?: boolean;
           deterministicOnly?: boolean;
@@ -745,8 +867,11 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           deterministicOnly: options.deterministicOnly,
           sinceBaseline: options.sinceBaseline,
           refreshDesign: options.refreshDesign,
+          isolatedRegistry: options.isolatedRegistry,
           dependencies: reviewDependencies,
         });
+        if (result.findingNameWarning !== undefined)
+          writeErr(result.findingNameWarning);
         writeOut(
           options.json === true
             ? JSON.stringify(result, null, 2)
@@ -863,7 +988,23 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
     .description(
       "capture and check for regressions; initialize clean HEAD once, then gate new findings",
     )
-    .argument("[flow]", "flow manifest id (required without --changed)")
+    .argument(
+      "[flow]",
+      "flow manifest id (required without --changed or --gate)",
+    )
+    .option(
+      "--gate",
+      "build gate: check only what the change affects, within a time budget; skips non-UI changes",
+    )
+    .option(
+      "--budget <duration>",
+      "with --gate: wall-clock budget such as 3m or 90s (default checks.gate.budgetMs, 3m)",
+      parseDuration,
+    )
+    .option(
+      "--reuse-server",
+      "use a server already answering at server.readyUrl instead of starting one",
+    )
     .option(
       "--changed [base]",
       "check states affected by changes since base (default: merge base with the default branch); put flow before --changed",
@@ -936,15 +1077,29 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         .default("major"),
     )
     .option(
+      "--isolated-registry",
+      "ignore the primary checkout's finding names (throwaway worktrees)",
+    )
+    .option(
       "--refresh-design",
       "refetch pinned Figma frames instead of reusing .idiom/designs",
+    )
+    .option(
+      "--probe-budget <ms>",
+      "run target for the interaction probe in milliseconds; 0 = no target (overrides checks.probe.flowBudgetMs for this run)",
+      parseNonNegativeInt,
     )
     .action(
       async (
         flow: string | undefined,
         options: {
           changed?: true | string;
+          gate?: boolean;
+          budget?: number;
+          reuseServer?: boolean;
           refreshDesign?: boolean;
+          probeBudget?: number;
+          isolatedRegistry?: boolean;
           from?: string;
           latest?: boolean;
           prod?: boolean;
@@ -967,20 +1122,146 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         command: Command,
       ) => {
         const shared = command.optsWithGlobals<SharedOptions>();
-        if (options.changed !== undefined) {
-          const output = await checkChanged({
-            ...options,
+        const changed = options.changed;
+        if (options.budget !== undefined && options.gate !== true)
+          throw new IdiomError("--budget requires --gate");
+        if (options.gate === true) {
+          const result = await withFailureJson(
+            options.json,
             flow,
-            changed: options.changed,
-            project: shared.project,
-            cwd: dependencies.cwd,
-            scope: {
-              states: options.states,
-              viewports: options.viewports,
-              schemes: options.schemes,
-            },
-            dependencies: reviewDependencies,
-          });
+            writeOut,
+            () =>
+              checkGate({
+                ...options,
+                flow,
+                changed,
+                project: shared.project,
+                cwd: dependencies.cwd,
+                probeBudgetMs: options.probeBudget,
+                budgetMs: options.budget,
+                reuseServer: options.reuseServer,
+                scope: {
+                  states: options.states,
+                  viewports: options.viewports,
+                  schemes: options.schemes,
+                },
+                onPlan: (lines) => {
+                  for (const line of lines) writeErr(line);
+                },
+                dependencies: reviewDependencies,
+              }),
+          );
+          if (result.skipped) {
+            writeOut(
+              options.json
+                ? JSON.stringify(
+                    {
+                      gate: {
+                        skipped: true,
+                        reason: result.reason,
+                        base: result.base,
+                        files: result.files,
+                      },
+                    },
+                    null,
+                    2,
+                  )
+                : result.line,
+            );
+            return;
+          }
+          const output = result.changed;
+          const checked = output.checks.filter(
+            (entry) => entry.status === "checked",
+          );
+          const plan = result.plan;
+          writeOut(
+            options.json
+              ? JSON.stringify(
+                  {
+                    gate: {
+                      plan,
+                      skippedWork: result.skippedWork,
+                      estimateMs: result.estimateMs,
+                      budgetMs: result.budgetMs,
+                      server: result.server,
+                      timing: result.timing,
+                    },
+                    selection: output.selection,
+                    checkedStates: output.checkedStates,
+                    checks: output.checks.map((entry) =>
+                      entry.status === "checked"
+                        ? {
+                            flow: entry.flow,
+                            status: entry.status,
+                            summary: entry.summary,
+                          }
+                        : entry,
+                    ),
+                  },
+                  null,
+                  2,
+                )
+              : [
+                  `idiom check --gate: checked ${output.checkedStates} state(s).`,
+                  ...checked.map((entry) =>
+                    [
+                      entry.summary.baselineNotApplied,
+                      renderCheckSummary(entry.summary, options).trimEnd(),
+                    ]
+                      .filter(Boolean)
+                      .join("\n"),
+                  ),
+                ].join("\n"),
+          );
+          for (const entry of checked)
+            writeErr(renderTimings(entry.summary.timings));
+          if (output.findingNameWarning !== undefined)
+            writeErr(output.findingNameWarning);
+          for (const entry of checked)
+            if (entry.summary.timing && checked.length > 1)
+              writeErr(renderTimingLine(entry.summary.timing, entry.flow));
+          writeErr(renderTimingLine(result.timing));
+          const failing =
+            options.failOn === "never"
+              ? []
+              : checked
+                  .flatMap((entry) => entry.summary.findings)
+                  .filter((finding) =>
+                    severityGateEligible(
+                      finding,
+                      options.failOn,
+                      options.failOnJudged,
+                    ),
+                  );
+          if (failing.length)
+            throw new IdiomError(
+              `check failed: ${failing.length} new/open finding(s) at or above ${options.failOn}`,
+            );
+          return;
+        }
+        if (changed !== undefined) {
+          const output = await withFailureJson(
+            options.json,
+            flow,
+            writeOut,
+            () =>
+              checkChanged({
+                ...options,
+                flow,
+                changed,
+                project: shared.project,
+                cwd: dependencies.cwd,
+                probeBudgetMs: options.probeBudget,
+                ...(options.reuseServer ? { reuseServer: true } : {}),
+                scope: {
+                  states: options.states,
+                  viewports: options.viewports,
+                  schemes: options.schemes,
+                },
+                dependencies: reviewDependencies,
+              }),
+          );
           const checked = output.checks.filter(
             (entry) => entry.status === "checked",
           );
@@ -1017,6 +1298,26 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           );
           for (const entry of checked)
             writeErr(renderTimings(entry.summary.timings));
+          if (output.findingNameWarning !== undefined)
+            writeErr(output.findingNameWarning);
+          const timings = checked.flatMap((entry) =>
+            entry.summary.timing ? [entry.summary.timing] : [],
+          );
+          if (timings.length > 1)
+            for (const entry of checked)
+              if (entry.summary.timing)
+                writeErr(renderTimingLine(entry.summary.timing, entry.flow));
+          if (timings.length)
+            writeErr(
+              renderTimingLine(
+                timings.length === 1
+                  ? (timings[0] as (typeof timings)[number])
+                  : combineCheckTimings(
+                      timings,
+                      timings.reduce((sum, timing) => sum + timing.totalMs, 0),
+                    ),
+              ),
+            );
           const failing = checked
             .flatMap((entry) => entry.summary.findings)
             .filter((finding) =>
@@ -1034,30 +1335,39 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         }
         if (!flow)
           throw new IdiomError(
-            "check requires a flow unless --changed is supplied",
+            "check requires a flow unless --changed or --gate is supplied",
           );
-        const summary = await checkCommand({
+        const summary = await withFailureJson(
+          options.json,
           flow,
-          project: shared.project,
-          cwd: dependencies.cwd,
-          from: options.from,
-          latest: options.latest,
-          baseline: options.baseline,
-          baselineFile: options.baselineFile,
-          all: options.all,
-          sinceBaseline: options.sinceBaseline,
-          prod: options.prod,
-          port: options.port,
-          refreshDesign: options.refreshDesign,
-          emitTickets: options.emitTickets,
-          advisory: options.advisory,
-          scope: {
-            states: options.states,
-            viewports: options.viewports,
-            schemes: options.schemes,
-          },
-          dependencies: reviewDependencies,
-        });
+          writeOut,
+          () =>
+            checkCommand({
+              flow,
+              project: shared.project,
+              cwd: dependencies.cwd,
+              from: options.from,
+              latest: options.latest,
+              baseline: options.baseline,
+              baselineFile: options.baselineFile,
+              all: options.all,
+              sinceBaseline: options.sinceBaseline,
+              prod: options.prod,
+              port: options.port,
+              refreshDesign: options.refreshDesign,
+              probeBudgetMs: options.probeBudget,
+              ...(options.reuseServer ? { reuseServer: true } : {}),
+              emitTickets: options.emitTickets,
+              advisory: options.advisory,
+              isolatedRegistry: options.isolatedRegistry,
+              scope: {
+                states: options.states,
+                viewports: options.viewports,
+                schemes: options.schemes,
+              },
+              dependencies: reviewDependencies,
+            }),
+        );
         writeOut(
           options.json === true
             ? JSON.stringify(summary, null, 2)
@@ -1068,10 +1378,14 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
               }).trimEnd(),
         );
         writeErr(renderTimings(summary.timings));
+        if (summary.findingNameWarning !== undefined)
+          writeErr(summary.findingNameWarning);
         if (options.json !== true && summary.baseline !== undefined) {
           const warning = baselineStaleWarning(summary.baseline);
           if (warning !== undefined) writeErr(warning);
         }
+        if (summary.timing !== undefined)
+          writeErr(renderTimingLine(summary.timing));
         const failing =
           options.failOn === "never"
             ? []
@@ -1511,6 +1825,272 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       },
     );
 
+  // `--json` and `--research` live on the parent so `idiom brief "<request>"
+  // --research --json` parses, and the parent consumes them wherever they
+  // appear: subcommands must read them from optsWithGlobals(), not options.
+  type BriefFlags = SharedOptions & { json?: boolean; research?: boolean };
+  const briefFlags = (command: Command, name: string): BriefFlags => {
+    const flags = command.optsWithGlobals<BriefFlags>();
+    if (flags.research === true)
+      throw new IdiomError(
+        `--research applies only to idiom brief "<request>" --research, not idiom brief ${name}`,
+      );
+    return flags;
+  };
+  const brief = program
+    .command("brief")
+    .description(
+      "before a UI ticket: triage the design decision, plan the research, record the brief, ask, and decide",
+    )
+    .argument("[request]", "the request text, or a path to a draft ticket")
+    .option(
+      "--research",
+      "triage, research and draft options through the configured review provider, then store the brief",
+    )
+    .option("--json", "with --research, print the outcome as JSON")
+    .action(async (request: string | undefined, _options, command: Command) => {
+      if (request === undefined) {
+        command.help({ error: true });
+        return;
+      }
+      const flags = command.optsWithGlobals<BriefFlags>();
+      if (flags.research !== true)
+        throw new IdiomError(
+          "pass --research to run research through your review provider, or use idiom brief triage",
+        );
+      const result = await briefResearchCommand({
+        project: flags.project,
+        cwd: dependencies.cwd,
+        request,
+        onFallback: (fallback) =>
+          writeErr(
+            `Warning: brief research used fallback provider ${fallback.to} after ${fallback.from} failed: ${fallback.reason}`,
+          ),
+        onProgress: (message) => writeErr(message),
+        dependencies: dependencies.brief,
+      });
+      writeOut(renderBriefResearch(result, flags.json === true));
+    });
+
+  brief
+    .command("triage")
+    .description(
+      "say whether a request or draft ticket holds a design decision, and which questions it leaves open",
+    )
+    .argument("<request>", "the request text, or a path to a draft ticket")
+    .option("--json", "print { id, verdict, reason, questions } as JSON")
+    .option(
+      "--no-model",
+      "print the rubric and answer shape for the calling agent to apply",
+    )
+    .action(
+      async (
+        request: string,
+        options: { model?: boolean },
+        command: Command,
+      ) => {
+        const shared = briefFlags(command, "triage");
+        writeOut(
+          await briefTriageCommand({
+            project: shared.project,
+            cwd: dependencies.cwd,
+            request,
+            json: shared.json,
+            noModel: options.model === false,
+            onFallback: (fallback) =>
+              writeErr(
+                `Warning: triage used fallback provider ${fallback.to} after ${fallback.from} failed: ${fallback.reason}`,
+              ),
+            dependencies: dependencies.brief,
+          }),
+        );
+      },
+    );
+
+  brief
+    .command("gate")
+    .description(
+      "warn when a ticket holds a design decision without a decided brief (exit 0 unless --strict)",
+    )
+    .argument("<tickets...>", "ticket Markdown files to check")
+    .option("--strict", "exit 1 when any ticket needs a decided brief")
+    .option("--json", "print { strict, warnings, tickets } as JSON")
+    .action(
+      async (
+        tickets: string[],
+        options: { strict?: boolean },
+        command: Command,
+      ) => {
+        const shared = briefFlags(command, "gate");
+        const result = await briefGateCommand({
+          project: shared.project,
+          cwd: dependencies.cwd,
+          tickets,
+          strict: options.strict,
+          onFallback: (fallback) =>
+            writeErr(
+              `Warning: triage used fallback provider ${fallback.to} after ${fallback.from} failed: ${fallback.reason}`,
+            ),
+          dependencies: dependencies.brief,
+        });
+        if (shared.json === true)
+          writeOut(JSON.stringify(gateJson(result), null, 2));
+        else {
+          const rendered = renderGate(result);
+          if (rendered !== "") writeOut(rendered);
+        }
+        if (options.strict === true && result.warnings > 0)
+          throw new IdiomError(
+            `brief gate: ${result.warnings} ticket(s) need a decided brief`,
+          );
+      },
+    );
+
+  brief
+    .command("plan")
+    .description(
+      "print research instructions for the calling agent: questions, references, checks, standards, budget and the record shape",
+    )
+    .argument(
+      "<target>",
+      "a triage id from idiom brief triage, the request text, or a path to a draft ticket",
+    )
+    .option(
+      "--question <text>",
+      "an open question to research (repeatable; skips the model triage)",
+      (value: string, previous: string[] = []) => [...previous, value],
+    )
+    .option("--minutes <n>", "research time budget in minutes (default 10)")
+    .option("--json", "print the plan as JSON")
+    .action(
+      async (
+        target: string,
+        options: { question?: string[]; minutes?: string },
+        command: Command,
+      ) => {
+        const shared = briefFlags(command, "plan");
+        writeOut(
+          await briefPlanCommand({
+            project: shared.project,
+            cwd: dependencies.cwd,
+            target,
+            questions: options.question,
+            minutes:
+              options.minutes === undefined
+                ? undefined
+                : Number(options.minutes),
+            json: shared.json,
+            onFallback: (fallback) =>
+              writeErr(
+                `Warning: triage used fallback provider ${fallback.to} after ${fallback.from} failed: ${fallback.reason}`,
+              ),
+            dependencies: dependencies.brief,
+          }),
+        );
+      },
+    );
+
+  brief
+    .command("record")
+    .description(
+      "validate an agent's research and options, store the decision brief, and print the question to ask",
+    )
+    .argument("[file]", "brief input JSON; omit or pass - to read stdin")
+    .option("--json", "print { slug, outcome, status, markdownPath, ask }")
+    .action(async (file: string | undefined, _options, command: Command) => {
+      const shared = briefFlags(command, "record");
+      const recorded = await briefRecordCommand({
+        project: shared.project,
+        cwd: dependencies.cwd,
+        file,
+        dependencies: dependencies.brief,
+      });
+      if (shared.json === true) {
+        writeOut(JSON.stringify(briefRecordJson(recorded), null, 2));
+        return;
+      }
+      writeOut(
+        [
+          `Recorded brief ${recorded.slug} (${recorded.outcome}, ${recorded.brief.status}) — ${recorded.markdownRelative}`,
+          ...(recorded.ask === undefined
+            ? recorded.brief.decidedBy === undefined
+              ? []
+              : [`Decided by ${recorded.brief.decidedBy}`]
+            : ["", renderAsk(recorded.ask, recorded.slug)]),
+        ].join("\n"),
+      );
+    });
+
+  brief
+    .command("decide")
+    .description(
+      "record the requester's choice and regenerate the ticket-ready brief",
+    )
+    .argument("<slug>", "brief name from idiom brief list")
+    .requiredOption("--option <id>", "the chosen option id")
+    .option("--by <name>", "who decided (default requester)")
+    .option("--json", "print the decision as JSON")
+    .action(
+      async (
+        slug: string,
+        options: { option: string; by?: string },
+        command: Command,
+      ) => {
+        const shared = briefFlags(command, "decide");
+        const decided = await briefDecideCommand({
+          project: shared.project,
+          cwd: dependencies.cwd,
+          slug,
+          option: options.option,
+          by: options.by,
+          dependencies: dependencies.brief,
+        });
+        writeOut(
+          shared.json === true
+            ? JSON.stringify(briefDecideJson(decided), null, 2)
+            : renderBriefDecide(decided),
+        );
+      },
+    );
+
+  brief
+    .command("list")
+    .description("list stored decision briefs, newest first")
+    .option("--json", "print the stored briefs as JSON")
+    .action(async (_options, command: Command) => {
+      const shared = briefFlags(command, "list");
+      const entries = await briefListCommand({
+        project: shared.project,
+        cwd: dependencies.cwd,
+      });
+      writeOut(
+        shared.json === true
+          ? JSON.stringify(
+              entries.map((entry) => ("error" in entry ? entry : entry.brief)),
+              null,
+              2,
+            )
+          : renderBriefList(entries),
+      );
+    });
+
+  brief
+    .command("show")
+    .description("print one stored decision brief")
+    .argument("<slug>", "brief name from idiom brief list")
+    .option("--json", "print the stored record as JSON")
+    .action(async (slug: string, _options, command: Command) => {
+      const shared = briefFlags(command, "show");
+      writeOut(
+        await briefShowCommand({
+          project: shared.project,
+          cwd: dependencies.cwd,
+          slug,
+          json: shared.json,
+        }),
+      );
+    });
+
   program
     .command("ruling")
     .description("record a reviewed design ruling or explicit no-rule outcome")
@@ -1574,8 +2154,12 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       "<observation>",
       'what is wrong, e.g. "the override dots should be 8px"',
     )
-    .requiredOption("--state <state>", "the flow state the miss was seen on")
+    .option(
+      "--state <state>",
+      "the flow state the miss was seen on (required unless --from-brief names one)",
+    )
     .option("--flow <id>", "the flow, when several declare the state")
+    .option("--from-brief <slug>", "the decided brief this rejection is about")
     .option("--screenshot <png>", "keep the screenshot the human annotated")
     .option("--from <runId>", "resolve against this stored capture")
     .option(
@@ -1591,8 +2175,9 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       async (
         observation: string,
         options: {
-          state: string;
+          state?: string;
           flow?: string;
+          fromBrief?: string;
           screenshot?: string;
           from?: string;
           selector: string[];
@@ -1609,6 +2194,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           observation,
           state: options.state,
           flow: options.flow,
+          fromBrief: options.fromBrief,
           screenshot: options.screenshot,
           from: options.from,
           selectors:
@@ -1693,8 +2279,11 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         const conflicts = result.outcomes.filter(
           (outcome) => outcome.kind === "conflict",
         ).length;
+        const blocked = result.outcomes.filter(
+          (outcome) => outcome.kind === "blocked",
+        ).length;
         writeOut(
-          `Tickets: ${created} created, ${existing} already emitted, ${resolved} already resolved, ${conflicts} conflict(s), ${result.ineligible.length} ineligible — ${result.outputDirectory}`,
+          `Tickets: ${created} created, ${existing} already emitted, ${resolved} already resolved, ${conflicts} conflict(s), ${blocked > 0 ? `${blocked} blocked, ` : ""}${result.ineligible.length} ineligible — ${result.outputDirectory}`,
         );
         for (const outcome of result.outcomes) {
           if (outcome.kind === "created")
@@ -1709,6 +2298,10 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
                 ? `${outcome.findingId}: already resolved (${outcome.status} lifecycle checkpoint)`
                 : `${outcome.findingId}: already resolved as ${outcome.status} in ${outcome.state} — ${outcome.path}`,
             );
+          else if (outcome.kind === "blocked")
+            writeOut(
+              `${outcome.findingId}: blocked by malformed tracker ticket — ${outcome.paths.join(", ")}`,
+            );
           else
             writeOut(
               `${outcome.findingId}: tracker conflict — ${outcome.paths.join(", ")}`,
@@ -1716,6 +2309,8 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         }
         for (const findingId of result.ineligible)
           writeOut(`${findingId}: not accepted; no ticket emitted`);
+        for (const ticket of result.malformed)
+          writeOut(`malformed tracker ticket: ${ticket.error}`);
       },
     );
 
@@ -1774,6 +2369,53 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
     });
 
   program
+    .command("doctor")
+    .description(
+      "boot the application server once and diagnose why a run could not start",
+    )
+    .argument("[flow]", "flow manifest id")
+    .option(
+      "--port <port>",
+      "serve the application on this port instead of a free one",
+      parsePortOption,
+    )
+    .option("--json", "print the machine-readable report")
+    .action(
+      async (
+        flow: string | undefined,
+        options: { port?: number; json?: boolean },
+        command: Command,
+      ) => {
+        const shared = command.optsWithGlobals<SharedOptions>();
+        const report = await runDoctor({
+          flow,
+          project: shared.project,
+          cwd: dependencies.cwd,
+          port: options.port,
+          dependencies: {
+            process: dependencies.capture?.process,
+            inheritedEnvironment: dependencies.capture?.inheritedEnvironment,
+          },
+        });
+        writeOut(
+          options.json === true
+            ? JSON.stringify(report, null, 2)
+            : renderDoctorReport(report).trimEnd(),
+        );
+        if (report.failure !== undefined) {
+          const step = report.steps.find((entry) => entry.status === "fail");
+          throw new RunFailure({
+            stage: report.failure.stage,
+            cause: report.failure.cause,
+            headline: report.failure.message,
+            hint: report.failure.hint,
+            detail: `idiom doctor: the ${step?.id ?? "first"} step failed`,
+          });
+        }
+      },
+    );
+
+  program
     .command("validate")
     .description("validate project configuration and flow manifests")
     .argument("[flow]", "flow manifest id")
@@ -1802,6 +2444,15 @@ export async function run(
     await program.parseAsync(argv);
     return 0;
   } catch (error) {
+    if (error instanceof RunFailure) {
+      // The headline is the first line a wrapper or CI log reads.
+      const write = lineWriter(
+        dependencies.stderr ?? ((message) => process.stderr.write(message)),
+      );
+      write(error.message);
+      write(`Fix: ${error.hint}`);
+      return RUN_FAILURE_EXIT_CODE;
+    }
     if (error instanceof IdiomError) {
       lineWriter(
         dependencies.stderr ?? ((message) => process.stderr.write(message)),

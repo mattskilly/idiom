@@ -4,6 +4,14 @@ import type { PNG } from "pngjs";
 import { pageSections } from "../checks/page-content.js";
 import type { CheckTuple } from "../checks/types.js";
 import { buildCritiqueContext } from "../critique/context.js";
+import {
+  type DeterministicContextLimit,
+  deterministicContextLimit,
+} from "../critique/deterministic-bound.js";
+import {
+  type TruncatedReference,
+  truncatedTextReferences,
+} from "../critique/reference-bound.js";
 import { referenceFromFile } from "../critique/reference-file.js";
 import { validateCritiqueResult } from "../critique/schema.js";
 import {
@@ -44,6 +52,10 @@ export type AdvisoryPattern = {
   reason?: string | undefined;
   screenshots: string[];
   findings: AdvisoryEntry[];
+  /** Text references sent to this pattern's model call in bounded form. */
+  truncatedReferences?: TruncatedReference[] | undefined;
+  /** Set when this pattern's deterministic findings context was bounded. */
+  deterministicContextLimit?: DeterministicContextLimit | undefined;
 };
 
 export type AdvisoryReview = {
@@ -258,6 +270,10 @@ export async function runAdvisoryReview(options: {
         geometry: tuples.map(surfaceGeometry),
         page,
       };
+      const truncated = truncatedTextReferences(input.references);
+      if (truncated.length > 0) entry.truncatedReferences = truncated;
+      const limit = deterministicContextLimit(input.deterministicFindings);
+      if (limit !== undefined) entry.deterministicContextLimit = limit;
       const critique = validateCritiqueResult({
         result: await options.adapter.critique(input),
         screenshots: input.screenshots,

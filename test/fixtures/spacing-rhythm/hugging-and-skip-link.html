@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Hugging containers and skip links</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font: 16px system-ui, sans-serif; }
+      main { width: 420px; padding: 20px; }
+      section { width: 100%; padding: 10px 12px 16px; }
+      a.action { display: block; width: 180px; height: 44px; line-height: 44px; }
+      /* A wrapper with no padding or border that only holds its link. */
+      section.hug { padding: 0; margin: 10px 0 16px; }
+      /* An off-screen skip link that slides in on focus. */
+      .skip { position: absolute; left: 8px; top: -120px; }
+      .skip:focus { top: 8px; }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#content">Skip to content</a>
+    <main id="content">
+      <section><a class="action" href="#rename">Rename calendar</a></section>
+      <section><a class="action" href="#colour">Change colour</a></section>
+      <section><a class="action" href="#share">Share calendar</a></section>
+      <section class="hug"><a class="action" href="#export">Export calendar</a></section>
+      <section><a class="action" href="#archive">Archive calendar</a></section>
+    </main>
+  </body>
+</html>

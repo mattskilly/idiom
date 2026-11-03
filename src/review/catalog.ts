@@ -267,6 +267,8 @@ export async function loadReviewCatalog(options: {
   additionalReportRoots?: readonly string[] | undefined;
   /** Tracker roots available for finding-name migration evidence. */
   additionalTrackerRoots?: readonly string[] | undefined;
+  /** Ignore the primary checkout's finding names; defaults to the config. */
+  isolatedRegistry?: boolean | undefined;
 }): Promise<ReviewCatalog> {
   const projectDirectory = await findProjectDirectory(
     resolveProjectArgument(options.project, options.cwd),
@@ -300,6 +302,7 @@ export async function loadReviewCatalog(options: {
     projectDirectory,
     additionalReportRoots: options.additionalReportRoots,
     additionalTrackerRoots: options.additionalTrackerRoots,
+    isolatedRegistry: options.isolatedRegistry,
   });
   const runs: ReviewCatalog["runs"] = [];
   const all: CatalogFinding[] = [];
@@ -354,6 +357,24 @@ export function findCatalogLineage(
   if (match === undefined)
     throw new IdiomError(`unknown finding id ${JSON.stringify(findingId)}`);
   return match;
+}
+
+/** True when `idiom decide --finding <id>` resolves `findingId`, ignoring occurrences only in `excludeRunDirectory` (a run about to overwrite its findings.json). */
+export function isCatalogDecisionTarget(
+  catalog: ReviewCatalog,
+  findingId: string,
+  excludeRunDirectory?: string,
+): boolean {
+  const matches = catalog.lineages.filter((lineage) =>
+    lineage.ids.includes(findingId),
+  );
+  const match = matches.length === 1 ? matches[0] : undefined;
+  if (match === undefined) return false;
+  if (excludeRunDirectory === undefined) return true;
+  const excluded = resolve(excludeRunDirectory);
+  return match.occurrences.some(
+    (occurrence) => resolve(occurrence.runDirectory) !== excluded,
+  );
 }
 
 export function findCatalogFinding(

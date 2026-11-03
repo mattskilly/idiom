@@ -10,9 +10,11 @@ idiom quick <url...>         # public-page review with no setup
 idiom init                   # safe project scaffold
 idiom upgrade                # update vendored skills, preserving customization
 idiom validate [flow]        # project + manifest validation
+idiom doctor [flow]          # boot the server once and diagnose setup
 idiom reference add|list|remove  # manage visual references and anti-references
 idiom capture <flow>         # deterministic browser capture
 idiom check <flow>           # every deterministic finding, in fix order
+idiom check --gate           # build gate: only what the change affects, within a budget
 idiom baseline record|accept [flow]  # record or accept the regression baseline
 idiom fix <flow>             # bounded local agent repairs with calibrated proof
 idiom sweep [flow] --all     # whole-product polish (choose a flow or --all)
@@ -23,6 +25,7 @@ idiom review <flow>          # bounded deterministic + model critique
 idiom report [runId]         # open the newest or named HTML report
 idiom system [--learn]       # render or learn the project design system
 idiom decide [--list]        # persist decisions or list lifecycle
+idiom brief triage|plan|gate|record|decide|list|show  # before a UI ticket: triage, research, ask, decide and gate
 idiom explore [flow]         # render three candidate directions for one state
 idiom explore resolve <run-id>  # record the judgment on an exploration
 idiom ruling --decision <id> # resolve a reviewed design-law question
@@ -281,6 +284,70 @@ idiom validate booking --project examples/booking
 
 `validate` and init with no accepted flow-generation offer are fully local: they make no model, network, or external API calls. Explicit `init --flows` or an accepted interactive offer visits the configured local app for route discovery. Validation treats setup command strings as data and never executes them.
 
+## doctor
+
+```sh
+idiom doctor            # the project's server, no flow setup
+idiom doctor booking    # also runs the flow's setup steps
+idiom doctor booking --port 4100 --json
+```
+
+`idiom doctor` boots the application server once, exactly as a capture would, and reports why a run could not start. It runs these steps in order, each with its timing:
+
+| Step | What it does |
+| --- | --- |
+| `config` | validates `.idiom/project.json` and the flow manifests; a failure skips every other step |
+| `registry` | resolves finding names from `.idiom/finding-names.json` (and the primary checkout's); divergence from the primary passes, and the next run warns |
+| `tree` | a warning, not a failure, when the tree is dirty or not a Git worktree, because a baseline cannot be recorded then |
+| `port` | binds the port the same way capture does (`--port`, `IDIOM_PORT`, `server.fixedPort`, or a free one) and fails when a pinned port already answers |
+| `setup` | runs the named flow's setup steps in a temporary data directory |
+| `build` | runs `server.build` with `server.env` and `PORT` |
+| `start` | runs `server.start` and waits for `server.readyUrl` within `server.startupTimeoutMs` |
+| `ready` | loads `server.readyUrl` once more and expects `200` |
+| `shutdown` | stops the server and checks that the port is released |
+
+Electron flows launch the app directly, so every server step is skipped for them. The first line is `idiom doctor <flow>: ok` or `idiom doctor <flow>: <failure>`; each failing or warning step adds a `fix:` line. The fixes cover the known causes: a start command that pins its port without `server.fixedPort`, a missing environment variable (add it to `server.env`), a port already in use, and a readiness URL that never returns `200`. `--json` prints `{ flow, ok, steps: [{ id, status, ms, detail, hint }], failure }`.
+
+Doctor exits `0` when every step passes or warns, and `2` with the failing step's one-line cause when one fails. It captures nothing and writes nothing to the project. The MCP tool is `idiom_doctor`.
+
+## Exit codes and setup failures
+
+Every command that captures uses the same exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | the run completed and the gate passed |
+| `1` | the findings gate failed (`--fail-on`), or another error occurred (usage, I/O) |
+| `2` | the run could not happen: a refused precondition, a server that did not start, or a capture that could not start |
+
+A run that could not happen prints its cause as the **first line** on stderr, with no `Error:` prefix, followed by any existing detail and a `Fix:` line:
+
+```
+server failed to start: exit 1 — Error: DATABASE_URL is not set
+application server exited before readiness (exit 1): …
+Fix: add DATABASE_URL to server.env in .idiom/project.json
+```
+
+The first line is one of:
+
+- `config invalid: …` (cause `invalid-config`, or `no-project` when no `.idiom/project.json` is found)
+- `finding-name registry refused: …` (`finding-name-registry`)
+- `baseline refused: tree dirty: <up to 5 paths>[ (+N more)] (commit or stash, or pass --all)` (`tree-dirty`)
+- `baseline refused: …` for a project outside a Git worktree (`not-a-git-worktree`)
+- `no recorded baseline for "<flow>" reachable from HEAD in <path>` (`baseline-missing`)
+- `server failed to start: exit <code>|signal <name> — <last stderr lines, redacted>` (`server-exited`)
+- `server failed to start: timeout after <ms>ms waiting for <readyUrl> — <last stderr lines>` (`server-timeout`)
+- `server failed to start: could not spawn — …` (`server-spawn`)
+- `server failed to start: port pinned — started on <configured>, not reserved <port>` (`port-pinned`)
+- `server failed to start: port <n> in use — <readyUrl> already answers` (`port-in-use`)
+- `capture failed to start: browser launch — …` (`browser-launch`)
+- `capture failed: <n> tuple(s): …` (`capture-failed`, MCP `idiom_check` only)
+- `baseline refused: the captured tree was dirty` (`tree-dirty-after-capture`)
+
+With `--json`, `check` and `baseline record|accept` also print `{ "flow": …, "failure": { "stage": "preflight"|"server"|"capture", "cause": …, "hint": …, "message": … } }` on stdout; `tree-dirty` adds `paths`. MCP tools return the same object as `structuredContent.failure`.
+
+Server failures exit `2` from any command that starts the server (`capture`, `check`, `review`, `sweep`, `verify`, `baseline record`). Preflight runs only for `check` and `baseline record|accept`; `review` also checks the finding-name registry before a fresh capture.
+
 ## reference
 
 Add a URL at an exact configured viewport, or copy a local image, with a required note that says what the review should follow or avoid:
@@ -361,7 +428,9 @@ Temporal findings include an optional `filmstrip` path in `--json`, including ba
 
 `idiom check` protects the flow against regressions by default. On the first check without a reachable baseline it records the already captured clean HEAD, announces the acceptance, and passes: existing defects become pre-existing. Commit the generated `.idiom/baselines/<flow>.json` (and the pixel directory for a published flow). Later checks report **New**, **Fixed**, and **Pre-existing** findings with the baseline SHA, and gate only new live deterministic occurrences. The capture runs once; repeated checks never advance the baseline automatically.
 
-Initialize on the branch state you want to preserve. A dirty or historical capture cannot initialize a HEAD baseline: commit or stash, capture clean HEAD and retry, or use `--all` to inspect every open finding. Once a baseline exists, checks can compare dirty working changes normally. After intentional changes, run `idiom baseline accept <flow>` and commit the updated record. This is model-free and repeatable:
+Initialize on the branch state you want to preserve. A dirty or historical capture cannot initialize a HEAD baseline: commit or stash, capture clean HEAD and retry, or use `--all` to inspect every open finding.
+
+Before it starts the server or captures anything, `check` runs a preflight: it validates the project and flow, reads the finding-name registry and, when this run would record the first baseline from a fresh capture, checks that the tree is clean. A refused preflight exits `2` in seconds with one line, for example `baseline refused: tree dirty: src/app/page.tsx, styles.css (commit or stash, or pass --all)`. Files Idiom writes itself and Git-ignored paths never count as dirty; [configuration.md](configuration.md#baselines) lists them. See [Exit codes and setup failures](#exit-codes-and-setup-failures). Once a baseline exists, checks can compare dirty working changes normally. After intentional changes, run `idiom baseline accept <flow>` and commit the updated record. This is model-free and repeatable:
 
 ```sh
 idiom check studio-lab                 # initialize once; then gate new findings
@@ -376,7 +445,12 @@ idiom check studio-lab --all           # report AND gate every open finding; exp
 idiom check studio-lab --json          # new findings, fixed and preExistingFindings
 idiom check studio-lab --fail-on minor # exit non-zero at this severity (default major; or never)
 idiom check studio-lab --all --ungrouped # full view, one entry per finding
+idiom check studio-lab --probe-budget 0 # no probe run target for this capture
 ```
+
+Every check ends its stderr with one **Timing** line naming where the run's time went and the slowest phase, for example `Timing: 2m41s — build reused, server start 12s, capture 1m50s (probe 1m02s), checks 9.0s; slowest: probe`. Capture is wall clock from browser launch to the last tuple; the probe is summed lane time and is included in capture. `--json` carries the same breakdown as `timing` (`totalMs`, `phases.{build,serverStart,capture,probe,checks}`, `slowest`). Multi-flow `--changed` and `--gate` runs print one line per flow and a combined line last. The multi-line `Timings:` block above it is unchanged. When a check is slow, read this line before reaching for anything else.
+
+Every check that probed prints **Probe coverage**: per state, how many controls the interaction probe completed, timed out on or never reached, and the most common not-reached reason. A warning follows when more than 10% were not reached. `--probe-budget <ms>` sets the probe's run target for one fresh capture (default `checks.probe.flowBudgetMs`, 400000); `0` means no target. It cannot be combined with `--from` or `--latest`. See [configuration.md](configuration.md#capture-settings).
 
 The full `--all` view starts with **Top issues** (five by default, adjustable with `--top <n>`), ranked by salience × prominence, then worst severity and first-seen order. Salience is a fixed rule/category policy. Prominence uses viewport-clipped area, visibility, primary region/action and bounded logarithmic state/place breadth. Known deterministic rules aggregate across selectors, with explicit adjacent-gap and clipping repair families. Compact output shows one prominent example and the family occurrence count; `--all` exposes every original group's evidence, rule and decision command. See [the ranking model](ranking.md) for the normative salience table, exact formula, fallback grouping, tie rules and worked example.
 
@@ -386,7 +460,7 @@ The same element failing the same rule in several states, viewports or colour sc
 
 `--emit-tickets <dir>` writes spec-standard proposals for this check's persisted, actionable findings, grouped by observed component and category within the flow; the symptoms of one root cause form one ticket across categories, with an "all symptoms clear" criterion. It requires no acceptance decision and creates none. Deferred-only and occurrence-only rows are excluded; in default and recorded-baseline modes, only reported new material findings qualify. The directory is a **file tracker root**: `.autobuild/tickets` writes beneath `.autobuild/tickets/triage/`; passing the `triage/` directory itself works too. Existing member identities suppress retries, including after a ticket is renamed or promoted. Crop links point to the retained report, with full screenshots as fallback and missing crops marked unavailable. Ticket counts, covered IDs and paths appear in text and the optional JSON `tickets` result. Emission runs before `--fail-on` is applied, so a failing check still deposits its requested proposals. Without the flag, check output and behavior stay unchanged.
 
-A recorded baseline is a small committable file at `.idiom/baselines/<flow>.json`: deterministic finding fingerprints and aliases per state, viewport, colour scheme and combination, plus the captured commit, version and checks configuration hash. It contains no screenshots. `baseline record <flow>` and `baseline accept [flow]` require a clean captured tree and accept `--from <runId>`, `--latest`, `--prod`, `--port`, `--json` and `--out <directory>` (overrides both JSON and pixel destinations). Accept infers the flow only when exactly one is configured; otherwise it lists the choices. It stores the capture's commit, even when replayed later, and replaces an existing record for that commit. Each file retains up to twenty records.
+A recorded baseline is a small committable file at `.idiom/baselines/<flow>.json`: deterministic finding fingerprints and aliases per state, viewport, colour scheme and combination, plus the captured commit, version and checks configuration hash. It contains no screenshots. `baseline record <flow>` and `baseline accept [flow]` require a clean captured tree and accept `--from <runId>`, `--latest`, `--prod`, `--port`, `--json`, `--isolated-registry` and `--out <directory>` (overrides both JSON and pixel destinations). Accept infers the flow only when exactly one is configured; otherwise it lists the choices. It stores the capture's commit, even when replayed later, and replaces an existing record for that commit. Each file retains up to twenty records.
 
 Default checks and `--since-baseline` select the recorded ancestor nearest HEAD by Git commit distance, with recording time breaking ties. Demonstrably unrelated branch records are skipped and retained. Missing Git objects or shallow-history uncertainty require fetching more history; they never authorize replacement. `--since-baseline` requires an existing reachable record. `--baseline-file <path>` selects only that compact file (relative to the invocation directory), also strictly: missing, malformed, wrong-flow or unreachable files fail without initialization. `--all` cannot accompany any baseline selector, and the three explicit selectors cannot be combined. Text and JSON separate **new**, **fixed** and **pre-existing** findings. The exit status and `--fail-on` apply only to new live deterministic occurrences, with rules, severity overrides and review lifecycle status applied. Each viewport participates independently, including findings beyond the report's attention cap. Fixed rows use the baseline's stored severity; a missing or failed tuple is listed as uncovered and cannot establish a fix. Suppressed findings still count as present evidence when deciding whether a defect was fixed.
 
@@ -418,17 +492,51 @@ Changed mode compares an existing recorded baseline by default, but **never init
 
 `--changed` requires fresh capture and rejects `--from` and `--latest`. Named-flow `--states` intersects inferred states after validating the IDs; viewport/scheme scopes work normally. With no flow, `--states`, `--baseline <runId>` and `--baseline-file` require a flow name. All selected flow options are checked before the first capture. `--prod`, `--advisory` and `--emit-tickets` work per selected flow with that run's provenance. A batch publishes one hook acknowledgment only when all selected captures succeed; failure, cancellation and edits during checking prevent acknowledgment.
 
+### Gate a build
+
+```sh
+idiom check --gate                      # every flow, affected states only, 3m budget
+idiom check checkout --gate             # one flow
+idiom check --gate --budget 90s         # budget: 90s, 3m, 2m30s or milliseconds
+idiom check --gate --reuse-server       # capture the dev server already at readyUrl
+idiom check --gate --changed main       # explicit base (default: the merge base)
+idiom check --gate --json --fail-on major
+```
+
+`--gate` is the check to run inside a build loop. It starts from the same changed-file mapping as `--changed` and makes it cheaper, says what it costs before it starts, and fits a time budget (`--budget`, else `checks.gate.budgetMs`, default 3 minutes).
+
+- **Non-UI changes skip.** Documentation (`*.md` except `DESIGN.md` and `PRODUCT.md`, `docs/**`), tests (`test/**`, `tests/**`, `__tests__/**`, `*.test.*`, `*.spec.*`), `.github/**`, lockfiles, build scratch and Idiom's own reports are non-UI by path, as are `checks.gate.nonUi` globs. When every changed file is non-UI the gate prints `no UI changes since <base>; skipped` and exits 0 in well under a second: no import graph, server or browser. When the import graph is **complete** (route entries found, no unresolved, nonliteral or malformed import anywhere, no unmappable states), a script module that no route reaches and that is not a style, markup, asset or static-directory file (`public/`, `static/`, `assets/`, or beside an `.html` file) is non-UI too, so a server-only edit no longer drags in every state. Build and runtime configuration never counts as non-UI this way: `package.json`, `*.config.*` scripts, `middleware.*`/`proxy.*`, `.env*` and `tsconfig`/`jsconfig` change what every page renders, so they gate every state. On an incomplete graph that pass is off and the plan line says `non-UI detection off: <reason>`; declare server-only directories in `checks.gate.nonUi` instead.
+- **One viewport and scheme.** Each affected state runs at the first declared viewport and `capture.colorScheme`, unless the change touches responsive styles (`@media` on width/height/orientation, `@container`, Tailwind breakpoint prefixes, `useMediaQuery`, `matchMedia` with a width) or theme styles (`prefers-color-scheme`, `dark:`, `[data-theme`, `.dark`, `color-scheme`, the `colorSchemeAttribute`, global theme files), in added or removed lines or untracked files. Then it widens that axis and says which file did it. Explicit `--viewports` / `--schemes` win.
+- **Probe the changed region.** Every probed run records a fingerprint per control (identity, rounded box, a fixed set of computed styles and text) in `observations.json`. The gate compares against the newest stored run with fingerprints that was captured from a clean tree at the base or an earlier commit. A dirty run, or one at a later commit, is never the reference: it may already contain the change (an earlier gate round in the same build, say), and a control the change broke would match it and go unclicked. the probe's own check candidates (duplicate names, glyph and unexplained controls, popups, text buttons) always run; another control is clicked only when it is new or renders differently. The rest are reported as `not reached: gate: unchanged since <runId>`, so probe coverage shows them. With no reference the probe runs unscoped and the plan says so.
+- **Baseline gating.** With a reachable recorded baseline the gate compares `--since-baseline`; without one it gates open findings and says `no recorded baseline for <flow>; … run idiom baseline record <flow>`.
+
+Before any server starts, the gate prints its plan and estimate to stderr:
+
+```
+idiom check --gate: 1 state × 1 viewport, probe on ≤23 controls (changed region), server reused (verified), est. 2m10s of 3m budget
+```
+
+The estimate uses the medians of up to five stored runs of the flow (capture per tuple, probe per control, server build and start, checks), split over capture lanes; with no history it uses defaults (20s per tuple, 1.5s per control, 30s server start, 5s checks) and says `(no history)`. When it exceeds the budget the gate trims, lowest priority first: ordinary probe controls (a smaller probe allotment; check candidates run first), viewports then schemes that styles widened, the probe itself, then whole states, lowest rank first (route-owned before import-reached before fallback; later flow states first). It never drops below one tuple of the best-ranked state; if that still exceeds the budget it runs anyway and says `estimate exceeds budget at minimum coverage`. Each cut prints `skipped: <kind> <what> — <reason> (~est)`, appears under **Build gate** in the report, and is in `--json` as `gate.skippedWork`.
+
+**Server reuse.** With `--reuse-server` or `server.reuse: true`, a server already answering `server.readyUrl` is captured instead of built and started (`build reused, server start reused` in the timing line). When `server.production.distDir/BUILD_ID` exists, the gate compares it with the build id the ready page serves (Next.js `buildId`) and refuses reuse on a mismatch or when a changed UI file is newer than the build: it then starts a server as usual. Without a build id to compare, reuse is `unverified` and the plan line says so: make sure the server at `readyUrl` is this checkout. Production flows (`--prod`, `"server": "production"`) instead reuse the production build cache keyed on working-tree content (HEAD's tree, the diff and untracked files), so an unchanged dirty tree in a build round does not rebuild.
+
+`--json` adds a top-level `gate` object (`plan`, `skippedWork`, `estimateMs`, `budgetMs`, `server`, `timing`) to the `--changed` envelope; the skip path prints `{"gate":{"skipped":true,"reason":…,"base":…,"files":…}}`. `--gate` rejects `--from`, `--latest`, `--all`, `--baseline`, `--since-baseline` and `--baseline-file`; `--states`, `--viewports`, `--schemes`, `--prod`, `--port`, `--probe-budget` (caps the probe allotment) and `--fail-on` work as usual. `--budget` requires `--gate`.
+
 ### Run in Autobuild
 
-For an Autobuild gate, initialize and commit the baseline so build worktrees inherit it; accept it again after intentional changes:
+Gate builds with `--gate`, and move full coverage to a scheduled run. The full run also refreshes the timing history and probe fingerprints the gate plans from:
 
 ```sh
 idiom check studio-lab
 git add .idiom/baselines
 git commit -m "Record studio baseline"
 # In each build:
+idiom check --gate --fail-on major
+# Nightly (CI schedule or cron), complete coverage:
 idiom check studio-lab --since-baseline --fail-on major
 ```
+
+If the gate is slow, read its `Timing:` line or lower `--budget`; don't remove the step.
 
 The `autobuild.toml` wiring is in [configuration.md](configuration.md#autobuild), and the pull-request workflow in [configuration.md](configuration.md#github-action).
 
@@ -564,6 +672,7 @@ idiom learn --state editor 'say "Sign in" not "Log in"'
 idiom learn --state editor "the left rail and the right rail should mirror horizontally"
 idiom learn --state editor "section headers never use all caps"     # becomes a ruling
 idiom learn --state editor --screenshot annotated.png "the override dots should be 8px"
+idiom learn --from-brief pinned-group "every tile got taller once pins were added"
 ```
 
 Sizes become `checks.components` entries (or, with "tall"/"wide", a state invariant in the flow manifest), quoted wording becomes a `checks.copy.glossary` term, "A and B should mirror" becomes a `checks.mirrored` pair, and anything else becomes a design-law ruling in `DESIGN.md` (force that with `--ruling`, and set its text with `--wording`). The subject ("override dots") is resolved to a selector from the state's newest stored capture; pass `--selector <css>` when it is ambiguous or nothing was captured. Learn prints the exact diff and writes nothing until you confirm it:
@@ -591,6 +700,8 @@ Sizes become `checks.components` entries (or, with "tall"/"wide", a state invari
 
 Only the learned entry is added; the rest of the file keeps its formatting.
 
+`--from-brief <slug>` names the decided brief a post-build rejection is about ([brief.md](brief.md#checking-the-build)). `--state` is then optional when the brief's assertions name exactly one flow state. When the words are not measurable themselves, the brief's size assertions for that state become state invariants; when there are none left to add, the rejection becomes a ruling that names the brief. A brief that is not decided is refused.
+
 Every learning also appends a line to `.idiom/learned.jsonl` naming the observation, what it became and the capture it was seen on (plus a copy of `--screenshot` under `.idiom/learned/`); commit both. Component sizes, invariants and mirrored pairs are measured at capture time, so run `idiom check <flow>` (a fresh capture) to see them report.
 
 ## compare
@@ -617,7 +728,7 @@ idiom review booking --deterministic-only --from <runId>
 idiom review booking --deterministic-only --latest
 ```
 
-New projects default to the subscription-backed `claude-code` provider, so full review needs an installed and authenticated Claude Code CLI but no API key. Idiom launches an isolated non-interactive session with only the `Read` tool, passes screenshots and image references as absolute readable paths, and sends all other critique context over stdin. The configured model identifier is passed to Claude Code. Idiom removes `ANTHROPIC_API_KEY` from this child only so an inherited key cannot override subscription authentication.
+New projects default to the subscription-backed `claude-code` provider, so full review needs an installed and authenticated Claude Code CLI but no API key. Idiom launches an isolated non-interactive session with only the `Read` tool, passes screenshots and image references as absolute readable paths, and sends all other critique context over stdin. The configured model identifier is passed to Claude Code. Idiom removes every `ANTHROPIC_*` variable, the third-party provider-selection flags (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`, `CLAUDE_CODE_USE_MANTLE`, `CLAUDE_CODE_USE_ANTHROPIC_AWS`), `CLAUDE_CODE_SKIP_*_AUTH` and `AWS_BEARER_TOKEN_BEDROCK` from this child, so an inherited key, token, base URL, header or provider switch cannot move critique off subscription authentication. Everything else passes through unchanged, including `PATH`, keychain access, `CLAUDE_CODE_OAUTH_TOKEN` and proxy settings. Your Claude Code settings files are not changed, so an `env` block or `apiKeyHelper` there still applies. The `anthropic` provider still reads `ANTHROPIC_API_KEY`. Each session sees at most 20 images, 20 MB of image files and 60,000 characters of DOM excerpts; a larger capture is split by state across several sessions, and anything that cannot fit any session is left out rather than silently dropped by the model's context.
 
 The direct Messages API remains an explicit fallback for existing projects and machines that cannot authenticate Claude Code. Select it in `.idiom/project.json` and provide the key in the process environment:
 
@@ -668,11 +779,17 @@ unavailable instead of implying that the law is complete.
 
 At most five material findings are published across both layers. After both layers complete, eligible findings are deduplicated and ranked by severity, confidence descending, then canonical fingerprint; deterministic confidence is `1.0`, so deterministic findings naturally win equal-severity confidence comparisons. Reports visibly label each material finding's layer and list every eligible finding below the cap cutoff in a separate evaluated-but-not-selected section. Model findings have per-finding confidence below `1.0` and cite real captured screenshots plus the guidance they violate. Standing rule-scope rejections from `.idiom/decisions.jsonl` and suppressions from `.idiom/rules.json` filter matching deterministic and model findings before selection and remain visible, with their provenance and reason, in every report's suppressed-findings appendix. Rules-file severity overrides apply before ranking and are annotated as `original -> effective` in the report.
 
-A report is labeled full only when the selected model provider completes successfully. `--deterministic-only` is labeled as an intentional model skip. A full review invokes the provider even when deterministic candidates already meet or exceed the material cap; cap saturation is never itself a degradation. A missing or unauthenticated `claude`, an unsupported model or CLI version, malformed output, provider/network failure, or missing API key on the explicit `anthropic` path produces a visible degradation warning and a non-full report. When Claude Code cannot run and no API key is available, the warning names both prerequisites and still exits 0 with ranked deterministic findings. A present key is never used as an automatic fallback; the warning explains how to select `model.provider: "anthropic"` explicitly or configure `model.fallback`. A configured `model.fallback` is used visibly, never silently. A missing or unauthenticated `codex` degrades the same way, with a `codex login` hint. Partial model batches are never published. `--deterministic-only` does not construct a provider or read provider-only screenshot/context inputs and makes zero external calls. A corrupt decision log remains an actionable project-data error because silently forgetting human policy would be unsafe.
+A report is labeled full only when the selected model provider completes successfully. `--deterministic-only` is labeled as an intentional model skip. A full review invokes the provider even when deterministic candidates already meet or exceed the material cap; cap saturation is never itself a degradation. A missing or unauthenticated `claude`, a Claude Code session that does not finish within its 10-minute bound, an unsupported model or CLI version, malformed output, a token-limit truncated response, provider/network failure, or missing API key on the explicit `anthropic` path produces a visible degradation warning and a non-full report. When Claude Code cannot run and no API key is available, the warning names both prerequisites and still exits 0 with ranked deterministic findings. When Claude Code runs and is signed in but the session itself fails (for example it hits its turn limit or gets an API error), the warning says "Claude Code ran but the critique session failed" with the CLI's own diagnostic, not a sign-in hint. A present key is never used as an automatic fallback; the warning explains how to select `model.provider: "anthropic"` explicitly or configure `model.fallback`. A configured `model.fallback` is used visibly, never silently. A missing or unauthenticated `codex` degrades the same way, with a `codex login` hint. Partial model batches are never published. When the Claude Code critique was split across sessions or left evidence out, the report stays full and says so in one line under the model layer, naming each omitted screenshot, crop, design image, reference or DOM excerpt and why; if every screenshot would be left out, the provider fails and the review degrades with the limit named. The model is shown at most 50 deterministic findings (or 20,000 characters of them) per prompt, the rest summarized by category and severity; when that bound applies, the report says so in one line under the model layer. `--deterministic-only` does not construct a provider or read provider-only screenshot/context inputs and makes zero external calls. A corrupt decision log remains an actionable project-data error because silently forgetting human policy would be unsafe.
 
 `--from` validates the stored flow and commit coherence and does not compare with current `HEAD`, launch a browser, start a server, or run Git. In full mode it may call the configured model; combine it with `--deterministic-only` for an offline replay. When `design.tokensFile` is absent, token drift is reported as skipped; when declared, the project-relative stylesheet is parsed and its custom-property values are normalized in Chromium. Review never produces an aggregate design rating.
 
-Findings use short names such as `finding-12`. `.idiom/finding-names.json` owns the monotonically increasing allocation plus every historical fingerprint and legacy `IDM-...` alias for each lineage. Review reserves names for material, deferred, and suppressed findings before publishing its artifacts, so a hidden or deferred name is never recycled. Linked worktrees union the local and primary registries; compatible entries merge, while divergent allocation of one name or identity fails closed instead of guessing. Existing projects need no rewrite: when the registry is missing, Idiom deterministically reconstructs it from decisions first, then retained reports and embedded ticket findings, and the next mutating `review`, `decide`, or `tickets` command persists it. `idiom context` performs the same projection read-only.
+Findings use short names such as `finding-12`. `.idiom/finding-names.json` owns the monotonically increasing allocation plus every historical fingerprint and legacy `IDM-...` alias for each lineage. Review reserves names for material, deferred, and suppressed findings before publishing its artifacts, so a hidden or deferred name is never recycled. Linked worktrees union the local and primary registries, and the current checkout's names win. Compatible primary entries merge. A primary entry that gives one of this checkout's names to a different finding, or names one of its findings differently, is skipped for the run, along with any primary decision, report or ticket record that relies on it. The run completes and prints one line on stderr (and `findingNameWarning` in `--json`):
+
+```
+Warning: finding-name registry diverges from the primary checkout: skipped 3 conflicting entries from <primary>/.idiom/finding-names.json; this checkout's names win (pass --isolated-registry to ignore the primary's names)
+```
+
+Skipped entries are never written to this checkout's registry, so repeated runs keep the same names and print the same line. New names continue after the highest number either registry has spent. For a throwaway worktree, `check`, `review` and `baseline record|accept` accept `--isolated-registry`, and the project key [`findingNames.isolatedRegistry`](configuration.md#finding-names) does the same for every command: the primary's registry, decisions, reports and tickets are not consulted for names. A registry that cannot be read or parsed (in either checkout), or a conflict within this checkout's own evidence, still refuses the run in preflight with `finding-name registry refused: …`. Existing projects need no rewrite: when the registry is missing, Idiom deterministically reconstructs it from decisions first, then retained reports and embedded ticket findings, and the next mutating `review`, `decide`, or `tickets` command persists it. `idiom context` performs the same projection read-only.
 
 Fingerprint inputs are canonicalized deterministically: Unicode and whitespace are normalized, CSS combinator spacing is standardized, stable classes in each compound selector are sorted, and generated/hashed classes are discarded when a tag, ID, attribute, or stable class still anchors the compound. A generated-only compound retains its original token rather than collapsing unrelated elements to one empty identity. Legacy hashes and IDs remain lookup aliases, so existing decisions, reports, and tickets stay readable and effective. Re-observing the same problem reuses its registry name and adds an occurrence to that lineage rather than creating a new identity. Ticket IDs, run IDs, capture directory names, fingerprints, ranking, and finding caps are unchanged.
 
@@ -752,6 +869,10 @@ idiom coverage --states              # which states each flow's latest capture o
 Coverage lists every route against the flows that capture it, so an uncaptured dashboard is a visible gap rather than silent approval, and prints the `routes` line that would capture the plain ones. Dynamic routes show the concrete paths flows used, e.g. `/p/[id] (e.g. /p/abc123)`.
 
 Exclusions are configured with [`coverage.exclude`](configuration.md#coverage).
+
+Both modes also list, per flow, the disclosures (`<details>`, `aria-haspopup` and `aria-expanded` controls) on the newest capture's surfaces that no state showed open and the probe never opened, with the reason: not reached, skipped, timed out, or no probe at that state. Up to ten are named, then a count; `--json` carries all of them as `disclosures`. A capture from before the disclosure inventory reports it unavailable. The same list appears in each flow review report's coverage section. See [the probe](configuration.md#probe).
+
+Both modes also list, per flow, the lists, tables, grids, feeds, configured regions and editors (a group whose only content is an Add, New or Create control) that held no items in any captured state of the newest capture, so you know which to seed with data before the checks can judge them filled. Up to ten are named with the states they were empty in, then a count; `--json` carries all of them as `emptyContainers`. A capture from before the container inventory reports it unavailable. The report's coverage section shows the same list under Empty containers.
 
 `--states` reports state coverage instead of routes. For each flow it reads the newest stored capture under `.idiom/reports` (passing or not, from any commit) and, for every state, marks each dimension observed, missing or not applicable:
 
@@ -913,11 +1034,47 @@ idiom decide --group group-1a2b3c4d5e6f --reject --scope rule --reason "Decorati
 
 `--group <id>` (from `idiom check` output or `groups.json`) appends one decision per member of the group in the newest run that recorded it, including members past the review's attention cap. It applies to the run's whole group, which can hold members `check` did not show because a baseline or status filtered them. `--finding` and `--group` cannot be combined.
 
+`--finding` accepts the actionable findings a review records in `findings.json`. A report's **Evaluated but not selected** section marks each finding past the cap: `decision target` when its id already has a catalog lineage from an earlier run, so `--finding` accepts it, or `report-only` when the id names it in that report only and `--finding` would fail with `unknown finding id`. Quick and page reviews mark every deferred finding report-only.
+
 Rejections default to `--scope instance`. Rule scope is defined only for rejection: `--accept --scope rule` (and `--accept --scope instance`) fails with `--scope applies only to --reject` and appends nothing. Reasons are optional for either decision but cannot be blank.
 
 Every actual accept or reject appends one schema-valid record with the canonical name to `.idiom/decisions.jsonl`; skip and quit append nothing. The log is never rewritten. Historical commands may still supply an `IDM-...` alias and resolve the same lineage. An instance decision applies to that lineage occurrence at the recorded commit, so a re-observation on a later commit is presented and requires its own decision even though its stable name is unchanged. Separately, the latest rule-scope record for a fingerprint controls standing suppression across the lineage: a rule rejection suppresses future matches, while a later rule acceptance removes that suppression.
 
-Use `idiom decide --list` for a read-only lifecycle view. It renders one entry per stable lineage with the canonical ID/fingerprint, aliases, surface, first/latest observation and occurrence count, latest decision, ticket/tracker state, verification result, and the ordered path from `open` onward. `--list` cannot be combined with decision flags and never appends to the log.
+Use `idiom decide --list` for a read-only lifecycle view. It renders one entry per stable lineage with the canonical ID/fingerprint, aliases, surface, first/latest observation and occurrence count, latest decision, ticket/tracker state, verification result, and the ordered path from `open` onward. A ticket is found by its generated filename first, then by the `idiom:finding` record embedded in a consolidated ticket (the same resolution `idiom tickets` uses), and listed with its tracker state and a `Ticket path:` line; a consolidated ticket is marked `— consolidated`. A catalog checkpoint with no tracker ticket behind it reads `checkpointed — no tracker ticket found`. `--list` cannot be combined with decision flags and never appends to the log.
+
+## brief
+
+The design decision gate that runs before a ticket is written. The flow, the rubric, the research plan, the brief input and its validation, and the question to ask are in the [design decision briefs guide](brief.md).
+
+```sh
+idiom brief triage "Add a pin button to every tile"   # or a path to a draft ticket
+idiom brief triage drafts/pinned-group.md --json
+idiom brief triage "Fix the typo in the Publish dialog" --no-model
+idiom brief plan triage-3f9c0a1b2d                     # research instructions for the agent
+idiom brief plan "Add a pin button to every tile" --question "How large is the pin?" --minutes 5
+idiom brief "Add a pin button to every tile" --research
+idiom brief record brief.json        # or: idiom brief record - < brief.json
+idiom brief record brief.json --json
+idiom brief decide pinned-group-in-the-add-drawer --option corner-pin
+idiom brief list
+idiom brief show pinned-group-in-the-add-drawer
+idiom brief gate tickets/pin.md                        # warn when a ticket lacks a decided brief
+idiom brief gate .autobuild/tickets/ready/file-12.md --strict --json
+```
+
+`triage <request>` takes the request text, or a path to an existing draft ticket file (up to 64 KB). It applies the shipped rubric with one bounded call to the configured review provider (`model.provider`, then `model.fallback` once if that fails, with a warning on stderr): no tools, no capture, a 90-second limit. It prints `no design decision: <reason>`, or `design decision: <reason>` followed by one `- <question>` line per open question, then `Triage id: <id>` (and `Next: idiom brief plan <id>` for a design decision), and exits 0 either way. It stores the result as `.idiom/briefs/triage/<id>.json`. `--json` prints exactly `{ id, verdict, reason, questions }`. `--no-model` makes no call and works outside a project: it prints the rubric, the request, any project context and the JSON answer shape for the calling agent to apply itself (`--json` returns the same as one object). Without `--no-model`, triage needs an initialized project for its provider.
+
+`plan <target>` prints research instructions for the calling agent: the open questions with what to check (hover, touch, keyboard, small screen, empty and error states), the reference products by tier, standards to look for, a time budget, the research rules and the exact JSON shape `record` accepts. The target is a triage id (no model call), or the request text or a draft-ticket path. With `--question <text>` (repeatable, up to 8) it plans those questions with no model call, also outside a project; without, it runs and stores a model triage first. `--minutes <n>` sets the budget (1–60, default 10). `--json` prints the plan object.
+
+`record [file]` validates the calling agent's research and options and stores `.idiom/briefs/<slug>.json` plus the rendered `<slug>.md`. Omit the file or pass `-` to read stdin (up to 1 MB). It prints `Recorded brief <slug> (created|updated, <status>) — .idiom/briefs/<slug>.md`, then, for a proposed brief, the question to ask the requester: numbered options with the recommendation first, any sketches, and whether the agent may proceed without asking. `--json` prints `{ slug, outcome, status, markdownPath, ask }`, where `ask.askUserQuestion` is ready for Claude Code's AskUserQuestion. Invalid input exits 1 with `brief rejected:` and one `path: message` line per issue on stderr. Recording an existing slug updates it.
+
+`decide <slug> --option <id> [--by <name>]` records the requester's choice (`decidedBy` defaults to `requester`) and regenerates the Markdown. It prints `Decided brief <slug>: <chosen title> (by <who>) — .idiom/briefs/<slug>.md`, plus a warning when the choice is not the recommendation, since the acceptance criteria were written for the recommendation. `--json` prints `{ slug, outcome, chosen, recommended, decidedBy, markdownPath, warning? }`.
+
+`"<request>" --research` runs the whole brief without an agent: triage, one web research call per open question and one options call through the configured review provider (`claude-code` or `codex`), then the same validation and storage as `record`. It takes the request text or a draft-ticket path, like `triage`, and writes progress lines and fallback warnings to stderr. It prints `Recorded brief <slug> (created|updated, proposed[, research incomplete]) — .idiom/briefs/<slug>.md` and a `Cost:` line (time, calls, and turns, searches and tokens when the provider reports them, against the budget); a run that stopped early adds its note. With no design decision it prints the triage line and `No design decision; no research run.` `--json` prints `{ outcome, triage, slug, markdown, status, researchRun }` (`outcome` is `stored` or `no-decision`). It exits 0 for a stored brief, complete or not, and for no design decision; an answer invalid twice, a provider failure with no fallback, an `anthropic`-only configuration or a triage that outlasts the budget exits 1 and stores nothing. Without `--research`, `idiom brief "<request>"` is an error. Details are in [brief.md](brief.md#two-ways-to-research).
+
+`gate <tickets...>` checks ticket files (up to 64 KB each) for a decided brief. A ticket that links one (`brief: <slug>`, or `brief = "<slug>"` in leading TOML front matter) or embeds a rendered brief is judged by that brief with no model call: `decided` passes, while `proposed`, `superseded` and a slug with no stored brief warn. A ticket with no brief is triaged once, as `triage` does, and warns with its open questions, `idiom brief plan <id>` and `idiom brief "<ticket>" --research` when it holds a design decision. It prints nothing when every ticket passes, otherwise one warning per ticket and `N of M ticket(s) need a decided brief.`, and exits 0. `--strict` exits 1 when any ticket warns; a failed triage counts as a warning. `--json` prints `{ strict, warnings, tickets }`. A missing or empty ticket, or a missing project when one is needed, exits 1 before any model call. Details and hook recipes are in [brief.md](brief.md#gate-tickets).
+
+`list` prints one line per brief, newest first: `<slug>  <status>[ by <decidedBy>]  <title>[ (research incomplete)]`, or `No briefs.`; a stored file that no longer parses is listed as `invalid` with the reason. `show <slug>` prints the rendered Markdown. Both take `--json` for the stored records.
 
 ## explore
 
@@ -1013,7 +1170,7 @@ By default, new tickets are created only in the target repository's `.autobuild/
 
 Retries inspect ticket IDs derived from every historical fingerprint/ID pair across `triage`, `ready`, `doing`, and `done`. This preserves a pre-canonicalization ticket filename and prevents duplicate emission after identity migration. A promoted or human-edited ticket is reported as already emitted and is never recreated or overwritten. Pre-existing duplicate ids are reported as a per-finding conflict without preventing unrelated accepted findings from being emitted.
 
-Every invocation also reads the canonical tracker's Markdown tickets once and strictly indexes their complete `idiom:finding` blocks by exact historical finding-ID/fingerprint pair. If no generated filename is authoritative, any `ticketed` or `verified-fixed` occurrence in the lineage, or any exact embedded record in an existing or completed ticket, suppresses emission and is reported as already resolved. This keeps a human-consolidated ticket authoritative after its redundant standalone files are removed; embedded discovery checkpoints `ticketed` without downgrading `verified-fixed`. Successful canonical tracker emission uses the same atomic checkpoint. A custom `--out` draft consults canonical tracker and persisted lifecycle state and retains no-overwrite behavior within its own directory, but does not checkpoint `ticketed`, so drafting cannot suppress a later canonical emission.
+Every invocation also reads the canonical tracker's Markdown tickets once and strictly indexes their complete `idiom:finding` blocks by exact historical finding-ID/fingerprint pair. If no generated filename is authoritative, any `ticketed` or `verified-fixed` occurrence in the lineage, or any exact embedded record in an existing or completed ticket, suppresses emission and is reported as already resolved. This keeps a human-consolidated ticket authoritative after its redundant standalone files are removed; embedded discovery checkpoints `ticketed` without downgrading `verified-fixed`. Successful canonical tracker emission uses the same atomic checkpoint. A custom `--out` draft consults canonical tracker and persisted lifecycle state and retains no-overwrite behavior within its own directory, but does not checkpoint `ticketed`, so drafting cannot suppress a later canonical emission. A ticket whose `idiom:finding` blocks are malformed, schema-invalid or repeat an embedded identity is reported with its path and reason (`malformed tracker ticket: …`) and is never repaired automatically. Only lineages whose IDs, fingerprints or generated filename appear in that ticket are reported as blocked instead of emitted; unrelated lineages still emit and reconcile. A corrupt ticket that no longer names its lineage at all cannot be recognized, so review every reported malformed ticket.
 
 To combine accepted findings into fewer tickets, opt into clustering:
 
@@ -1037,7 +1194,7 @@ readyState = "ready"
 
 Proposals land in `tasks/triage/`. Ready/doing/done destinations, configured ready-state descendants and directory aliases into those states are rejected. A configuration making triage dispatchable is rejected, and a non-file default tracker requires an explicit file directory. Proposal/create-state configuration cannot bypass human triage. Ordinary `tickets --out` keeps its direct draft-directory semantics.
 
-Deduplication checks individual members before grouping, across arbitrary Markdown filenames at the requested tracker root and its state directories, plus the source tracker. Canonical names, historical aliases/fingerprints and legacy standalone filenames remain authoritative after renaming, promotion or consolidation. Existing tickets are never overwritten or extended. If a component gains new findings, only uncovered members receive a new proposal; multiple owner files produce a per-member conflict while unrelated work proceeds. Canonical publication checkpoints accepted members as ticketed without replacing verification status. Custom drafts and unaccepted check proposals do not checkpoint lifecycle status.
+Deduplication checks individual members before grouping, across arbitrary Markdown filenames at the requested tracker root and its state directories, plus the source tracker. Canonical names, historical aliases/fingerprints and legacy standalone filenames remain authoritative after renaming, promotion or consolidation. Existing tickets are never overwritten or extended. If a component gains new findings, only uncovered members receive a new proposal; multiple owner files produce a per-member conflict while unrelated work proceeds. A malformed tracker ticket is reported with its path and blocks only the members it names; the rest still publish. Canonical publication checkpoints accepted members as ticketed without replacing verification status. Custom drafts and unaccepted check proposals do not checkpoint lifecycle status.
 
 ## verify
 
@@ -1058,7 +1215,7 @@ Only the exact referenced state/viewport/colour-scheme triples are captured—ne
 
 The verdict uses structured DOM text, allow-listed semantic/presentation attributes, computed style, deterministic checks, and stable-island-relative geometry. Dates and times plus their layout reflow are normalized away. PNG differences and raw dimensions are inspectable evidence only, and unequal image sizes are padded safely for the paired composite. A declared target may disappear consistently when its stable region remains coherent; unrelated changes outside a bounded locus cannot prove a finding fixed.
 
-Output defaults to a fresh `.idiom/reports/verify-<timestamp>/`. An explicit `--out` is the exact verify-owned directory and is atomically replaced on retry. It contains `before-after.md`, `report.html`, `attachments.json`, one `before-after-<state>-<viewport>.png` per referenced tuple, and `current-a/` plus `current-b/` recapture artifacts. Both reports identify finding-selected scope—or the full declared grid required by a full-flow finding—and the historical baseline and current recapture commits; neither scope is presented as a fresh whole-flow review. The self-contained HTML embeds labeled before/after images and provides a presentation-only comparison slider plus the browser-native print/save action. Its content-security policy forbids external requests. The slider disappears in print while the static pair remains. Attachment kinds are stable and distinct: `idiom-before-after-001`, `idiom-before-after-002`, and so on in manifest order, plus `idiom-verify-report`.
+Output defaults to a fresh `.idiom/reports/verify-<timestamp>/`. An explicit `--out` is the exact verify-owned directory and is atomically replaced on retry. It contains `before-after.md`, `report.html`, `attachments.json`, one `before-after-<state>-<viewport>.png` per referenced tuple (a state or viewport name with characters outside letters, digits, `.`, `_` and `-` is written as a sanitized stem plus a short hash, so each composite stays a single file in the output directory), and `current-a/` plus `current-b/` recapture artifacts. Both reports identify finding-selected scope—or the full declared grid required by a full-flow finding—and the historical baseline and current recapture commits; neither scope is presented as a fresh whole-flow review. The self-contained HTML embeds labeled before/after images and provides a presentation-only comparison slider plus the browser-native print/save action. Its content-security policy forbids external requests. The slider disappears in print while the static pair remains. Attachment kinds are stable and distinct: `idiom-before-after-001`, `idiom-before-after-002`, and so on in manifest order, plus `idiom-verify-report`.
 
 Default verify outputs can be opened with `idiom report`. Custom outputs outside `.idiom/reports/` are intentionally not discovered; for the example above, open `.ab/idiom/report.html` directly in a browser.
 
@@ -1090,7 +1247,7 @@ It is offline, model-free, and read-only: no provider is constructed, no credent
 
 **Size ceiling.** A brief never exceeds **12,000 UTF-8 bytes**. Headers, every unavailable-evidence marker, and every section heading are reserved first; content is then allocated as recorded rulings and standing prohibitions, design law, design tokens and project rules, accepted work, and finally product intent. Rulings are atomic and outrank replaceable prose, so a long law cannot hide its recorded resolutions. Truncation happens only at complete-entry and line boundaries: a ruling or prohibition is never split and neither is a multi-byte character. Whatever did not fit is reported in place, for example `(37 further lines omitted to stay within the 12000-byte ceiling)`.
 
-**Evidence resolution across checkouts.** The brief resolves the tracked `.idiom/finding-names.json` registry alongside two gitignored stores, all through the same Git-topology boundary: the current checkout plus, from a linked worktree, the primary checkout. `.idiom/reports/` supplies the finding evidence that makes a prohibition behavioral; `.autobuild/tickets/` supplies the tracker state that tells built work from open work. Registry entries are unioned strictly so every rendered reference uses the same canonical name. The project's own report root wins on a run collision, and `context` writes to neither checkout. When a store is unreachable the brief still emits, marked:
+**Evidence resolution across checkouts.** The brief resolves the tracked `.idiom/finding-names.json` registry alongside two gitignored stores, all through the same Git-topology boundary: the current checkout plus, from a linked worktree, the primary checkout. `.idiom/reports/` supplies the finding evidence that makes a prohibition behavioral; `.autobuild/tickets/` supplies the tracker state that tells built work from open work. Registry entries are unioned with the current checkout's names winning, so every rendered reference uses the same canonical name. The project's own report root wins on a run collision, and `context` writes to neither checkout. When a store is unreachable the brief still emits, marked:
 
 - `Review evidence: unavailable in this checkout` — prohibitions fall back to the degraded fingerprint form and no accepted work can be listed.
 - `Tracker state: unavailable in this checkout` — listed entries may already have been built.

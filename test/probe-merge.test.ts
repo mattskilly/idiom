@@ -272,3 +272,103 @@ test("a later round replaces only the rows it worked on", () => {
     ["#later-nested", "completed"],
   ]);
 });
+
+test("a revealed state stays on the opening state's row and is dropped from reused copies", () => {
+  const revealed = {
+    name: "Help",
+    kind: "popup" as const,
+    trigger: "body > button",
+    status: "unavailable" as const,
+    reason: "revealed-state limit (checks.probe.maxRevealed)",
+  };
+  const nested: ProbeResult = {
+    ...result,
+    selector: "#item",
+    name: "Help › Link",
+    revealed: { ...revealed, name: "Help › Link", kind: "mode" },
+  };
+  const merged = (state: string) => {
+    const ledger = createProbeLedger();
+    const saved = candidate("#saved");
+    ledger.plan("p", [{ state: "a", candidates: [saved] }]);
+    ledger.record(
+      "p",
+      identity(saved),
+      "a",
+      { ...result, revealed },
+      [],
+      [nested],
+    );
+    const artifact: ProbeArtifact = { status: "ran", results: [] };
+    mergePlannedProbe({
+      ledger,
+      partition: "p",
+      state,
+      candidates: [saved],
+      artifact,
+    });
+    return artifact.results;
+  };
+  const owner = merged("a");
+  expect(owner[0]?.revealed).toEqual(revealed);
+  expect(owner[1]?.revealed).toEqual(nested.revealed);
+  const reused = merged("b");
+  expect(reused[0]?.reusedFrom).toBe("a");
+  expect(reused[0]?.revealed).toBeUndefined();
+  expect(reused[1]?.reusedFrom).toBe("a");
+  expect(reused[1]?.revealed).toBeUndefined();
+});
+
+test("a later round's selection trials join the earlier round's", () => {
+  const trial = (
+    selector: string,
+    status: "completed" | "timed-out",
+  ): NonNullable<ProbeArtifact["selectionTrials"]>["trials"][number] => ({
+    selector,
+    name: selector,
+    affordance: "link",
+    status,
+    effects: [],
+  });
+  const merged = accumulateProbeRound(
+    {
+      status: "ran",
+      results: [],
+      selectionTrials: {
+        status: "partial",
+        reason: "#b timed-out (selection)",
+        limit: 12,
+        candidates: 2,
+        trials: [trial("#a", "completed"), trial("#b", "timed-out")],
+      },
+    },
+    {
+      status: "ran",
+      results: [],
+      selectionTrials: {
+        status: "ran",
+        limit: 12,
+        candidates: 2,
+        trials: [trial("#b", "completed"), trial("#c", "completed")],
+      },
+    },
+  );
+  expect(merged.selectionTrials).toEqual({
+    status: "partial",
+    reason: "#b timed-out (selection)",
+    limit: 12,
+    candidates: 4,
+    trials: [
+      trial("#a", "completed"),
+      trial("#b", "completed"),
+      trial("#c", "completed"),
+    ],
+  });
+  // A round without the pass keeps the other round's trials.
+  expect(
+    accumulateProbeRound(
+      { status: "ran", results: [] },
+      { status: "ran", results: [], selectionTrials: merged.selectionTrials },
+    ).selectionTrials,
+  ).toBe(merged.selectionTrials);
+});

@@ -110,7 +110,11 @@ export function checkPlugins(directory = root) {
     "version",
     "a semantic version",
   );
-  const claudePath = ".claude-plugin/plugin.json";
+  // Claude Code installs dependencies whenever a plugin root holds package.json
+  // and a lockfile, with no switch to turn it off, so the Claude plugin lives in
+  // a subdirectory that holds neither.
+  const claudeRoot = "plugins/claude";
+  const claudePath = `${claudeRoot}/.claude-plugin/plugin.json`;
   const claude = read(claudePath);
   const portable = read("plugin.json");
   for (const [path, manifest] of [
@@ -146,9 +150,9 @@ export function checkPlugins(directory = root) {
     "extensions.com.openai.hooks",
     'an explicit empty configuration {"hooks":{}}',
   );
-  for (const [path, manifest] of [
-    [claudePath, claude],
-    ["plugin.json", portable],
+  for (const [path, manifest, pluginRoot] of [
+    [claudePath, claude, join(directory, claudeRoot)],
+    ["plugin.json", portable, directory],
   ]) {
     check(
       manifest.skills === undefined,
@@ -156,7 +160,7 @@ export function checkPlugins(directory = root) {
       "skills",
       "absent (default skills/ discovery)",
     );
-    const skills = discoverSkills(directory, manifest, errors, path);
+    const skills = discoverSkills(pluginRoot, manifest, errors, path);
     if (skills.length !== 1 || skills[0].name !== "idiom")
       errors.push(
         `${path}: skills must resolve to exactly one "idiom" skill (found: ${
@@ -199,10 +203,32 @@ export function checkPlugins(directory = root) {
   };
   const claudeEntry = singleEntry(claudeCatalog, claudeCatalogPath);
   check(
-    claudeEntry?.source === "./",
+    claudeEntry?.source === `./${claudeRoot}`,
     claudeCatalogPath,
     "plugins[0].source",
-    '"./" (repository root)',
+    `"./${claudeRoot}" (dependency-free plugin directory)`,
+  );
+  for (const name of [
+    "package.json",
+    "bun.lock",
+    "bun.lockb",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "node_modules",
+  ])
+    check(
+      !existsSync(join(directory, claudeRoot, name)),
+      `${claudeRoot}/${name}`,
+      "file",
+      "absent (Claude Code installs dependencies when a plugin root has package.json and a lockfile)",
+    );
+  check(
+    !existsSync(join(directory, ".claude-plugin/plugin.json")),
+    ".claude-plugin/plugin.json",
+    "file",
+    `absent (the Claude plugin lives in ${claudeRoot})`,
   );
   if (claudeEntry?.version !== undefined)
     check(
@@ -276,10 +302,12 @@ export function checkPlugins(directory = root) {
     "templates/idiom/init.md",
     "skills/idiom/SKILL.md",
     "skills/idiom/references/init.md",
-    "hooks/hooks.json",
-    "hooks/lib.mjs",
-    "hooks/post-tool-use.mjs",
-    "hooks/stop.mjs",
+    `${claudeRoot}/skills/idiom/SKILL.md`,
+    `${claudeRoot}/skills/idiom/references/init.md`,
+    `${claudeRoot}/hooks/hooks.json`,
+    `${claudeRoot}/hooks/lib.mjs`,
+    `${claudeRoot}/hooks/post-tool-use.mjs`,
+    `${claudeRoot}/hooks/stop.mjs`,
   ]) {
     try {
       check(
@@ -293,6 +321,20 @@ export function checkPlugins(directory = root) {
       errors.push(`${path}: required plugin file is missing`);
     }
   }
+  // Hooks run from the plugin cache, which has no node_modules.
+  const hooks = join(directory, claudeRoot, "hooks");
+  if (isDirectory(hooks))
+    for (const file of readdirSync(hooks).filter((f) => f.endsWith(".mjs")))
+      for (const [, specifier] of readFileSync(
+        join(hooks, file),
+        "utf8",
+      ).matchAll(/(?:\bfrom|\bimport)\s*\(?\s*["']([^"']+)["']/g))
+        check(
+          specifier.startsWith("node:") || specifier.startsWith("./"),
+          `${claudeRoot}/hooks/${file}`,
+          `import ${specifier}`,
+          "a node: built-in or a ./ sibling",
+        );
   return errors;
 }
 

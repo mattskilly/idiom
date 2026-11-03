@@ -1,6 +1,14 @@
 import { expect, test } from "vitest";
-import { decisionViews } from "../src/decisions/log.js";
-import { selectFindings } from "../src/review/findings.js";
+import {
+  decisionViews,
+  isFingerprintSuppressed,
+  ruleRejection,
+} from "../src/decisions/log.js";
+import {
+  type FindingDraft,
+  selectFindings,
+  suppressFindingDrafts,
+} from "../src/review/findings.js";
 import { renderReport } from "../src/review/report.js";
 import { decisionSchema } from "../src/schemas/decision.js";
 import { findingSchema } from "../src/schemas/finding.js";
@@ -88,7 +96,9 @@ test("review selection suppresses rules before stable severity ranking and cap",
     ],
   });
   expect(report).toContain("Intentional treatment");
-  expect(report).toContain("minor-first (minor) — Layer: deterministic");
+  expect(report).toContain(
+    "minor-first (minor) — Report-only: not an `idiom decide --finding` target — Layer: deterministic",
+  );
   expect(report).toContain(
     "Severity override: major -> minor by rule lower-deferred (Known low impact)",
   );
@@ -129,4 +139,85 @@ test("only the latest rule judgment suppresses; instance rejection never does", 
     maxFindings: 5,
   });
   expect(superseded.actionable).toEqual([item]);
+});
+
+test("every selection branch applies the same suppression result for a fingerprint", () => {
+  const item = finding("shared", "major");
+  expect(item.fingerprint).toBe("fp-shared");
+  const draft: FindingDraft = {
+    finding: item,
+    selectorHint: "button",
+    stableOrder: 0,
+  };
+  const record = (
+    decision: "accept" | "reject",
+    scope: "instance" | "rule",
+    at: string,
+  ) =>
+    decisionSchema.parse({
+      at,
+      commit: "abc123",
+      findingId: "shared",
+      fingerprint: "fp-shared",
+      decision,
+      scope,
+      actor: "human",
+    });
+  const logs = {
+    "rule reject": [record("reject", "rule", "2026-08-15T10:00:00.000Z")],
+    "rule reject then accept": [
+      record("reject", "rule", "2026-08-15T10:00:00.000Z"),
+      record("accept", "rule", "2026-08-15T11:00:00.000Z"),
+    ],
+    "instance reject only": [
+      record("reject", "instance", "2026-08-15T10:00:00.000Z"),
+    ],
+  };
+  const expected = {
+    "rule reject": true,
+    "rule reject then accept": false,
+    "instance reject only": false,
+  };
+
+  for (const [name, log] of Object.entries(logs)) {
+    const canonical = ruleRejection(["fp-shared"], log);
+    const views = decisionViews(log);
+    const selected = selectFindings({
+      findings: [item],
+      decisions: views,
+      maxFindings: 5,
+    });
+    const drafts = suppressFindingDrafts([draft], log);
+    const results = {
+      canonical: canonical !== undefined,
+      selectedSuppressed: selected.suppressed.some(
+        (entry) => entry.finding === item,
+      ),
+      selectedWithheld: ![
+        ...selected.actionable,
+        ...selected.deferred,
+      ].includes(item),
+      draftSuppressed: drafts.suppressed.some(
+        (entry) => entry.finding === item,
+      ),
+      draftWithheld: !drafts.kept.includes(draft),
+      wrapper: isFingerprintSuppressed("fp-shared", views),
+    };
+    const want = expected[name as keyof typeof expected];
+    expect(results, name).toEqual({
+      canonical: want,
+      selectedSuppressed: want,
+      selectedWithheld: want,
+      draftSuppressed: want,
+      draftWithheld: want,
+      wrapper: want,
+    });
+    if (canonical !== undefined) {
+      expect(selected.suppressed[0]?.decision).toBe(canonical);
+      const draftSuppression = drafts.suppressed[0];
+      expect(draftSuppression?.source).toBe("decision");
+      if (draftSuppression?.source === "decision")
+        expect(draftSuppression.decision).toBe(canonical);
+    }
+  }
 });

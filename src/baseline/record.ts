@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { captureTupleKey } from "../capture/resolve.js";
 import { projectChecksConfig } from "../checks/project-config.js";
 import type { CheckTuple } from "../checks/types.js";
-import { IdiomError } from "../errors.js";
+import { IdiomError, RunFailure } from "../errors.js";
 import { loadRunTuples } from "../review/artifacts.js";
 import type { Flow } from "../schemas/flow.js";
 import { isPublishedFlow } from "../schemas/flow.js";
@@ -78,9 +78,13 @@ export async function recordBaseline(options: {
       metadata.source.dirty === true ||
       (options.requireHead === true && metadata.source.dirty !== false)
     )
-      throw new IdiomError(
-        `baseline record needs a capture of a clean tree; commit or stash first${options.requireHead === true ? ", then capture HEAD again, or inspect with --all" : ""}`,
-      );
+      throw new RunFailure({
+        stage: "capture",
+        cause: "tree-dirty-after-capture",
+        headline: "baseline refused: the captured tree was dirty",
+        detail: `baseline record needs a capture of a clean tree; commit or stash first${options.requireHead === true ? ", then capture HEAD again, or inspect with --all" : ""}`,
+        hint: `commit or stash, then capture HEAD again (if the tree was clean before the run, something the run executed changed a tracked file: commit it or gitignore it)${options.requireHead === true ? ", or inspect with --all" : ""}`,
+      });
   }
   if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(loaded.commit))
     throw new IdiomError(

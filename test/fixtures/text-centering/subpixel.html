@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sub-pixel centring</title>
+    <style>
+      body {
+        margin: 24px;
+        color: #1b1f24;
+      }
+      button {
+        display: inline-flex;
+        align-items: center;
+        margin: 4px;
+        padding: 0 12px;
+        border: 1px solid #8a9099;
+        border-radius: 6px;
+        background: #eef0f3;
+        font-family: Arial, sans-serif;
+      }
+      /* Symmetric boxes whose labels measure 1.0–1.2px off from font metrics alone. */
+      #save { font-size: 18px; height: 32px; }
+      #export { font-size: 28px; height: 50px; }
+      /* A real off-centre label: the padding pushes it about 3px down. */
+      #nudged { font-size: 14px; height: 30px; padding-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Toolbar</h1>
+      <button id="save" type="button">Save</button>
+      <button id="export" type="button">Save</button>
+      <button id="nudged" type="button">Publish</button>
+    </main>
+  </body>
+</html>

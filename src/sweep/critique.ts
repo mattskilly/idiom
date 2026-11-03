@@ -1,7 +1,12 @@
 import type { CheckTuple } from "../checks/types.js";
 import { buildCritiqueContext } from "../critique/context.js";
+import {
+  type DeterministicContextLimit,
+  deterministicContextLimit,
+} from "../critique/deterministic-bound.js";
 import { validateCritiqueResult } from "../critique/schema.js";
 import type {
+  CritiqueEvidenceLimits,
   CritiqueInput,
   CritiqueResult,
   ModelFindingCandidate,
@@ -33,6 +38,10 @@ export type SweepSurface = {
   crops: string[];
   geometryRows: number;
   modelFindings: number;
+  /** Set when the Claude Code critique split or left out this surface's evidence. */
+  evidenceLimits?: CritiqueEvidenceLimits | undefined;
+  /** Set when this surface's deterministic findings context was bounded. */
+  deterministicContextLimit?: DeterministicContextLimit | undefined;
 };
 
 export type SweepCritique = {
@@ -108,6 +117,11 @@ export async function sweepCritique(options: {
       ),
       modelFindings: 0,
     };
+    const limit = deterministicContextLimit(
+      context.deterministicFindings,
+      state,
+    );
+    if (limit !== undefined) surface.deterministicContextLimit = limit;
     result.surfaces.push(surface);
     try {
       const crops = await sweepCrops({
@@ -130,6 +144,8 @@ export async function sweepCritique(options: {
         specAvailable: options.spec !== undefined,
       });
       surface.modelFindings = critique.findings.length;
+      if (critique.evidenceLimits !== undefined)
+        surface.evidenceLimits = critique.evidenceLimits;
       result.findings.push(...critique.findings);
       result.decisionObservations.push(...critique.decisionObservations);
       result.discardedDecisionObservations +=

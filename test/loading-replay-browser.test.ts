@@ -353,6 +353,35 @@ test("on a page with more controls than time, the clicks leave the held replay i
   ).toBe(true);
 }, 90_000);
 
+test("with no flow target, the clicks keep no held reserve and the held replay still runs", async () => {
+  // A no-target run leases each state the capture's remaining lifetime; a
+  // long state timeout stands in for it.
+  const { artifact, slow } = await probe("loading-state/crowded.html", {
+    stateTimeoutMs: 120_000,
+    waitMs: 1500,
+    unbounded: true,
+  });
+  expect(artifact.status).not.toBe("timed-out");
+  expect(
+    artifact.results.some((result) =>
+      /held replay reserve/.test(result.skipped ?? ""),
+    ),
+  ).toBe(false);
+  expect(artifact.heldReplay).toMatchObject({ queued: 1, ran: 1 });
+  expect(slow).toHaveLength(1);
+}, 150_000);
+
+test("with no flow target, an unreached held replay names capture.maxMinutes", async () => {
+  const { artifact } = await probe("loading-state/before.html", {
+    stateTimeoutMs: 6000,
+    controlTimeoutMs: 5000,
+    unbounded: true,
+  });
+  expect(artifact.heldReplay?.notes).toEqual([
+    "not reached: capture.maxMinutes (1 held replays)",
+  ]);
+});
+
 test("a held web step that submits by document navigation notes it once, briefly", async () => {
   const url = `${server.origin}/loading-exclusions/form-nav.html`;
   const { artifact, slow } = await probe("loading-exclusions/form-nav.html", {

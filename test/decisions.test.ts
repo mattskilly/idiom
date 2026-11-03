@@ -8,6 +8,7 @@ import {
   decisionViews,
   isFingerprintSuppressed,
   readDecisionLog,
+  ruleRejection,
 } from "../src/decisions/log.js";
 import { decisionSchema } from "../src/schemas/decision.js";
 import { findingSchema } from "../src/schemas/finding.js";
@@ -123,6 +124,67 @@ test("latest decision views separate finding judgment from standing rule memory"
   expect(views.byFindingId.get("one")).toEqual(records[2]);
   expect(views.byFindingId.get("two")).toEqual(records[1]);
   expect(isFingerprintSuppressed("shared", views)).toBe(false);
+  expect(views.ruleDecisions).toEqual([records[0], records[1]]);
+  expect(
+    isFingerprintSuppressed("shared", decisionViews(records.slice(0, 1))),
+  ).toBe(true);
+});
+
+test("ruleRejection returns the latest rule rejection across identities", () => {
+  const record = (
+    fingerprint: string,
+    decision: "accept" | "reject",
+    scope: "instance" | "rule",
+    at: string,
+  ) =>
+    decisionSchema.parse({
+      at,
+      commit: "a",
+      findingId: "one",
+      fingerprint,
+      decision,
+      scope,
+      actor: "human",
+    });
+  const reject = record("fp", "reject", "rule", "2026-08-14T12:00:00.000Z");
+  const accept = record("fp", "accept", "rule", "2026-08-14T13:00:00.000Z");
+  const laterReject = record(
+    "fp",
+    "reject",
+    "rule",
+    "2026-08-14T14:00:00.000Z",
+  );
+
+  expect(ruleRejection(["fp"], [reject])).toBe(reject);
+  expect(ruleRejection(["fp"], [])).toBeUndefined();
+  expect(
+    ruleRejection(
+      ["fp"],
+      [record("fp", "reject", "instance", "2026-08-14T12:00:00.000Z")],
+    ),
+  ).toBeUndefined();
+  expect(ruleRejection(["fp"], [reject, accept])).toBeUndefined();
+  expect(ruleRejection(["fp"], [accept, laterReject])).toBe(laterReject);
+  expect(ruleRejection(["other"], [reject])).toBeUndefined();
+
+  const aliasReject = record(
+    "alias",
+    "reject",
+    "rule",
+    "2026-08-14T15:00:00.000Z",
+  );
+  expect(ruleRejection(["fp", "alias"], [reject, accept, aliasReject])).toBe(
+    aliasReject,
+  );
+  const aliasAccept = record(
+    "alias",
+    "accept",
+    "rule",
+    "2026-08-14T15:00:00.000Z",
+  );
+  expect(
+    ruleRejection(["fp", "alias"], [laterReject, aliasAccept]),
+  ).toBeUndefined();
 });
 
 test("malformed logs are line-numbered and cannot be extended", async () => {

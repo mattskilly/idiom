@@ -15,6 +15,9 @@ function stable(value: unknown): unknown {
 
 /** Call with the complete schema-normalized checks block, including capture settings. */
 export function checksConfigHash(checks: Project["checks"]): string {
+  // The build gate changes what is selected, never what a check reports.
+  const { gate: _gate, ...rest } = checks;
+  checks = rest;
   return `sha256:${createHash("sha256")
     .update(
       JSON.stringify(

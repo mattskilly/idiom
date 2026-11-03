@@ -1,0 +1,18 @@
+{
+  "recorded": "idiom brief triage --json via claude-code claude-sonnet-5-5, rubric v1, 2026-10-31",
+  "request": "Add a default Pinned group at the top of the Add drawer that users can customize.",
+  "response": {
+    "verdict": "design decision",
+    "reason": "Adds a new group surface at the top of the Add drawer (new-control-or-surface, placement-or-timing), a customization interaction, a user-facing concept name (\"Pinned\"), and likely a per-item pin control.",
+    "questions": [
+      "How do users add or remove items in Pinned: a per-item pin control on every drawer item, drag into the group, or a menu? How large is that control next to the item row, and does it increase row height?",
+      "Is the pin control visible all the time or only on hover? How does it work on touch (no hover) and from the keyboard (focus order, shortcut, accessible label)?",
+      "What does Pinned contain by default before the user customizes it (empty, a preset list, or recent/frequent items), and how does an empty state look and read compared with real items?",
+      "Can users reorder items within Pinned, and how (drag handle, keyboard move up/down, touch long-press)?",
+      "Is 'Pinned' the right user-facing name for the group, and does it match any existing term for favorites or pins elsewhere in the product?",
+      "Does Pinned stay fixed at the top when the drawer is scrolled or searched, and are pinned items also shown in their original group (duplicated) or moved out?",
+      "How much drawer space does Pinned take: is there a maximum number of pinned items, does it collapse, and how does it affect how many other items fit without scrolling?",
+      "Is the customization stored per user or per workspace/device, and is there a way to reset Pinned to its default?"
+    ]
+  }
+}

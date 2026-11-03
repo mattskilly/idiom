@@ -42,6 +42,8 @@ export const learnedEntrySchema = z
       .strict()
       .optional(),
     screenshot: z.string().trim().min(1).optional(),
+    /** The decided brief this rejection was about (`learn --from-brief`). */
+    brief: z.string().trim().min(1).optional(),
   })
   .strict();
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   Dialog,
   Download,
@@ -11,14 +12,20 @@ import { animatedKeys, snapCandidateKeys } from "../checks/motion-snap.js";
 import type {
   ActionTimelineArtifact,
   ExplanationRecord,
+  ObservationArtifact,
   ProbeArtifact,
   ProbeAttemptTimings,
   ProbeCollection,
   ProbeEffect,
   ProbeResult,
   ProbeSafetyLedger,
+  Rect,
+  RevealedState,
+  SelectionTrial,
+  SelectsAncestor,
 } from "../checks/types.js";
 import { DESTRUCTIVE_ACTION_PATTERN } from "../copy-policy.js";
+import { settleAnimations } from "./animation-settle.js";
 import { Deadline, DeadlineExpired, deadlinePage } from "./deadline.js";
 import { beginEffectWindow, LATE_CONTENT_WINDOW_MS } from "./effect-window.js";
 import {
@@ -45,6 +52,7 @@ import {
   MAX_HELD_REPLAYS,
   replayHeld,
 } from "./loading.js";
+import { menuInventory, triggerBox } from "./menu-inventory.js";
 import { MotionCollector, mergeMotion } from "./motion.js";
 import {
   identityKeys,
@@ -52,8 +60,17 @@ import {
   type ProbeLedger,
   type ProbeLedgerEntry,
 } from "./probe-ledger.js";
+import {
+  backgroundRequestLabels,
+  clickNetworkEffect,
+  type InitiatedRequest,
+} from "./probe-network.js";
 import type { ReplayLedger } from "./replay-ledger.js";
-import { ignoredRequest, probeRequestAllowed } from "./request-policy.js";
+import {
+  ignoredRequest,
+  probeRequestAllowed,
+  safeRequestMethod,
+} from "./request-policy.js";
 import { mergeTimelines, TimelineCollector } from "./timeline.js";
 import type { CaptureHooks } from "./types.js";
 
@@ -70,6 +87,11 @@ export type ProbeOptions = CaptureHooks & {
     | undefined;
   enumerateOnly?: boolean | undefined;
   flowBudget?: import("./probe-budget.js").ProbeBudgetLease | undefined;
+  /**
+   * No flow target: per-state time fractions are off; only per-control
+   * timeouts and the capture lifetime bound the state.
+   */
+  unbounded?: boolean | undefined;
   /** Replay on the supplied disposable page, including replacement pages. */
   restore: (page: Page) => Promise<void>;
   replacePage?: (() => Promise<Page>) | undefined;
@@ -125,7 +147,40 @@ export type ProbeOptions = CaptureHooks & {
   heldReplay?:
     | { delayMs: number; withinMs: number; steps: HeldStep[] }
     | undefined;
+  /**
+   * Observe a disclosure the probe opened, in place, for the revealed-state
+   * checks. Absent: nothing is observed (library callers are unchanged).
+   */
+  observeRevealed?:
+    | ((
+        page: Page,
+        revealed: { root?: string | undefined; trigger: string },
+      ) => Promise<ObservationArtifact>)
+    | undefined;
+  /** Revealed observations per state (default 12); 0 records none. */
+  maxRevealed?: number | undefined;
+  /**
+   * The build gate's changed region: rendered fingerprints from a reference
+   * run. An ordinary control whose fingerprint is unchanged is not clicked.
+   */
+  region?: ProbeRegion | undefined;
 };
+
+export type ProbeRegion = {
+  reference: ReadonlyMap<string, string>;
+  runId: string;
+};
+
+/** Why the gate left a control out: it renders exactly as in the reference. */
+export const gateUnchangedReason = (runId: string) =>
+  `gate: unchanged since ${runId}`;
+
+/** Default `checks.probe.maxRevealed`. */
+export const DEFAULT_MAX_REVEALED = 12;
+/** Links and look-alike controls the selection pass clicks per state. */
+export const SELECTION_TRIAL_LIMIT = 12;
+/** The longest a revealed observation may take inside a control's budget. */
+const REVEALED_OBSERVE_MS = 3000;
 
 /** A web step whose action sent requests, replayable on a fresh page. */
 export type HeldStep = {
@@ -156,6 +211,10 @@ export type ProbeCandidate = {
   modal?: boolean | undefined;
   /** Declares a popup (`aria-haspopup`): its revealed items are nested work. */
   popup?: boolean | undefined;
+  /** Opens something: a details summary, a popup or an expander. */
+  disclosure?: "details" | "popup" | "expanded" | undefined;
+  /** `aria-controls`: the ids of what the control opens. */
+  controls?: string | undefined;
   region?: string | undefined;
   /** Explicit or implicit role, part of the control's identity. */
   role?: string | undefined;
@@ -165,9 +224,81 @@ export type ProbeCandidate = {
   order?: number | undefined;
   unavailable?: string | undefined;
   intentReason?: string | undefined;
+  /** Rendered identity: rect, a fixed set of computed styles and text. */
+  fingerprint?: string | undefined;
 };
 
 type Candidate = ProbeCandidate;
+
+/**
+ * One digest per candidate from its identity key, rounded rect, a fixed list
+ * of computed styles and its trimmed text. Integer rects keep sub-pixel
+ * layout noise from marking every control changed.
+ */
+async function renderedFingerprints(
+  page: Page,
+  candidates: Candidate[],
+  keys: string[],
+): Promise<string[]> {
+  const rendered = await page.evaluate(
+    (paths) => {
+      const properties = [
+        "display",
+        "visibility",
+        "opacity",
+        "color",
+        "background-color",
+        "border-top-width",
+        "border-right-width",
+        "border-bottom-width",
+        "border-left-width",
+        "border-top-color",
+        "border-right-color",
+        "border-bottom-color",
+        "border-left-color",
+        "font-size",
+        "font-weight",
+        "padding",
+        "gap",
+      ];
+      return paths.map((path) => {
+        let element: Element | null = null;
+        try {
+          element = document.querySelector(path);
+        } catch {
+          element = null;
+        }
+        if (!element) return "absent";
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return JSON.stringify([
+          [rect.x, rect.y, rect.width, rect.height].map(Math.round),
+          properties.map((property) => style.getPropertyValue(property)),
+          (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 200),
+        ]);
+      });
+    },
+    candidates.map((candidate) => candidate.path),
+  );
+  return rendered.map((value, index) =>
+    createHash("sha1")
+      .update(`${keys[index] ?? ""}\0${value}`)
+      .digest("hex"),
+  );
+}
+
+/** The probe's own check candidates, decided from one state's names. */
+function checkCandidate(candidate: Candidate, names: Map<string, number>) {
+  return (
+    (names.get(candidate.name) ?? 0) > 1 ||
+    Boolean(candidate.explanation) ||
+    candidate.textLabel === false ||
+    (candidate.popup === true && !candidate.submit) ||
+    (candidate.textLabel === true &&
+      !candidate.submit &&
+      (candidate.role === "button" || candidate.role === "menuitem"))
+  );
+}
 
 /** Landmarks whose controls are shared chrome, probed after a state's own. */
 const chromeRegion = /^(?:banner|navigation|toolbar|menubar|contentinfo)\b/;
@@ -287,6 +418,9 @@ async function installInstrumentation(
   page: Page,
   respectControlIntent: boolean,
 ): Promise<void> {
+  // Normally already installed before the document's scripts; this late
+  // copy covers a document loaded without it.
+  await page.evaluate(recordClickRequests);
   await page.evaluate((respectControlIntent) => {
     const scope = window as unknown as {
       __idiomProbe?: {
@@ -294,7 +428,9 @@ async function installInstrumentation(
         aria: number;
         clipboard: number;
         popups: number;
+        initiated: InitiatedRequest[];
       };
+      __idiomRequests?: ClickRequestRecorder;
       __idiomCleanup?: () => void;
       __idiomPickerCount?: () => number;
       __idiomObserver?: MutationObserver;
@@ -302,6 +438,7 @@ async function installInstrumentation(
         target: Node;
         type: MutationRecordType;
         attributeName: string | null;
+        oldValue: string | null;
       }>;
     };
     scope.__idiomCleanup?.();
@@ -396,7 +533,13 @@ async function installInstrumentation(
         });
       }
     }
-    const state = { mutations: 0, aria: 0, clipboard: 0, popups: 0 };
+    const state = {
+      mutations: 0,
+      aria: 0,
+      clipboard: 0,
+      popups: 0,
+      initiated: [] as InitiatedRequest[],
+    };
     scope.__idiomProbe = state;
     const counted: NonNullable<typeof scope.__idiomRecords> = [];
     scope.__idiomRecords = counted;
@@ -455,6 +598,7 @@ async function installInstrumentation(
           target: record.target,
           type: record.type,
           attributeName: record.attributeName,
+          oldValue: record.oldValue,
         });
       }
     });
@@ -528,6 +672,16 @@ async function installInstrumentation(
     restore.push(() => {
       if (window.open === wrappedOpen) window.open = open;
     });
+    // Requests the click starts are recorded by `recordClickRequests`,
+    // armed only for this window.
+    const requests = scope.__idiomRequests;
+    if (requests) {
+      requests.initiated = state.initiated;
+      requests.armed = true;
+      restore.push(() => {
+        requests.armed = false;
+      });
+    }
   }, respectControlIntent);
 }
 
@@ -548,6 +702,7 @@ async function readCounters(page: Page) {
         aria: number;
         clipboard: number;
         popups: number;
+        initiated: InitiatedRequest[];
       };
     };
     return {
@@ -556,6 +711,7 @@ async function readCounters(page: Page) {
         aria: 0,
         clipboard: 0,
         popups: 0,
+        initiated: [],
       }),
       pickers: scope.__idiomPickerCount?.() ?? 0,
       ...(() => {
@@ -608,6 +764,603 @@ async function primaryMutations(page: Page, clicked: string): Promise<number> {
       }).length;
     }, clicked)
     .catch(() => 1);
+}
+
+/**
+ * After a click: a strict ancestor of the clicked element newly became
+ * selected, while neither selection nor focus moved to anything matching
+ * the clicked element. Reads the click's own mutation records; never clicks.
+ * `name` is the clicked element's accessible name, as `enumerate` reads it.
+ */
+async function ancestorSelection(
+  page: Page,
+  path: string,
+  name: string,
+): Promise<SelectsAncestor | undefined> {
+  return await page.evaluate(
+    ({ path, name }) => {
+      const scope = window as unknown as {
+        __idiomRecords?: Array<{
+          target: Node;
+          type: MutationRecordType;
+          attributeName: string | null;
+          oldValue?: string | null;
+        }>;
+      };
+      const target = document.querySelector(path);
+      if (target === null) return undefined;
+      const role = target.getAttribute("role")?.trim().split(/\s+/)[0] ?? "";
+      if (
+        /^(?:option|tab|radio|checkbox|switch|menuitemradio|menuitemcheckbox|treeitem|gridcell|row)$/.test(
+          role,
+        ) ||
+        target.matches("input[type=radio], input[type=checkbox]") ||
+        target.closest("label") !== null
+      )
+        return undefined;
+      const alpha = (color: string) => {
+        if (color === "transparent") return 0;
+        const slash = color.match(/\/\s*([\d.]+%?)\s*\)$/);
+        if (slash?.[1] !== undefined)
+          return slash[1].endsWith("%")
+            ? Number.parseFloat(slash[1]) / 100
+            : Number.parseFloat(slash[1]);
+        const rgba = color.match(/^rgba\((.*)\)$/);
+        if (rgba?.[1] !== undefined)
+          return Number.parseFloat(rgba[1].split(",").at(-1) ?? "1");
+        return 1;
+      };
+      const style = getComputedStyle(target);
+      const parentStyle =
+        target.parentElement === null
+          ? undefined
+          : getComputedStyle(target.parentElement);
+      const ownFill =
+        alpha(style.backgroundColor) > 0 &&
+        style.backgroundColor !== parentStyle?.backgroundColor;
+      const framed = (["Top", "Right", "Bottom", "Left"] as const).every(
+        (side) =>
+          (Number.parseFloat(style[`border${side}Width`]) || 0) >= 1 &&
+          !["none", "hidden"].includes(style[`border${side}Style`]) &&
+          alpha(style[`border${side}Color`]) > 0,
+      );
+      const affordance: "button" | "link" | "pointer" | undefined =
+        ownFill || framed
+          ? "button"
+          : target.matches("a[href]") ||
+              style.textDecorationLine.includes("underline") ||
+              (parentStyle !== undefined &&
+                style.color !== parentStyle.color &&
+                alpha(style.backgroundColor) === 0)
+            ? "link"
+            : style.cursor === "pointer"
+              ? "pointer"
+              : undefined;
+      if (affordance === undefined) return undefined;
+      const selectedClass = /(?:^|[-_:])(?:selected|active|current)(?:$|[-_])/i;
+      const absent = (value: string | null | undefined) =>
+        value === null || value === undefined || value === "false";
+      const markerOf = (
+        element: Element,
+        attribute: string,
+        old: string | null,
+      ): string | undefined => {
+        const now = element.getAttribute(attribute);
+        if (attribute === "aria-selected")
+          return now === "true" && old !== "true" ? attribute : undefined;
+        if (
+          attribute === "aria-current" ||
+          attribute === "data-selected" ||
+          attribute === "data-active" ||
+          attribute === "data-current"
+        )
+          return !absent(now) && absent(old) ? attribute : undefined;
+        if (attribute === "data-state")
+          return (now === "active" || now === "selected") && old !== now
+            ? `data-state:${now}`
+            : undefined;
+        if (attribute === "class") {
+          const before = new Set((old ?? "").split(/\s+/));
+          const token = [...element.classList].find(
+            (item) => selectedClass.test(item) && !before.has(item),
+          );
+          return token === undefined ? undefined : `class:${token}`;
+        }
+        return undefined;
+      };
+      // The first record per element and attribute holds the pre-click value.
+      const firsts = new Map<
+        string,
+        { element: Element; old: string | null }
+      >();
+      const ids = new Map<Element, number>();
+      for (const record of scope.__idiomRecords ?? []) {
+        if (record.type !== "attributes" || record.attributeName === null)
+          continue;
+        if (!(record.target instanceof Element)) continue;
+        const id = ids.get(record.target) ?? ids.size;
+        ids.set(record.target, id);
+        const key = `${id}|${record.attributeName}`;
+        if (!firsts.has(key))
+          firsts.set(key, {
+            element: record.target,
+            old: record.oldValue ?? null,
+          });
+      }
+      const marked: Array<{ element: Element; marker: string }> = [];
+      for (const [key, { element, old }] of firsts) {
+        const marker = markerOf(element, key.slice(key.indexOf("|") + 1), old);
+        if (marker !== undefined) marked.push({ element, marker });
+      }
+      if (marked.length === 0) return undefined;
+      const normalized = (value: string) =>
+        value.replace(/\s+/g, " ").trim().slice(0, 120);
+      const nameOf = (element: Element) =>
+        normalized(
+          (element.getAttribute("aria-labelledby") ?? "")
+            .split(/\s+/)
+            .map((id) => document.getElementById(id)?.textContent ?? "")
+            .join(" ")
+            .trim() ||
+            element.getAttribute("aria-label") ||
+            (element as HTMLElement).innerText ||
+            (element instanceof HTMLInputElement ? element.value : "") ||
+            element.getAttribute("title") ||
+            "",
+        );
+      const wanted = normalized(name);
+      const references = (element: Element) =>
+        target.id !== "" &&
+        ([
+          "aria-controls",
+          "aria-labelledby",
+          "aria-describedby",
+          "aria-owns",
+          "aria-activedescendant",
+        ].some((attribute) =>
+          (element.getAttribute(attribute) ?? "")
+            .split(/\s+/)
+            .includes(target.id),
+        ) ||
+          element.getAttribute("for") === target.id);
+      const matches = (element: Element) =>
+        (wanted !== "" && nameOf(element) === wanted) || references(element);
+      // Selection that reached the clicked element, or anything standing for
+      // it elsewhere, is the click working.
+      for (const { element } of marked) {
+        if (element === target || target.contains(element)) return undefined;
+        if (!element.contains(target) && matches(element)) return undefined;
+      }
+      const active = document.activeElement;
+      if (
+        active !== null &&
+        active !== document.body &&
+        active !== target &&
+        !target.contains(active) &&
+        !active.contains(target) &&
+        matches(active)
+      )
+        return undefined;
+      const area = (element: Element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.width * rect.height;
+      };
+      const visible = (element: Element) =>
+        element.checkVisibility({
+          checkOpacity: true,
+          checkVisibilityCSS: true,
+        }) && area(element) > 0;
+      // ARIA states name the selection best, then data attributes, then classes.
+      const rank = (marker: string) =>
+        marker.startsWith("aria-") ? 0 : marker.startsWith("data-") ? 1 : 2;
+      const ancestors = marked
+        .filter(
+          ({ element }) =>
+            element !== target &&
+            element.contains(target) &&
+            element !== document.body &&
+            element !== document.documentElement,
+        )
+        .sort((a, b) => rank(a.marker) - rank(b.marker));
+      // The nearest selected ancestor speaks for the click.
+      const nearest = ancestors.find(
+        ({ element }) =>
+          !ancestors.some(
+            (other) =>
+              other.element !== element && element.contains(other.element),
+          ),
+      );
+      if (nearest === undefined) return undefined;
+      const ancestor = nearest.element;
+      // A wrapper that holds only the clicked element (`<li class=active><a>`)
+      // is its route marker, not a separate block.
+      const holdsOthers = [
+        ...ancestor.querySelectorAll("a[href], button, [role=button], input"),
+      ].some(
+        (other) =>
+          other !== target &&
+          !target.contains(other) &&
+          !other.contains(target) &&
+          visible(other),
+      );
+      if (!holdsOthers && area(ancestor) < 2 * area(target)) return undefined;
+      const pathFor = (element: Element): string => {
+        const parts: string[] = [];
+        let current: Element | null = element;
+        while (current !== null && current !== document.documentElement) {
+          const parent: Element | null = current.parentElement;
+          const tag = current.tagName.toLowerCase();
+          if (parent === null) {
+            parts.unshift(tag);
+            break;
+          }
+          const index =
+            [...parent.children]
+              .filter((child) => child.tagName === current?.tagName)
+              .indexOf(current) + 1;
+          parts.unshift(`${tag}:nth-of-type(${index})`);
+          current = parent;
+        }
+        return `html > ${parts.join(" > ")}`;
+      };
+      const generatedId = /^[:_«]r|^radix-|^headlessui-|\d{3,}/;
+      const label = normalized(
+        ancestor.getAttribute("aria-label") ||
+          (ancestor.getAttribute("aria-labelledby") ?? "")
+            .split(/\s+/)
+            .map((id) => document.getElementById(id)?.textContent ?? "")
+            .join(" "),
+      );
+      const tag = ancestor.tagName.toLowerCase();
+      const ancestorRole = ancestor
+        .getAttribute("role")
+        ?.trim()
+        .split(/\s+/)[0];
+      return {
+        ancestor:
+          ancestor.id !== "" && !generatedId.test(ancestor.id)
+            ? `#${CSS.escape(ancestor.id)}`
+            : pathFor(ancestor),
+        ancestorName: (
+          label || (ancestorRole ? `${ancestorRole} ${tag}` : tag)
+        ).slice(0, 60),
+        marker: nearest.marker,
+        affordance,
+      };
+    },
+    { path, name },
+  );
+}
+
+type SelectionCandidate = {
+  path: string;
+  selector: string;
+  name: string;
+  affordance: "button" | "link" | "pointer";
+  /** Same as `enumerate`'s: already selected or a drag handle, when opted in. */
+  intentReason?: string | undefined;
+};
+
+/**
+ * Links and look-alike controls the main pass never clicks, each inside a
+ * selectable container (a block an editor canvas can select), in document
+ * order. Innermost first: a candidate holding another is dropped.
+ */
+async function selectionCandidates(
+  page: Page,
+  skip: string[],
+  already: string[],
+  respectControlIntent: boolean,
+): Promise<SelectionCandidate[]> {
+  return await page.evaluate(
+    ({ skipSelectors, already, respectControlIntent }) => {
+      const pathFor = (element: Element): string => {
+        const parts: string[] = [];
+        let current: Element | null = element;
+        while (current !== null && current !== document.documentElement) {
+          const parent: Element | null = current.parentElement;
+          const tag = current.tagName.toLowerCase();
+          if (parent === null) {
+            parts.unshift(tag);
+            break;
+          }
+          const index =
+            [...parent.children]
+              .filter((child) => child.tagName === current?.tagName)
+              .indexOf(current) + 1;
+          parts.unshift(`${tag}:nth-of-type(${index})`);
+          current = parent;
+        }
+        return `html > ${parts.join(" > ")}`;
+      };
+      const visible = (element: Element) => {
+        if (!element.checkVisibility()) return false;
+        const rect = element.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        let current: Element | null = element;
+        while (current !== null) {
+          const style = getComputedStyle(current);
+          if (
+            style.display === "none" ||
+            style.visibility === "hidden" ||
+            Number(style.opacity) <= 0
+          )
+            return false;
+          current = current.parentElement;
+        }
+        return true;
+      };
+      const nameOf = (element: Element) =>
+        (
+          (element.getAttribute("aria-labelledby") ?? "")
+            .split(/\s+/)
+            .map((id) => document.getElementById(id)?.textContent ?? "")
+            .join(" ")
+            .trim() ||
+          element.getAttribute("aria-label") ||
+          (element as HTMLElement).innerText ||
+          (element instanceof HTMLInputElement ? element.value : "") ||
+          element.getAttribute("title") ||
+          ""
+        )
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 120);
+      const alpha = (color: string) => {
+        if (color === "transparent") return 0;
+        const slash = color.match(/\/\s*([\d.]+%?)\s*\)$/);
+        if (slash?.[1] !== undefined)
+          return slash[1].endsWith("%")
+            ? Number.parseFloat(slash[1]) / 100
+            : Number.parseFloat(slash[1]);
+        const rgba = color.match(/^rgba\((.*)\)$/);
+        if (rgba?.[1] !== undefined)
+          return Number.parseFloat(rgba[1].split(",").at(-1) ?? "1");
+        return 1;
+      };
+      // Must match `enumerate`: these are the main pass's clicks.
+      const controlSelector =
+        "button, summary, [role=button], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], input[type=button], input[type=submit], [aria-haspopup]:not([aria-haspopup=false]):not(input, textarea, select, [contenteditable]), [aria-expanded]:not(input, textarea, select, [contenteditable])";
+      const area = (element: Element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.width * rect.height;
+      };
+      const pointerOrigin = (element: Element, cursors: string[]) =>
+        cursors.includes(getComputedStyle(element).cursor) &&
+        (element.parentElement === null ||
+          getComputedStyle(element.parentElement).cursor !==
+            getComputedStyle(element).cursor);
+      const buttonLook = (element: Element) => {
+        const style = getComputedStyle(element);
+        const parentStyle =
+          element.parentElement === null
+            ? undefined
+            : getComputedStyle(element.parentElement);
+        const ownFill =
+          alpha(style.backgroundColor) > 0 &&
+          style.backgroundColor !== parentStyle?.backgroundColor;
+        const framed = (["Top", "Right", "Bottom", "Left"] as const).every(
+          (side) =>
+            (Number.parseFloat(style[`border${side}Width`]) || 0) >= 1 &&
+            !["none", "hidden"].includes(style[`border${side}Style`]) &&
+            alpha(style[`border${side}Color`]) > 0,
+        );
+        return ownFill || framed;
+      };
+      const directText = (element: Element) =>
+        [...element.childNodes]
+          .filter((node) => node.nodeType === Node.TEXT_NODE)
+          .map((node) => node.textContent ?? "")
+          .join("")
+          .replace(/\s+/g, " ")
+          .trim();
+      const lookAlike = (element: Element) => {
+        const text = directText(element);
+        return (
+          text.length >= 1 &&
+          text.length <= 40 &&
+          element.getBoundingClientRect().height <= 64 &&
+          buttonLook(element)
+        );
+      };
+      const affordanceOf = (element: Element) => {
+        const style = getComputedStyle(element);
+        const parentStyle =
+          element.parentElement === null
+            ? undefined
+            : getComputedStyle(element.parentElement);
+        if (buttonLook(element)) return "button" as const;
+        if (
+          element.matches("a[href]") ||
+          style.textDecorationLine.includes("underline") ||
+          (parentStyle !== undefined &&
+            style.color !== parentStyle.color &&
+            alpha(style.backgroundColor) === 0)
+        )
+          return "link" as const;
+        return "pointer" as const;
+      };
+      const selectable = (element: Element) =>
+        (element.matches("[tabindex]") &&
+          !element.matches(
+            "a[href], button, input, select, textarea, summary",
+          )) ||
+        element.matches(
+          "[aria-selected], [data-selected], [data-active], [data-state], [draggable=true], [role=option], [role=gridcell], [role=treeitem], [role=row]",
+        ) ||
+        pointerOrigin(element, ["pointer", "move", "grab"]);
+      const container = (element: Element) => {
+        let current = element.parentElement;
+        for (let depth = 0; current !== null && depth < 8; depth += 1) {
+          if (current === document.body || current === document.documentElement)
+            return false;
+          if (area(current) > area(element) && selectable(current)) return true;
+          current = current.parentElement;
+        }
+        return false;
+      };
+      const skipped = (element: Element) =>
+        skipSelectors.some((selector) => {
+          try {
+            return element.closest(selector) !== null;
+          } catch {
+            return false;
+          }
+        });
+      // Must match `enumerate`'s intentReason.
+      const intentReason = (element: Element): string | undefined => {
+        if (!respectControlIntent) return undefined;
+        for (const attribute of [
+          "aria-pressed",
+          "aria-selected",
+          "aria-checked",
+        ])
+          if (element.getAttribute(attribute) === "true")
+            return `already selected: ${attribute}`;
+        const current = element.getAttribute("aria-current")?.trim();
+        if (current && current !== "false")
+          return "already selected: aria-current";
+        if (element.getAttribute("draggable")?.toLowerCase() === "true")
+          return "drag handle: draggable";
+        if (/drag/i.test(element.getAttribute("aria-roledescription") ?? ""))
+          return "drag handle: aria-roledescription";
+        if (/\b(move|drag|reorder)\b/i.test(nameOf(element)))
+          return "drag handle: name";
+        return undefined;
+      };
+      const done = new Set(already);
+      const found: Element[] = [];
+      for (const element of document.body?.querySelectorAll("*") ?? []) {
+        if (element.closest(controlSelector) !== null) continue;
+        const link = element.closest("a[href]");
+        if (link !== null && link !== element) continue;
+        if (
+          !(
+            element.matches("a[href]") ||
+            pointerOrigin(element, ["pointer"]) ||
+            lookAlike(element)
+          )
+        )
+          continue;
+        if (!visible(element) || skipped(element) || !container(element))
+          continue;
+        found.push(element);
+      }
+      return found
+        .filter(
+          (element) =>
+            !found.some(
+              (other) => other !== element && element.contains(other),
+            ),
+        )
+        .map((element) => ({ element, path: pathFor(element) }))
+        .filter(({ path }) => !done.has(path))
+        .map(({ element, path }) => {
+          const reason = intentReason(element);
+          return {
+            path,
+            selector: element.id ? `#${CSS.escape(element.id)}` : path,
+            name: nameOf(element),
+            affordance: affordanceOf(element),
+            ...(reason ? { intentReason: reason } : {}),
+          };
+        });
+    },
+    { skipSelectors: skip, already, respectControlIntent },
+  );
+}
+
+/**
+ * Click one selection candidate with link navigation suppressed. A
+ * window-level bubble listener cancels a link's default action after every
+ * page handler ran, so the app sees an ordinary click and the page stays.
+ * No motion or timeline evidence is recorded.
+ */
+async function selectionTrial(
+  page: Page,
+  candidate: SelectionCandidate,
+  waitMs: number,
+  respectControlIntent: boolean,
+): Promise<SelectionTrial> {
+  const base = {
+    selector: candidate.selector,
+    name: candidate.name,
+    affordance: candidate.affordance,
+  };
+  const before = page.url();
+  let popups = 0;
+  const onPopup = () => {
+    popups += 1;
+  };
+  page.on("popup", onPopup);
+  try {
+    await installInstrumentation(page, respectControlIntent);
+    await page.evaluate(() => {
+      const scope = window as unknown as {
+        __idiomLinkGuard?: (event: Event) => void;
+      };
+      if (scope.__idiomLinkGuard)
+        window.removeEventListener("click", scope.__idiomLinkGuard);
+      scope.__idiomLinkGuard = (event: Event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest("a[href]") !== null
+        )
+          event.preventDefault();
+      };
+      window.addEventListener("click", scope.__idiomLinkGuard);
+    });
+    const effectWindow = await beginEffectWindow(page, waitMs);
+    try {
+      try {
+        await page
+          .locator(candidate.path)
+          .first()
+          .click({ timeout: 1500, noWaitAfter: true });
+      } catch (error) {
+        return {
+          ...base,
+          status: "skipped",
+          skipped: `not clickable: ${(error instanceof Error ? error.message : String(error)).split("\n")[0] ?? ""}`,
+          effects: [],
+        };
+      }
+      await effectWindow.wait();
+    } finally {
+      await effectWindow.dispose();
+    }
+    const effects = new Set<ProbeEffect>();
+    if (page.url() !== before) effects.add("navigation");
+    const counters = await readCounters(page).catch(() => undefined);
+    if (counters === undefined || counters.mutations > 0) effects.add("dom");
+    if ((counters?.aria ?? 0) > 0) effects.add("aria");
+    if ((counters?.popups ?? 0) > 0 || popups > 0) effects.add("popup");
+    const selectsAncestor =
+      !effects.has("navigation") && !effects.has("popup")
+        ? await ancestorSelection(page, candidate.path, candidate.name).catch(
+            () => undefined,
+          )
+        : undefined;
+    return {
+      ...base,
+      status: "completed",
+      effects: [...effects],
+      ...(selectsAncestor === undefined ? {} : { selectsAncestor }),
+    };
+  } finally {
+    page.off("popup", onPopup);
+    await page
+      .evaluate(() => {
+        const scope = window as unknown as {
+          __idiomLinkGuard?: (event: Event) => void;
+        };
+        if (scope.__idiomLinkGuard)
+          window.removeEventListener("click", scope.__idiomLinkGuard);
+        delete scope.__idiomLinkGuard;
+      })
+      .catch(() => undefined);
+    await cleanupInstrumentation(page);
+  }
 }
 
 /** Visible named regions: what a click "opens" is the set that changes. */
@@ -895,8 +1648,10 @@ async function enumerate(
         rootSelector === undefined
           ? [document]
           : [...document.querySelectorAll(rootSelector)];
+      // Disclosures (popup triggers and expanders) are controls whatever
+      // their element; text entry is left to its own role.
       const controlSelector =
-        "button, summary, [role=button], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], input[type=button], input[type=submit]";
+        "button, summary, [role=button], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], input[type=button], input[type=submit], [aria-haspopup]:not([aria-haspopup=false]):not(input, textarea, select, [contenteditable]), [aria-expanded]:not(input, textarea, select, [contenteditable])";
       const selectedSelector =
         "input[type=radio]:checked, [role=tab][aria-selected=true], [role=radio][aria-checked=true]";
       const controls = new Set(
@@ -971,6 +1726,8 @@ async function enumerate(
         submit: boolean;
         modal: boolean;
         popup?: boolean;
+        disclosure?: "details" | "popup" | "expanded";
+        controls?: string;
         unavailable?: string;
         intentReason?: string;
       }> = [];
@@ -1095,12 +1852,25 @@ async function enumerate(
         const region = regionOf(control);
         const reason = intentReason(control);
         const haspopup = control.getAttribute("aria-haspopup");
+        const popup = haspopup !== null && haspopup !== "false";
+        const disclosure =
+          control.tagName.toLowerCase() === "summary" &&
+          control.parentElement instanceof HTMLDetailsElement
+            ? ("details" as const)
+            : popup
+              ? ("popup" as const)
+              : control.hasAttribute("aria-expanded")
+                ? ("expanded" as const)
+                : undefined;
+        const controls = control.getAttribute("aria-controls")?.trim();
         result.push({
+          ...(disclosure === undefined ? {} : { disclosure }),
+          ...(controls ? { controls } : {}),
           repeated,
           ...(repeatedGroup ? { repeatedGroup } : {}),
           textLabel: /\p{L}{2}/u.test(html.innerText ?? ""),
           modal: modal !== undefined,
-          ...(haspopup !== null && haspopup !== "false" ? { popup: true } : {}),
+          ...(popup ? { popup: true } : {}),
           submit:
             control instanceof HTMLButtonElement
               ? control.type === "submit" && control.form !== null
@@ -1126,16 +1896,207 @@ async function enumerate(
   );
 }
 
+/** Probe paths of visible positioned elements: what a disclosure may reveal. */
+async function positionedPaths(page: Page): Promise<string[]> {
+  return await page.evaluate(() => {
+    const paths: string[] = [];
+    for (const element of document.body?.querySelectorAll("*") ?? []) {
+      const style = getComputedStyle(element);
+      if (!["absolute", "fixed"].includes(style.position)) continue;
+      if (!element.checkVisibility({ checkOpacity: true })) continue;
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      const parts: string[] = [];
+      for (
+        let current: Element | null = element;
+        current !== null && current !== document.documentElement;
+        current = current.parentElement
+      ) {
+        const parent: Element | null = current.parentElement;
+        const tag = current.tagName.toLowerCase();
+        if (parent === null) {
+          parts.unshift(tag);
+          break;
+        }
+        const index =
+          [...parent.children]
+            .filter((child) => child.tagName === current?.tagName)
+            .indexOf(current) + 1;
+        parts.unshift(`${tag}:nth-of-type(${index})`);
+      }
+      paths.push(`html > ${parts.join(" > ")}`);
+    }
+    return paths;
+  });
+}
+
+/**
+ * What a disclosure click revealed: its `aria-controls` target, its open
+ * `details`, a region the click opened, or the nearest newly visible
+ * positioned element near the trigger. `opened` is false when nothing
+ * opened and no open state flipped.
+ */
+async function disclosureRoot(
+  page: Page,
+  candidate: Candidate,
+  before: string[],
+  openedRoots: string[],
+): Promise<{ opened: boolean; root?: string | undefined }> {
+  return await page.evaluate(
+    ({ path, controls, before, openedRoots }) => {
+      const pathFor = (element: Element): string => {
+        const parts: string[] = [];
+        let current: Element | null = element;
+        while (current !== null && current !== document.documentElement) {
+          const parent: Element | null = current.parentElement;
+          const tag = current.tagName.toLowerCase();
+          if (parent === null) {
+            parts.unshift(tag);
+            break;
+          }
+          const index =
+            [...parent.children]
+              .filter((child) => child.tagName === current?.tagName)
+              .indexOf(current) + 1;
+          parts.unshift(`${tag}:nth-of-type(${index})`);
+          current = parent;
+        }
+        return `html > ${parts.join(" > ")}`;
+      };
+      const visible = (element: Element) => {
+        if (!element.checkVisibility({ checkOpacity: true })) return false;
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const trigger = document.querySelector(path);
+      if (trigger === null) return { opened: false };
+      const details =
+        trigger.tagName.toLowerCase() === "summary" &&
+        trigger.parentElement instanceof HTMLDetailsElement
+          ? trigger.parentElement
+          : undefined;
+      const flipped =
+        details?.open === true ||
+        trigger.getAttribute("aria-expanded") === "true";
+      for (const id of (controls ?? "").split(/\s+/)) {
+        const target = id === "" ? null : document.getElementById(id);
+        if (target !== null && visible(target))
+          return { opened: true, root: pathFor(target) };
+      }
+      if (details?.open === true)
+        return { opened: true, root: pathFor(details) };
+      const region = openedRoots[0];
+      if (region !== undefined) return { opened: true, root: region };
+      const earlier = new Set(before);
+      let scope: Element | null = trigger.parentElement;
+      for (let depth = 0; scope !== null && depth < 3; depth += 1) {
+        const fresh = [...scope.querySelectorAll("*")].filter(
+          (element) =>
+            !element.contains(trigger) &&
+            ["absolute", "fixed"].includes(
+              getComputedStyle(element).position,
+            ) &&
+            visible(element) &&
+            !earlier.has(pathFor(element)),
+        );
+        const outermost = fresh.find(
+          (element) =>
+            !fresh.some(
+              (other) => other !== element && other.contains(element),
+            ),
+        );
+        if (outermost !== undefined)
+          return { opened: true, root: pathFor(outermost) };
+        scope = scope.parentElement;
+      }
+      return { opened: flipped };
+    },
+    {
+      path: candidate.path,
+      controls: candidate.controls,
+      before,
+      openedRoots,
+    },
+  );
+}
+
+/** Probe paths of visible text-entry fields, to see a mode switch add one. */
+async function visibleFields(page: Page): Promise<string[]> {
+  return await page.evaluate(() => {
+    const pathFor = (element: Element): string => {
+      const parts: string[] = [];
+      let current: Element | null = element;
+      while (current !== null && current !== document.documentElement) {
+        const parent: Element | null = current.parentElement;
+        const tag = current.tagName.toLowerCase();
+        if (parent === null) {
+          parts.unshift(tag);
+          break;
+        }
+        const index =
+          [...parent.children]
+            .filter((child) => child.tagName === current?.tagName)
+            .indexOf(current) + 1;
+        parts.unshift(`${tag}:nth-of-type(${index})`);
+        current = parent;
+      }
+      return `html > ${parts.join(" > ")}`;
+    };
+    return [
+      ...document.querySelectorAll(
+        "input:not([type=hidden]), textarea, select, [contenteditable=true]",
+      ),
+    ]
+      .filter((element) => {
+        if (!element.checkVisibility({ checkOpacity: true })) return false;
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      })
+      .map(pathFor);
+  });
+}
+
+/**
+ * Why a control should not be clicked. Selection (an already-selected tab,
+ * option, radio or current item, whose click is a no-op by design) always
+ * applies; `selectionOnly` leaves out the opt-in `respectControlIntent`
+ * reasons (pressed toggles, drag handles, other aria-checked/selected).
+ * Switches and checkboxes toggle on click, so they are never selection.
+ */
 async function intentSkip(
   page: Page,
   candidate: Candidate,
+  { selectionOnly = false }: { selectionOnly?: boolean } = {},
 ): Promise<string | undefined> {
   return (
     page
       .locator(candidate.path)
       .first()
       .evaluate(
-        (control) => {
+        (control, selectionOnly) => {
+          const selected = (selector: string, attribute: string) =>
+            control.closest(selector)?.getAttribute(attribute) === "true";
+          if (selected("[role=tab], [role=option]", "aria-selected"))
+            return "already selected: aria-selected";
+          if (selected("[role=radio], [role=menuitemradio]", "aria-checked"))
+            return "already selected: aria-checked";
+          const current = control.getAttribute("aria-current")?.trim();
+          if (current && current !== "false")
+            return "already selected: aria-current";
+          // A radio, or the label for or wrapping one.
+          const radio =
+            control instanceof HTMLInputElement
+              ? control
+              : control.closest("label")?.control;
+          if (
+            radio instanceof HTMLInputElement &&
+            radio.type === "radio" &&
+            radio.checked
+          )
+            return "already selected: checked radio";
+          if (control instanceof HTMLOptionElement && control.selected)
+            return "already selected: checked option";
+          if (selectionOnly) return undefined;
           for (const attribute of [
             "aria-pressed",
             "aria-selected",
@@ -1144,15 +2105,6 @@ async function intentSkip(
             if (control.getAttribute(attribute) === "true")
               return `already selected: ${attribute}`;
           }
-          const current = control.getAttribute("aria-current")?.trim();
-          if (current && current !== "false")
-            return "already selected: aria-current";
-          if (
-            control instanceof HTMLInputElement &&
-            control.type === "radio" &&
-            control.checked
-          )
-            return "already selected: checked radio";
           if (control.getAttribute("draggable")?.toLowerCase() === "true")
             return "drag handle: draggable";
           if (/drag/i.test(control.getAttribute("aria-roledescription") ?? ""))
@@ -1168,7 +2120,7 @@ async function intentSkip(
           if (/\b(move|drag|reorder)\b/i.test(name)) return "drag handle: name";
           return undefined;
         },
-        undefined,
+        selectionOnly,
         { timeout: 1500 },
       )
       // A control missing after restore falls through to clickAndObserve, which
@@ -1242,6 +2194,14 @@ async function confirmClick(
   }
 }
 
+/** The trigger box feeds `menu`; it is never a probe result key itself. */
+function withoutTriggerBox<T extends { triggerBox?: unknown }>(
+  outcome: T,
+): Omit<T, "triggerBox"> {
+  const { triggerBox: _box, ...rest } = outcome;
+  return rest;
+}
+
 async function clickAndObserve(
   page: Page,
   path: string,
@@ -1261,6 +2221,9 @@ async function clickAndObserve(
   effects: ProbeEffect[];
   signature?: string;
   primary?: boolean;
+  selectsAncestor?: SelectsAncestor;
+  triggerBox?: { trigger: Rect; group: string };
+  backgroundRequests?: string[];
   error?: string;
 }> {
   // Hover first and let any tooltip settle, so the click is measured alone.
@@ -1292,6 +2255,7 @@ async function clickAndObserve(
     await hoverRecording?.dispose();
     await hover.dispose();
   }
+  const box = await triggerBox(page, path);
   const before = await snapshot(page);
   const requests: Request[] = [];
   let dialogs = 0;
@@ -1389,6 +2353,7 @@ async function clickAndObserve(
       prints: 0,
       submits: 0,
       permissions: 0,
+      initiated: [] as InitiatedRequest[],
     }));
     if (counters.prints > 0) effects.add("print");
     // A vetoed submission did try to send; a denied prompt did ask.
@@ -1414,7 +2379,6 @@ async function clickAndObserve(
     if (counters.clipboard > 0) effects.add("clipboard");
     if (counters.popups > 0 || popups > 0) effects.add("popup");
     if (dialogs > 0) effects.add("dialog");
-    if (requests.length > 0) effects.add("network");
     const focus = await page
       .evaluate((clicked) => {
         const active = document.activeElement;
@@ -1427,6 +2391,17 @@ async function clickAndObserve(
       }, path)
       .catch(() => false);
     if (focus) effects.add("focus");
+    const selectsAncestor =
+      (effects.has("dom") || effects.has("aria")) &&
+      !["navigation", "popup", "download", "filechooser", "picker"].some(
+        (effect) => effects.has(effect as ProbeEffect),
+      )
+        ? await ancestorSelection(
+            page,
+            path,
+            name.split(" › ").at(-1) ?? name,
+          ).catch(() => undefined)
+        : undefined;
     const opened = after.revealed.filter(
       (name) => !before.revealed.includes(name),
     );
@@ -1435,6 +2410,37 @@ async function clickAndObserve(
         .filter((region) => opened.includes(region.name))
         .map((region) => region.selector),
     );
+    // Only requests the click started count, and only when something
+    // visible follows or the request would change data.
+    const seen = requests.map((request) => ({
+      method: request.method(),
+      url: request.url(),
+    }));
+    const navigations = requests
+      .filter(
+        (request) =>
+          request.isNavigationRequest() && !safeRequestMethod(request.method()),
+      )
+      .map((request) => ({ method: request.method(), url: request.url() }));
+    if (
+      clickNetworkEffect({
+        initiated: counters.initiated,
+        navigations,
+        visible:
+          [...effects].some((effect) => effect !== "network") ||
+          opened.length > 0 ||
+          dialogs > 0,
+      })
+    )
+      effects.add("network");
+    const backgroundRequests =
+      effects.size === 0
+        ? backgroundRequestLabels(
+            seen,
+            [...counters.initiated, ...navigations],
+            before.url,
+          )
+        : [];
     const primary =
       effects.has("print") ||
       effects.has("download") ||
@@ -1478,6 +2484,9 @@ async function clickAndObserve(
       effects: [...effects],
       ...(signature === undefined ? {} : { signature }),
       primary,
+      ...(selectsAncestor === undefined ? {} : { selectsAncestor }),
+      ...(box === undefined ? {} : { triggerBox: box }),
+      ...(backgroundRequests.length > 0 ? { backgroundRequests } : {}),
     };
   } finally {
     page.off("request", onRequest);
@@ -1499,12 +2508,120 @@ async function clickAndObserve(
   }
 }
 
+/** Page-side state of `recordClickRequests`. */
+type ClickRequestRecorder = { armed: boolean; initiated: InitiatedRequest[] };
+
+/**
+ * Record the requests a probe click starts: fetch, XHR and beacons sent by
+ * its handlers' synchronous code and their microtask continuations. Run
+ * before application scripts, so a client that keeps its own reference to
+ * `fetch` from load still calls through the wrapper. Inert until a click
+ * window arms it. Self-contained: it is serialized.
+ */
+export function recordClickRequests() {
+  const scope = window as unknown as {
+    __idiomRequests?: ClickRequestRecorder;
+  };
+  if (scope.__idiomRequests) return;
+  const recorder: ClickRequestRecorder = { armed: false, initiated: [] };
+  scope.__idiomRequests = recorder;
+  // The reset is a macrotask, so it runs after the dispatching task and its
+  // microtask checkpoint, while a poll on its own timer task is outside the
+  // window. (A timer already due when the click task ends may slip in
+  // first; such a request still needs a visible change or a non-safe method
+  // to count.)
+  let active = false;
+  const onActivity = () => {
+    if (!recorder.armed || active) return;
+    active = true;
+    setTimeout(() => {
+      active = false;
+    }, 0);
+  };
+  for (const type of [
+    "pointerdown",
+    "mousedown",
+    "pointerup",
+    "mouseup",
+    "click",
+  ])
+    window.addEventListener(type, onActivity, true);
+  const initiate = (
+    method: string,
+    url: string | URL,
+    via: "fetch" | "xhr" | "beacon",
+  ) => {
+    if (!recorder.armed || !active || recorder.initiated.length >= 50) return;
+    try {
+      recorder.initiated.push({
+        method: method.toUpperCase(),
+        url: new URL(url, location.href).href,
+        via,
+      });
+    } catch {
+      // An unparseable URL fails in the page too.
+    }
+  };
+  const fetcher = window.fetch;
+  if (typeof fetcher === "function")
+    window.fetch = function (
+      this: unknown,
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) {
+      const request = input instanceof Request ? input : undefined;
+      initiate(
+        init?.method ?? request?.method ?? "GET",
+        request?.url ?? (input as string | URL),
+        "fetch",
+      );
+      return fetcher.call(this, input, init);
+    } as typeof window.fetch;
+  const xhr = XMLHttpRequest.prototype;
+  const xhrOpen = xhr.open;
+  const xhrSend = xhr.send;
+  const opened = new WeakMap<
+    XMLHttpRequest,
+    { method: string; url: string | URL }
+  >();
+  xhr.open = function (
+    this: XMLHttpRequest,
+    method: string,
+    url: string | URL,
+    ...rest: unknown[]
+  ) {
+    opened.set(this, { method, url });
+    return (xhrOpen as (...args: unknown[]) => void).call(
+      this,
+      method,
+      url,
+      ...rest,
+    );
+  } as typeof xhr.open;
+  xhr.send = function (
+    this: XMLHttpRequest,
+    body?: Document | XMLHttpRequestBodyInit | null,
+  ) {
+    const request = opened.get(this);
+    if (request) initiate(request.method, request.url, "xhr");
+    return xhrSend.call(this, body);
+  };
+  const beacon = navigator.sendBeacon;
+  if (typeof beacon === "function")
+    navigator.sendBeacon = (url: string | URL, data?: BodyInit | null) => {
+      initiate("POST", url, "beacon");
+      return beacon.call(navigator, url, data);
+    };
+}
+
 /**
  * Probe-only shims run before application scripts in replayed
  * documents/frames. `strict` (third-party pages) also vetoes form submission
  * and denies permission prompts. Self-contained: it is serialized.
  */
 function suppressNativeUi(strict = false) {
+  // Opaque-origin frames (sandboxed srcdoc) block callbacks and some APIs.
+  if (window !== window.top && self.origin === "null") return;
   const scope = window as unknown as {
     __idiomSuppressed?: {
       print: number;
@@ -1710,14 +2827,24 @@ export async function probeControls(
     { signal: options.signal },
   );
   options.flowBudget?.start(state);
+  // With no flow target the state deadline only expires as the capture
+  // lifetime ends; name that limit, not a budget.
+  const budgetReason = options.unbounded
+    ? "capture.maxMinutes"
+    : options.flowBudget
+      ? "flow budget share"
+      : "state budget";
   // A full replay runs on its own budget, never inside the next control's.
   const restoreBudgetMs = Math.max(controlTimeoutMs, 15000);
   // Nested menu items share one small budget so they cannot starve the
-  // top-level controls.
+  // top-level controls. With no flow target there is nothing to starve:
+  // each nested item is bounded only by its own control deadline.
   const nestedBudgetMs = () =>
-    options.flowBudget
-      ? 0.25 * options.flowBudget.shareMs()
-      : Math.min(15000, 0.25 * stateTimeoutMs);
+    options.unbounded
+      ? Number.POSITIVE_INFINITY
+      : options.flowBudget
+        ? 0.25 * options.flowBudget.shareMs()
+        : Math.min(15000, 0.25 * stateTimeoutMs);
   let nestedUsed = 0;
   let current: Page | undefined = options.page;
   // Set by navigation, popups, retired pages and a failed restore ladder.
@@ -1898,12 +3025,11 @@ export async function probeControls(
       const allowed = probeRequestAllowed(request, "third-party");
       recordProbeRequest(safety, request, allowed);
       if (allowed) return route.fallback();
-      effects?.add("network");
+      // The click decides whether a blocked request was its effect.
       return route.abort("blockedbyclient").catch(() => undefined);
     }
     if (replaying > 0 || probeRequestAllowed(route.request()))
       return route.fallback();
-    effects?.add("network");
     return route.abort("blockedbyclient").catch(() => undefined);
   };
   const protect = async (page: Page, deadline: Deadline) => {
@@ -1943,24 +3069,20 @@ export async function probeControls(
       }
       close(popup);
     };
-    const onRequest = (request: Request) => {
-      if (!ignoredRequest(request)) effects?.add("network");
-    };
     const onRoute = onContextRoute;
     page.on("dialog", onDialog);
     page.on("filechooser", onFileChooser);
     page.on("download", onDownload);
     page.on("popup", onPopup);
-    page.on("request", onRequest);
     protections.set(page, () => {
       page.off("dialog", onDialog);
       page.off("filechooser", onFileChooser);
       page.off("download", onDownload);
       page.off("popup", onPopup);
-      page.off("request", onRequest);
       return page.unroute("**/*", onRoute).catch(() => undefined);
     });
     await deadline.run(() => page.route("**/*", onRoute));
+    await deadline.run(() => page.addInitScript(recordClickRequests));
     const strict = safety !== undefined;
     await deadline.run(() => page.addInitScript(suppressNativeUi, strict));
     for (const frame of page.frames())
@@ -2027,7 +3149,8 @@ export async function probeControls(
       ...skippedResult(candidate, `not reached: ${reason}`, parent),
       status: "not-reached",
     });
-    if (reason.startsWith("assigned to state:")) return;
+    if (reason.startsWith("assigned to state:") || reason.startsWith("gate: "))
+      return;
     if (
       reason !== "checks.probe.maxControls" &&
       artifact.status !== "timed-out"
@@ -2369,6 +3492,155 @@ export async function probeControls(
       } else needsReplay = true;
       bound?.dispose();
       deadline.dispose();
+    }
+  };
+  /**
+   * The selection pass: links and look-alike controls inside selectable
+   * containers, clicked once each with navigation suppressed. Its trials
+   * stay out of `artifact.results`, where a guarded link would read as dead.
+   */
+  const selectionPhase = async (already: string[]) => {
+    const reserve = () => controlTimeoutMs + 2 * options.waitMs + 1500;
+    if (options.signal?.aborted || state.remaining() < reserve()) return;
+    progress("selection candidates");
+    const trials: SelectionTrial[] = [];
+    const record = (pass: NonNullable<ProbeArtifact["selectionTrials"]>) => {
+      artifact.selectionTrials = pass;
+      return pass;
+    };
+    const failed = (pass: ReturnType<typeof record>, reason: string) => {
+      pass.status = "partial";
+      pass.reason = [...new Set([pass.reason, reason].filter(Boolean))].join(
+        "; ",
+      );
+    };
+    const step = async <T>(
+      work: (page: Page, deadline: Deadline) => Promise<T>,
+    ): Promise<T> => {
+      const deadline = new Deadline(
+        "control",
+        Math.min(controlTimeoutMs, state.remaining()),
+        () => `${selector} (${activity})`,
+        { signal: state.signal },
+      );
+      let bound: ReturnType<typeof deadlinePage> | undefined;
+      try {
+        return await deadline.run(async () => {
+          const realPage = await ensurePage(deadline);
+          bound = deadlinePage(realPage, deadline);
+          const page = bound.page;
+          if (needsReplay || !(await settle(page, deadline)))
+            await replay(page);
+          return await work(page, deadline);
+        });
+      } finally {
+        // The trial left the page where its click did.
+        if (bound && !deadline.signal.aborted && !needsReplay) {
+          const settled = await settle(bound.page, deadline).catch(() => false);
+          if (!settled) needsReplay = true;
+        } else needsReplay = true;
+        bound?.dispose();
+        deadline.dispose();
+      }
+    };
+    const rethrowState = (error: unknown) => {
+      if (options.signal?.aborted) throw options.signal.reason;
+      if (
+        state.signal.aborted ||
+        (error instanceof DeadlineExpired && error.scope === "state")
+      )
+        throw state.signal.reason ?? error;
+    };
+    let found: SelectionCandidate[];
+    try {
+      found = await step((page) =>
+        selectionCandidates(page, options.skip, already, intent),
+      );
+    } catch (error) {
+      rethrowState(error);
+      failed(
+        record({
+          status: "ran",
+          limit: SELECTION_TRIAL_LIMIT,
+          candidates: 0,
+          trials,
+        }),
+        `selection candidates unavailable: ${(error instanceof Error ? error.message : String(error)).split("\n")[0]}`,
+      );
+      return;
+    }
+    const pass = record({
+      status: "ran",
+      limit: SELECTION_TRIAL_LIMIT,
+      candidates: found.length,
+      trials,
+    });
+    let clicked = 0;
+    for (const candidate of found) {
+      if (options.signal?.aborted || clicked >= SELECTION_TRIAL_LIMIT) break;
+      // The same never-click guard as the main and nested passes.
+      const preSkip =
+        candidate.intentReason ??
+        (destructive.test(candidate.name) ? "destructive name" : undefined);
+      if (preSkip) {
+        if (preSkip === "destructive name" && safety)
+          safety.skipped.destructive += 1;
+        trials.push({
+          selector: candidate.selector,
+          name: candidate.name,
+          affordance: candidate.affordance,
+          status: "skipped",
+          skipped: preSkip,
+          effects: [],
+          elapsedMs: 0,
+        });
+        continue;
+      }
+      clicked += 1;
+      if (state.remaining() < reserve()) {
+        failed(pass, `selection pass stopped: ${budgetReason}`);
+        break;
+      }
+      selector = candidate.selector;
+      progress("selection");
+      const started = clock();
+      try {
+        const trial = await step(async (page) => {
+          const result = await selectionTrial(
+            page,
+            candidate,
+            options.waitMs,
+            intent,
+          );
+          if (
+            result.effects.includes("navigation") ||
+            result.effects.includes("popup")
+          )
+            needsReplay = true;
+          return result;
+        });
+        trials.push({ ...trial, elapsedMs: Math.max(0, clock() - started) });
+      } catch (error) {
+        rethrowState(error);
+        const timedOut = error instanceof DeadlineExpired;
+        trials.push({
+          selector: candidate.selector,
+          name: candidate.name,
+          affordance: candidate.affordance,
+          status: timedOut ? "timed-out" : "skipped",
+          ...(timedOut
+            ? {}
+            : {
+                skipped: `not clickable: ${(error instanceof Error ? error.message : String(error)).split("\n")[0]}`,
+              }),
+          effects: [],
+          elapsedMs: Math.max(0, clock() - started),
+        });
+        if (timedOut) {
+          failed(pass, `${candidate.selector} timed-out (selection)`);
+          break;
+        }
+      }
     }
   };
   let activeCandidate: Candidate | undefined;
@@ -2713,9 +3985,10 @@ export async function probeControls(
         }
       }
       if (state.remaining() < 3 * held.delayMs + controlTimeoutMs) {
-        summary.notes.push(`not reached: probe budget (${left} held replays)`);
+        const limit = options.unbounded ? "capture.maxMinutes" : "probe budget";
+        summary.notes.push(`not reached: ${limit} (${left} held replays)`);
         failureSummary?.notes.push(
-          `not reached: probe budget (${left} action replays)`,
+          `not reached: ${limit} (${left} action replays)`,
         );
         break;
       }
@@ -2760,10 +4033,12 @@ export async function probeControls(
     entry: ProbeLedgerEntry,
     parent?: string,
   ) => {
+    // A revealed state is checked once, at the state that opened it.
     const {
       elapsedMs: _elapsed,
       timings: _timings,
       timeoutScope: _scope,
+      revealed: _revealed,
       ...cached
     } = entry.result;
     const local = skippedResult(candidate, "", parent);
@@ -2778,12 +4053,101 @@ export async function probeControls(
       reusedFrom: entry.state,
     });
     for (const nested of entry.nested ?? []) {
-      const { elapsedMs: _nestedElapsed, ...rest } = nested;
+      const {
+        elapsedMs: _nestedElapsed,
+        revealed: _nestedRevealed,
+        ...rest
+      } = nested;
       publish(candidate, {
         ...rest,
         status: "completed",
         reusedFrom: entry.state,
       });
+    }
+  };
+  const maxRevealed = options.maxRevealed ?? DEFAULT_MAX_REVEALED;
+  let revealedCount = 0;
+  /** Revealed roots of opened disclosures, for their mode-switch items. */
+  const revealedRoots = new Map<Candidate, string | undefined>();
+  /**
+   * Observe an opened disclosure in place, inside the attempt's deadline.
+   * A slow or failed observation is recorded as unavailable; it never turns
+   * the control's own result into a timeout.
+   */
+  const observeRevealedState = async (
+    page: Page,
+    deadline: Deadline,
+    base: Pick<RevealedState, "name" | "kind" | "trigger" | "root">,
+  ): Promise<RevealedState | undefined> => {
+    const hook = options.observeRevealed;
+    if (hook === undefined || maxRevealed === 0) return undefined;
+    const described = {
+      name: base.name,
+      kind: base.kind,
+      trigger: base.trigger,
+      ...(base.root === undefined ? {} : { root: base.root }),
+    };
+    if (revealedCount >= maxRevealed)
+      return {
+        ...described,
+        status: "unavailable",
+        reason: "revealed-state limit (checks.probe.maxRevealed)",
+      };
+    revealedCount += 1;
+    const begun = clock();
+    const budget = Math.min(REVEALED_OBSERVE_MS, deadline.remaining() - 250);
+    if (budget < 250)
+      return {
+        ...described,
+        status: "unavailable",
+        reason: "no time left in the control's budget",
+      };
+    progress("revealed state");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const left = () => Math.max(1, budget - (clock() - begun));
+      await settleAnimations(page, Math.min(500, left() / 4));
+      const observing = hook(page, { root: base.root, trigger: base.trigger });
+      observing.catch(() => undefined);
+      const observed = await Promise.race([
+        observing,
+        new Promise<"timed-out">((resolve) => {
+          timer = setTimeout(() => resolve("timed-out"), left());
+        }),
+      ]);
+      if (observed === "timed-out") {
+        // The abandoned evaluate may still be running in the page.
+        needsReplay = true;
+        return {
+          ...described,
+          status: "unavailable",
+          reason: `observation took longer than ${Math.round(budget)}ms`,
+        };
+      }
+      if (observed.version !== 2)
+        return {
+          ...described,
+          status: "unavailable",
+          reason: "the revealed page is not HTML",
+        };
+      const { probe: _probe, ...observations } = observed;
+      return { ...described, status: "observed", observations };
+    } catch (error) {
+      if (
+        options.signal?.aborted ||
+        state.signal.aborted ||
+        (error instanceof DeadlineExpired && error.scope === "state")
+      )
+        throw error;
+      deadline.check();
+      needsReplay = true;
+      return {
+        ...described,
+        status: "unavailable",
+        reason: `observation failed: ${error instanceof Error ? (error.message.split("\n")[0] ?? "") : String(error)}`,
+      };
+    } finally {
+      clearTimeout(timer);
     }
   };
   try {
@@ -2864,6 +4228,43 @@ export async function probeControls(
     for (const [index, candidate] of candidates.entries()) {
       candidate.order = index;
       keyOf.set(candidate, keys[index] ?? candidate.path);
+    }
+    // Every probed run records fingerprints, so a full run seeds the gate.
+    try {
+      const fingerprints = await state.run(() =>
+        renderedFingerprints(
+          options.page,
+          candidates,
+          candidates.map((candidate) => keyOf.get(candidate) ?? ""),
+        ),
+      );
+      const recorded: Record<string, string> = {};
+      for (const [index, candidate] of candidates.entries()) {
+        const fingerprint = fingerprints[index];
+        if (fingerprint === undefined) continue;
+        candidate.fingerprint = fingerprint;
+        recorded[keyOf.get(candidate) ?? candidate.path] = fingerprint;
+      }
+      artifact.fingerprints = recorded;
+    } catch (error) {
+      if (options.signal?.aborted || state.signal.aborted) throw error;
+      if (error instanceof DeadlineExpired) throw error;
+    }
+    const region = options.region;
+    if (region) {
+      const names = new Map<string, number>();
+      for (const candidate of candidates)
+        names.set(candidate.name, (names.get(candidate.name) ?? 0) + 1);
+      for (const candidate of candidates) {
+        const key = keyOf.get(candidate) ?? candidate.path;
+        if (
+          !candidate.unavailable &&
+          candidate.fingerprint !== undefined &&
+          !checkCandidate(candidate, names) &&
+          region.reference.get(key) === candidate.fingerprint
+        )
+          candidate.unavailable = gateUnchangedReason(region.runId);
+      }
     }
     if (options.enumerateOnly || ledger?.planned(partition))
       artifact.candidates = candidates;
@@ -3008,19 +4409,21 @@ export async function probeControls(
     /**
      * Once there is an action to replay held, the clicks leave it part of
      * the state budget: on a page with more controls than time, the held
-     * replay would otherwise never run.
+     * replay would otherwise never run. With no flow target the state runs
+     * until its work is done, so the held replays always follow the clicks.
      */
-    const heldReserveMs = options.heldReplay
-      ? Math.min(
-          0.3 * stateTimeoutMs,
-          2 *
-            (3 * options.heldReplay.delayMs +
-              controlTimeoutMs +
-              (options.failureReplay
-                ? options.failureReplay.feedbackWithinMs + controlTimeoutMs
-                : 0)),
-        )
-      : 0;
+    const heldReserveMs =
+      options.heldReplay && !options.unbounded
+        ? Math.min(
+            0.3 * stateTimeoutMs,
+            2 *
+              (3 * options.heldReplay.delayMs +
+                controlTimeoutMs +
+                (options.failureReplay
+                  ? options.failureReplay.feedbackWithinMs + controlTimeoutMs
+                  : 0)),
+          )
+        : 0;
     const reserved = () =>
       heldReserveMs > 0 &&
       (heldQueue.length > 0 || (options.heldReplay?.steps.length ?? 0) > 0) &&
@@ -3112,7 +4515,26 @@ export async function probeControls(
                 (record) => record.selector === explanation.selector,
               );
           }
+          // Selection skips always apply. Without the intent opt-in they
+          // are checked after sampling, so the control keeps its hover and
+          // focus evidence; only the no-op click is skipped.
+          if (!intent) {
+            const selected = await intentSkip(page, candidate, {
+              selectionOnly: true,
+            });
+            deadline.check();
+            if (selected)
+              return {
+                result: skippedResult(candidate, selected),
+                ...(explanationRecords === undefined
+                  ? {}
+                  : { explanationRecords }),
+              };
+          }
           progress("observe");
+          const positionedBefore = candidate.disclosure
+            ? await positionedPaths(page)
+            : [];
           effects = new Set();
           let openedRoots: string[] = [];
           const outcome = await clickAndObserve(
@@ -3140,19 +4562,49 @@ export async function probeControls(
           }
           if (!outcome.error)
             snapSuspect = suspectSnap(candidate, timeline.lastAction());
+          const { triggerBox: box, ...observedOutcome } = outcome;
           const result: ProbeResult = outcome.error
             ? skippedResult(candidate, `not clickable: ${outcome.error}`)
             : {
                 ...skippedResult(candidate, ""),
-                ...outcome,
+                ...observedOutcome,
                 skipped: undefined,
               };
-          const items = openedRoots.length
-            ? await enumerate(
-                page,
-                options.skip,
-                openedRoots.join(", "),
-                intent,
+          // A disclosure that opened in place: a plain positioned popover
+          // has no region, so its own root supplies the nested items.
+          let itemsRoot = openedRoots.join(", ");
+          const leftPage = outcome.effects.some((effect) =>
+            ["navigation", "popup", "download", "filechooser"].includes(effect),
+          );
+          if (candidate.disclosure && !outcome.error && !leftPage) {
+            const found = await disclosureRoot(
+              page,
+              candidate,
+              positionedBefore,
+              openedRoots,
+            );
+            deadline.check();
+            if (found.opened) {
+              revealedRoots.set(candidate, found.root);
+              if (itemsRoot === "" && found.root !== undefined)
+                itemsRoot = found.root;
+              const revealed = await observeRevealedState(page, deadline, {
+                name: candidate.name,
+                kind: candidate.disclosure,
+                trigger: candidate.path,
+                root: found.root,
+              });
+              if (revealed) result.revealed = revealed;
+            }
+          }
+          if (!outcome.error && !leftPage && itemsRoot !== "" && box) {
+            const inventory = await menuInventory(page, itemsRoot, deadline);
+            deadline.check();
+            if (inventory) result.menu = { ...box, ...inventory };
+          }
+          const items = itemsRoot
+            ? (await enumerate(page, options.skip, itemsRoot, intent)).filter(
+                (item) => item.path !== candidate.path,
               )
             : [];
           return {
@@ -3313,10 +4765,21 @@ export async function probeControls(
                 await window.dispose();
               }
             }
-            const skipped = intent ? await intentSkip(page, item) : undefined;
+            const skipped = await intentSkip(page, item, {
+              selectionOnly: !intent,
+            });
             deadline.check();
             if (skipped)
               return { result: skippedResult(item, skipped, parentName) };
+            // One step below a disclosure, an item may switch it into a new
+            // mode (a field appears, a surface opens) worth checking too.
+            const disclosureParent =
+              parents.length === 1 && parents[0]?.disclosure !== undefined
+                ? parents[0]
+                : undefined;
+            const fieldsBefore = disclosureParent
+              ? await visibleFields(page)
+              : [];
             effects = new Set();
             let openedRoots: string[] = [];
             const result = await clickAndObserve(
@@ -3336,6 +4799,29 @@ export async function probeControls(
               onBlocked,
               lateContentMs,
             );
+            let revealed: RevealedState | undefined;
+            if (
+              disclosureParent &&
+              !result.error &&
+              !result.effects.some((effect) =>
+                ["navigation", "popup", "download", "filechooser"].includes(
+                  effect,
+                ),
+              )
+            ) {
+              const earlier = new Set(fieldsBefore);
+              const newField = (await visibleFields(page)).some(
+                (path) => !earlier.has(path),
+              );
+              deadline.check();
+              if (newField || openedRoots.length > 0)
+                revealed = await observeRevealedState(page, deadline, {
+                  name: `${parentName} › ${item.name}`,
+                  kind: "mode",
+                  trigger: item.path,
+                  root: revealedRoots.get(disclosureParent),
+                });
+            }
             const items = openedRoots.length
               ? await enumerate(
                   page,
@@ -3354,8 +4840,9 @@ export async function probeControls(
                   )
                 : {
                     ...skippedResult(item, "", parentName),
-                    ...result,
+                    ...withoutTriggerBox(result),
                     skipped: undefined,
+                    ...(revealed === undefined ? {} : { revealed }),
                   },
             };
           },
@@ -3422,6 +4909,8 @@ export async function probeControls(
     // explanation and collection passes take what remains.
     effects = undefined;
     await heldPhase();
+    effects = undefined;
+    await selectionPhase(candidates.map((candidate) => candidate.path));
     effects = undefined;
     // Glyph links receive explanations without becoming click candidates.
     for (const explanation of explanations.filter(
@@ -3627,18 +5116,10 @@ export async function probeControls(
       }
       // Every queued control the state budget never reached is reported.
       for (const candidate of queue)
-        if (!handled.has(candidate))
-          notReached(
-            candidate,
-            options.flowBudget ? "flow budget share" : "state budget",
-          );
+        if (!handled.has(candidate)) notReached(candidate, budgetReason);
       for (const { candidate, parent } of nestedQueue)
         if (!handled.has(candidate))
-          notReached(
-            candidate,
-            options.flowBudget ? "flow budget share" : "state budget",
-            parent,
-          );
+          notReached(candidate, budgetReason, parent);
       retire();
       progress("state timed-out");
     } else {

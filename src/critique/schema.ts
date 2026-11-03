@@ -9,7 +9,9 @@ import {
   type DecisionObservation,
   decisionObservationSchema,
 } from "../schemas/ruling.js";
+import { modelEvaluation } from "./evaluation.js";
 import {
+  type CritiqueEvidenceLimits,
   type CritiqueResult,
   critiqueResult,
   type DesignImageRef,
@@ -229,13 +231,10 @@ function findingIssues(
       issues.push(
         `findings.${index}.colorScheme: required for a multi-scheme capture`,
       );
-    if (
-      /\b(?:score|scores|rating|ratings|grade|grades|rubric total)\b/i.test(
-        prose,
-      )
-    )
+    const evaluation = modelEvaluation(prose);
+    if (evaluation !== undefined)
       issues.push(
-        `findings.${index}: aggregate or numeric design-rating language is forbidden`,
+        `findings.${index}: aggregate or numeric design-rating language is forbidden (${JSON.stringify(evaluation)})`,
       );
     for (const label of finding.screenshots) {
       const screenshot = known.get(label);
@@ -475,5 +474,35 @@ export function validateCritiqueResult(options: {
     decisionObservations: parsed.decisionObservations,
     discardedDecisionObservations:
       upstreamDiscarded + parsed.discardedDecisionObservations,
+    evidenceLimits: evidenceLimitsOf(record.evidenceLimits),
   });
+}
+
+/** Keep a well-formed evidence-limit record; drop a malformed one. */
+function evidenceLimitsOf(value: unknown): CritiqueEvidenceLimits | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const limits = record.limits as Record<string, unknown> | null | undefined;
+  if (
+    record.provider !== "claude-code" ||
+    typeof record.sessions !== "number" ||
+    !Number.isSafeInteger(record.sessions) ||
+    record.sessions < 0 ||
+    !Array.isArray(record.omitted) ||
+    limits === null ||
+    typeof limits !== "object" ||
+    typeof limits.images !== "number" ||
+    typeof limits.imageBytes !== "number" ||
+    typeof limits.domChars !== "number" ||
+    !record.omitted.every(
+      (item: unknown) =>
+        item !== null &&
+        typeof item === "object" &&
+        typeof (item as Record<string, unknown>).label === "string" &&
+        typeof (item as Record<string, unknown>).kind === "string" &&
+        typeof (item as Record<string, unknown>).reason === "string",
+    )
+  )
+    return undefined;
+  return value as CritiqueEvidenceLimits;
 }

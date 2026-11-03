@@ -4,10 +4,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { decideCommand } from "../src/commands/decide.js";
 import { initProject } from "../src/commands/init.js";
+import { ticketsCommand } from "../src/commands/tickets.js";
 import { appendDecision, readDecisionLog } from "../src/decisions/log.js";
 import {
   checkpointLineageStatus,
   loadReviewCatalog,
+  newestOpenFindings,
 } from "../src/review/catalog.js";
 import {
   type FindingDraft,
@@ -43,13 +45,14 @@ function finding(options: {
   id: string;
   fingerprint: string;
   createdAt: string;
+  commit?: string;
   status?: "open" | "ticketed" | "verified-fixed" | "verify-failed";
 }) {
   return findingSchema.parse({
     id: options.id,
     fingerprint: options.fingerprint,
     createdAt: options.createdAt,
-    commit: "abc123",
+    commit: options.commit ?? "abc123",
     flow: "booking",
     state: "ready",
     viewport: "phone",
@@ -389,6 +392,197 @@ describe("lineage and lifecycle", () => {
     expect(output).toContain("open -> approved -> ticketed -> verify-failed");
   });
 
+  test("a regressed finding does not inherit a past verified-fixed result", async () => {
+    const directory = await project();
+    const first = finding({
+      id: "IDM-first-0001",
+      fingerprint: "regress-print",
+      createdAt: "2026-08-14T12:00:00.000Z",
+    });
+    await reportRun(directory, "2026-08-14", [first]);
+    const catalog = await loadReviewCatalog({ project: directory });
+    await checkpointLineageStatus({
+      catalog,
+      findingId: first.id,
+      status: "ticketed",
+    });
+    await checkpointLineageStatus({
+      catalog,
+      findingId: first.id,
+      status: "verified-fixed",
+    });
+
+    const verified = await loadReviewCatalog({ project: directory });
+    const draft: FindingDraft = {
+      finding: {
+        ...first,
+        id: "draft",
+        status: "open",
+        createdAt: "2026-08-16T12:00:00.000Z",
+      },
+      selectorHint: "button.primary",
+      stableOrder: 0,
+    };
+    const [republished] = finalizeFindings({
+      runId: "2026-08-16",
+      drafts: [draft],
+      catalog: verified,
+    });
+    expect(republished).toMatchObject({ id: "finding-1", status: "ticketed" });
+    if (republished === undefined) throw new Error("expected a finding");
+    await reportRun(directory, "2026-08-16", [republished]);
+
+    const refreshed = await loadReviewCatalog({ project: directory });
+    const decisions = await readDecisionLog(directory);
+    const lifecycles = await reduceLifecycles({
+      catalog: refreshed,
+      decisions,
+    });
+    expect(lifecycles[0]?.occurrences).toBe(2);
+    expect(lifecycles[0]?.verification).toBeUndefined();
+    expect(lifecycles[0]?.path).not.toContain("verified-fixed");
+    const rendered = renderLifecycleList(lifecycles);
+    expect(rendered).toContain("Verification: none");
+    expect(rendered).not.toContain("verified-fixed");
+
+    const output: string[] = [];
+    await decideCommand({
+      project: directory,
+      list: true,
+      write: (message) => output.push(message),
+    });
+    expect(output.join("\n")).toContain("Verification: none");
+    expect(output.join("\n")).not.toContain("verified-fixed");
+
+    // The earlier occurrence keeps its verification result for audit.
+    const history = JSON.parse(
+      await readFile(
+        join(directory, ".idiom", "reports", "2026-08-14", "findings.json"),
+        "utf8",
+      ),
+    ) as { status: string }[];
+    expect(history[0]?.status).toBe("verified-fixed");
+    expect(refreshed.lineages[0]?.occurrences[0]?.finding.status).toBe(
+      "verified-fixed",
+    );
+
+    // The re-observed occurrence can still be verified afresh.
+    await checkpointLineageStatus({
+      catalog: refreshed,
+      findingId: republished.id,
+      status: "verified-fixed",
+    });
+    const reverified = await reduceLifecycles({
+      catalog: await loadReviewCatalog({ project: directory }),
+      decisions,
+    });
+    expect(reverified[0]?.verification).toBe("verified-fixed");
+  });
+
+  test.each([
+    ["verified-fixed", "ticketed"],
+    ["verify-failed", "ticketed"],
+    ["ticketed", "ticketed"],
+  ] as const)(
+    "republishes a lineage whose latest is %s as %s",
+    async (prior, expected) => {
+      const directory = await project();
+      const first = finding({
+        id: "IDM-first-0001",
+        fingerprint: "regress-print",
+        createdAt: "2026-08-14T12:00:00.000Z",
+        status: prior,
+      });
+      await reportRun(directory, "2026-08-14", [first]);
+      const catalog = await loadReviewCatalog({ project: directory });
+      const draft: FindingDraft = {
+        finding: { ...first, id: "draft", status: "open" },
+        selectorHint: "button.primary",
+        stableOrder: 0,
+      };
+      expect(
+        finalizeFindings({ runId: "2026-08-16", drafts: [draft], catalog })[0]
+          ?.status,
+      ).toBe(expected);
+    },
+  );
+
+  test("an instance decision does not carry to a re-observation on a later commit", async () => {
+    const directory = await project();
+    const first = finding({
+      id: "IDM-first-0001",
+      fingerprint: "same-fingerprint",
+      createdAt: "2026-08-14T12:00:00.000Z",
+      commit: "abc123",
+    });
+    await reportRun(directory, "2026-08-14", [first]);
+    await appendDecision({
+      projectDirectory: directory,
+      finding: first,
+      decision: "accept",
+      scope: "instance",
+      now: () => new Date("2026-08-14T13:00:00.000Z"),
+    });
+
+    // On its own commit the instance decision applies.
+    const applicable = await reduceLifecycles({
+      catalog: await loadReviewCatalog({ project: directory }),
+      decisions: await readDecisionLog(directory),
+    });
+    expect(applicable[0]?.decision?.decision).toBe("accept");
+    expect(applicable[0]?.path).toEqual(["open", "approved"]);
+
+    const later = finding({
+      id: "IDM-later-0001",
+      fingerprint: "same-fingerprint",
+      createdAt: "2026-08-15T12:00:00.000Z",
+      commit: "def456",
+    });
+    await reportRun(directory, "2026-08-15", [later]);
+    const catalog = await loadReviewCatalog({ project: directory });
+    const decisions = await readDecisionLog(directory);
+    expect(catalog.lineages).toHaveLength(1);
+    const lineage = catalog.lineages[0];
+    expect(lineage?.occurrences).toHaveLength(2);
+
+    const lifecycles = await reduceLifecycles({ catalog, decisions });
+    expect(lifecycles[0]?.decision).toBeUndefined();
+    expect(lifecycles[0]?.path).toEqual(["open"]);
+    const rendered = renderLifecycleList(lifecycles);
+    expect(rendered).toContain("Decision: none");
+    expect(rendered).not.toContain("approved");
+
+    const output: string[] = [];
+    await decideCommand({
+      project: directory,
+      list: true,
+      write: (message) => output.push(message),
+    });
+    expect(output.join("\n")).toContain("Decision: none");
+    expect(output.join("\n")).not.toContain("approved");
+
+    // The prompt and ticket eligibility agree the occurrence is undecided.
+    expect(
+      newestOpenFindings(catalog, decisions).map((record) => record.finding.id),
+    ).toContain(lineage?.latest.finding.id);
+    const tickets = await ticketsCommand({ project: directory });
+    expect(tickets.ineligible).toContain(lineage?.id);
+
+    // A rule-scope decision still applies across commits.
+    await appendDecision({
+      projectDirectory: directory,
+      finding: later,
+      decision: "accept",
+      scope: "rule",
+      now: () => new Date("2026-08-15T13:00:00.000Z"),
+    });
+    const ruled = await reduceLifecycles({
+      catalog: await loadReviewCatalog({ project: directory }),
+      decisions: await readDecisionLog(directory),
+    });
+    expect(ruled[0]?.path).toEqual(["open", "approved"]);
+  });
+
   test("an additional report root merges by run id and leaves the default alone", async () => {
     const directory = await project();
     const secondary = await mkdtemp(join(tmpdir(), "idiom-secondary-"));
@@ -526,5 +720,207 @@ describe("lineage and lifecycle", () => {
       }),
     ).rejects.toThrow("--list cannot be combined");
     expect(await readFile(decisionsPath, "utf8")).toBe(before);
+  });
+});
+
+describe("decide --list ticket context", () => {
+  async function embed(path: string, findings: ReturnType<typeof finding>[]) {
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(
+      path,
+      `# Combined\n\n${findings
+        .map(
+          (embedded) =>
+            `\`\`\`idiom:finding\n${JSON.stringify(embedded)}\n\`\`\`\n`,
+        )
+        .join("\n")}`,
+    );
+  }
+
+  async function listed(directory: string): Promise<string> {
+    const output: string[] = [];
+    await decideCommand({
+      project: directory,
+      list: true,
+      write: (message) => output.push(message),
+    });
+    return output.join("\n");
+  }
+
+  test("names the consolidated ticket that embeds a lineage", async () => {
+    const directory = await project();
+    const reviewed = finding({
+      id: "IDM-run-0001",
+      fingerprint: "consolidated-fingerprint",
+      createdAt: "2026-08-14T12:00:00.000Z",
+    });
+    await reportRun(directory, "2026-08-14", [reviewed]);
+    await appendDecision({
+      projectDirectory: directory,
+      finding: reviewed,
+      decision: "accept",
+      scope: "instance",
+      now: () => new Date("2026-08-14T13:00:00.000Z"),
+    });
+    const combined = join(
+      directory,
+      ".autobuild",
+      "tickets",
+      "done",
+      "combined.md",
+    );
+    await embed(combined, [reviewed]);
+
+    const lifecycles = await reduceLifecycles({
+      catalog: await loadReviewCatalog({ project: directory }),
+      decisions: await readDecisionLog(directory),
+    });
+    expect(lifecycles[0]?.ticket).toEqual({
+      id: "combined",
+      state: "done",
+      paths: [combined],
+      conflict: false,
+      source: "consolidated",
+    });
+    expect(lifecycles[0]?.path).toEqual(["open", "approved", "ticketed"]);
+
+    // Also once the catalog records the ticketed checkpoint.
+    await checkpointLineageStatus({
+      catalog: await loadReviewCatalog({ project: directory }),
+      findingId: reviewed.id,
+      status: "ticketed",
+    });
+    const output = await listed(directory);
+    expect(output).toContain("  Ticket: combined (done) — consolidated\n");
+    expect(output).toContain(`  Ticket path: ${combined}\n`);
+    expect(output).not.toContain("custom");
+  });
+
+  test("keeps generated-ticket listings and their precedence over embedded records", async () => {
+    const directory = await project();
+    const reviewed = finding({
+      id: "IDM-run-0001",
+      fingerprint: "generated-fingerprint",
+      createdAt: "2026-08-14T12:00:00.000Z",
+      status: "ticketed",
+    });
+    await reportRun(directory, "2026-08-14", [reviewed]);
+    const generatedId = ticketId(reviewed.fingerprint, reviewed.id);
+    const generated = join(
+      directory,
+      ".autobuild",
+      "tickets",
+      "ready",
+      `${generatedId}.md`,
+    );
+    await mkdir(join(generated, ".."), { recursive: true });
+    await writeFile(generated, "generated ticket");
+    await embed(
+      join(directory, ".autobuild", "tickets", "doing", "combined.md"),
+      [reviewed],
+    );
+
+    const lifecycles = await reduceLifecycles({
+      catalog: await loadReviewCatalog({ project: directory }),
+      decisions: [],
+    });
+    expect(lifecycles[0]?.ticket).toEqual({
+      id: generatedId,
+      state: "ready",
+      paths: [generated],
+      conflict: false,
+      source: "generated",
+    });
+    const output = await listed(directory);
+    expect(output).toContain(`  Ticket: ${generatedId} (ready)\n`);
+    expect(output).toContain(`  Ticket path: ${generated}\n`);
+    expect(output).toContain("  Lifecycle: open -> ticketed\n");
+    expect(output).not.toContain("consolidated");
+  });
+
+  test("labels a checkpoint with no tracker ticket as checkpointed", async () => {
+    const directory = await project();
+    await reportRun(directory, "2026-08-14", [
+      finding({
+        id: "IDM-run-0001",
+        fingerprint: "orphan-fingerprint",
+        createdAt: "2026-08-14T12:00:00.000Z",
+        status: "ticketed",
+      }),
+    ]);
+    const lifecycles = await reduceLifecycles({
+      catalog: await loadReviewCatalog({ project: directory }),
+      decisions: [],
+    });
+    expect(lifecycles[0]?.ticket).toEqual({
+      state: "checkpointed",
+      paths: [],
+      conflict: false,
+    });
+    const output = await listed(directory);
+    expect(output).toContain(
+      "  Ticket: checkpointed — no tracker ticket found\n",
+    );
+    expect(output).not.toContain("Ticket path:");
+    expect(output).not.toContain("custom");
+  });
+
+  test("reports every ticket embedding the same identity as a conflict", async () => {
+    const directory = await project();
+    const reviewed = finding({
+      id: "IDM-run-0001",
+      fingerprint: "conflict-fingerprint",
+      createdAt: "2026-08-14T12:00:00.000Z",
+    });
+    await reportRun(directory, "2026-08-14", [reviewed]);
+    const tickets = join(directory, ".autobuild", "tickets");
+    const first = join(tickets, "ready", "alpha.md");
+    const second = join(tickets, "done", "beta.md");
+    await embed(first, [reviewed]);
+    await embed(second, [reviewed]);
+
+    const lifecycles = await reduceLifecycles({
+      catalog: await loadReviewCatalog({ project: directory }),
+      decisions: [],
+    });
+    expect(lifecycles[0]?.ticket).toMatchObject({
+      conflict: true,
+      source: "consolidated",
+    });
+    expect([...(lifecycles[0]?.ticket?.paths ?? [])].sort()).toEqual(
+      [first, second].sort(),
+    );
+    const output = await listed(directory);
+    expect(output).toContain("— consolidated — conflict\n");
+    expect(output).toMatch(/Ticket path: .*alpha\.md/);
+    expect(output).toMatch(/Ticket path: .*beta\.md/);
+  });
+
+  test("one consolidated ticket seen from two tracker roots is not a conflict", async () => {
+    const directory = await project();
+    const inherited = await mkdtemp(join(tmpdir(), "idiom-memory-root-"));
+    directories.push(inherited);
+    const reviewed = finding({
+      id: "IDM-run-0001",
+      fingerprint: "shared-fingerprint",
+      createdAt: "2026-08-14T12:00:00.000Z",
+    });
+    await reportRun(directory, "2026-08-14", [reviewed]);
+    const own = join(directory, ".autobuild", "tickets", "ready", "shared.md");
+    await embed(own, [reviewed]);
+    await embed(join(inherited, "ready", "shared.md"), [reviewed]);
+
+    const lifecycles = await reduceLifecycles({
+      catalog: await loadReviewCatalog({ project: directory }),
+      decisions: [],
+      additionalTrackerRoots: [inherited],
+    });
+    expect(lifecycles[0]?.ticket).toEqual({
+      id: "shared",
+      state: "ready",
+      paths: [own],
+      conflict: false,
+      source: "consolidated",
+    });
   });
 });

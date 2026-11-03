@@ -1,4 +1,14 @@
 import {
+  computeDisclosureCoverage,
+  type DisclosureCoverage,
+  disclosureCoverageLines,
+} from "../coverage/disclosures.js";
+import {
+  computeEmptyContainerCoverage,
+  type EmptyContainerCoverage,
+  emptyContainerCoverageLines,
+} from "../coverage/empty-containers.js";
+import {
   crawlRoutes,
   discoverRouteEntries,
   type ExcludedRoute,
@@ -12,13 +22,63 @@ import {
 } from "../coverage/states.js";
 import { IdiomError } from "../errors.js";
 import { findNewestCapture, loadRunTuples } from "../review/artifacts.js";
+import { stateChainLabel } from "../schemas/flow.js";
 import { validateProject } from "../validation.js";
 
 export type CoverageSummary = ReturnType<typeof routeCoverage> & {
   discoveredFrom: string;
   /** Routes coverage.exclude in project.json removed from the list. */
   excluded: ExcludedRoute[];
+  /** Per flow, from its newest capture: disclosures nothing opened. */
+  disclosures: Array<{ flow: string; coverage: DisclosureCoverage }>;
+  /** Per flow, from its newest capture: containers only ever seen empty. */
+  emptyContainers: Array<{ flow: string; coverage: EmptyContainerCoverage }>;
 };
+
+type Validated = Awaited<ReturnType<typeof validateProject>>;
+
+/** Each flow's disclosure and empty-container coverage from its newest stored capture. */
+async function flowCaptureCoverage(
+  validated: Validated,
+): Promise<Pick<CoverageSummary, "disclosures" | "emptyContainers">> {
+  const disclosures: CoverageSummary["disclosures"] = [];
+  const emptyContainers: CoverageSummary["emptyContainers"] = [];
+  const unavailable = (flow: string, reason: string) => {
+    disclosures.push({ flow, coverage: { status: "unavailable", reason } });
+    emptyContainers.push({ flow, coverage: { status: "unavailable", reason } });
+  };
+  for (const { flow } of validated.flows) {
+    const directory = await findNewestCapture({
+      projectDirectory: validated.projectDirectory,
+      flow: flow.id,
+    });
+    if (directory === undefined) {
+      unavailable(flow.id, `not captured yet; run idiom capture ${flow.id}`);
+      continue;
+    }
+    try {
+      const loaded = await loadRunTuples(validated, flow, directory);
+      const tuples = loaded.tuples.filter(
+        (tuple) => tuple.failure === undefined,
+      );
+      const labels = Object.fromEntries(
+        flow.states.map((state) => [state.id, stateChainLabel(state)]),
+      );
+      disclosures.push({
+        flow: flow.id,
+        coverage: computeDisclosureCoverage(tuples, labels),
+      });
+      emptyContainers.push({
+        flow: flow.id,
+        coverage: computeEmptyContainerCoverage(tuples, labels),
+      });
+    } catch (error) {
+      if (!(error instanceof IdiomError)) throw error;
+      unavailable(flow.id, error.message);
+    }
+  }
+  return { disclosures, emptyContainers };
+}
 
 /**
  * Which of the app's routes no flow captures. Idiom's silence about a route
@@ -51,6 +111,7 @@ export async function coverageCommand(options: {
     ),
     discoveredFrom: options.crawl ?? "filesystem routes (app/, pages/)",
     excluded,
+    ...(await flowCaptureCoverage(validated)),
   };
 }
 
@@ -123,5 +184,23 @@ export function renderCoverage(summary: CoverageSummary): string {
         .map((route) => JSON.stringify(route.route))
         .join(", ")}]`,
     );
+  if (summary.disclosures.length > 0) {
+    lines.push("", "Disclosures never opened:");
+    for (const { flow, coverage } of summary.disclosures)
+      lines.push(
+        ...disclosureCoverageLines(coverage).map((line, index) =>
+          index === 0 ? `${flow}: ${line}` : line,
+        ),
+      );
+  }
+  if (summary.emptyContainers.length > 0) {
+    lines.push("", "Containers only ever seen empty:");
+    for (const { flow, coverage } of summary.emptyContainers)
+      lines.push(
+        ...emptyContainerCoverageLines(coverage).map((line, index) =>
+          index === 0 ? `${flow}: ${line}` : line,
+        ),
+      );
+  }
   return `${lines.join("\n")}\n`;
 }

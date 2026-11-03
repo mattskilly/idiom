@@ -2,7 +2,8 @@ import { z } from "zod";
 
 const nonempty = z.string().trim().min(1);
 const pixels = z.number().finite().nonnegative();
-const dimension = z.union([
+/** A size: an exact CSS pixel value or an inclusive `{min,max}` range. */
+export const invariantDimensionSchema = z.union([
   pixels,
   z
     .object({ min: pixels, max: pixels })
@@ -41,8 +42,8 @@ export const invariantSchema = z.union([
     .object({
       ...common,
       selector: nonempty,
-      width: dimension.optional(),
-      height: dimension.optional(),
+      width: invariantDimensionSchema.optional(),
+      height: invariantDimensionSchema.optional(),
     })
     .strict()
     .refine(

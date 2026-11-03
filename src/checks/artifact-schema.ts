@@ -9,6 +9,7 @@ import {
   livenessArtifactSchema,
   touchReachabilityArtifactSchema,
 } from "./dynamic-schema.js";
+import type { ObservationArtifactV2 } from "./types.js";
 
 const finite = z.number().finite();
 const dimension = finite.nonnegative();
@@ -101,6 +102,7 @@ const elementSchema = z
           .strict(),
       ])
       .optional(),
+    spacingExcluded: z.string().min(1).optional(),
     paintedContent: z
       .object({
         selectors: z.array(z.string()),
@@ -139,6 +141,7 @@ const elementSchema = z
       .optional(),
     ancestorSelectors: z.array(z.string()),
     authoredProperties: z.array(z.string()).optional(),
+    tokenContext: z.number().int().min(0).optional(),
     styles: stylesSchema,
     hitTestWith: z.array(z.string()),
   })
@@ -617,6 +620,10 @@ export const actionTimelineSchema = z
         control: z.string().min(1).optional(),
         controls: z.array(z.string().min(1)),
         commonAncestor: z.string().min(1).optional(),
+        /** The one region the click expanded (aria-expanded, no aria-controls). */
+        opened: z.string().min(1).optional(),
+        /** Invalid fields in the click's form, their messages and live regions. */
+        validated: z.array(z.string().min(1)).optional(),
       })
       .strict(),
     /**
@@ -955,6 +962,13 @@ const signalsSchema = z
       .strict()
       .optional(),
     value: z.string().optional(),
+    nativeControl: z
+      .object({
+        type: z.enum(["file", "date", "color", "range"]),
+        defaultStyled: z.boolean(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -1002,6 +1016,83 @@ const probeSafetySchema = z
   })
   .strict();
 
+const probeEffectSchema = z.enum([
+  "dom",
+  "focus",
+  "navigation",
+  "dialog",
+  "network",
+  "popup",
+  "clipboard",
+  "aria",
+  "filechooser",
+  "picker",
+  "print",
+  "download",
+]);
+const affordanceSchema = z.enum(["button", "link", "pointer"]);
+const selectsAncestorSchema = z
+  .object({
+    ancestor: z.string().min(1),
+    ancestorName: z.string(),
+    marker: z.string().min(1),
+    affordance: affordanceSchema,
+  })
+  .strict();
+const rowColorsSchema = z
+  .object({ backgroundColor: z.string(), color: z.string() })
+  .strict();
+const probeMenuSchema = z
+  .object({
+    trigger: rectSchema,
+    group: z.string().min(1),
+    root: z.string().min(1),
+    items: z.array(
+      z
+        .object({
+          name: z.string(),
+          disabled: z.boolean(),
+          selector: z.string().min(1),
+        })
+        .strict(),
+    ),
+    hover: z
+      .array(
+        z
+          .object({
+            selector: z.string().min(1),
+            disabled: z.boolean(),
+            rest: rowColorsSchema,
+            hovered: rowColorsSchema,
+          })
+          .strict(),
+      )
+      .optional(),
+  })
+  .strict();
+const selectionTrialsSchema = z
+  .object({
+    status: z.enum(["ran", "partial"]),
+    reason: z.string().optional(),
+    limit: countSchema,
+    candidates: countSchema,
+    trials: z.array(
+      z
+        .object({
+          selector: z.string().min(1),
+          name: z.string(),
+          affordance: affordanceSchema,
+          status: z.enum(["completed", "skipped", "timed-out"]),
+          skipped: z.string().optional(),
+          effects: z.array(probeEffectSchema),
+          selectsAncestor: selectsAncestorSchema.optional(),
+          elapsedMs: finite.nonnegative().optional(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
 const probeSchema = z
   .object({
     safety: probeSafetySchema.optional(),
@@ -1019,6 +1110,8 @@ const probeSchema = z
       })
       .strict()
       .optional(),
+    selectionTrials: selectionTrialsSchema.optional(),
+    fingerprints: z.record(z.string(), z.string()).optional(),
     heldReplay: z
       .object({
         delayMs: z.number().int().positive(),
@@ -1042,27 +1135,13 @@ const probeSchema = z
         .object({
           selector: z.string().min(1),
           name: z.string(),
-          effects: z.array(
-            z.enum([
-              "dom",
-              "focus",
-              "navigation",
-              "dialog",
-              "network",
-              "popup",
-              "clipboard",
-              "aria",
-              "filechooser",
-              "picker",
-              "print",
-              "download",
-            ]),
-          ),
+          effects: z.array(probeEffectSchema),
           signature: z.string().optional(),
           persistent: z.boolean(),
           repeated: z.boolean().optional(),
           region: z.string().optional(),
           primary: z.boolean().optional(),
+          backgroundRequests: z.array(z.string().min(1)).max(5).optional(),
           skipped: z.string().optional(),
           elapsedMs: finite.nonnegative().optional(),
           status: z.enum(["completed", "timed-out", "not-reached"]).optional(),
@@ -1079,6 +1158,26 @@ const probeSchema = z
             })
             .strict()
             .optional(),
+          revealed: z
+            .object({
+              name: z.string().min(1),
+              kind: z.enum(["details", "popup", "expanded", "mode"]),
+              trigger: z.string().min(1),
+              root: z.string().min(1).optional(),
+              status: z.enum(["observed", "unavailable"]),
+              reason: z.string().optional(),
+              // A revealed observation never carries its own probe.
+              observations: z
+                .lazy(
+                  (): z.ZodType<ObservationArtifactV2> =>
+                    revealedObservationSchema,
+                )
+                .optional(),
+            })
+            .strict()
+            .optional(),
+          selectsAncestor: selectsAncestorSchema.optional(),
+          menu: probeMenuSchema.optional(),
         })
         .strict(),
     ),
@@ -1227,6 +1326,29 @@ const overlapSchema = z
   })
   .strict();
 
+const disclosureSchema = z
+  .object({
+    selector: z.string().min(1),
+    path: z.string().min(1),
+    id: z.string().min(1).optional(),
+    name: z.string(),
+    kind: z.enum(["details", "popup", "expanded"]),
+    open: z.boolean(),
+  })
+  .strict();
+
+const popoverCoverSchema = z
+  .object({
+    overlay: z.string().min(1),
+    target: z.string().min(1),
+    targetRole: z.enum(["field", "trigger"]),
+    rect: rectSchema,
+    samples: z.number().int().min(0),
+    hits: z.number().int().min(0),
+    partial: z.array(z.string().min(1)),
+  })
+  .strict();
+
 const clippedTextSchema = z
   .object({
     selector: z.string().min(1),
@@ -1254,6 +1376,15 @@ const fieldGroupSchema = z
         })
         .strict(),
     ),
+  })
+  .strict();
+
+const repeatedContainerSchema = z
+  .object({
+    selector: z.string().min(1),
+    kind: z.enum(["list", "table", "grid", "feed", "editor", "configured"]),
+    name: z.string().max(80),
+    items: z.number().int().min(0),
   })
   .strict();
 
@@ -1405,6 +1536,15 @@ const headingSchema = z
   })
   .strict();
 
+const typedTokenSchema = z
+  .object({
+    kind: z.enum(["color", "radius", "spacing", "control-height", "other"]),
+    value: z.string(),
+    name: z.string().optional(),
+    theme: z.string().optional(),
+  })
+  .strict();
+
 const tokenSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("not-configured") }).strict(),
   z
@@ -1415,23 +1555,21 @@ const tokenSchema = z.discriminatedUnion("status", [
         .record(z.string(), z.string())
         .refine((value) => Object.keys(value).length > 0),
       normalizedValues: z.array(z.string()),
-      typedValues: z
+      typedValues: z.array(typedTokenSchema).optional(),
+      contextProperties: z.array(z.string().startsWith("--")).optional(),
+      contexts: z
         .array(
           z
             .object({
-              kind: z.enum([
-                "color",
-                "radius",
-                "spacing",
-                "control-height",
-                "other",
-              ]),
-              value: z.string(),
-              name: z.string().optional(),
-              theme: z.string().optional(),
+              colorScheme: z.string(),
+              usedScheme: z.enum(["light", "dark"]),
+              environment: z.record(z.string(), z.string()),
+              normalizedValues: z.array(z.string()),
+              typedValues: z.array(typedTokenSchema).optional(),
             })
             .strict(),
         )
+        .max(16)
         .optional(),
     })
     .strict(),
@@ -1580,6 +1718,21 @@ const focusVisibleSchema = z
     rect: rectSchema,
     changed: z.array(z.string()),
     proxy: identifier.optional(),
+  })
+  .strict();
+const selectionOutlineSchema = z
+  .object({
+    owner: identifier,
+    ownerName: z.string(),
+    ownerState: z.enum(["selected", "focused", "framed"]),
+    painter: identifier,
+    kind: z.enum(["outline", "box-shadow", "border"]),
+    ring: rectSchema,
+    popover: identifier,
+    popoverRole: z.string(),
+    popoverRect: rectSchema,
+    crossing: rectSchema,
+    stacking: z.enum(["hit-test", "stack-order", "top-layer"]),
   })
   .strict();
 const lineLengthSchema = z
@@ -1785,6 +1938,7 @@ const observationArtifactV2Schema = z
               "cta",
               "adjacent-region",
               "sibling-region",
+              "brief",
             ]),
             selector: z.string().min(1),
             matches: z.array(z.string().min(1)),
@@ -1794,6 +1948,8 @@ const observationArtifactV2Schema = z
       )
       .optional(),
     overlaps: z.array(overlapSchema).optional(),
+    disclosures: z.array(disclosureSchema).optional(),
+    popoverCovers: z.array(popoverCoverSchema).optional(),
     clippedText: z.array(clippedTextSchema).optional(),
     bandEdges: geometryScan(bandEdgeSchema).optional(),
     wordBreaks: geometryScan(wordBreakSchema).optional(),
@@ -1817,6 +1973,7 @@ const observationArtifactV2Schema = z
       .array(z.object({ url: z.string(), reason: z.string() }).strict())
       .optional(),
     emptyRegions: emptyRegionsSchema.optional(),
+    repeatedContainers: z.array(repeatedContainerSchema).max(100).optional(),
     progress: progressArtifactSchema.optional(),
     touchReachability: touchReachabilityArtifactSchema.optional(),
     liveness: livenessArtifactSchema.optional(),
@@ -1829,6 +1986,7 @@ const observationArtifactV2Schema = z
     fonts: fontObservationSchema.optional(),
     links: geometryScan(linkSchema).optional(),
     focusVisible: geometryScan(focusVisibleSchema).optional(),
+    selectionOutlines: geometryScan(selectionOutlineSchema).optional(),
     lineLengths: geometryScan(lineLengthSchema).optional(),
     orphanWords: geometryScan(orphanWordSchema).optional(),
     imageRenders: geometryScan(imageRenderSchema).optional(),
@@ -1836,6 +1994,11 @@ const observationArtifactV2Schema = z
     screenshot: screenshotGeometrySchema.optional(),
   })
   .strict();
+
+const revealedObservationSchema: z.ZodType<ObservationArtifactV2> =
+  observationArtifactV2Schema.omit({
+    probe: true,
+  });
 
 export const observationArtifactSchema = z.discriminatedUnion("version", [
   observationArtifactV1Schema,

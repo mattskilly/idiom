@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Assistant</title>
+    <style>
+      body {
+        margin: 0;
+        font: 15px/1.5 system-ui, sans-serif;
+        color: #1d2330;
+        background: #f6f7f9;
+      }
+      main {
+        max-width: 560px;
+        margin: 48px auto;
+        padding: 24px;
+        background: #fff;
+        border-radius: 12px;
+      }
+      h1 {
+        margin: 0 0 16px;
+        font-size: 20px;
+      }
+      .composer {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      textarea,
+      .link-row input {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 10px 12px;
+        font: inherit;
+        border: 1px solid #c9ced8;
+        border-radius: 8px;
+      }
+      textarea {
+        height: 96px;
+        resize: none;
+      }
+      .tools {
+        position: relative;
+      }
+      .tools > button {
+        padding: 8px 16px;
+        font: inherit;
+        color: #fff;
+        background: #3048c8;
+        border: 0;
+        border-radius: 8px;
+      }
+      #attach-menu {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        z-index: 10;
+        width: 240px;
+        padding: 12px;
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 6px 24px rgb(0 0 0 / 0.16);
+      }
+      #attach-menu[hidden] {
+        display: none;
+      }
+      #attach-menu .option {
+        display: block;
+        width: 100%;
+        margin: 0;
+        padding: 8px 12px;
+        font: inherit;
+        text-align: left;
+        color: #1d2330;
+        background: #fff;
+        border: 1px solid #c9ced8;
+        border-radius: 6px;
+      }
+      #attach-menu input[type="file"] {
+        display: block;
+        margin-bottom: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Assistant</h1>
+      <div class="composer">
+        <textarea id="prompt" aria-label="Prompt"></textarea>
+        <div class="tools">
+          <button
+            id="attach"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="attach-menu"
+          >
+            Attach
+          </button>
+          <div id="attach-menu" hidden>
+            <input id="attach-file" type="file" aria-label="Upload a file" />
+            <button class="option" id="attach-image" type="button">Image</button>
+            <button class="option" id="attach-link" type="button">Link</button>
+          </div>
+        </div>
+        <div id="extra"></div>
+      </div>
+    </main>
+    <script>
+      (() => {
+        const attach = document.getElementById("attach");
+        const menu = document.getElementById("attach-menu");
+        attach.addEventListener("click", () => {
+          const open = menu.hidden;
+          menu.hidden = !open;
+          attach.setAttribute("aria-expanded", String(open));
+        });
+        document.getElementById("attach-image").addEventListener("click", () => {
+          attach.dataset.mode = "image";
+        });
+        // Choosing Link adds a URL field row, but the popover stays open on top.
+        document.getElementById("attach-link").addEventListener("click", () => {
+          const extra = document.getElementById("extra");
+          if (extra.children.length > 0) return;
+          const row = document.createElement("div");
+          row.className = "link-row";
+          row.innerHTML =
+            '<input id="link-url" type="url" aria-label="Link URL" placeholder="https://" />';
+          extra.append(row);
+        });
+      })();
+    </script>
+  </body>
+</html>

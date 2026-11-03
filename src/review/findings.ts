@@ -11,7 +11,7 @@ import type {
   ModelFindingCandidate,
   ScreenshotRef,
 } from "../critique/types.js";
-import type { DecisionViews } from "../decisions/log.js";
+import { type DecisionViews, ruleRejection } from "../decisions/log.js";
 import { buildRuleContract } from "../findings/contract.js";
 import { evaluateRules } from "../rules/index.js";
 import type { Decision } from "../schemas/decision.js";
@@ -362,17 +362,11 @@ export function suppressFindingDrafts(
   const kept: FindingDraft[] = [];
   const suppressed: SuppressedFinding[] = [];
   for (const draft of drafts) {
-    const identities = new Set([
-      draft.finding.fingerprint,
-      ...(draft.fingerprintAliases ?? []),
-    ]);
-    const decision = decisions
-      .filter(
-        (candidate) =>
-          candidate.scope === "rule" && identities.has(candidate.fingerprint),
-      )
-      .at(-1);
-    if (decision?.decision !== "reject") kept.push(draft);
+    const decision = ruleRejection(
+      [draft.finding.fingerprint, ...(draft.fingerprintAliases ?? [])],
+      decisions,
+    );
+    if (decision === undefined) kept.push(draft);
     else
       suppressed.push({
         finding: draft.finding,
@@ -432,6 +426,16 @@ export function applyRulesToDrafts(
   return { kept, suppressed };
 }
 
+/** A re-observed finding is ticketed work again; a past verification result is history, not its state. */
+function republishedStatus(
+  prior: Finding["status"] | undefined,
+  fallback: Finding["status"],
+): Finding["status"] {
+  if (prior === "verified-fixed" || prior === "verify-failed")
+    return "ticketed";
+  return prior ?? fallback;
+}
+
 export function finalizeFindingSelection(options: {
   runId: string;
   drafts: FindingDraft[];
@@ -471,7 +475,10 @@ export function finalizeFindingSelection(options: {
     return findingSchema.parse({
       ...draft.finding,
       id,
-      status: lineage?.latest.finding.status ?? draft.finding.status,
+      status: republishedStatus(
+        lineage?.latest.finding.status,
+        draft.finding.status,
+      ),
     });
   });
   return {
@@ -504,19 +511,17 @@ export function selectFindings(options: {
   suppressed: Array<{ finding: Finding; decision: Decision }>;
   deferred: Finding[];
 } {
-  const suppressed = options.findings.flatMap((finding) => {
-    const decision = options.decisions.byRuleFingerprint.get(
-      finding.fingerprint,
+  const suppressed: Array<{ finding: Finding; decision: Decision }> = [];
+  const candidates: Array<{ finding: Finding; index: number }> = [];
+  for (const [index, finding] of options.findings.entries()) {
+    const decision = ruleRejection(
+      [finding.fingerprint],
+      options.decisions.ruleDecisions,
     );
-    return decision?.decision === "reject" ? [{ finding, decision }] : [];
-  });
-  const unsuppressed = options.findings
-    .map((finding, index) => ({ finding, index }))
-    .filter(
-      ({ finding }) =>
-        options.decisions.byRuleFingerprint.get(finding.fingerprint)
-          ?.decision !== "reject",
-    )
+    if (decision === undefined) candidates.push({ finding, index });
+    else suppressed.push({ finding, decision });
+  }
+  const unsuppressed = candidates
     .sort(
       (left, right) =>
         (severityOrder.get(left.finding.severity) ?? 3) -

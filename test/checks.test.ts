@@ -700,6 +700,30 @@ describe("deterministic checks", () => {
             inlineTextTarget: true,
           }),
           element({
+            selector: "a.explicit-link",
+            tag: "a",
+            rect: { x: 0, y: 0, width: 80, height: 18 },
+            inlineTextTarget: true,
+            ...({ attributes: { role: "link" } } as Partial<ObservedElement>),
+          }),
+          element({
+            selector: "a.button-role",
+            tag: "a",
+            rect: { x: 0, y: 0, width: 40, height: 18 },
+            inlineTextTarget: true,
+            ...({ attributes: { role: "button" } } as Partial<ObservedElement>),
+          }),
+          element({
+            selector: "a.signalled-tab",
+            tag: "a",
+            rect: { x: 0, y: 0, width: 40, height: 18 },
+            inlineTextTarget: true,
+            ...({
+              attributes: {},
+              signals: { role: " Tab " },
+            } as unknown as Partial<ObservedElement>),
+          }),
+          element({
             selector: "button.small",
             tag: "button",
             rect: { x: 0, y: 0, width: 40, height: 40 },
@@ -730,7 +754,14 @@ describe("deterministic checks", () => {
       result.candidates
         .filter(({ candidate }) => candidate.category === "target-size")
         .map(({ candidate }) => candidate.selectorHint),
-    ).toEqual(["button.small", "input.small", "a.padded-link", "a.block-link"]);
+    ).toEqual([
+      "a.button-role",
+      "a.signalled-tab",
+      "button.small",
+      "input.small",
+      "a.padded-link",
+      "a.block-link",
+    ]);
   });
 
   test("excludes horizontally off-screen targets but keeps vertical and partial targets", () => {
@@ -1329,8 +1360,10 @@ describe("deterministic checks", () => {
     expect(findings[0]).toMatchObject({
       tuple: { state: "account" },
       candidate: {
+        // The account row hugs its wrapper, so it is measured to the rule:
+        // a placement distinct from the filtered state's padded row.
         explanation: expect.stringContaining(
-          "prevailing clearance is 16 CSS px, supported by 3 observed placements",
+          "prevailing clearance is 16 CSS px, supported by 4 observed placements",
         ),
       },
     });
@@ -1408,7 +1441,17 @@ describe("deterministic checks", () => {
       ]).candidates.filter(
         ({ candidate }) => candidate.category === "spacing-rhythm",
       );
-    expect(spacingFindings([0, 0, 0, 0])).toEqual([]);
+    // Rows that hug their wrappers are measured to the next row (36px), so
+    // only the last, which touches the rule, stands out.
+    expect(
+      spacingFindings([0, 0, 0, 0]).map(
+        ({ candidate }) => candidate.explanation,
+      ),
+    ).toEqual([
+      expect.stringMatching(
+        /^button\.action-4 has 0 CSS px clearance below it to rule at hr\.actions-rule.*prevailing clearance is 36 CSS px/,
+      ),
+    ]);
     expect(spacingFindings([16, 16, 16, 16])).toEqual([]);
     expect(spacingFindings([16, 16, 0])).toEqual([]);
     expect(spacingFindings([16, 16, 16, 12])).toEqual([]);
@@ -1658,6 +1701,101 @@ describe("deterministic checks", () => {
     ]);
   });
 
+  test("exempts the expected document but reports a same-URL subresource", () => {
+    const documentUrl = "http://127.0.0.1:3107/not-found";
+    const text =
+      "Failed to load resource: the server responded with a status of 404 (Not Found)";
+    const location = { url: documentUrl, lineNumber: 0, columnNumber: 0 };
+    const result = runDeterministicChecks([
+      tuple({
+        consoleProvenance: true,
+        documentResponse: {
+          url: documentUrl,
+          actualStatus: 404,
+          expectedStatus: 404,
+        },
+        console: [
+          {
+            type: "error",
+            text,
+            location,
+            request: { resourceType: "document", mainFrame: true },
+          },
+          {
+            type: "error",
+            text,
+            location,
+            request: { resourceType: "script", mainFrame: true },
+          },
+        ],
+      }),
+    ]).candidates.filter(
+      ({ candidate }) => candidate.category === "console-error",
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]?.candidate.selectorHint).toBe(
+      `error | ${documentUrl}:0:0 | ${text}`,
+    );
+    expect(result[0]?.candidate.consoleExcerpt).toBe(text);
+    // Both reported would fold into one candidate recorded twice.
+    expect(result[0]?.candidate.explanation).not.toContain("recorded");
+  });
+
+  test("matches the expected document load error at its final, fragment-free URL", () => {
+    const origin = "http://127.0.0.1:3107";
+    const resourceMessage =
+      "Failed to load resource: the server responded with a status of 404";
+    const at = (url: string) => ({
+      type: "error",
+      text: resourceMessage,
+      location: { url, lineNumber: 0, columnNumber: 0 },
+    });
+    const excerpts = (value: CheckTuple) =>
+      runDeterministicChecks([value])
+        .candidates.filter(
+          ({ candidate }) => candidate.category === "console-error",
+        )
+        .map(({ candidate }) => candidate.selectorHint);
+    const status = { actualStatus: 404, expectedStatus: 404 };
+
+    // Redirected: only the final URL is the expected document failure.
+    expect(
+      excerpts(
+        tuple({
+          documentResponse: {
+            url: `${origin}/old`,
+            finalUrl: `${origin}/gone`,
+            ...status,
+          },
+          console: [
+            at(`${origin}/gone`),
+            at(`${origin}/old`),
+            at(`${origin}/elsewhere`),
+          ],
+        }),
+      ),
+    ).toEqual([
+      `error | ${origin}/old:0:0 | ${resourceMessage}`,
+      `error | ${origin}/elsewhere:0:0 | ${resourceMessage}`,
+    ]);
+
+    // Fragment on the declared URL, with or without a recorded final URL.
+    for (const finalUrl of [undefined, `${origin}/not-found`]) {
+      expect(
+        excerpts(
+          tuple({
+            documentResponse: {
+              url: `${origin}/not-found#details`,
+              ...(finalUrl === undefined ? {} : { finalUrl }),
+              ...status,
+            },
+            console: [at(`${origin}/not-found`), at(`${origin}/other`)],
+          }),
+        ),
+      ).toEqual([`error | ${origin}/other:0:0 | ${resourceMessage}`]);
+    }
+  });
+
   test("keeps expected document failures when any exemption guard is absent", () => {
     const documentUrl = "http://127.0.0.1:3107/not-found";
     const resourceMessage =
@@ -1698,10 +1836,32 @@ describe("deterministic checks", () => {
           },
         ],
       }),
+      tuple({
+        documentResponse: {
+          ...context,
+          finalUrl: "http://127.0.0.1:3107/elsewhere",
+        },
+        console: [record],
+      }),
       tuple({ console: [record] }),
+      tuple({
+        consoleProvenance: true,
+        documentResponse: context,
+        console: [
+          {
+            ...record,
+            request: { resourceType: "document", mainFrame: false },
+          },
+        ],
+      }),
+      tuple({
+        consoleProvenance: true,
+        documentResponse: context,
+        console: [record],
+      }),
     ];
     expect(cases.map((item) => candidates(item).length)).toEqual([
-      1, 1, 1, 1, 1,
+      1, 1, 1, 1, 1, 1, 1, 1,
     ]);
   });
 
@@ -1720,6 +1880,75 @@ describe("deterministic checks", () => {
         ({ candidate }) => candidate.category === "token-drift",
       ),
     ).toBe(false);
+  });
+
+  test("token-drift judges colours in an overriding subtree against that subtree's context", () => {
+    const paint = (selector: string, color: string, tokenContext?: number) =>
+      element({
+        selector,
+        interactive: false,
+        ...(tokenContext === undefined ? {} : { tokenContext }),
+        styles: {
+          ...styles,
+          color,
+          borderTopLeftRadius: "6px",
+          borderTopRightRadius: "6px",
+          borderBottomRightRadius: "6px",
+          borderBottomLeftRadius: "6px",
+        },
+      });
+    const observed = observations([
+      paint("p.root-light", "rgb(44, 55, 66)"),
+      paint("p.root-dark", "rgb(210, 211, 212)"),
+      paint("p.card-light", "rgb(44, 55, 66)", 0),
+      paint("p.card-dark", "rgb(210, 211, 212)", 0),
+      paint("p.unknown-context", "rgb(44, 55, 66)", 3),
+    ]);
+    const context = {
+      colorScheme: "dark",
+      usedScheme: "dark" as const,
+      environment: {},
+      normalizedValues: ["rgb(210, 211, 212)"],
+    };
+    const hints = (tokens: ObservationArtifact["tokens"]) =>
+      runDeterministicChecks([tuple({ observations: { ...observed, tokens } })])
+        .candidates.filter(
+          ({ candidate }) => candidate.category === "token-drift",
+        )
+        .map(({ candidate }) => candidate.selectorHint);
+    const expected = ["p.root-dark::color", "p.card-light::color"];
+    expect(
+      hints({
+        status: "configured",
+        source: "theme.css",
+        declarations: { "--direct": "light-dark(#2c3742, #d2d3d4)" },
+        normalizedValues: ["6px", "rgb(44, 55, 66)"],
+        contextProperties: [],
+        contexts: [context],
+      }),
+    ).toEqual(expected);
+    expect(
+      hints({
+        status: "configured",
+        source: "theme.css",
+        declarations: { "--direct": "light-dark(#2c3742, #d2d3d4)" },
+        normalizedValues: [],
+        typedValues: [
+          { kind: "color", value: "rgb(44, 55, 66)" },
+          { kind: "radius", value: "6px" },
+        ],
+        contextProperties: [],
+        contexts: [
+          {
+            ...context,
+            typedValues: [
+              { kind: "color", value: "rgb(210, 211, 212)" },
+              { kind: "radius", value: "8px" },
+            ],
+          },
+        ],
+      }),
+    ).toEqual(expected);
   });
 
   test("ignores unpainted outlines and collapses uniform box shorthands", () => {

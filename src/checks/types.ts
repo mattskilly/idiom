@@ -84,6 +84,11 @@ export const deterministicCheckIds = [
   "double-submit",
   "error-state-missing",
   "retry-blocked",
+  "nested-border",
+  "parent-selection",
+  "selection-outline",
+  "disabled-highlight",
+  "brief-mismatch",
 ] as const;
 
 export type DeterministicCheckId = (typeof deterministicCheckIds)[number];
@@ -171,6 +176,12 @@ export type ObservedElement = {
   text: string;
   visible: boolean;
   painted?: PaintedFact | undefined;
+  /**
+   * Set when the element sits in a closed `<details>` (outside its summary),
+   * or a `hidden`, `inert` or `content-visibility: hidden` subtree: spacing
+   * rules do not measure it. Absent in older artifacts.
+   */
+  spacingExcluded?: string | undefined;
   /** Contributors and scroll extent excluding wholly unpainted content. */
   paintedContent?:
     | {
@@ -195,13 +206,35 @@ export type ObservedElement = {
   clientWidth: number;
   clientHeight: number;
   outOfFlow: boolean;
+  /** Unpadded inline anchor whose rendered text, not an icon or atomic child, sets its size. */
   inlineTextTarget?: boolean | undefined;
   /** Clickable fragments of associated native checkbox/radio labels; absent in legacy captures. */
   targetSizeLabels?: Array<{ selector: string; rects: Rect[] }> | undefined;
   ancestorSelectors: string[];
   authoredProperties?: string[] | undefined;
+  /** Index into `tokens.contexts`; absent when the body's context applies. */
+  tokenContext?: number | undefined;
   styles: ObservedStyles;
   hitTestWith: string[];
+};
+
+export type TypedTokenValue = {
+  kind: "color" | "radius" | "spacing" | "control-height" | "other";
+  value: string;
+  name?: string | undefined;
+  theme?: string | undefined;
+};
+
+/**
+ * A subtree whose colour scheme or referenced custom properties differ from
+ * the body's, with the colour token values that apply inside it.
+ */
+export type TokenContext = {
+  colorScheme: string;
+  usedScheme: "light" | "dark";
+  environment: Record<string, string>;
+  normalizedValues: string[];
+  typedValues?: TypedTokenValue[] | undefined;
 };
 
 export type TokenObservation =
@@ -211,14 +244,10 @@ export type TokenObservation =
       source: string;
       declarations: Record<string, string>;
       normalizedValues: string[];
-      typedValues?:
-        | Array<{
-            kind: "color" | "radius" | "spacing" | "control-height" | "other";
-            value: string;
-            name?: string | undefined;
-            theme?: string | undefined;
-          }>
-        | undefined;
+      typedValues?: TypedTokenValue[] | undefined;
+      /** App custom properties token values reference, in fingerprint order. */
+      contextProperties?: string[] | undefined;
+      contexts?: TokenContext[] | undefined;
     };
 
 export type ObservationArtifactV1 = {
@@ -416,6 +445,17 @@ export type ElementSignals = {
    * captures.
    */
   value?: string | undefined;
+  /**
+   * `file`, `date`, `color` and `range` inputs only: whether the browser's
+   * default appearance is what paints (for `file`, the
+   * `::file-selector-button`). Absent in older captures.
+   */
+  nativeControl?: NativeControlSignal | undefined;
+};
+
+export type NativeControlSignal = {
+  type: "file" | "date" | "color" | "range";
+  defaultStyled: boolean;
 };
 
 export type ProbeEffect =
@@ -438,6 +478,64 @@ export type ProbeAttemptTimings = {
   restoreCheckMs: number;
   escapeMs: number;
   replayMs: number;
+};
+
+/** A click that marked an ancestor of the clicked element as selected. */
+export type SelectsAncestor = {
+  /** Selector of the ancestor that became selected. */
+  ancestor: string;
+  ancestorName: string;
+  /**
+   * What marked it: `aria-selected`, `aria-current`, `class:<token>`,
+   * `data-<name>` or `data-state:<value>`.
+   */
+  marker: string;
+  /** Why the clicked element reads as clickable. */
+  affordance: "button" | "link" | "pointer";
+};
+
+/**
+ * A link or look-alike control inside a selectable container, clicked once
+ * by the probe's selection pass with link navigation suppressed.
+ */
+export type SelectionTrial = {
+  selector: string;
+  name: string;
+  affordance: "button" | "link" | "pointer";
+  status: "completed" | "skipped" | "timed-out";
+  skipped?: string | undefined;
+  effects: ProbeEffect[];
+  selectsAncestor?: SelectsAncestor | undefined;
+  elapsedMs?: number | undefined;
+};
+
+/** A menu row's colours at rest and under the pointer. */
+export type MenuRowSample = {
+  selector: string;
+  disabled: boolean;
+  rest: { backgroundColor: string; color: string };
+  hovered: { backgroundColor: string; color: string };
+};
+
+/**
+ * What a probe click that opened a menu or listbox found: where the trigger
+ * sat, which group held it, and the rows the menu listed.
+ */
+export type ProbeMenu = {
+  /** The trigger's box in document coordinates, measured before the click. */
+  trigger: Rect;
+  /** Probe path of the trigger's toolbar, menubar, group or row (or parent). */
+  group: string;
+  /** Selector of the opened menu. */
+  root: string;
+  /** Visible rows, in order, at most 40. */
+  items: Array<{ name: string; disabled: boolean; selector: string }>;
+  /**
+   * Hover samples for up to three disabled rows and the first enabled row,
+   * taken only when the menu has a disabled row. Partial when the attempt
+   * ran short of time.
+   */
+  hover?: MenuRowSample[] | undefined;
 };
 
 export type ProbeResult = {
@@ -471,7 +569,39 @@ export type ProbeResult = {
    * probes.
    */
   primary?: boolean | undefined;
+  /**
+   * The click changed nothing; these requests ran during it but none was
+   * started by it. Redacted `METHOD /path` (cross-origin `METHOD host/path`).
+   */
+  backgroundRequests?: string[] | undefined;
   skipped?: string | undefined;
+  /**
+   * The disclosure this click opened (or the mode a menu item switched it
+   * into), observed in place for the revealed-state checks. Absent on reused
+   * results: a revealed state is checked once, where it was opened.
+   */
+  revealed?: RevealedState | undefined;
+  /**
+   * The click selected an ancestor instead of anything matching the clicked
+   * control. Absent in artifacts from older probes.
+   */
+  selectsAncestor?: SelectsAncestor | undefined;
+  /** Present when the click opened a menu or listbox; absent in older artifacts. */
+  menu?: ProbeMenu | undefined;
+};
+
+export type RevealedState = {
+  /** Probe name: "Attach", or "Attach › Link" for a mode-switch item. */
+  name: string;
+  kind: "details" | "popup" | "expanded" | "mode";
+  /** Probe path of the clicked control. */
+  trigger: string;
+  /** Selector of the revealed root, when one was found. */
+  root?: string | undefined;
+  status: "observed" | "unavailable";
+  reason?: string | undefined;
+  /** A version 2 observation of the revealed page, without `probe`. */
+  observations?: ObservationArtifactV2 | undefined;
 };
 
 export type MotionStyles = {
@@ -617,6 +747,8 @@ export type ProbeArtifact = {
   safety?: ProbeSafetyLedger | undefined;
   /** Read-only enumeration used to allocate this flow before any clicks. */
   candidates?: import("../capture/probe.js").ProbeCandidate[] | undefined;
+  /** Control identity → rendered fingerprint, the build gate's reference. */
+  fingerprints?: Record<string, string> | undefined;
   selector?: string | undefined;
   step?: string | undefined;
   explanations?: ExplanationArtifact | undefined;
@@ -636,6 +768,19 @@ export type ProbeArtifact = {
         reused?: number | undefined;
         completed: string[];
         notes: string[];
+      }
+    | undefined;
+  /**
+   * The selection pass over links and look-alike controls inside selectable
+   * containers. Absent when the pass did not run.
+   */
+  selectionTrials?:
+    | {
+        status: "ran" | "partial";
+        reason?: string | undefined;
+        limit: number;
+        candidates: number;
+        trials: SelectionTrial[];
       }
     | undefined;
   /** The held (slow-network) replay of actions that sent requests. */
@@ -741,6 +886,36 @@ export type DialogObservation = {
 export type OverlapKind = "interactive" | "text";
 
 /** Two interactive or text elements whose visible boxes intersect. */
+/** A control that opens something: a details summary, a popup or an expander. */
+export type DisclosureObservation = {
+  selector: string;
+  /** The probe's `html > tag:nth-of-type(n) > …` path for the same element. */
+  path: string;
+  /** `#id` as the probe spells it, when the element has an id. */
+  id?: string | undefined;
+  name: string;
+  kind: "details" | "popup" | "expanded";
+  open: boolean;
+};
+
+/**
+ * An open overlay (menu, listbox, popover, non-modal dialog, positioned
+ * disclosure content) whose box covers a field outside it or its own
+ * trigger beyond the anchor edge.
+ */
+export type PopoverCoverObservation = {
+  overlay: string;
+  target: string;
+  targetRole: "field" | "trigger";
+  /** Covered intersection (viewport-clipped when on screen). */
+  rect: Rect;
+  /** Hit-test points inside the viewport. */
+  samples: number;
+  /** Points whose top element is inside the overlay. */
+  hits: number;
+  partial: string[];
+};
+
 export type OverlapObservation = {
   /** Observed selectors, a < b lexically. */
   a: string;
@@ -801,7 +976,9 @@ export type SelectorMarkPurpose =
   | "naming"
   | "cta"
   | "adjacent-region"
-  | "sibling-region";
+  | "sibling-region"
+  /** A decided brief's assertion selector; keeps hidden matches. */
+  | "brief";
 
 /** A configured selector resolved at capture time to observed selectors. */
 export type SelectorMark = {
@@ -825,6 +1002,15 @@ export type EmptyRegionObservation = {
   cta: string[];
   /** Explanatory text in scope, normalized, at most 160 chars ("" when none). */
   text: string;
+};
+
+/** A repeated-content container and how many rendered items it held. */
+export type RepeatedContainerObservation = {
+  selector: string;
+  kind: "list" | "table" | "grid" | "feed" | "editor" | "configured";
+  /** aria-label, aria-labelledby, caption, or nearest heading or legend, at most 80 chars ("" when none). */
+  name: string;
+  items: number;
 };
 
 export type EmptyRegionsObservation = {
@@ -928,7 +1114,7 @@ export type ProgressArtifact = {
 
 /** Where a measured property's winning declaration was authored. */
 export type StyleSource = {
-  /** Stylesheet path, `<style>[n]`, or `inline`. */
+  /** Stylesheet path, `<style>[n]`, `adopted[n]`, or `inline`. */
   sheet: string;
   selector: string;
   /** Custom properties the declaration references. */
@@ -1068,6 +1254,27 @@ export type GeometryScan<T> =
   | { status: "ran"; records: T[] }
   | { status: "partial" | "unavailable"; reason: string; records: T[] };
 
+/**
+ * A selection or focus ring drawn by a separate positioned overlay over an
+ * element, running across an open popover that sits above the element.
+ */
+export type SelectionOutlineObservation = {
+  owner: string;
+  ownerName: string;
+  /** `framed`: no marker on the owner; the frame is the evidence. */
+  ownerState: "selected" | "focused" | "framed";
+  painter: string;
+  kind: "outline" | "box-shadow" | "border";
+  /** Outer painted rectangle of the ring. */
+  ring: Rect;
+  popover: string;
+  popoverRole: string;
+  popoverRect: Rect;
+  /** Bounding box of the ring band inside the popover's interior. */
+  crossing: Rect;
+  stacking: "hit-test" | "stack-order" | "top-layer";
+};
+
 export type BandEdgeObservation = {
   selector: string;
   rect: Rect;
@@ -1160,12 +1367,17 @@ export type ObservationArtifactV2 = Omit<
   fresh?: boolean | undefined;
   selectorMarks?: SelectorMark[] | undefined;
   overlaps?: OverlapObservation[] | undefined;
+  /** Disclosure controls on the surface; absent in older captures. */
+  disclosures?: DisclosureObservation[] | undefined;
+  popoverCovers?: PopoverCoverObservation[] | undefined;
   clippedText?: ClippedTextObservation[] | undefined;
   fieldGroups?: FieldGroupObservation[] | undefined;
   /** Collected only for published flows. */
   images?: ImageObservation[] | undefined;
   failedImageRequests?: FailedImageRequest[] | undefined;
   emptyRegions?: EmptyRegionsObservation | undefined;
+  /** Absent in captures that predate the container inventory. */
+  repeatedContainers?: RepeatedContainerObservation[] | undefined;
   progress?: ProgressArtifact | undefined;
   bandEdges?: GeometryScan<BandEdgeObservation> | undefined;
   wordBreaks?: GeometryScan<WordBreakObservation> | undefined;
@@ -1179,6 +1391,8 @@ export type ObservationArtifactV2 = Omit<
   fonts?: FontObservation | undefined;
   links?: GeometryScan<LinkObservation> | undefined;
   focusVisible?: GeometryScan<FocusVisibleObservation> | undefined;
+  /** Absent in captures that predate the selection outline scan. */
+  selectionOutlines?: GeometryScan<SelectionOutlineObservation> | undefined;
   lineLengths?: GeometryScan<LineLengthObservation> | undefined;
   orphanWords?: GeometryScan<OrphanWordObservation> | undefined;
   imageRenders?: GeometryScan<ImageRenderObservation> | undefined;
@@ -1299,9 +1513,16 @@ export type CheckTuple = {
   axe?: unknown;
   console: ConsoleRecord[];
   consoleAvailable?: boolean | undefined;
+  /** True when capture recorded request provenance for network console records. */
+  consoleProvenance?: boolean | undefined;
   documentResponse?:
     | {
         url: string;
+        /**
+         * Final URL of the document response after redirects, when capture
+         * recorded it; `url` is the declared navigation URL.
+         */
+        finalUrl?: string | undefined;
         actualStatus: number;
         expectedStatus: number;
       }
@@ -1361,10 +1582,13 @@ export type ChecksConfig = {
   focusVisible?: { enabled: boolean; ignore: string[] } | undefined;
   lineLength?: { enabled: boolean; max: number } | undefined;
   orphanWord?: { enabled: boolean; maxChars: number } | undefined;
+  nestedBorder?: { enabled: boolean } | undefined;
   images?: { enabled: boolean; distortionTolerance: number } | undefined;
   layoutShift?: { enabled: boolean; max: number } | undefined;
   interactionShift?: { enabled: boolean; minDistance: number } | undefined;
   designDrift?: DesignDriftConfig | undefined;
+  /** Decided design briefs, judged by brief-mismatch; undefined judges none. */
+  briefs?: import("../brief/assertions.js").BriefCheck[] | undefined;
   /** Recorded `decide --choose` answers, applied where design references disagree. */
   designChoices?: import("../design/decide.js").DesignChoice[] | undefined;
   bandEdges?: { enabled: boolean; tolerance: number } | undefined;

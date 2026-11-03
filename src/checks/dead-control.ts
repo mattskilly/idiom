@@ -24,6 +24,9 @@ export const deadControlCheck: DeterministicCheck = {
       if (result.skipped !== undefined || result.effects.length > 0) continue;
       const label = result.name === "" ? result.selector : `"${result.name}"`;
       const toggle = toggles.has(result.selector);
+      const background = result.backgroundRequests?.length
+        ? `; only background requests observed (${result.backgroundRequests.join(", ")}), none started by the click`
+        : "";
       candidates.push({
         observation: observed(
           {
@@ -50,8 +53,10 @@ export const deadControlCheck: DeterministicCheck = {
           : "idiom:control-does-nothing",
         selectorHint: result.selector,
         explanation: toggle
-          ? `Toggle ${label} was clicked and its pressed state did not change, and nothing else did either.`
-          : `${label} (${result.selector}) is enabled, but clicking it changed nothing observable: no DOM change, focus move, navigation, dialog, network request or clipboard write within the probe window.`,
+          ? `Toggle ${label} was clicked and its pressed state did not change, and nothing else did either${background}.`
+          : background
+            ? `${label} (${result.selector}) is enabled, but clicking it changed nothing observable${background}.`
+            : `${label} (${result.selector}) is enabled, but clicking it changed nothing observable: no DOM change, focus move, navigation, dialog, network request or clipboard write within the probe window.`,
         acceptance: [
           `Clicking ${label} produces a visible result, or the control is disabled with a stated reason, or it is removed.`,
         ],

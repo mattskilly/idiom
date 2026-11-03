@@ -1,6 +1,6 @@
 ---
 name: idiom
-description: Use when UI is created or changed, before declaring a UI task complete, and before a PR with UI changes. Review public pages with Idiom quick, check configured flows against intended designs, and hand off requested repairs through fix-plan and verify.
+description: Use before writing a ticket, spec or code that adds or changes UI, or when a request involves a design decision; when UI is created or changed, before declaring a UI task complete, and before a PR with UI changes. Triage design decisions with idiom brief, review public pages with Idiom quick, check configured flows against intended designs, and hand off requested repairs through fix-plan and verify.
 ---
 
 # /idiom
@@ -11,7 +11,18 @@ For automatic or natural-language invocation, select applicable configured flow(
 
 Findings are measured (a deterministic rule with its measurement), observed (an action or probe with its timing and result), or judged (model critique with stated confidence when supplied). Treat judged findings as suggestions: severity gates count measured and observed findings by default; --fail-on-judged opts judged suggestions in.
 
-Ask only for design judgment; report execution errors. When available, prefer MCP tools: `idiom_quick`, `idiom_check`, `idiom_context`, `idiom_flows`, `idiom_fix_plan`, `idiom_verify`, `idiom_decide`, `idiom_init` (init), `idiom_design_add` (design add), `idiom_choose` (decide --choose), `idiom_tickets` (clustered tickets), `idiom_sweep` (sweep), `idiom_coverage` (coverage) and `idiom_baseline` (baseline show/record). Keep human judgment and an explicit reason for decisions. Use CLI for absent tools or CLI-only workflows (page review, explore, rulings/learn, references, per-finding tickets and instructions, spec-based verify, report/system); never silently retry a tool error via CLI. Verify mode owns verification only; fix-plan hands repairs to the caller only when requested. Figma: when Figma's own MCP server is connected, use it to read the frame for intent and context, then pass the frame URL (with `node-id`) to Idiom (prefer `idiom_design_add` when present, else `idiom design add <state> <frame-url>`, or `review --page <url> --design <frame-url>`) for the measured comparison; never transcribe Figma values by hand. The first fetch needs `FIGMA_TOKEN` (a personal access token with `file_content:read`), in the MCP server's environment for tools. When references disagree, a finding is a design decision: ask the human which reference is intended and their reason, then record exactly that with `idiom_choose` when present, else `idiom decide --finding <id> --choose <name> --reason <reason>`.
+Ask only for design judgment; report execution errors. When available, prefer MCP tools: `idiom_quick`, `idiom_check`, `idiom_context`, `idiom_flows`, `idiom_fix_plan`, `idiom_verify`, `idiom_decide`, `idiom_init` (init), `idiom_design_add` (design add), `idiom_choose` (decide --choose), `idiom_tickets` (clustered tickets), `idiom_sweep` (sweep), `idiom_coverage` (coverage), `idiom_baseline` (baseline show/record) and `idiom_brief_triage`, `idiom_brief_plan`, `idiom_brief_record`, `idiom_brief_decide` (brief). Keep human judgment and an explicit reason for decisions. Use CLI for absent tools or CLI-only workflows (page review, explore, rulings/learn, references, per-finding tickets and instructions, spec-based verify, report/system); never silently retry a tool error via CLI. Verify mode owns verification only; fix-plan hands repairs to the caller only when requested. Figma: when Figma's own MCP server is connected, use it to read the frame for intent and context, then pass the frame URL (with `node-id`) to Idiom (prefer `idiom_design_add` when present, else `idiom design add <state> <frame-url>`, or `review --page <url> --design <frame-url>`) for the measured comparison; never transcribe Figma values by hand. The first fetch needs `FIGMA_TOKEN` (a personal access token with `file_content:read`), in the MCP server's environment for tools. When references disagree, a finding is a design decision: ask the human which reference is intended and their reason, then record exactly that with `idiom_choose` when present, else `idiom decide --finding <id> --choose <name> --reason <reason>`.
+
+## Before you spec UI
+
+Before writing a ticket, spec or code that adds or changes visible UI, or when
+`$ARGUMENTS` is `brief <request>`, never write the ticket first:
+
+1. Call `idiom_brief_triage` with the request verbatim (CLI: `idiom brief triage "<request>" --json`). `no design decision`: proceed as usual.
+2. `design decision`: call `idiom_brief_plan` with the triage id (CLI: `idiom brief plan <id>`) and follow it within its budget. Cite every claim, label it hands-on or read, and write "nothing found" rather than guess.
+3. Call `idiom_brief_record` (CLI: `idiom brief record --json`) with the filled shape; fix every `path: message` issue it returns.
+4. If `ask.proceed.allowed`, proceed on the recommendation and tell the human what you chose. Otherwise ask with AskUserQuestion using `ask.askUserQuestion` verbatim (`ask.text` where that tool is absent).
+5. Call `idiom_brief_decide` (CLI: `idiom brief decide <slug> --option <id>`) with their choice, then use `.idiom/briefs/<slug>.md` as the ticket.
 
 ## Verify mode
 
@@ -26,6 +37,11 @@ Report the verdict and evidence paths. Do not repair anything yourself.
 When `$ARGUMENTS` is `check <flow>`, run `idiom check <flow>`; present findings
 in its order: severity first, then prominence (salience × prominence) within a tier, with each `Evidence:` image. If asked, fix blockers and majors and
 rerun until clean. Never decide, suppress or reword findings; ask the human.
+
+In a build loop use `idiom check --gate`: it checks only what the change
+affects, within a time budget, and skips at once when nothing UI changed. Run
+the full `idiom check <flow>` on a schedule. If Idiom is slow, use `--gate` or
+report the `Timing:` line; don't disable it.
 
 ## Init mode
 
@@ -66,7 +82,7 @@ run every ticket's printed verification-sidecar command for its flow and tuple.
 ## Review mode
 
 Otherwise `$ARGUMENTS` is an optional flow id — never `init`, `verify` or `check`.
-Explore and sweep were routed above. With no flow, process `.idiom/flows/*.json` in
+Brief, explore and sweep were routed above. With no flow, process `.idiom/flows/*.json` in
 deterministic filename order.
 
 Before review, manage visual context only with

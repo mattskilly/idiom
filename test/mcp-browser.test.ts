@@ -50,7 +50,11 @@ type Check = {
     captures: { total: number };
   };
   reports: { findings: string; markdown: string; html: string };
-  coverage: { states: string[]; selectedTuples: number };
+  coverage: {
+    states: string[];
+    selectedTuples: number;
+    probeCoverage?: { flowBudgetMs?: number; totals: { candidates: number } };
+  };
   baselineRecorded?: { path: string };
   baseline: object;
 };
@@ -192,6 +196,8 @@ test("real benchmark quick/check/issue expose ranked complete findings and the a
   );
 
   expect(response.coverage.selectedTuples).toBe(2);
+  // This fixture turns the probe off, so there is no probe coverage to report.
+  expect(response.coverage).not.toHaveProperty("probeCoverage");
   const stored = JSON.parse(
     await readFile(response.reports.findings, "utf8"),
   ) as Finding[];

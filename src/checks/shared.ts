@@ -1,3 +1,4 @@
+import { isElementPainted } from "./painted.js";
 import type {
   ActionTimeline,
   ActionTimelineArtifact,
@@ -113,6 +114,28 @@ export function isVisuallyHidden(element: ObservedElement): boolean {
     ["hidden", "clip"].includes(element.styles.overflowX) &&
     ["hidden", "clip"].includes(element.styles.overflowY)
   );
+}
+
+/**
+ * Wholly outside the page on the left, right or top: a skip link parked at
+ * `left: -9999px` or `top: -40px` until focused.
+ */
+export function isOffScreen(
+  element: ObservedElement,
+  artifact: { document: { scrollWidth: number } },
+): boolean {
+  const { x, y, width, height } = element.rect;
+  return (
+    x + width <= 0 || x >= artifact.document.scrollWidth || y + height <= 0
+  );
+}
+
+/**
+ * Spacing and gap rules measure painted elements outside closed disclosures
+ * and hidden, inert or content-visibility-hidden subtrees.
+ */
+export function isSpacingEligible(element: ObservedElement): boolean {
+  return isElementPainted(element) && element.spacingExcluded === undefined;
 }
 
 export type SignalledElement = ObservedElementV2 & {
@@ -456,7 +479,7 @@ export function scanResult(
 }
 
 /** v2 observation evidence for a check, or undefined (older capture). */
-export function v2Observations(tuple: CheckTuple) {
+export function v2Observations(tuple: Pick<CheckTuple, "observations">) {
   const observation = tuple.observations;
   return observation?.version === 2 ? observation : undefined;
 }

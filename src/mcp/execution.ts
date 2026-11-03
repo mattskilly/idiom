@@ -3,8 +3,15 @@ import type {
   ServerContext,
 } from "@modelcontextprotocol/server";
 import type { CaptureDependencies } from "../capture/run.js";
+import { RunFailure } from "../errors.js";
 
 export function toolError(error: unknown): CallToolResult {
+  if (error instanceof RunFailure)
+    return {
+      isError: true,
+      content: [{ type: "text", text: `${error.message}\n${error.hint}` }],
+      structuredContent: { failure: error.failureJson() },
+    };
   const diagnostic = error instanceof Error ? error.message : String(error);
   const recovery =
     /executable doesn't exist|playwright install|browser.*not.*found/i.test(

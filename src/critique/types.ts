@@ -218,20 +218,51 @@ export interface CritiqueAdapter {
   critique(input: CritiqueInput): Promise<CritiqueResult>;
 }
 
+/** The kinds of evidence a bounded critique session can leave out. */
+export type CritiqueEvidenceKind =
+  | "captured-screenshot"
+  | "zoomed-crop"
+  | "intended-design-image"
+  | "reference"
+  | "anti-reference"
+  | "dom-excerpt";
+
+/**
+ * Set when a provider's per-session evidence budget split the capture across
+ * sessions or left evidence out. Absent when everything fit in one session.
+ */
+export type CritiqueEvidenceLimits = {
+  provider: "claude-code";
+  /** Per-session limits: image count, summed image file bytes, DOM characters. */
+  limits: { images: number; imageBytes: number; domChars: number };
+  /** Sessions the critique ran in; more than one means it was split. */
+  sessions: number;
+  omitted: Array<{
+    label: string;
+    kind: CritiqueEvidenceKind;
+    reason: string;
+  }>;
+};
+
 export type CritiqueResult = {
   findings: ModelFindingCandidate[];
   decisionObservations: DecisionObservation[];
   discardedDecisionObservations: number;
+  evidenceLimits?: CritiqueEvidenceLimits | undefined;
 };
 
 export function critiqueResult(options: {
   findings: ModelFindingCandidate[];
   decisionObservations?: DecisionObservation[] | undefined;
   discardedDecisionObservations?: number | undefined;
+  evidenceLimits?: CritiqueEvidenceLimits | undefined;
 }): CritiqueResult {
   return {
     findings: options.findings,
     decisionObservations: options.decisionObservations ?? [],
     discardedDecisionObservations: options.discardedDecisionObservations ?? 0,
+    ...(options.evidenceLimits === undefined
+      ? {}
+      : { evidenceLimits: options.evidenceLimits }),
   };
 }

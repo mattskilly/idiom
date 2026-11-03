@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { loadBriefChecks } from "../brief/store.js";
 import { readDecisionLog } from "../decisions/log.js";
 import { designChoicesFrom } from "../design/decide.js";
 import { parseRulingBlocks } from "../rulings/law.js";
@@ -47,6 +48,7 @@ async function scaleRulings(
  * reference choices and design-system answers, so review, check, fix,
  * baseline and verify all emit the same candidates for the same decisions.
  * A recorded add-step extends the effective scale for its context only.
+ * Decided design briefs feed brief-mismatch.
  */
 export async function projectChecksConfig(validated: {
   projectDirectory: string;
@@ -57,9 +59,11 @@ export async function projectChecksConfig(validated: {
   const designChoices = designChoicesFrom(
     await readDecisionLog(validated.projectDirectory),
   );
+  const briefs = await loadBriefChecks(validated.projectDirectory);
   return {
     ...checksConfigFrom(validated.project.checks),
     ...(designChoices.length ? { designChoices } : {}),
+    ...(briefs.length ? { briefs } : {}),
     scaleQuestions: {
       rulings:
         validated.project.design === undefined

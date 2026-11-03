@@ -12,10 +12,12 @@ import { checksConfigFrom } from "../checks/registry.js";
 import type { ActionTimelineArtifact } from "../checks/types.js";
 import { navigateDesign } from "../design/source.js";
 import {
+  briefMarks,
   type ColorScheme,
   checkMarks,
   type Project,
 } from "../schemas/project.js";
+import { ConsoleProvenance } from "./console-provenance.js";
 import { ExplanationCollector } from "./explanations.js";
 import { replayRequests } from "./failure-identity.js";
 import { FilmstripBudget, FilmstripCapture } from "./filmstrips.js";
@@ -35,9 +37,11 @@ import {
   probeControls,
   probeRequestAllowed,
   protectProbeFocus,
+  recordClickRequests,
   recordProbeRequest,
 } from "./probe.js";
 import { ProgressCollector } from "./progress.js";
+import { revealedObserver, revealedProbeOptions } from "./revealed.js";
 import { ScrollbarController, scrollbarLaunchOptions } from "./scrollbars.js";
 import { TimelineCollector } from "./timeline.js";
 import type {
@@ -79,6 +83,34 @@ function reachContext(state: FlowState): ReachContext {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Probe init script: registration resolves without installing a worker, as
+ * Playwright's block does, but never throws from a sandboxed frame.
+ * Serialized, so self-contained.
+ */
+function blockServiceWorkers(): void {
+  if (window !== window.top && self.origin === "null") return;
+  try {
+    const container = navigator.serviceWorker;
+    if (container)
+      container.register = async () =>
+        undefined as unknown as ServiceWorkerRegistration;
+  } catch {
+    // Reading navigator.serviceWorker throws where workers are disabled.
+  }
+}
+
+/**
+ * `hideWebdriver` init script: apps that turn motion off under automation
+ * read navigator.webdriver as false. Serialized, so self-contained.
+ */
+function hideWebdriver(): void {
+  Object.defineProperty(Navigator.prototype, "webdriver", {
+    configurable: true,
+    get: () => false,
+  });
 }
 
 export function deterministicContextOptions(
@@ -153,8 +185,10 @@ async function captureInContext(
   linkChecker: (() => LinkChecker) | undefined,
 ): Promise<TupleResult> {
   const records: ConsoleRecord[] = [];
+  const timestamps = new Map<ConsoleRecord, number>();
   let page: Page | undefined;
   let scrollbars: ScrollbarController | undefined;
+  let provenance: ConsoleProvenance | undefined;
   // Third-party probing shares one ledger across the sweep and the clicks.
   const safety =
     tuple.probe && tuple.probeSafety === "third-party"
@@ -165,6 +199,8 @@ async function captureInContext(
   try {
     page = await context.newPage();
     scrollbars = await ScrollbarController.create(page);
+    // Without CDP provenance the tuple keeps the older console exemption.
+    provenance = await ConsoleProvenance.create(page).catch(() => undefined);
     const steps = "health" in tuple.state ? tuple.state.steps : [];
     const health = tuple.health ?? {
       allow:
@@ -173,22 +209,22 @@ async function captureInContext(
           : { urls: [], console: [] },
     };
     const annotate = (record: ConsoleRecord): ConsoleRecord =>
-      steps.length > 0 && consoleIsAllowed(record, health)
+      consoleIsAllowed(record, health)
         ? { ...record, healthAllowed: true }
         : record;
     page.on("console", (message) => {
       const location = message.location();
-      records.push(
-        annotate({
-          type: message.type(),
-          text: message.text(),
-          location: {
-            url: location.url,
-            lineNumber: location.lineNumber,
-            columnNumber: location.columnNumber,
-          },
-        }),
-      );
+      const record = annotate({
+        type: message.type(),
+        text: message.text(),
+        location: {
+          url: location.url,
+          lineNumber: location.lineNumber,
+          columnNumber: location.columnNumber,
+        },
+      });
+      records.push(record);
+      if (provenance) timestamps.set(record, message.timestamp());
     });
     page.on("pageerror", (error) => {
       records.push(annotate({ type: "pageerror", text: error.message }));
@@ -296,14 +332,23 @@ async function captureInContext(
           )
         : undefined;
     const runner = createRunner(true);
+    let documentResponseUrl: string | undefined;
     const reach = async (
       active: WebStepRunner | undefined,
       activePage = target,
       through = steps,
-    ) =>
-      active === undefined
-        ? ((await activePage.goto(tuple.navigationUrl))?.status() ?? null)
-        : active.reach(tuple.navigationUrl, through, reachContext(tuple.state));
+    ) => {
+      if (active !== undefined)
+        return active.reach(
+          tuple.navigationUrl,
+          through,
+          reachContext(tuple.state),
+        );
+      const response = await activePage.goto(tuple.navigationUrl);
+      // Only the primary page's navigation describes the tuple's document.
+      if (activePage === target) documentResponseUrl = response?.url();
+      return response?.status() ?? null;
+    };
     /** Replay steps 1..n-1 on a fresh page, as restore replays them all. */
     const reachBefore = async (activePage: Page, stepIndex: number) => {
       const replay = createRunner(false, activePage);
@@ -367,7 +412,8 @@ async function captureInContext(
         ];
       });
     };
-    return await collectPageEvidence({
+    const consoleProvenance = provenance;
+    const result = await collectPageEvidence({
       page,
       signal: tuple.signal,
       onActivity: tuple.onActivity,
@@ -380,6 +426,10 @@ async function captureInContext(
         tuple.designReference
           ? navigateDesign(target, tuple.designReference)
           : reach(runner),
+      documentUrl: () =>
+        tuple.designReference
+          ? undefined
+          : (runner?.documentUrl ?? documentResponseUrl),
       healthGuard: runner,
       assertDestination:
         "path" in tuple.state.expect && tuple.state.expect.path !== undefined
@@ -409,8 +459,13 @@ async function captureInContext(
         : undefined,
       createAxe: runtime.createAxe,
       // Freeze step evidence before replay/probe activity mutates the page.
-      collectConsole: async () =>
-        steps.length > 0 || tuple.probe ? [...records] : records,
+      collectConsole: async () => {
+        const snapshot =
+          steps.length > 0 || tuple.probe ? [...records] : records;
+        return consoleProvenance
+          ? consoleProvenance.annotate(snapshot, timestamps)
+          : snapshot;
+      },
       tokens: tuple.tokens ?? { status: "not-configured" },
       screenshotOptions: deterministicScreenshotOptions(tuple.project),
       reuseScreenshot: tuple.reuseScreenshot,
@@ -438,7 +493,10 @@ async function captureInContext(
             floatingOverlays:
               tuple.project.checks.shellVisibility?.floatingOverlays,
             fresh: tuple.state.fresh === true,
-            marks: checkMarks(tuple.project.checks),
+            marks: [
+              ...checkMarks(tuple.project.checks),
+              ...briefMarks(tuple.briefSelectors),
+            ],
             ...(tuple.published ? { images: true } : {}),
             emptyState: tuple.project.checks.emptyState,
             bandEdges: tuple.project.checks.bandEdges?.enabled === true,
@@ -531,6 +589,8 @@ async function captureInContext(
               requestedActions: tuple.filmstripRequests?.map((r) => r.identity),
               enumerateOnly: tuple.enumerateProbe,
               flowBudget: tuple.probeBudget,
+              unbounded: tuple.probeUnbounded,
+              region: tuple.probeRegion,
               signal: tuple.signal,
               onActivity: tuple.onActivity,
               onProbeProgress: tuple.onProbeProgress,
@@ -549,6 +609,19 @@ async function captureInContext(
               respectControlIntent: settings.respectControlIntent,
               maxControls: settings.maxControls,
               waitMs: settings.waitMs,
+              ...(tuple.enumerateProbe || tuple.designReference
+                ? {}
+                : revealedProbeOptions(
+                    settings,
+                    revealedObserver({
+                      tokens: tuple.tokens ?? { status: "not-configured" },
+                      masks: tuple.state.mask,
+                      marks: [
+                        ...checkMarks(tuple.project.checks),
+                        ...briefMarks(tuple.briefSelectors),
+                      ],
+                    }),
+                  )),
               motionSelectors: tuple.project.checks.motion.selectors,
               motionMinExtentPx: tuple.project.checks.motion.minExtentPx,
               reducedMotion: tuple.project.capture.reducedMotion,
@@ -599,9 +672,11 @@ async function captureInContext(
           }
         : undefined,
     });
+    return consoleProvenance ? { ...result, consoleProvenance: true } : result;
   } finally {
     await closeWithin(() => page?.close());
     await scrollbars?.dispose();
+    await provenance?.dispose();
   }
 }
 
@@ -678,8 +753,6 @@ export function createBrowserLauncher(
           tuple.viewport,
           tuple.colorScheme ?? tuple.project.capture.colorScheme,
         ),
-        // A service worker's fetches bypass context routing.
-        ...(tuple.probe ? { serviceWorkers: "block" as const } : {}),
       });
       try {
         await runtime.prepareContext?.(context, tuple);
@@ -691,11 +764,25 @@ export function createBrowserLauncher(
         void context.close().catch(() => undefined);
         tuple.signal.throwIfAborted();
       }
+      const fail = async (error: unknown) => {
+        await context.close().catch(() => undefined);
+        throw error;
+      };
+      // A service worker's fetches bypass context routing. Playwright's own
+      // `serviceWorkers: "block"` reads navigator.serviceWorker in every frame,
+      // which throws (as an uncaught page error) in sandboxed frames.
+      if (tuple.probe)
+        await context.addInitScript(blockServiceWorkers).catch(fail);
+      if (tuple.hideWebdriver ?? tuple.project.capture.hideWebdriver)
+        await context.addInitScript(hideWebdriver).catch(fail);
       const attribute = tuple.project.capture.colorSchemeAttribute;
       if (attribute !== undefined) {
         await context
           .addInitScript(
             ({ name, value }: { name: string; value: string }) => {
+              // Opaque-origin frames (sandboxed srcdoc) block the observer's
+              // callbacks and log the block as a console error.
+              if (window !== window.top && self.origin === "null") return;
               const apply = () => {
                 const root = document.documentElement;
                 if (root === null) return false;
@@ -717,11 +804,17 @@ export function createBrowserLauncher(
               value: tuple.colorScheme ?? tuple.project.capture.colorScheme,
             },
           )
+          .catch(fail);
+      }
+      // Before the app's scripts, so a click's requests are attributed even
+      // through a fetch reference the app captured at load.
+      if (tuple.probe)
+        await context
+          .addInitScript(recordClickRequests)
           .catch(async (error: unknown) => {
             await context.close().catch(() => undefined);
             throw error;
           });
-      }
       return context;
     };
     return {

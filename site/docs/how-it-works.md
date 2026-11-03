@@ -32,7 +32,11 @@ That is how it catches content that jumps, a button that shows nothing while its
 
 ## What gets judged
 
-Capture waits for entrance animations to finish, then judges only what is painted. Anything in a closed menu, a collapsed section or still invisible is skipped and counted, not measured. Every report states what it could not check and why.
+Capture waits for entrance animations to finish, then judges only what is painted. Anything in a closed menu, a collapsed section or still invisible is skipped and counted, not measured. The interaction probe then opens the menus, popovers and disclosures it reaches and checks what each one reveals, such as a popover over its own field or an unstyled native file input; those findings name where they were found, such as `panel › Attach`. Every report states what it could not check and why, including the controls the probe never reached.
+
+## Before the build
+
+Some defects are decided before any code exists, when a ticket quietly picks a control or placement nobody chose. `idiom brief` triages a request for design decisions, researches the open questions, and records the option the requester picks, with acceptance criteria Idiom can measure. `idiom check` then reports an element that breaks a decided brief as `brief-mismatch`. See [Design decision briefs](/docs/brief).
 
 ## Next
 

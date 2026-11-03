@@ -1,4 +1,9 @@
-import { isVisuallyHidden, verify } from "./shared.js";
+import {
+  isOffScreen,
+  isSpacingEligible,
+  isVisuallyHidden,
+  verify,
+} from "./shared.js";
 import type {
   CheckTuple,
   FindingCandidate,
@@ -19,6 +24,8 @@ type Boundary = {
   selector: string;
   source: BoundarySource;
   edge: "top" | "bottom";
+  /** A container edge with no padding or border that its content reaches. */
+  hugs?: boolean;
 };
 
 type Placement = {
@@ -98,8 +105,76 @@ function painted(width: string, color: string): boolean {
   return Number.parseFloat(width) > 0 && !transparent(color);
 }
 
+/** Visible content a spacing measurement can see. */
+function measurable(
+  element: ObservedElementV2,
+  artifact: ObservationArtifactV2,
+): boolean {
+  return (
+    element.visible &&
+    !isVisuallyHidden(element) &&
+    isSpacingEligible(element) &&
+    !isOffScreen(element, artifact)
+  );
+}
+
+/** The top and bottom of each ancestor path's measurable content, in one pass. */
+function contentExtents(
+  artifact: ObservationArtifactV2,
+): Map<string, { top: number; bottom: number }> {
+  const extents = new Map<string, { top: number; bottom: number }>();
+  for (const element of artifact.elements) {
+    if (
+      !measurable(element, artifact) ||
+      element.rect.width <= 0 ||
+      element.rect.height <= 0
+    )
+      continue;
+    const top = element.rect.y;
+    const bottom = element.rect.y + element.rect.height;
+    const segments = element.structuralPath.split("/");
+    for (let depth = 1; depth < segments.length; depth += 1) {
+      const path = segments.slice(0, depth).join("/");
+      const extent = extents.get(path);
+      if (extent === undefined) extents.set(path, { top, bottom });
+      else {
+        extent.top = Math.min(extent.top, top);
+        extent.bottom = Math.max(extent.bottom, bottom);
+      }
+    }
+  }
+  return extents;
+}
+
+/**
+ * A container edge with no padding or painted border on that side, which its
+ * content reaches. Only a control that itself reaches it looks past it.
+ */
+function hugs(
+  container: ObservedElementV2,
+  edge: "top" | "bottom",
+  extents: Map<string, { top: number; bottom: number }>,
+): boolean {
+  const { styles, rect } = container;
+  const [padding, width, color] =
+    edge === "top"
+      ? [styles.paddingTop, styles.borderTopWidth, styles.borderTopColor]
+      : [
+          styles.paddingBottom,
+          styles.borderBottomWidth,
+          styles.borderBottomColor,
+        ];
+  if (Number.parseFloat(padding) > 0.5 || painted(width, color)) return false;
+  const content = extents.get(container.structuralPath);
+  if (content === undefined) return false;
+  return edge === "top"
+    ? Math.abs(content.top - rect.y) <= 0.5
+    : Math.abs(content.bottom - (rect.y + rect.height)) <= 0.5;
+}
+
 function boundaries(artifact: ObservationArtifactV2): Boundary[] {
   const result: Boundary[] = [];
+  const extents = contentExtents(artifact);
   if (artifact.document.scrollHeight <= artifact.document.clientHeight) {
     result.push(
       {
@@ -123,36 +198,28 @@ function boundaries(artifact: ObservationArtifactV2): Boundary[] {
     );
   }
   const pushEdges = (element: ObservedElementV2, source: BoundarySource) => {
-    result.push(
-      {
-        coordinate: element.rect.y,
+    for (const edge of ["top", "bottom"] as const) {
+      result.push({
+        coordinate:
+          edge === "top"
+            ? element.rect.y
+            : element.rect.y + element.rect.height,
         x: element.rect.x,
         width: element.rect.width,
         path: element.structuralPath,
         selector: element.selector,
         source,
-        edge: "top",
-      },
-      {
-        coordinate: element.rect.y + element.rect.height,
-        x: element.rect.x,
-        width: element.rect.width,
-        path: element.structuralPath,
-        selector: element.selector,
-        source,
-        edge: "bottom",
-      },
-    );
+        edge,
+        ...(source === "container" && hugs(element, edge, extents)
+          ? { hugs: true }
+          : {}),
+      });
+    }
   };
   for (const element of [...artifact.elements].sort((left, right) =>
     left.structuralPath.localeCompare(right.structuralPath),
   )) {
-    if (
-      !element.visible ||
-      isVisuallyHidden(element) ||
-      element.rect.width <= 0
-    )
-      continue;
+    if (!measurable(element, artifact) || element.rect.width <= 0) continue;
     if (element.tag === "hr") pushEdges(element, "rule");
     if (semanticContainers.has(element.tag)) pushEdges(element, "container");
     if (painted(element.styles.borderTopWidth, element.styles.borderTopColor)) {
@@ -194,19 +261,38 @@ function boundaries(artifact: ObservationArtifactV2): Boundary[] {
 
 function interactiveKind(
   element: ObservedElementV2,
+  artifact: ObservationArtifactV2,
 ): InteractiveKind | undefined {
-  if (!element.visible || isVisuallyHidden(element) || !element.interactive)
-    return undefined;
+  if (!measurable(element, artifact) || !element.interactive) return undefined;
   if (element.tag === "button") return "button";
   if (element.tag === "a") return "link";
   if (element.tag === "input") return "input";
   return undefined;
 }
 
+/**
+ * A hugging container's edge that this element itself reaches is the
+ * element's own edge, so the measurement looks past it. Content between the
+ * element and that edge (a padded row) makes the edge a real boundary.
+ */
+function reachesHuggingEdge(
+  element: ObservedElementV2,
+  boundary: Boundary,
+  side: Side,
+): boolean {
+  if (boundary.hugs !== true) return false;
+  if (!pathContains(boundary.path, element.structuralPath)) return false;
+  const edge =
+    side === "boundary-above"
+      ? element.rect.y
+      : element.rect.y + element.rect.height;
+  return Math.abs(edge - boundary.coordinate) <= 0.5;
+}
+
 function nearestBoundary(
   element: ObservedElementV2,
   available: Boundary[],
-  observed: ObservedElementV2[],
+  artifact: ObservationArtifactV2,
   side: Side,
 ): Boundary | undefined {
   const start = element.rect.y;
@@ -219,7 +305,8 @@ function nearestBoundary(
       if (
         boundary.path === element.structuralPath ||
         pathContains(element.structuralPath, boundary.path) ||
-        !overlapsHorizontally(element, boundary)
+        !overlapsHorizontally(element, boundary) ||
+        reachesHuggingEdge(element, boundary, side)
       )
         return false;
       if (
@@ -248,10 +335,9 @@ function nearestBoundary(
       );
     })[0];
   if (nearest === undefined) return undefined;
-  const interveningContent = observed.some((other) => {
+  const interveningContent = artifact.elements.some((other) => {
     if (
-      !other.visible ||
-      isVisuallyHidden(other) ||
+      !measurable(other, artifact) ||
       other.rect.width <= 0 ||
       other.rect.height <= 0 ||
       other.structuralPath === element.structuralPath ||
@@ -312,16 +398,11 @@ function derivePlacements(tuple: CheckTuple): Placement[] {
   for (const element of [...artifact.elements].sort((left, right) =>
     left.structuralPath.localeCompare(right.structuralPath),
   )) {
-    const kind = interactiveKind(element);
+    const kind = interactiveKind(element, artifact);
     if (kind === undefined) continue;
     if (clipped(element)) continue;
     for (const side of ["boundary-above", "boundary-below"] as const) {
-      const boundary = nearestBoundary(
-        element,
-        available,
-        artifact.elements,
-        side,
-      );
+      const boundary = nearestBoundary(element, available, artifact, side);
       if (boundary === undefined) continue;
       if (side === "boundary-below" && atClipEdge(element, boundary)) continue;
       const clearance = canonical(

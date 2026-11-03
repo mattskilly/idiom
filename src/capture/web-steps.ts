@@ -181,6 +181,7 @@ export class WebStepRunner implements StepHealthGuard {
   private poll: Promise<void> | undefined;
   private disposed = false;
   private status: number | null = null;
+  private responseUrl: string | undefined;
   private logReads: Promise<void> = Promise.resolve();
   private signalFailure!: () => void;
   private failureSignal = new Promise<void>((accept) => {
@@ -347,7 +348,9 @@ export class WebStepRunner implements StepHealthGuard {
   ): Promise<number | null> {
     this.signal?.throwIfAborted();
     this.onActivity?.("navigation");
-    this.status = (await this.page.goto(url))?.status() ?? null;
+    const response = await this.page.goto(url);
+    this.status = response?.status() ?? null;
+    this.responseUrl = response?.url();
     await this.motion?.initialize();
     const reachedFrom = context?.reachedFrom;
     for (const [index, step] of steps.entries()) {
@@ -453,6 +456,11 @@ export class WebStepRunner implements StepHealthGuard {
       }
     }
     return this.status;
+  }
+
+  /** Final URL of the last navigation's document response, after redirects. */
+  get documentUrl(): string | undefined {
+    return this.responseUrl;
   }
 
   async finish() {

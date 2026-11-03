@@ -33,6 +33,19 @@ function assertSafeUnique(values: string[], kind: string): void {
   }
 }
 
+/**
+ * Files Idiom itself writes during a run, relative to the project. A run that
+ * changed only these still captured the committed tree, so they never make
+ * source identity dirty (and never refuse a baseline).
+ */
+export const IDIOM_RUN_WRITTEN_PATHS = [
+  ".idiom/finding-names.json",
+  ".idiom/ruling-names.json",
+  ".idiom/reports",
+  ".idiom/cache",
+  ".idiom/agent-hooks",
+] as const;
+
 export async function snapshotSource(
   projectDirectory: string,
   options: {
@@ -40,6 +53,18 @@ export async function snapshotSource(
     explicitOutputPath?: string | undefined;
   } = {},
 ): Promise<SourceIdentity> {
+  const { commit, dirty } = await sourceStatus(projectDirectory, options);
+  return { commit, dirty };
+}
+
+/** Source identity plus every path that makes the tree dirty. */
+export async function sourceStatus(
+  projectDirectory: string,
+  options: {
+    excludedPaths?: string[] | undefined;
+    explicitOutputPath?: string | undefined;
+  } = {},
+): Promise<SourceIdentity & { dirtyPaths: string[] }> {
   try {
     const [{ stdout: commit }, { stdout: rootOutput }] = await Promise.all([
       execFileAsync("git", ["rev-parse", "HEAD"], {
@@ -98,7 +123,7 @@ export async function snapshotSource(
     }
     const excludedDirectories = [
       ...(options.excludedPaths ?? []),
-      resolve(projectDirectory, ".idiom", "cache", "production"),
+      ...IDIOM_RUN_WRITTEN_PATHS.map((path) => resolve(projectDirectory, path)),
     ]
       .map((path) => relative(root, canonicalizeFromProject(path)))
       .filter(
@@ -138,7 +163,7 @@ export async function snapshotSource(
         (directory) => path === directory || path.startsWith(`${directory}/`),
       ) || pathIsStagingResidue(path);
     const records = status.split("\0").filter((record) => record.length > 0);
-    let dirty = false;
+    const dirtyPaths: string[] = [];
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];
       if (record === undefined) continue;
@@ -149,12 +174,14 @@ export async function snapshotSource(
         if (source !== undefined) paths.push(source);
         index += 1;
       }
-      if (!paths.every(pathIsExcluded)) {
-        dirty = true;
-        break;
-      }
+      // A rename or copy is reported by its destination.
+      if (!paths.every(pathIsExcluded)) dirtyPaths.push(paths[0] as string);
     }
-    return { commit: commit.trim(), dirty };
+    return {
+      commit: commit.trim(),
+      dirty: dirtyPaths.length > 0,
+      dirtyPaths,
+    };
   } catch (error) {
     if (error instanceof IdiomError) throw error;
     throw new IdiomError(

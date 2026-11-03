@@ -58,3 +58,8 @@ export async function readAutobuildTemplate(): Promise<string> {
 export async function readAutobuildVerifierSkillTemplate(): Promise<string> {
   return readFile(autobuildVerifierSkillTemplatePath(), "utf8");
 }
+
+/** Idiom-owned, not project-owned: never copied into `.idiom/` by init. */
+export function briefRubricPath(): string {
+  return join(templatesDirectory(), "brief", "rubric.md");
+}

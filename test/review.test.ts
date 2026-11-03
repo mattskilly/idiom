@@ -1,20 +1,28 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { writeBaselineReport } from "../src/capture/artifacts.js";
 import { runDeterministicChecks } from "../src/checks/registry.js";
 import type {
+  CheckTuple,
   ObservationArtifactV2,
   ObservedElementV2,
 } from "../src/checks/types.js";
+import { decideCommand } from "../src/commands/decide.js";
 import { initProject } from "../src/commands/init.js";
+import type { CritiqueInput, CritiqueResult } from "../src/critique/types.js";
 import {
   readDecisions,
   standingRuleRejections,
 } from "../src/decisions/read.js";
+import { IdiomError } from "../src/errors.js";
 import { buildReviewCoverage } from "../src/report/coverage.js";
 import { findLatestCapture, loadCaptureRun } from "../src/review/artifacts.js";
+import {
+  isCatalogDecisionTarget,
+  type ReviewCatalog,
+} from "../src/review/catalog.js";
 import {
   buildDeterministicDrafts,
   buildModelDrafts,
@@ -28,8 +36,17 @@ import {
 } from "../src/review/findings.js";
 import { renderReviewHtmlReport } from "../src/review/html-report.js";
 import { FindingNamingSession } from "../src/review/names.js";
-import { renderReport, writeReport } from "../src/review/report.js";
-import { runReview } from "../src/review/run.js";
+import {
+  degradedReasonSentence,
+  renderReport,
+  writeReport,
+} from "../src/review/report.js";
+import {
+  hasReviewableScreenshot,
+  NO_REVIEWABLE_SCREENSHOTS_REASON,
+  noReviewableScreenshotsOutcome,
+  runReview,
+} from "../src/review/run.js";
 import { findingSchema } from "../src/schemas/finding.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
@@ -306,6 +323,72 @@ test("loads literal and setup-derived document response context", async () => {
   );
 });
 
+test("loads console request provenance and reports only the same-URL subresource", async () => {
+  const run = await successfulRun();
+  const tuple = join(run, "ready", "phone");
+  const documentUrl = "http://127.0.0.1:3107/ready";
+  const text =
+    "Failed to load resource: the server responded with a status of 404 (Not Found)";
+  const location = { url: documentUrl, lineNumber: 0, columnNumber: 0 };
+  const records = [
+    {
+      type: "error",
+      text,
+      location,
+      request: { resourceType: "document", mainFrame: true },
+    },
+    {
+      type: "error",
+      text,
+      location,
+      request: { resourceType: "script", mainFrame: true },
+    },
+  ];
+  const consolePath = join(tuple, "console.jsonl");
+  const metadataPath = join(tuple, "metadata.json");
+  await writeFile(
+    consolePath,
+    records.map((record) => `${JSON.stringify(record)}\n`).join(""),
+  );
+  await writeFile(
+    metadataPath,
+    JSON.stringify({ ...metadata(), status: 404, consoleProvenance: true }),
+  );
+  const load = () =>
+    loadCaptureRun({
+      runDirectory: run,
+      expectedFlow: "booking",
+      expectedStatusByState: new Map([["ready", 404]]),
+    });
+  const loaded = (await load()).tuples[0];
+  expect(loaded?.consoleProvenance).toBe(true);
+  expect(loaded?.console.map((record) => record.request)).toEqual(
+    records.map((record) => record.request),
+  );
+  const reported = runDeterministicChecks(loaded ? [loaded] : [])
+    .candidates.filter(
+      ({ candidate }) => candidate.category === "console-error",
+    )
+    .map(({ candidate }) => candidate);
+  expect(reported).toHaveLength(1);
+  expect(reported[0]?.explanation).not.toContain("recorded");
+
+  await writeFile(
+    consolePath,
+    `${JSON.stringify({ ...records[0], request: { resourceType: "document", mainFrame: "yes" } })}\n`,
+  );
+  await expect(load()).rejects.toThrow(
+    "request must be { resourceType: string, mainFrame: boolean }",
+  );
+  await expect(load()).rejects.toBeInstanceOf(IdiomError);
+  await writeFile(consolePath, "");
+  await writeFile(
+    metadataPath,
+    JSON.stringify({ ...metadata(), consoleProvenance: "true" }),
+  );
+  await expect(load()).rejects.toThrow(`invalid metadata in ${metadataPath}`);
+});
+
 test.each([
   {
     kind: "literal",
@@ -375,6 +458,43 @@ test.each([
     expect(consoleErrors).toHaveLength(suppressed ? 0 : 1);
   },
 );
+
+test("loads the recorded final document URL and rejects a non-string one", async () => {
+  const run = await successfulRun();
+  const expectedStatusByState = new Map([["ready", 404]]);
+  const metadataPath = join(run, "ready", "phone", "metadata.json");
+  const load = () =>
+    loadCaptureRun({
+      runDirectory: run,
+      expectedFlow: "booking",
+      expectedStatusByState,
+    });
+  await writeFile(metadataPath, JSON.stringify({ ...metadata(), status: 404 }));
+  expect((await load()).tuples[0]?.documentResponse).not.toHaveProperty(
+    "finalUrl",
+  );
+
+  await writeFile(
+    metadataPath,
+    JSON.stringify({
+      ...metadata(),
+      status: 404,
+      documentUrl: "http://127.0.0.1:3107/gone",
+    }),
+  );
+  expect((await load()).tuples[0]?.documentResponse).toEqual({
+    url: "http://127.0.0.1:3107/ready",
+    finalUrl: "http://127.0.0.1:3107/gone",
+    actualStatus: 404,
+    expectedStatus: 404,
+  });
+
+  await writeFile(
+    metadataPath,
+    JSON.stringify({ ...metadata(), status: 404, documentUrl: 3107 }),
+  );
+  await expect(load()).rejects.toThrow();
+});
 
 test("a non-string canonicalOrigin makes metadata invalid", async () => {
   const run = await successfulRun();
@@ -725,6 +845,164 @@ test("reports render full, intentional, and degraded model outcomes distinctly",
   expect(degraded).toContain("## Model layer did not run");
   expect(degraded).toContain("\\`network\\` \\*failed\\*<br>retry unavailable");
   expect(degraded).not.toContain("# Full review:");
+});
+
+test("degraded reports punctuate the reason before the deterministic-findings note", () => {
+  const base = {
+    flow: "booking",
+    commit: "abc123",
+    findings: [],
+    tuples: [],
+    coverage: [],
+  };
+  const render = (reason: string) => {
+    const options = { ...base, outcome: { kind: "degraded" as const, reason } };
+    return {
+      markdown: renderReport(options),
+      html: renderReviewHtmlReport({ ...options, screenshots: new Map() }),
+    };
+  };
+
+  const unpunctuated = render("ANTHROPIC_API_KEY is not set");
+  expect(unpunctuated.markdown).toContain(
+    "ANTHROPIC\\_API\\_KEY is not set. Deterministic findings remain available.",
+  );
+  expect(unpunctuated.html).toContain(
+    "Model layer did not run: ANTHROPIC_API_KEY is not set. Deterministic findings remain available.",
+  );
+
+  const punctuated = render("provider failed.");
+  for (const report of [punctuated.markdown, punctuated.html]) {
+    expect(report).toContain(
+      "provider failed. Deterministic findings remain available.",
+    );
+    expect(report).not.toContain("failed..");
+  }
+
+  const truncated = render("provider response was cut…");
+  for (const report of [truncated.markdown, truncated.html]) {
+    expect(report).toContain("cut… Deterministic findings remain available.");
+    expect(report).not.toContain("….");
+  }
+
+  expect(degradedReasonSentence("x")).toBe("x.");
+  expect(degradedReasonSentence("x \n")).toBe("x.");
+  for (const terminated of ["x.", "x!", "x?", "x…", "x.)", 'x."']) {
+    expect(degradedReasonSentence(terminated)).toBe(terminated);
+  }
+  expect(degradedReasonSentence("")).toBe("");
+});
+
+test("reports list truncated text references only when the model layer was attempted", () => {
+  const base = {
+    flow: "booking",
+    commit: "abc123",
+    findings: [],
+    tuples: [],
+    coverage: [],
+  };
+  const truncatedReferences = [
+    {
+      label: "reference:brand.md",
+      polarity: "reference" as const,
+      totalChars: 40_213,
+      includedChars: 12_000,
+    },
+  ];
+  const sentence =
+    "Text references truncated for the model (limit 12,000 characters each): reference:brand.md (40,213 characters, first 12,000 sent).";
+  for (const outcome of [
+    { kind: "full" as const },
+    { kind: "degraded" as const, reason: "provider failed" },
+  ]) {
+    const options = { ...base, outcome, truncatedReferences };
+    expect(renderReport(options), outcome.kind).toContain(sentence);
+    expect(
+      renderReviewHtmlReport({ ...options, screenshots: new Map() }),
+      outcome.kind,
+    ).toContain(sentence);
+  }
+  for (const options of [
+    { ...base, outcome: { kind: "full" as const } },
+    { ...base, outcome: { kind: "full" as const }, truncatedReferences: [] },
+    {
+      ...base,
+      outcome: { kind: "deterministic-only" as const },
+      truncatedReferences,
+    },
+  ]) {
+    expect(renderReport(options)).not.toContain("Text references truncated");
+    expect(
+      renderReviewHtmlReport({ ...options, screenshots: new Map() }),
+    ).not.toContain("Text references truncated");
+  }
+});
+
+test("reports note when the deterministic findings context was bounded", () => {
+  const base = {
+    flow: "booking",
+    commit: "abc123",
+    findings: [],
+    tuples: [],
+    coverage: [],
+  };
+  const deterministicContextLimits = [
+    { state: "checkout", totalFindings: 212, includedFindings: 50 },
+  ];
+  const sentence =
+    "Deterministic findings context for the model was bounded (limit 50 findings or 20,000 characters per prompt): checkout 50 of 212 listed, the rest summarized by category and severity.";
+  for (const outcome of [
+    { kind: "full" as const },
+    { kind: "degraded" as const, reason: "provider failed" },
+  ]) {
+    const options = { ...base, outcome, deterministicContextLimits };
+    expect(renderReport(options), outcome.kind).toContain(sentence);
+    expect(
+      renderReviewHtmlReport({ ...options, screenshots: new Map() }),
+      outcome.kind,
+    ).toContain(sentence);
+  }
+  for (const options of [
+    { ...base, outcome: { kind: "full" as const } },
+    {
+      ...base,
+      outcome: { kind: "full" as const },
+      deterministicContextLimits: [],
+    },
+    {
+      ...base,
+      outcome: { kind: "deterministic-only" as const },
+      deterministicContextLimits,
+    },
+  ]) {
+    expect(renderReport(options)).not.toContain("context for the model");
+    expect(
+      renderReviewHtmlReport({ ...options, screenshots: new Map() }),
+    ).not.toContain("context for the model");
+  }
+  const advisory = {
+    version: 1 as const,
+    flow: "booking",
+    outcome: { kind: "full" as const },
+    patterns: [
+      {
+        id: "logo-marquee",
+        intent: "A calm row of logos",
+        state: "home",
+        status: "ok" as const,
+        screenshots: [],
+        findings: [],
+        deterministicContextLimit: { totalFindings: 61, includedFindings: 31 },
+      },
+    ],
+  };
+  const patternSentence =
+    "Deterministic findings context for the model was bounded (limit 50 findings or 20,000 characters per prompt): 31 of 61 listed, the rest summarized by category and severity.";
+  const options = { ...base, outcome: { kind: "full" as const }, advisory };
+  expect(renderReport(options)).toContain(patternSentence);
+  expect(
+    renderReviewHtmlReport({ ...options, screenshots: new Map() }),
+  ).toContain(patternSentence);
 });
 
 test("review coverage is ordered before findings and exposes narrowed and failed scope", () => {
@@ -1283,6 +1561,12 @@ test("full stored review evaluates the model after six deterministic findings an
   expect(firstReport).not.toContain("IDM-");
   expect(firstReport.match(/Layer: deterministic/g)).toHaveLength(6);
   expect(firstReport).not.toContain("cap of 5 was exhausted");
+  // Both deferred ids are run-local; this run's own findings.json never makes
+  // them decidable.
+  expect(
+    firstReport.match(/Report-only: not an `idiom decide --finding` target/g),
+  ).toHaveLength(2);
+  expect(firstReport).not.toContain("Decision target:");
   expect(firstHtmlReport).toContain("data:image/png;base64,");
   expect(firstHtmlReport).toContain("Evaluated but not selected");
   expect(firstHtmlReport).toContain("prefers-color-scheme: dark");
@@ -1308,6 +1592,237 @@ test("full stored review evaluates the model after six deterministic findings an
   expect(secondFindings.map(({ id }) => id)).toEqual(
     firstFindings.map(({ id }) => id),
   );
+  const secondReport = await readFile(second.reportPath, "utf8");
+  expect(
+    secondReport.match(/Report-only: not an `idiom decide --finding` target/g),
+  ).toHaveLength(2);
+  expect(secondReport).not.toContain("Decision target:");
+  expect(first).not.toHaveProperty("critiqueEvidenceLimits");
+  expect(firstReport).not.toContain("critique evidence was limited");
+  expect(firstHtmlReport).not.toContain("critique evidence was limited");
+
+  const evidenceLimits = {
+    provider: "claude-code" as const,
+    limits: { images: 20, imageBytes: 20 * 1024 * 1024, domChars: 60_000 },
+    sessions: 2,
+    omitted: [
+      {
+        label: "ready/mobile",
+        kind: "dom-excerpt" as const,
+        reason: "excerpt is 70,000 characters; session DOM budget is 60,000",
+      },
+    ],
+  };
+  const limited = await runReview({
+    project,
+    flow: "booking",
+    from: runId,
+    dependencies: {
+      critique: {
+        async critique() {
+          return {
+            findings: [],
+            decisionObservations: [],
+            discardedDecisionObservations: 0,
+            evidenceLimits,
+          };
+        },
+      },
+    },
+  });
+  const sentence =
+    "Claude Code critique evidence was limited (per session: 20 images, 20 MB of images, 60,000 DOM characters): split across 2 sessions; omitted ready/mobile (dom-excerpt: excerpt is 70,000 characters; session DOM budget is 60,000).";
+  expect(limited.outcome).toEqual({ kind: "full" });
+  expect(limited.critiqueEvidenceLimits).toEqual(evidenceLimits);
+  expect(await readFile(limited.reportPath, "utf8")).toContain(sentence);
+  expect(await readFile(limited.htmlReportPath, "utf8")).toContain(sentence);
+});
+
+test("isCatalogDecisionTarget mirrors decide --finding resolution outside the excluded run", () => {
+  const lineage = (ids: string[], runDirectories: string[]) => ({
+    ids,
+    occurrences: runDirectories.map((runDirectory) => ({ runDirectory })),
+  });
+  const catalog = {
+    lineages: [
+      lineage(["finding-1"], ["/reports/a", "/reports/b"]),
+      lineage(["finding-2"], ["/reports/b"]),
+      lineage(["finding-3"], ["/reports/a"]),
+      lineage(["finding-3"], ["/reports/b"]),
+    ],
+  } as unknown as ReviewCatalog;
+  expect(isCatalogDecisionTarget(catalog, "finding-1")).toBe(true);
+  expect(isCatalogDecisionTarget(catalog, "finding-1", "/reports/b")).toBe(
+    true,
+  );
+  expect(isCatalogDecisionTarget(catalog, "finding-9")).toBe(false);
+  expect(isCatalogDecisionTarget(catalog, "finding-3")).toBe(false);
+  expect(isCatalogDecisionTarget(catalog, "finding-2")).toBe(true);
+  expect(isCatalogDecisionTarget(catalog, "finding-2", "/reports/x/../b")).toBe(
+    false,
+  );
+});
+
+test("capped report marks catalog-backed deferred findings as decision targets and run-local ones as report-only", async () => {
+  const project = await mkdtemp(
+    join(tmpdir(), "idiom-review-deferred-targets-"),
+  );
+  directories.push(project);
+  await initProject({ project, yes: true });
+  await writeFile(
+    join(project, ".idiom", "flows", "booking.json"),
+    JSON.stringify({
+      id: "booking",
+      title: "Booking",
+      intent: ["The primary action is obvious."],
+      setup: [],
+      viewports: ["mobile"],
+      states: [{ id: "ready", description: "Ready", url: "/", expect: {} }],
+    }),
+  );
+  const firstRunId = "2026-08-15T12-00-00-000Z";
+  const secondRunId = "2026-08-16T12-00-00-000Z";
+  const reports = join(project, ".idiom", "reports");
+  const tuple = join(reports, firstRunId, "ready", "mobile");
+  await mkdir(tuple, { recursive: true });
+  await Promise.all([
+    writeFile(
+      join(tuple, "metadata.json"),
+      JSON.stringify({
+        ...metadata(),
+        viewport: {
+          name: "mobile",
+          width: 390,
+          height: 844,
+          deviceScaleFactor: 2,
+        },
+      }),
+    ),
+    writeFile(join(tuple, "screenshot.png"), "png"),
+    writeFile(join(tuple, "dom.html"), "<h1>Ready</h1>"),
+    writeFile(join(tuple, "console.jsonl"), ""),
+    writeFile(
+      join(tuple, "axe.json"),
+      JSON.stringify({
+        violations: [
+          {
+            id: "color-contrast",
+            impact: "serious",
+            nodes: Array.from({ length: 6 }, (_, index) => ({
+              target: [`p.copy-${index + 1}`],
+              html: `<p class="copy-${index + 1}">copy</p>`,
+            })),
+          },
+        ],
+      }),
+    ),
+    writeFile(
+      join(tuple, "observations.json"),
+      JSON.stringify({
+        ...observations,
+        viewport: { width: 390, height: 844 },
+        document: {
+          scrollWidth: 390,
+          scrollHeight: 844,
+          clientWidth: 390,
+          clientHeight: 844,
+        },
+      }),
+    ),
+  ]);
+  await cp(join(reports, firstRunId), join(reports, secondRunId), {
+    recursive: true,
+  });
+  const blocker = {
+    category: "hierarchy" as const,
+    severity: "blocker" as const,
+    confidence: 0.9,
+    rule: "DESIGN.md: keep the primary action dominant",
+    selectorHint: "main form",
+    state: "ready",
+    viewport: "mobile",
+    screenshots: ["ready/mobile"],
+    references: [],
+    explanation: "The primary action is not visually identifiable.",
+    suggestedArea: "main form",
+    acceptance: ["The primary action is visually dominant."],
+  };
+
+  // Run 1: no model finding, so five deterministic findings are material and
+  // one is deferred.
+  const first = await runReview({
+    project,
+    flow: "booking",
+    from: firstRunId,
+    dependencies: { critique: { critique: async () => [] } },
+  });
+  const firstMaterial = JSON.parse(
+    await readFile(first.findingsPath, "utf8"),
+  ) as Array<{ id: string }>;
+  expect(firstMaterial).toHaveLength(5);
+  expect(first.deferredFindings).toHaveLength(1);
+
+  // Run 2: the blocker takes a slot, displacing one finding run 1 recorded.
+  const second = await runReview({
+    project,
+    flow: "booking",
+    from: secondRunId,
+    dependencies: { critique: { critique: async () => [blocker] } },
+  });
+  const secondMaterial = JSON.parse(
+    await readFile(second.findingsPath, "utf8"),
+  ) as Array<{ id: string }>;
+  expect(secondMaterial).toHaveLength(5);
+  expect(second.deferredFindings).toHaveLength(2);
+  const firstIds = new Set(firstMaterial.map(({ id }) => id));
+  const catalogued = second.deferredFindings.filter(({ id }) =>
+    firstIds.has(id),
+  );
+  const runLocal = second.deferredFindings.filter(
+    ({ id }) => !firstIds.has(id),
+  );
+  expect(catalogued).toHaveLength(1);
+  expect(runLocal).toHaveLength(1);
+  const cataloguedId = catalogued[0]?.id ?? "";
+  const runLocalId = runLocal[0]?.id ?? "";
+
+  const report = await readFile(second.reportPath, "utf8");
+  const html = await readFile(second.htmlReportPath, "utf8");
+  expect(report).toContain(
+    `- ${cataloguedId} (major) — Decision target: \`idiom decide --finding ${cataloguedId}\``,
+  );
+  expect(report).toContain(
+    `- ${runLocalId} (major) — Report-only: not an \`idiom decide --finding\` target`,
+  );
+  expect(report).toContain(
+    "Each entry is marked: `decision target` ids already have a catalog lineage",
+  );
+  expect(report).toContain(
+    "Actionable findings above are recorded in findings.json and can be passed to `idiom decide --finding <id>`.",
+  );
+  for (const { id } of secondMaterial) expect(report).toContain(id);
+  expect(html).toContain(
+    `<strong>${cataloguedId}</strong> <span class="badge badge-good">decision target</span> <code>idiom decide --finding ${cataloguedId}</code>`,
+  );
+  expect(html).toContain(
+    `<strong>${runLocalId}</strong> <span class="badge badge-neutral">report-only</span>`,
+  );
+
+  // The labels match what decide actually accepts.
+  await decideCommand({
+    project,
+    finding: cataloguedId,
+    accept: true,
+    write: () => {},
+  });
+  await expect(
+    decideCommand({
+      project,
+      finding: runLocalId,
+      accept: true,
+      write: () => {},
+    }),
+  ).rejects.toThrow(/unknown finding id/);
 });
 
 test("full review revalidates and publishes recurring unruled decisions outside findings", async () => {
@@ -1434,6 +1949,7 @@ test("suppressed decision provenance renders the canonical name in both formats"
     path: "/project/.idiom/finding-names.json",
     registry: { version: 1 as const, next: 1, entries: [] },
     changed: false,
+    malformedTickets: [],
   };
   const named = {
     ...rejected,
@@ -1959,4 +2475,203 @@ test("coverage shows responsive-break not applicable off the minimum width and n
     );
     expect(output).not.toContain("Responsive and target");
   }
+});
+
+async function reviewFixture(screenshotStates: readonly string[]) {
+  const project = await mkdtemp(join(tmpdir(), "idiom-review-screens-"));
+  directories.push(project);
+  await initProject({ project, yes: true });
+  await writeFile(
+    join(project, ".idiom", "flows", "booking.json"),
+    JSON.stringify({
+      id: "booking",
+      title: "Booking",
+      intent: ["The primary action is obvious."],
+      setup: [],
+      viewports: ["mobile"],
+      states: [
+        { id: "ready", description: "Ready", url: "/", expect: {} },
+        {
+          id: "confirmed",
+          description: "Confirmed",
+          url: "/confirmed",
+          expect: {},
+        },
+      ],
+    }),
+  );
+  const runId = "2026-08-21T12-00-00-000Z";
+  for (const state of ["ready", "confirmed"]) {
+    const tuple = join(project, ".idiom", "reports", runId, state, "mobile");
+    await mkdir(tuple, { recursive: true });
+    await Promise.all([
+      writeFile(
+        join(tuple, "metadata.json"),
+        JSON.stringify({
+          ...metadata(
+            screenshotStates.includes(state)
+              ? null
+              : { stage: "navigation", message: "navigation timed out" },
+          ),
+          state: { id: state, description: state },
+          viewport: {
+            name: "mobile",
+            width: 390,
+            height: 844,
+            deviceScaleFactor: 2,
+          },
+          url: {
+            kind: "literal",
+            origin: "http://127.0.0.1:3107",
+            url: `http://127.0.0.1:3107/${state}`,
+          },
+        }),
+      ),
+      ...(screenshotStates.includes(state)
+        ? [writeFile(join(tuple, "screenshot.png"), "png")]
+        : []),
+      writeFile(join(tuple, "dom.html"), `<h1>${state}</h1>`),
+      writeFile(join(tuple, "console.jsonl"), ""),
+      writeFile(join(tuple, "axe.json"), JSON.stringify({ violations: [] })),
+      writeFile(
+        join(tuple, "observations.json"),
+        JSON.stringify({
+          ...observations,
+          viewport: { width: 390, height: 844 },
+          document: {
+            scrollWidth: 390,
+            scrollHeight: 844,
+            clientWidth: 390,
+            clientHeight: 844,
+          },
+        }),
+      ),
+    ]);
+  }
+  return { project, runId };
+}
+
+function recordingCritique(
+  result: () => Promise<CritiqueResult> = async () => ({
+    findings: [],
+    decisionObservations: [],
+    discardedDecisionObservations: 0,
+  }),
+) {
+  const calls: CritiqueInput[] = [];
+  return {
+    calls,
+    adapter: {
+      async critique(input: CritiqueInput) {
+        calls.push(input);
+        return result();
+      },
+    },
+  };
+}
+
+test("no reviewable screenshots helpers name the tuple count", () => {
+  const tuple = (screenshotPath?: string) =>
+    ({
+      ...(screenshotPath === undefined ? {} : { screenshotPath }),
+    }) as CheckTuple;
+  expect(hasReviewableScreenshot([])).toBe(false);
+  expect(noReviewableScreenshotsOutcome([])).toEqual({
+    kind: "degraded",
+    reason:
+      "no reviewable screenshots: 0 of 0 capture tuples produced a screenshot, so model critique did not run",
+  });
+  expect(hasReviewableScreenshot([tuple()])).toBe(false);
+  const single = noReviewableScreenshotsOutcome([tuple()]);
+  expect(single.kind === "degraded" && single.reason).toContain(
+    "0 of 1 capture tuple produced",
+  );
+  expect(hasReviewableScreenshot([tuple(), tuple("a/screenshot.png")])).toBe(
+    true,
+  );
+});
+
+test("a capture with no screenshots degrades the model layer without a provider request", async () => {
+  const { project, runId } = await reviewFixture([]);
+  const critique = recordingCritique();
+  const result = await runReview({
+    project,
+    flow: "booking",
+    from: runId,
+    dependencies: { critique: critique.adapter },
+  });
+  expect(critique.calls).toHaveLength(0);
+  expect(result.outcome).toEqual({
+    kind: "degraded",
+    reason: expect.stringContaining(NO_REVIEWABLE_SCREENSHOTS_REASON),
+  });
+  const reason =
+    result.outcome.kind === "degraded" ? result.outcome.reason : "";
+  expect(reason).toContain("0 of 2 capture tuples");
+  for (const providerWording of ["credential", "network", "malformed"])
+    expect(reason.toLowerCase()).not.toContain(providerWording);
+  const report = await readFile(result.reportPath, "utf8");
+  expect(report).toContain("# Degraded review:");
+  expect(report).toContain("Model layer did not run");
+  expect(report).not.toContain("# Full review:");
+
+  const deterministic = await runReview({
+    project,
+    flow: "booking",
+    from: runId,
+    deterministicOnly: true,
+  });
+  expect(result.findingCount).toBe(deterministic.findingCount);
+  expect(JSON.parse(await readFile(result.findingsPath, "utf8"))).toEqual(
+    JSON.parse(await readFile(deterministic.findingsPath, "utf8")),
+  );
+});
+
+test("a provider failure keeps its own degradation reason", async () => {
+  const { project, runId } = await reviewFixture(["ready", "confirmed"]);
+  const critique = recordingCritique(async () => {
+    throw new Error("network down");
+  });
+  const result = await runReview({
+    project,
+    flow: "booking",
+    from: runId,
+    dependencies: { critique: critique.adapter },
+  });
+  expect(critique.calls).toHaveLength(1);
+  expect(result.outcome.kind).toBe("degraded");
+  expect(
+    result.outcome.kind === "degraded" ? result.outcome.reason : "",
+  ).not.toContain(NO_REVIEWABLE_SCREENSHOTS_REASON);
+});
+
+test("one reviewable screenshot keeps the full model review", async () => {
+  const { project, runId } = await reviewFixture(["ready"]);
+  const critique = recordingCritique();
+  const result = await runReview({
+    project,
+    flow: "booking",
+    from: runId,
+    dependencies: { critique: critique.adapter },
+  });
+  expect(critique.calls).toHaveLength(1);
+  expect(critique.calls[0]?.screenshots).toHaveLength(1);
+  expect(result.outcome).toEqual({ kind: "full" });
+});
+
+test("a sweep over a capture with no screenshots degrades without a provider request", async () => {
+  const { project, runId } = await reviewFixture([]);
+  const critique = recordingCritique();
+  const result = await runReview({
+    project,
+    flow: "booking",
+    from: runId,
+    mode: "sweep",
+    dependencies: { critique: critique.adapter },
+  });
+  expect(critique.calls).toHaveLength(0);
+  expect(result.outcome).toEqual({
+    kind: "degraded",
+    reason: expect.stringContaining(NO_REVIEWABLE_SCREENSHOTS_REASON),
+  });
 });

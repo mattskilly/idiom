@@ -13,6 +13,7 @@ import { validateProject } from "../validation.js";
 import {
   type AttachmentManifest,
   canonicalAttachmentKind,
+  compositeArtifactName,
   validateAttachmentManifest,
   writeAttachmentManifest,
 } from "../verify/attachments.js";
@@ -69,14 +70,6 @@ function defaultOutput(projectDirectory: string, now: Date): string {
     "reports",
     `compare-${now.toISOString().replaceAll(":", "-").replaceAll(".", "-")}`,
   );
-}
-
-function compositePath(coordinate: TupleCoordinate): string {
-  const combination =
-    coordinate.combination === undefined
-      ? ""
-      : `-${coordinate.combination.replace(/[^A-Za-z0-9._-]+/g, "-")}`;
-  return `before-after-${coordinate.state}-${coordinate.viewport}${coordinate.colorScheme === undefined ? "" : `-${coordinate.colorScheme}`}${combination}.png`;
 }
 
 function notComparableReason(
@@ -214,7 +207,7 @@ export async function runCompare(options: {
         continue;
       }
       const ordinal = changed.length + 1;
-      const path = compositePath(coordinate);
+      const path = compositeArtifactName(coordinate);
       await writeBeforeAfterComposite({
         beforePath: beforeTuple.screenshotPath as string,
         afterPath: afterTuple.screenshotPath as string,

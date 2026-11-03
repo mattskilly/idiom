@@ -4,7 +4,7 @@ import { lstat, mkdir, mkdtemp, realpath, rename, rm } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { IdiomError } from "../errors.js";
+import { IdiomError, RunFailure } from "../errors.js";
 import type { Flow } from "../schemas/flow.js";
 import { type Project, productionConfigExample } from "../schemas/project.js";
 import {
@@ -19,6 +19,12 @@ import {
   readBuildId,
 } from "./production-cache.js";
 import { localOrigin } from "./resolve.js";
+import {
+  redact,
+  type ServerFailureCause,
+  serverFailureHint,
+  stderrTail,
+} from "./server-diagnosis.js";
 import { type PhaseTiming, skipped } from "./timings.js";
 import type { ProductionBuild } from "./types.js";
 
@@ -67,20 +73,6 @@ export function expandDataDirectory(
 
 function bounded(value: string): string {
   return value.length <= OUTPUT_LIMIT ? value : value.slice(-OUTPUT_LIMIT);
-}
-
-function redact(value: string, environment: NodeJS.ProcessEnv): string {
-  let result = value;
-  for (const [name, secret] of Object.entries(environment)) {
-    if (
-      /_(TOKEN|SECRET|KEY)$/.test(name) &&
-      secret !== undefined &&
-      secret.length > 0
-    ) {
-      result = result.split(secret).join(`[redacted ${name}]`);
-    }
-  }
-  return result;
 }
 
 export function expandEnvironment(
@@ -333,9 +325,35 @@ export async function startServer(options: {
     : (await isPortOpen(server.port, readyHost))
       ? server.port
       : undefined;
+  // Every startup failure leads with one line: what failed, and the tail of
+  // what the server said. The existing explanation follows as detail.
+  const failure = (
+    cause: ServerFailureCause,
+    headline: string,
+    detail: string,
+    output = "",
+    port?: number,
+  ) =>
+    new RunFailure({
+      stage: "server",
+      cause,
+      headline: `server failed to start: ${headline}`,
+      detail,
+      hint: serverFailureHint({
+        cause,
+        output,
+        project: options.project,
+        configuredPort: options.configuredPort,
+        port,
+      }),
+    });
   if (occupied !== undefined) {
-    throw new IdiomError(
+    throw failure(
+      "port-in-use",
+      `port ${occupied} in use — ${server.readyUrl} already answers`,
       `cannot start application server: ${server.readyUrl} already answers — port ${occupied} in use by another process`,
+      "",
+      occupied,
     );
   }
   // A start command that pins its port (`next start --port 3100` inside a
@@ -356,11 +374,16 @@ export async function startServer(options: {
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
+  let stderr = "";
   const collect = (chunk: string | Buffer) => {
     output = bounded(output + chunk.toString());
   };
   child.stdout?.on("data", collect);
-  child.stderr?.on("data", collect);
+  child.stderr?.on("data", (chunk: string | Buffer) => {
+    collect(chunk);
+    stderr = bounded(stderr + chunk.toString());
+  });
+  const tail = () => stderrTail(stderr, output, options.environment);
   let spawnError: Error | undefined;
   child.once("error", (error) => {
     spawnError = error;
@@ -402,37 +425,53 @@ export async function startServer(options: {
     while (true) {
       options.signal?.throwIfAborted();
       if (spawnError !== undefined) {
-        throw new IdiomError(
-          `application server could not start: ${redact(spawnError.message, options.environment)}`,
+        const message = redact(spawnError.message, options.environment);
+        throw failure(
+          "server-spawn",
+          `could not spawn — ${message}`,
+          `application server could not start: ${message}`,
+          spawnError.message,
         );
       }
       if (child.exitCode !== null || child.signalCode !== null) {
-        throw new IdiomError(
+        const status =
+          child.signalCode === null
+            ? `exit ${String(child.exitCode)}`
+            : `signal ${child.signalCode}`;
+        throw failure(
+          "server-exited",
+          `${status} — ${tail()}`,
           `application server exited before readiness (${child.signalCode ?? `exit ${String(child.exitCode)}`}): ${redact(output.trim(), options.environment)}`,
+          output,
         );
       }
-      try {
-        const response = await fetchReady(server.readyUrl, {
-          signal: options.signal
-            ? AbortSignal.any([options.signal, AbortSignal.timeout(1_000)])
-            : AbortSignal.timeout(1_000),
-        });
-        options.signal?.throwIfAborted();
-        if (response.status === 200) break;
-      } catch {
-        // The server may not have bound yet.
-      }
+      // The server may not have bound yet.
+      if (
+        await serverAnswers(server.readyUrl, {
+          fetch: fetchReady,
+          signal: options.signal,
+          timeoutMs: 1_000,
+        })
+      )
+        break;
+      options.signal?.throwIfAborted();
       if (
         configuredPort !== undefined &&
         (await isPortOpen(configuredPort, readyHost))
       ) {
-        throw new IdiomError(
+        throw failure(
+          "port-pinned",
+          `port pinned — started on ${configuredPort}, not reserved ${server.port}`,
           `application server started on its configured port ${configuredPort}, not the reserved port ${server.port}: its start command pins the port instead of reading PORT. Set "server.fixedPort": true in .idiom/project.json, or pass --port ${configuredPort}`,
+          output,
         );
       }
       if (now() >= deadline) {
-        throw new IdiomError(
+        throw failure(
+          "server-timeout",
+          `timeout after ${server.startupTimeoutMs}ms waiting for ${server.readyUrl} — ${tail()}`,
           `application server was not ready at ${server.readyUrl} within ${server.startupTimeoutMs}ms: ${redact(output.trim(), options.environment)}`,
+          output,
         );
       }
       await sleep(100);
@@ -442,6 +481,8 @@ export async function startServer(options: {
     try {
       await stop();
     } catch (cleanup) {
+      if (error instanceof RunFailure)
+        throw error.withDetail(`; server cleanup failed: ${String(cleanup)}`);
       throw new IdiomError(
         `${String(error)}; server cleanup failed: ${String(cleanup)}`,
       );
@@ -463,6 +504,30 @@ async function stopCommand(
   }
 }
 
+/** The readiness check: the ready URL answers 200 within the timeout. */
+export async function serverAnswers(
+  readyUrl: string,
+  options: {
+    fetch?: typeof globalThis.fetch | undefined;
+    signal?: AbortSignal | undefined;
+    timeoutMs?: number | undefined;
+  } = {},
+): Promise<boolean> {
+  const timeout = AbortSignal.timeout(options.timeoutMs ?? 2_000);
+  try {
+    const response = await (options.fetch ?? globalThis.fetch)(readyUrl, {
+      signal: options.signal
+        ? AbortSignal.any([options.signal, timeout])
+        : timeout,
+    });
+    options.signal?.throwIfAborted();
+    return response.status === 200;
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    return false;
+  }
+}
+
 export type ProductionRuntime = {
   dataDirectory: string;
   timings: { build: PhaseTiming; start: PhaseTiming };
@@ -478,6 +543,11 @@ export async function prepareProduction(options: {
   dataDirectory: string;
   commit: string;
   dirty?: boolean | undefined;
+  /**
+   * Working-tree content identity (the build gate). Replaces the commit in
+   * the cache key and lets the cache serve a dirty tree.
+   */
+  inputIdentity?: string | undefined;
   /** A pinned port (`--port`, `IDIOM_PORT`, `fixedPort`); otherwise a free one. */
   port?: number | undefined;
   inheritedEnvironment?: NodeJS.ProcessEnv;
@@ -519,10 +589,13 @@ export async function prepareProduction(options: {
   }
   const clock = options.dependencies?.monotonicNow ?? (() => performance.now());
   const timings = { build: skipped(), start: skipped() };
-  const cache = production.reuseBuild
-    ? await openProductionCache(root, output)
-    : undefined;
-  const cacheable = cache !== undefined && options.dirty === false;
+  const cache =
+    production.reuseBuild || options.inputIdentity !== undefined
+      ? await openProductionCache(root, output)
+      : undefined;
+  const cacheable =
+    cache !== undefined &&
+    (options.dirty === false || options.inputIdentity !== undefined);
   const dataDirectory = cacheable ? cache.dataDirectory : options.dataDirectory;
   let reservation: PortReservation | undefined;
   const release = async () => {
@@ -607,7 +680,7 @@ export async function prepareProduction(options: {
     const hash = inputHash([
       root,
       output,
-      options.commit,
+      options.inputIdentity ?? options.commit,
       production,
       options.project.server.port,
       options.project.server.readyUrl,

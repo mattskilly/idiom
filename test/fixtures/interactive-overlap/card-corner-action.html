@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Card corner actions</title>
+<style>
+  body { margin: 24px; font: 14px/1.4 system-ui, sans-serif; color: #1b1f24; }
+  .grid { display: grid; grid-template-columns: repeat(2, 220px); gap: 24px; }
+  .card { position: relative; border: 1px solid #c8ccd2; border-radius: 8px; background: #fff; }
+  .card > a { display: block; padding: 16px; color: inherit; text-decoration: none; min-height: 120px; }
+  .card h2 { margin: 0 0 8px; font-size: 16px; }
+  .corner { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; }
+  /* Under the card link instead of on top of it: unreachable. */
+  .buried { z-index: -1; }
+  /* Positioned over the neighbouring card's link, not its own. */
+  .stray { position: absolute; top: 40px; left: 200px; width: 48px; height: 32px; }
+  .pair { position: relative; height: 40px; margin-top: 24px; }
+  .pair button { position: absolute; top: 0; width: 120px; height: 36px; }
+  #save { left: 0; }
+  #publish { left: 80px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Projects</h1>
+  <div class="grid">
+    <article class="card" id="card-a">
+      <a href="#alpha" id="alpha-link"><h2>Alpha</h2><p>Updated today</p></a>
+      <button class="corner" id="alpha-menu" aria-label="Alpha options">⋯</button>
+    </article>
+    <article class="card" id="card-b">
+      <a href="#beta" id="beta-link"><h2>Beta</h2><p>Updated yesterday</p></a>
+      <button class="corner buried" id="beta-menu" aria-label="Beta options">⋯</button>
+    </article>
+    <article class="card" id="card-c">
+      <a href="#gamma" id="gamma-link"><h2>Gamma</h2><p>Updated last week</p></a>
+      <button class="stray" id="gamma-stray">Pin</button>
+    </article>
+    <article class="card" id="card-d">
+      <a href="#delta" id="delta-link"><h2>Delta</h2><p>Updated last month</p></a>
+    </article>
+  </div>
+  <!-- Below the fold, where hit testing cannot reach. -->
+  <div class="grid" style="margin-top: 1400px">
+    <article class="card" id="card-e">
+      <a href="#epsilon" id="epsilon-link"><h2>Epsilon</h2><p>Archived</p></a>
+      <button class="corner" id="epsilon-menu" aria-label="Epsilon options">⋯</button>
+    </article>
+    <article class="card" id="card-f">
+      <a href="#zeta" id="zeta-link"><h2>Zeta</h2><p>Archived</p></a>
+      <button class="corner buried" id="zeta-menu" aria-label="Zeta options">⋯</button>
+    </article>
+  </div>
+  <div class="pair">
+    <button id="save">Save draft</button>
+    <button id="publish">Publish</button>
+  </div>
+</main>
+</body>
+</html>

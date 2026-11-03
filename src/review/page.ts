@@ -8,11 +8,19 @@ import {
   tupleCritiqueMaterial,
 } from "../critique/context.js";
 import {
+  type DeterministicContextLimit,
+  deterministicContextLimit,
+} from "../critique/deterministic-bound.js";
+import {
   type CritiqueFallbackEvent,
   type CritiqueModelConfig,
   type CritiqueProvider,
   describeCritiqueFailure,
 } from "../critique/provider.js";
+import {
+  type TruncatedReference,
+  truncatedTextReferences,
+} from "../critique/reference-bound.js";
 import { referenceFromFile } from "../critique/reference-file.js";
 import { validateCritiqueResult } from "../critique/schema.js";
 import type {
@@ -49,6 +57,8 @@ import {
 import type { PageReviewScope, ReviewOutcome } from "./report.js";
 import {
   createReviewCritiqueAdapter,
+  hasReviewableScreenshot,
+  noReviewableScreenshotsOutcome,
   type ReviewDependencies,
   withFallback,
 } from "./run.js";
@@ -65,6 +75,10 @@ export type PageReviewResult = {
   findingCount: number;
   deferredFindings: Finding[];
   outcome: ReviewOutcome;
+  /** Text references the model saw in bounded form; absent when none. */
+  truncatedReferences?: TruncatedReference[] | undefined;
+  /** Prompts whose deterministic findings context was bounded; absent when none. */
+  deterministicContextLimits?: DeterministicContextLimit[] | undefined;
   counts: CaptureCounts;
 };
 
@@ -248,6 +262,8 @@ export async function runPageReview(options: {
 
   let modelDrafts: FindingDraft[] = [];
   let outcome: ReviewOutcome;
+  let truncatedReferences: TruncatedReference[] = [];
+  let deterministicContextLimits: DeterministicContextLimit[] = [];
   // An explicit provider or model is honored literally, without fallback.
   const explicit =
     options.provider !== undefined || options.model !== undefined;
@@ -263,6 +279,8 @@ export async function runPageReview(options: {
       reason:
         "no model configured; pass --model or run inside an Idiom project",
     };
+  } else if (!hasReviewableScreenshot(loaded.tuples)) {
+    outcome = noReviewableScreenshotsOutcome(loaded.tuples);
   } else {
     try {
       const material = await tupleCritiqueMaterial(loaded.tuples, runDirectory);
@@ -272,6 +290,7 @@ export async function runPageReview(options: {
           : await loadReferenceContext(projectDirectory)),
         ...frames,
       ];
+      truncatedReferences = truncatedTextReferences(references);
       const input: CritiqueInput = {
         flow: configuration.flow.id,
         intent: [],
@@ -301,6 +320,9 @@ export async function runPageReview(options: {
         rulingResolutions: [],
         page: pageContext,
       };
+      deterministicContextLimits = [
+        deterministicContextLimit(input.deterministicFindings),
+      ].flatMap((limit) => limit ?? []);
       const { capture: _capture, ...critiqueDependencies } =
         options.dependencies ?? {};
       const modelConfig: CritiqueModelConfig =
@@ -365,6 +387,8 @@ export async function runPageReview(options: {
     focus,
     sections: pageContext.sections,
   };
+  // No deferredDecisionTargets: page-review ids never enter the catalog, so
+  // every deferred entry is report-only.
   const { reportPath, htmlReportPath } = await writeReviewReports(
     runDirectory,
     {
@@ -379,6 +403,10 @@ export async function runPageReview(options: {
         ? {}
         : { narrowWidth: reviewed.narrowWidth }),
       outcome,
+      truncatedReferences,
+      ...(deterministicContextLimits.length === 0
+        ? {}
+        : { deterministicContextLimits }),
       page: scope,
       reportCoverage: buildReviewCoverage({
         collapsedTupleKeys: loaded.collapsedTupleKeys,
@@ -397,6 +425,10 @@ export async function runPageReview(options: {
     findingCount: findings.length,
     deferredFindings,
     outcome,
+    ...(truncatedReferences.length === 0 ? {} : { truncatedReferences }),
+    ...(deterministicContextLimits.length === 0
+      ? {}
+      : { deterministicContextLimits }),
     counts,
   };
 }

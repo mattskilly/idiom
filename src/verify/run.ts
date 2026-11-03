@@ -193,9 +193,11 @@ export async function runVerify(options: {
       against: options.against,
       gitTopology: options.dependencies?.gitTopology,
     });
+    const statuses = expectedStatusByState(flow);
     const historicalPixels = await loadCaptureRun({
       runDirectory: baseline.runDirectory,
       expectedFlow: options.flow,
+      expectedStatusByState: statuses,
     });
     const filmstripRequests = verificationFilmstripRequests(
       findings,
@@ -230,7 +232,6 @@ export async function runVerify(options: {
     const viewportOrder =
       flow.viewports ?? validated.project.viewports.map(({ name }) => name);
     const colorSchemeOrder = selectColorSchemes(validated.project, flow);
-    const statuses = expectedStatusByState(flow);
     const [baselineLoaded, loadedA, loadedB] = await Promise.all([
       loadCaptureRun({
         runDirectory: baseline.runDirectory,
@@ -315,6 +316,8 @@ export async function runVerify(options: {
     await cp(runB.runDirectory, join(staging, "current-b"), {
       recursive: true,
     });
+    // Composites are written before evaluation, so a failed verification still
+    // publishes them; the Autobuild verifier attaches them as failure evidence.
     const comparisons = [];
     for (const composite of manifest.composites) {
       const beforeTuple = baselineTuples.find(

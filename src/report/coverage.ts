@@ -9,9 +9,30 @@ import type { Coordinate } from "../capture/scope.js";
 import type { CaptureTupleSelection } from "../capture/types.js";
 import type { CheckTuple } from "../checks/types.js";
 import {
+  type BriefCoverage,
+  briefCoverageLines,
+  computeBriefCoverage,
+} from "../coverage/briefs.js";
+import {
+  computeDisclosureCoverage,
+  type DisclosureCoverage,
+  disclosureCoverageLines,
+} from "../coverage/disclosures.js";
+import {
+  computeEmptyContainerCoverage,
+  type EmptyContainerCoverage,
+  emptyContainerCoverageLines,
+} from "../coverage/empty-containers.js";
+import {
+  computeProbeCoverage,
+  type ProbeCoverage,
+  probeCoverageLines,
+} from "../coverage/probe.js";
+import {
   type FlowStateCoverage,
   stateCoverageLine,
 } from "../coverage/states.js";
+import { describeSkip } from "../gate/render.js";
 import {
   type QuickInteraction,
   renderInteractionSentences,
@@ -44,6 +65,16 @@ export type ReportCoverage = {
   interaction?: QuickInteraction | undefined;
   /** Flow review only: which dimensions each state was observed in. */
   stateCoverage?: FlowStateCoverage | undefined;
+  /** Flow review only: how much of each probed state the probe exercised. */
+  probeCoverage?: ProbeCoverage | undefined;
+  /** `idiom check --gate`: the plan the run used and the work it skipped. */
+  gate?: import("../gate/types.js").GateReportSection | undefined;
+  /** Flow review with a probe: disclosures nothing opened. */
+  disclosureCoverage?: DisclosureCoverage | undefined;
+  /** Repeated-content containers seen; absent for older captures or when there are none. */
+  emptyContainerCoverage?: EmptyContainerCoverage | undefined;
+  /** Decided design briefs relevant to the flow; absent when there are none. */
+  briefCoverage?: BriefCoverage | undefined;
 };
 
 export type SurfaceCoverageEntry = {
@@ -96,6 +127,7 @@ type CoverageTuple = Pick<
   | "mismatches"
   | "layoutRepresentative"
   | "observations"
+  | "timelines"
 >;
 
 function tupleSucceeded(tuple: CoverageTuple): boolean {
@@ -195,6 +227,8 @@ export function buildReviewCoverage(options: {
   commit: string;
   interaction?: QuickInteraction | undefined;
   stateCoverage?: FlowStateCoverage | undefined;
+  /** Decided briefs, as the checks judged them. */
+  briefs?: import("../brief/assertions.js").BriefCheck[] | undefined;
 }): ReportCoverage {
   const record = options.record;
   const states = record
@@ -317,6 +351,43 @@ export function buildReviewCoverage(options: {
     currentFlow: options.flow,
     allFlows: options.allFlows ?? [options.flow],
   });
+  // Quick review reports its probe in its own Interaction section.
+  const probeCoverage =
+    options.interaction === undefined
+      ? computeProbeCoverage({
+          tuples: options.tuples,
+          flowBudgetMs: record?.probe.flowBudgetMs,
+        })
+      : undefined;
+  const stateLabels = Object.fromEntries(
+    options.flow.states.map((state) => [state.id, stateChainLabel(state)]),
+  );
+  const disclosureCoverage =
+    probeCoverage === undefined
+      ? undefined
+      : computeDisclosureCoverage(
+          options.tuples.filter(tupleSucceeded),
+          stateLabels,
+        );
+  // Not gated on the probe; older captures and pages without lists omit it.
+  const containers = computeEmptyContainerCoverage(
+    options.tuples.filter(tupleSucceeded),
+    stateLabels,
+  );
+  const emptyContainerCoverage =
+    containers.status === "ran" && containers.total > 0
+      ? containers
+      : undefined;
+  const briefs =
+    options.briefs === undefined
+      ? undefined
+      : computeBriefCoverage(
+          options.tuples.filter(tupleSucceeded),
+          options.briefs,
+          options.flow.id,
+        );
+  const briefCoverage =
+    briefs !== undefined && briefs.entries.length > 0 ? briefs : undefined;
   return {
     flow: options.flow.id,
     purpose: "Declared review coverage",
@@ -344,6 +415,10 @@ export function buildReviewCoverage(options: {
     ...(options.stateCoverage === undefined
       ? {}
       : { stateCoverage: options.stateCoverage }),
+    ...(probeCoverage === undefined ? {} : { probeCoverage }),
+    ...(disclosureCoverage === undefined ? {} : { disclosureCoverage }),
+    ...(emptyContainerCoverage === undefined ? {} : { emptyContainerCoverage }),
+    ...(briefCoverage === undefined ? {} : { briefCoverage }),
   };
 }
 
@@ -503,6 +578,11 @@ export function renderCoverageMarkdown(coverage: ReportCoverage): string {
           ),
           "",
         ]),
+    ...probeCoverageMarkdown(coverage),
+    ...gateMarkdown(coverage),
+    ...disclosureCoverageMarkdown(coverage),
+    ...emptyContainerCoverageMarkdown(coverage),
+    ...briefCoverageMarkdown(coverage),
     "Limitations:",
     "",
     ...coverage.limitations.map(
@@ -510,6 +590,137 @@ export function renderCoverageMarkdown(coverage: ReportCoverage): string {
     ),
     "",
   ].join("\n");
+}
+
+function probeCoverageMarkdown(coverage: ReportCoverage): string[] {
+  if (coverage.probeCoverage === undefined) return [];
+  const lines = probeCoverageLines(
+    coverage.probeCoverage,
+    coverage.stateLabels,
+  );
+  return [
+    "### Interaction probe",
+    "",
+    markdownText(lines.header),
+    "",
+    ...lines.states.map((line) => `- ${markdownText(line)}`),
+    "",
+    ...(lines.warning === undefined
+      ? []
+      : [`**Warning:** ${markdownText(lines.warning)}`, ""]),
+  ];
+}
+
+function gateLines(gate: NonNullable<ReportCoverage["gate"]>): string[] {
+  return gate.skippedWork.length
+    ? gate.skippedWork.map(describeSkip)
+    : ["Nothing was skipped to fit the budget."];
+}
+
+function gateMarkdown(coverage: ReportCoverage): string[] {
+  if (coverage.gate === undefined) return [];
+  return [
+    "### Build gate",
+    "",
+    markdownText(coverage.gate.plan),
+    "",
+    ...gateLines(coverage.gate).map((line) => `- ${markdownText(line)}`),
+    "",
+  ];
+}
+
+function gateHtml(coverage: ReportCoverage): string {
+  if (coverage.gate === undefined) return "";
+  return `<h3>Build gate</h3><p>${escapeHtml(coverage.gate.plan)}</p><ul>${gateLines(
+    coverage.gate,
+  )
+    .map((line) => `<li>${escapeHtml(line)}</li>`)
+    .join("")}</ul>`;
+}
+
+function disclosureCoverageMarkdown(coverage: ReportCoverage): string[] {
+  if (coverage.disclosureCoverage === undefined) return [];
+  const [head = "", ...rest] = disclosureCoverageLines(
+    coverage.disclosureCoverage,
+  );
+  return [
+    "### Disclosures",
+    "",
+    markdownText(head),
+    ...(rest.length === 0
+      ? []
+      : ["", ...rest.map((line) => markdownText(line))]),
+    "",
+  ];
+}
+
+function briefCoverageMarkdown(coverage: ReportCoverage): string[] {
+  if (coverage.briefCoverage === undefined) return [];
+  const [head = "", ...rest] = briefCoverageLines(coverage.briefCoverage);
+  return [
+    "### Decided briefs",
+    "",
+    markdownText(head),
+    "",
+    ...rest.map((line) => markdownText(line)),
+    "",
+  ];
+}
+
+function briefCoverageHtml(coverage: ReportCoverage): string {
+  if (coverage.briefCoverage === undefined) return "";
+  const [head = "", ...rest] = briefCoverageLines(coverage.briefCoverage);
+  const items: Array<{ line: string; nested: string[] }> = [];
+  for (const line of rest)
+    if (line.startsWith("  - ")) items.at(-1)?.nested.push(line.slice(4));
+    else items.push({ line: line.slice(2), nested: [] });
+  return `<h3>Decided briefs</h3><p>${escapeHtml(head)}</p><ul>${items
+    .map(
+      ({ line, nested }) =>
+        `<li>${escapeHtml(line)}${nested.length === 0 ? "" : `<ul>${nested.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}</ul>`}</li>`,
+    )
+    .join("")}</ul>`;
+}
+
+function disclosureCoverageHtml(coverage: ReportCoverage): string {
+  if (coverage.disclosureCoverage === undefined) return "";
+  const [head = "", ...rest] = disclosureCoverageLines(
+    coverage.disclosureCoverage,
+  );
+  return `<h3>Disclosures</h3><p>${escapeHtml(head)}</p>${rest.length === 0 ? "" : `<ul>${rest.map((line) => `<li>${escapeHtml(line.replace(/^- /, ""))}</li>`).join("")}</ul>`}`;
+}
+
+function emptyContainerCoverageMarkdown(coverage: ReportCoverage): string[] {
+  if (coverage.emptyContainerCoverage === undefined) return [];
+  const [head = "", ...rest] = emptyContainerCoverageLines(
+    coverage.emptyContainerCoverage,
+  );
+  return [
+    "### Empty containers",
+    "",
+    markdownText(head),
+    ...(rest.length === 0
+      ? []
+      : ["", ...rest.map((line) => markdownText(line))]),
+    "",
+  ];
+}
+
+function emptyContainerCoverageHtml(coverage: ReportCoverage): string {
+  if (coverage.emptyContainerCoverage === undefined) return "";
+  const [head = "", ...rest] = emptyContainerCoverageLines(
+    coverage.emptyContainerCoverage,
+  );
+  return `<h3>Empty containers</h3><p>${escapeHtml(head)}</p>${rest.length === 0 ? "" : `<ul>${rest.map((line) => `<li>${escapeHtml(line.replace(/^- /, ""))}</li>`).join("")}</ul>`}`;
+}
+
+function probeCoverageHtml(coverage: ReportCoverage): string {
+  if (coverage.probeCoverage === undefined) return "";
+  const lines = probeCoverageLines(
+    coverage.probeCoverage,
+    coverage.stateLabels,
+  );
+  return `<h3>Interaction probe</h3><p>${escapeHtml(lines.header)}</p><ul>${lines.states.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>${lines.warning === undefined ? "" : `<p><strong>Warning:</strong> ${escapeHtml(lines.warning)}</p>`}`;
 }
 
 function renderSurfaceGroupMarkdown(
@@ -552,7 +763,7 @@ export function renderCoverageHtml(coverage: ReportCoverage): string {
     surfaces === undefined
       ? ""
       : `<h3>Project surfaces</h3><dl>${renderSurfaceGroupHtml("Judged in this review", surfaces.judged)}${renderSurfaceGroupHtml("Governed by another flow, not judged here", surfaces.governedNotJudged)}${renderSurfaceGroupHtml("Ungoverned (no flow captures this surface)", surfaces.ungoverned)}</dl>`;
-  return `<section class="panel coverage" aria-labelledby="coverage-heading"><h2 id="coverage-heading">Coverage and limits</h2><p>${escapeHtml(coverage.purpose)}</p><dl><dt>Flow</dt><dd>${escapeHtml(coverage.flow)}</dd><dt>States</dt><dd>${coverage.states.length} of ${coverage.declaredStateCount} declared (${states})</dd><dt>Viewports</dt><dd>${viewports}</dd><dt>Colour schemes</dt><dd>${schemes}</dd><dt>Successful tuples</dt><dd>${coverage.successfulTuples} of ${coverage.selectedTuples} selected</dd>${coverage.stateCoverage === undefined ? "" : `<dt>State coverage</dt><dd>${escapeHtml(stateCoverageLine(coverage.stateCoverage))}</dd>`}${coverage.commits.map(({ label, value }) => `<dt>${escapeHtml(label)}</dt><dd><code>${escapeHtml(value)}</code></dd>`).join("")}</dl>${surfaceHtml}${interactionHtml(coverage.interaction)}<h3>Limitations</h3><ul>${coverage.limitations.map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("")}</ul></section>`;
+  return `<section class="panel coverage" aria-labelledby="coverage-heading"><h2 id="coverage-heading">Coverage and limits</h2><p>${escapeHtml(coverage.purpose)}</p><dl><dt>Flow</dt><dd>${escapeHtml(coverage.flow)}</dd><dt>States</dt><dd>${coverage.states.length} of ${coverage.declaredStateCount} declared (${states})</dd><dt>Viewports</dt><dd>${viewports}</dd><dt>Colour schemes</dt><dd>${schemes}</dd><dt>Successful tuples</dt><dd>${coverage.successfulTuples} of ${coverage.selectedTuples} selected</dd>${coverage.stateCoverage === undefined ? "" : `<dt>State coverage</dt><dd>${escapeHtml(stateCoverageLine(coverage.stateCoverage))}</dd>`}${coverage.commits.map(({ label, value }) => `<dt>${escapeHtml(label)}</dt><dd><code>${escapeHtml(value)}</code></dd>`).join("")}</dl>${surfaceHtml}${interactionHtml(coverage.interaction)}${probeCoverageHtml(coverage)}${gateHtml(coverage)}${disclosureCoverageHtml(coverage)}${emptyContainerCoverageHtml(coverage)}${briefCoverageHtml(coverage)}<h3>Limitations</h3><ul>${coverage.limitations.map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("")}</ul></section>`;
 }
 
 function interactionHtml(interaction: QuickInteraction | undefined): string {

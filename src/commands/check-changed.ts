@@ -40,6 +40,8 @@ export type ChangedCheckResult = {
   selection: ChangedSelection;
   checks: ChangedCheckEntry[];
   checkedStates: number;
+  /** The divergence line, once: every flow in a project yields the same. */
+  findingNameWarning?: string | undefined;
 };
 
 /** Shared CLI/MCP controller. No run, baseline or hook success is invented for skipped flows. */
@@ -205,7 +207,17 @@ export async function checkChanged(
     combined,
     options.dependencies?.capture?.signal,
   );
-  return { selection, checks, checkedStates };
+  const findingNameWarning = checks
+    .map((entry) =>
+      entry.status === "checked" ? entry.summary.findingNameWarning : undefined,
+    )
+    .find((warning) => warning !== undefined);
+  return {
+    selection,
+    checks,
+    checkedStates,
+    ...(findingNameWarning === undefined ? {} : { findingNameWarning }),
+  };
 }
 
 export function renderChangedSelection(

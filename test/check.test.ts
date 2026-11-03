@@ -754,3 +754,101 @@ test("check --from retains captured label regions and reads legacy observations 
   });
   expect(targetSelectors(legacy)).toContain("#explicit");
 }, 30_000);
+
+test("a linked worktree whose registry diverged from the primary still checks, with one warning", async () => {
+  const { project, commit } = await studioProject();
+  const from = "2026-10-22T12-00-00-000Z";
+  await storedRun(project, from, commit);
+  const primary = await checkCommand({
+    all: true,
+    project,
+    flow: "studio-lab",
+    from,
+  });
+  expect(primary.findingNameWarning).toBeUndefined();
+  const primaryNames = JSON.parse(
+    await readFile(join(project, ".idiom", "finding-names.json"), "utf8"),
+  );
+  expect(primaryNames.entries.length).toBeGreaterThan(0);
+
+  const worktree = join(
+    await mkdtemp(join(tmpdir(), "idiom-check-worktree-")),
+    "wt",
+  );
+  directories.push(join(worktree, ".."));
+  await run("git", ["worktree", "add", "-q", "--detach", worktree], {
+    cwd: project,
+  });
+  // The worktree reviewed on its own and spent the same numbers on other
+  // findings.
+  await writeFile(
+    join(worktree, ".idiom", "finding-names.json"),
+    `${JSON.stringify({
+      version: 1,
+      next: primaryNames.next,
+      entries: primaryNames.entries.map((entry: { name: string }) => ({
+        name: entry.name,
+        fingerprints: [`worktree-${entry.name}`],
+        legacyIds: [],
+      })),
+    })}\n`,
+  );
+  await storedRun(worktree, from, commit);
+  const first = await checkCommand({
+    all: true,
+    project: worktree,
+    flow: "studio-lab",
+    from,
+  });
+  expect(first.findingNameWarning).toMatch(
+    /^Warning: finding-name registry diverges from the primary checkout: skipped \d+ conflicting entr(y|ies) from .*finding-names\.json; this checkout's names win/,
+  );
+  await expect(readFile(first.reportPath, "utf8")).resolves.toBeTruthy();
+  const firstIds = first.findings.map((finding) => finding.id).sort();
+  for (const entry of primaryNames.entries)
+    expect(firstIds).not.toContain(entry.name);
+
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const code = await runCli(
+    [
+      "node",
+      "idiom",
+      "check",
+      "studio-lab",
+      "--all",
+      "--project",
+      worktree,
+      "--from",
+      from,
+      "--json",
+      "--fail-on",
+      "never",
+    ],
+    {
+      stdout: (message) => stdout.push(message),
+      stderr: (message) => stderr.push(message),
+    },
+  );
+  expect(code).toBe(0);
+  const second = JSON.parse(stdout.join("\n"));
+  expect(
+    second.findings.map((finding: { id: string }) => finding.id).sort(),
+  ).toEqual(firstIds);
+  expect(second.findingNameWarning).toBe(first.findingNameWarning);
+  expect(
+    stderr.filter((line) => line.includes("finding-name registry diverges")),
+  ).toHaveLength(1);
+
+  const isolated = await checkCommand({
+    all: true,
+    project: worktree,
+    flow: "studio-lab",
+    from,
+    isolatedRegistry: true,
+  });
+  expect(isolated.findingNameWarning).toBeUndefined();
+  expect(isolated.findings.map((finding) => finding.id).sort()).toEqual(
+    firstIds,
+  );
+}, 90_000);

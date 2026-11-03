@@ -18,7 +18,7 @@ const Project = z.object({
     readyUrl: z.string(),         // "http://127.0.0.1:3107/"
     port: z.number(),             // 3107
     fixedPort: z.boolean().optional(), // true keeps the configured port and environment
-    env: z.record(z.string()),    // { BOOKING_DATABASE_URL: "", BOOKING_DEMO_CALENDAR: "1", PORT: "3107", ... }
+    env: z.record(z.string(), z.string()),    // { BOOKING_DATABASE_URL: "", BOOKING_DEMO_CALENDAR: "1", PORT: "3107", ... }
     startupTimeoutMs: z.number().default(60_000),
   }),
   viewports: z.array(z.object({ name: z.string(), width: z.number(), height: z.number() }))
@@ -37,6 +37,7 @@ const Project = z.object({
     colorScheme: z.enum(["light", "dark"]).default("light"),
     colorSchemeAttribute: z.string().optional(), // e.g. "data-theme"
     reducedMotion: z.boolean().default(true),
+    hideWebdriver: z.boolean().optional(), // navigator.webdriver reads false; flows may override
     fullPage: z.boolean().default(true),
     settleMs: z.number().default(250),
     animationSettleMs: z.number().finite().nonnegative().default(1500),
@@ -56,6 +57,24 @@ const Project = z.object({
     designFile: z.string().default("DESIGN.md"),
   }),
   baselines: z.object({ directory: z.string().min(1) }).strict().optional(),
+  brief: z.object({                      // optional; read only by idiom brief
+    $comment: z.string().optional(),
+    ticketTemplate: z.object({
+      sections: z.array(z.object({
+        heading: z.string().trim().min(1).max(80),
+        content: z.enum(["decision", "options", "criteria", "outOfScope", "evidence", "references", "text"]),
+        body: z.string().trim().min(1).optional(), // required iff content is "text"
+      }).strict()).min(1),                // decision, criteria, evidence exactly once each
+    }).strict().optional(),
+    references: z.array(z.object({
+      name: z.string().trim().min(1),
+      tier: z.string().regex(/^[a-z][a-z0-9-]*$/), // bar | always | floor
+      note: z.string().trim().min(1),
+      url: z.string().url().optional(),
+    }).strict()).default([]),
+    researchBudgetMs: z.number().int().min(60_000).max(3_600_000).optional(), // default 900000
+    researchMaxSearches: z.number().int().min(1).max(20).optional(),          // default 5, per question
+  }).strict().optional(),
   model: z.object({
     provider: z.enum(["claude-code", "anthropic", "codex"]),
     model: z.string(),                   // model id passed to the selected provider
@@ -82,21 +101,24 @@ Notes:
 - `design.tokens` — optional typed inline declarations, normally proposed by `idiom system --learn` and saved only on confirmation. Source paths must be project-relative and cannot escape the project. Original names are presentation identities, including dotted DTCG paths; they are never blindly emitted as CSS custom-property names. `other` is display-only. File tokens and inline tokens are merged by source/key/theme identity, retaining inline settings when an identity is already configured.
 - `checks.scales.spacing` — defaults to `[]`; entries are nonnegative finite CSS-pixel numbers or strict `{multipleOf: positiveFiniteNumber}` base steps (v4 `--spacing`). Declared values check visible V2 elements' authored computed padding, margin magnitudes and gap axes with 0.5px tolerance; zero/default/auto/normal and unsupported percentages are excluded. Historical observations without authorship facts disclose missing coverage. This does not change geometric `spacing-rhythm` inference.
 - Confirmed imports union values into existing control heights, role radii and border lists. Theme variants retain their context in tokens; numeric scales contain the union. Rem conversions use recorded root sizes, or an explicitly disclosed 16px assumption without evidence; incompatible root conversions are omitted from numeric scales. Source dimension purpose mappings are inferred from spacing/space/gap/padding/margin, radius/radii and explicit control/button/input height names, never guessed from DTCG value shape.
-- V2 `observations.json` optionally records positive finite `rootFontSize`, literal `theme`, and configured tokens' `typedValues` (`kind`, normalized `value`, optional `name`/`theme`). Old artifacts remain valid, with historical untyped token behavior and explicit missing rem coverage. Spacing-only inline tokens are valid. Recapture to enforce newly learned token rules. The system page's drift is value coverage within one selected run, not proof of variable references or project-wide unused code.
+- V2 `observations.json` optionally records positive finite `rootFontSize`, literal `theme`, and configured tokens' `typedValues` (`kind`, normalized `value`, optional `name`/`theme`). Configured tokens optionally record `contexts` (at most 16): each subtree whose computed `color-scheme` or referenced app custom properties differ from the body's and change a resolved colour, with its `colorScheme`, measured `usedScheme` (`light` | `dark`), the referenced properties' `environment`, colour `normalizedValues`, and `typedValues` when the root has them. `contextProperties` lists those referenced property names, and an element in such a subtree carries `tokenContext`, its index into `contexts`; token-drift judges its colours (not radii) against that context. Both are absent when no subtree differs. Old artifacts remain valid, with historical untyped token behavior and explicit missing rem coverage. Spacing-only inline tokens are valid. Recapture to enforce newly learned token rules. The system page's drift is value coverage within one selected run, not proof of variable references or project-wide unused code.
 - V2 element `styles` optionally record computed `userSelect`, and `attributes` may include `inert`; `dead-affordance` uses both to recognise non-interactive illustration frames. Older artifacts without them stay valid and get no `user-select` exemption.
 - Every newly observed element records `painted: { value: true }` or `{ value: false, reason, boundary? }`. Both V1 and V2 accept the optional fact. Missing facts preserve historical offline review behavior; they are never reconstructed from old styles. False reasons include `display-none`, `visibility-hidden`, `visibility-collapse`, `content-visibility-hidden`, `closed-details`, `opacity-0`, `zero-area` and `clipped-by <selector>`. `boundary` names the causal element. Eligibility includes below-fold content and partial clips, without hit testing, viewport intersection or `aria-hidden` exclusion. A closed details element and its first direct summary subtree remain eligible; other descendants do not.
+- Element `spacingExcluded?: string` marks an element inside a closed `<details>` (outside its first summary) or a `hidden`, `inert` or `content-visibility: hidden` subtree (`closed-details`, `hidden`, `inert`, `content-visibility-hidden`). Spacing and gap rules (`field-group`, `spacing-rhythm`, `scale-conformance` spacing, `adjacent-gap`) skip it, and newer captures form no field groups from it. Older captures omit it.
 - Element `paintedContent?: { selectors, width, height, clipped? }` retains contributor identities and the content extent without wholly unpainted descendants, separately from raw scroll measurements. `clipped: { text, interactive, marquee }` lists up to ten selectors each: painted text and controls partly cut off by the box (excluding `aria-hidden`/`inert` subtrees and content a nearer scroller owns), and the marquee tracks whose cut-off content was excluded. Older captures omit it. Selection members may carry `paintedDecoration` and `decorationOwners` alongside their unchanged raw `decoration`. These additive fields let offline rules filter contributors without changing document overflow or selection-validity checks.
 - Check coverage may include `paintedSkipped: Record<string, number>`, keyed by full rule id. Counts are distinct rejected element selectors in that rule's input domain for that tuple, including zero when it ran on new evidence. Older evidence omits the field. Reasons and unavailable/skipped statuses are retained. JSON, Markdown and HTML reports expose these counts. Coverage may also include `inkSkipped: Record<string, number>`, keyed by full rule id: records dropped because the stored screenshot shows no ink where they were measured (currently `idiom:orphan-word`), present only when nonzero. Review/check JSON and MCP quick/check responses add `checkCoverage`, a coordinate-labelled array of check coverage records (without the DOM/observation payload), when painted or ink counts exist; legacy responses omit that field.
 - V2 `observations.json` optionally records craft-rule evidence: `fonts` (declared faces with status and stylesheet URLs, the families visible text uses with up to five selectors and a fallback flag, and failed font requests), `links` (visible http(s) links with absolute href, same-origin flag and the run's check result: `ok`, `broken` with code or DNS reason, or `unchecked` with a reason), `focusVisible` (each keyboard focus stop with the `node.property` keys that changed and an optional visible `proxy`), `lineLengths` (paragraphs over 45 rendered characters per line), `orphanWords` (headings and button labels whose last line holds one word; newer captures add optional `rect`, the union of the owner's measured painted word rects, `lastLine`, the stranded word's rect, both viewport-relative like element rects, and `ink`, `{status: "measured", share}` with share in [0, 1] of sampled screenshot pixels under `lastLine` that differ from their modal colour, or `{status: "unavailable", reason}`), `imageRenders` (broken images and `fill` images rendered off their natural ratio) and `layoutShift` (largest session-window score and up to 150 entries with source selectors). Scans use the `{status, reason?, records}` shape; older artifacts without these fields stay valid and the checks report unavailable coverage.
 - V2 `observations.json` optionally records `screenshot`: how the tuple screenshot was taken (`strategy` `viewport` | `full-page` | `tiled`, positive device `scale`, CSS `width`/`height`, `tiles` only when tiled) and, only when the full-page size changed between the start of observing and the screenshot, `drift` (`observed` and `captured` sizes) with `rects`, each observed selector's rect re-measured at screenshot time. Crops use `scale` and prefer `rects` over the observed element rect. `metadata.json` mirrors everything but `rects`. Older artifacts without it stay valid and crop as before.
 - `baselines.directory` — optional project-relative or absolute local directory for compact finding baselines; defaults to `.idiom/baselines`. This location is not part of the checks hash.
-- `model.provider` — `claude-code` is the scaffold default and uses the authenticated local CLI without an API key. `anthropic` is the explicit direct-API path and requires `ANTHROPIC_API_KEY`. `codex` uses the authenticated local Codex CLI. Existing files are not migrated or reinterpreted.
+- `model.provider` — `claude-code` is the scaffold default and uses the authenticated local CLI without an API key. `anthropic` is the explicit direct-API path and requires `ANTHROPIC_API_KEY`; it sends no `thinking` setting and caps output at 16,000 tokens, so pick a model whose thinking is off by default. A response cut off at that limit is reported as truncation, not malformed output. `codex` uses the authenticated local Codex CLI. Existing files are not migrated or reinterpreted.
 - `model.fallback` — optional `{provider, model}` used, visibly, only when the primary provider fails; it must name a different provider. Review, sweep and configured page review honor it; `idiom explore` does not, and explore rejects `codex` as its provider.
 - `model.maxFindings` — an integer from 1 through 5 and the material-findings cap across both evaluation layers. There is no overall score field anywhere, by design.
 
 ### Capture URL metadata
 
 Web tuple `metadata.json` records the actual served origin in `url.origin`. Literal URLs use `{ kind: "literal", origin, url }`; setup-derived URLs use `{ kind: "setup-stdout", origin, source, pattern, append, template }`, with private seed values replaced by a stable template. Both kinds optionally carry `canonicalOrigin: string` when the served origin differs from the configured one. Derived console, DOM, axe and observation evidence uses the configured origin to keep finding identity stable. Offline review applies the same origin mapping to its document URL, preserving expected-status console suppression. Older records without `canonicalOrigin` retain their original URL interpretation.
+
+Web `console.jsonl` records produced by a browser resource load carry `request: { resourceType, mainFrame }`, where `resourceType` uses Playwright's vocabulary (`document`, `script`, `image`, …) and `mainFrame` says whether the request came from the top-level frame. Script-originated records have no `request`. When capture recorded this provenance, `metadata.json` sets `consoleProvenance: true`, and expected-status suppression applies only to the record whose request is the main-frame document; a matching record without provenance is reported. Older artifacts and Electron tuples have no flag and keep the previous suppression by URL, status and message.
 
 ## 2. Flow manifest — `.idiom/flows/<id>.json`
 
@@ -109,7 +131,7 @@ const SharedFlow = {
   setup: z.array(z.object({              // sequential; each must exit 0 and fully terminate
     run: z.string(),
     cwd: z.string().optional(),
-    env: z.record(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
     captureStdout: z.boolean().default(false),  // makes setup stdout available to urlFrom
   })),
   viewports: z.array(z.string()).optional(),
@@ -153,7 +175,7 @@ const ElectronFlow = z.object({
       executablePath: z.string().trim().min(1),
       args: z.array(z.string()).default([]),
       cwd: z.string().optional(),
-      env: z.record(z.string()).default({}),
+      env: z.record(z.string(), z.string()).default({}),
       timeoutMs: z.number().positive().default(30000),
     }),
     window: z.object({
@@ -266,7 +288,7 @@ const Finding = z.object({
   verification: z.object({
     kind: z.enum(["deterministic-check", "recapture-visual", "manual"]),
     check: z.string().optional(),        // checkId to re-run on verify
-    params: z.record(z.unknown()).optional(),
+    params: z.record(z.string(), z.unknown()).optional(),
   }),
   status: z.enum(["open", "approved", "rejected", "ticketed", "verified-fixed", "verify-failed"]),
 })
@@ -400,6 +422,124 @@ const Decision = z.object({
 ```
 
 The file is append-only and committed — the decision history is part of the product context a future agent (or teammate) inherits.
+
+## 10. Decision brief — `.idiom/briefs/<slug>.json`
+
+Written by `idiom brief record` or `idiom brief "<request>" --research` beside the rendered `<slug>.md`. The input is the same object without `version`, `rubricVersion`, `createdAt`, `updatedAt` and `researchRun`, with `slug` optional (derived from the title). Validation rules are in [brief.md](brief.md#validation).
+
+```ts
+const StoredBrief = z.object({
+  version: z.literal(1),
+  slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64),
+  title: z.string().trim().min(1).max(120),
+  request: z.string().trim().min(1).max(20_000),   // verbatim
+  decision: z.string().trim().min(1),              // the design question
+  requestNamedIdea: z.boolean(),
+  triage: z.object({ verdict, reason, questions }).optional(),
+  research: z.array(z.object({
+    question: z.string(),
+    findings: z.union([
+      z.array(z.object({ claim: z.string(), source: httpUrl, verified: z.enum(["hands-on", "read"]) })).min(1),
+      z.literal("nothing found"),
+    ]),
+  })).min(1),
+  options: z.array(z.object({
+    id: slug, title: z.string(), summary: z.string(),
+    kind: z.enum(["requester", "alternative", "dont-build"]),
+    cost: z.object({ space: z.string(), steps: z.string(), concepts: z.string(), code: z.string() }),
+    rejectedBecause: z.string().optional(),       // every option but the recommendation
+    label: z.string().max(40).optional(),         // one line; the answer label in the ask
+    sketch: z.string().optional(),                // ASCII, ≤16 lines of ≤72 characters; the ask's preview
+  })).min(2).max(4),
+  recommendation: z.object({ option: slug, reason: z.string() }),
+  acceptanceCriteria: z.array(z.object({
+    kind: z.enum(["geometry", "input-states", "contrast", "behaviour"]),
+    statement: z.string(),
+  })).min(1),
+  outOfScope: z.array(z.string()).default([]),
+  status: z.enum(["proposed", "decided", "superseded"]).default("proposed"),
+  decidedBy: z.string().optional(),               // required when decided
+  supersededBy: slug.optional(),                  // required when superseded
+  stakes: z.enum(["low", "high"]).optional(),     // read as "high" when absent
+  reversible: z.boolean().optional(),             // read as false when absent
+  chosenOption: slug.optional(),                  // decided only; the recommendation when absent
+  rubricVersion: z.number().int().positive(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  researchRun: z.object({                         // Idiom-owned; only --research writes it
+    provider: z.enum(["claude-code", "anthropic", "codex"]),
+    model: z.string(),
+    budgetMs: z.number().int(), durationMs: z.number().int(), calls: z.number().int(),
+    turns: z.number().int().optional(),           // each figure only when the provider exposed it
+    searches: z.number().int().optional(),
+    tokens: z.object({ input: z.number().int(), output: z.number().int() }).optional(),
+    incomplete: z.object({                        // the run stopped at its budget or a bound
+      stage: z.enum(["research", "options"]),
+      note: z.string(),
+      unresearched: z.array(z.string()),          // triage questions, verbatim
+    }).optional(),
+  }).strict().optional(),
+});
+```
+
+When `researchRun.incomplete` is set, `status` must be `proposed`, `research` may be empty, and `decision`, `requestNamedIdea`, `options`, `recommendation` and `acceptanceCriteria` are either all present or all absent. Without it, every field above is required as shown.
+
+### Stored triage — `.idiom/briefs/triage/<id>.json`
+
+Written by every model `idiom brief triage` (and by `idiom brief plan` when it triages first). The id is `triage-` plus the first 10 hex characters of sha256(`<rubricVersion>\n<request>`), so re-triaging a request overwrites its own record.
+
+```ts
+const StoredTriage = z.object({
+  version: z.literal(1),
+  id: z.string().regex(/^triage-[0-9a-f]{10}$/),
+  request: z.string(),
+  rubricVersion: z.number().int().positive(),
+  createdAt: z.iso.datetime(),
+  verdict: z.enum(["design decision", "no design decision"]),
+  reason: z.string(),
+  questions: z.array(z.string()),
+}).strict();
+```
+
+### Research plan — `idiom brief plan --json`
+
+```ts
+type BriefPlan = {
+  request: string;
+  triageId?: string;
+  noDecision?: true;                              // a no-design-decision triage
+  questions: { question: string; check: string[] }[];
+  references: Record<string, { name: string; note: string }[]>;   // by tier: bar, always, floor, …
+  referencesNote?: string;                        // when none are configured
+  checks: { id: "hover" | "touch" | "keyboard" | "small-screen" | "empty-state" | "error-state"; check: string }[];
+  standards: { topic: string; look_for: string; url: string }[];
+  budget: { minutes: number; searches: { min: 3; max: 6 } };
+  rules: string[];
+  recordShape: object;                            // the brief input skeleton, placeholders to replace
+  recordRules: string[];
+  next: string[];
+};
+```
+
+### Record result — `idiom brief record --json`
+
+```ts
+type BriefRecordResult = {
+  slug: string;
+  outcome: "created" | "updated";
+  status: "proposed" | "decided" | "superseded";
+  markdownPath: string;                           // project-relative
+  ask: null | {                                   // null unless proposed
+    decision: string;                             // ends with "?"
+    recommendation: string;                       // option id
+    options: { id: string; label: string; description: string; preview?: string }[];  // recommended first
+    proceed: { allowed: boolean; reason: string };
+    askUserQuestion: { questions: [{ question: string; header: "Design call"; multiSelect: false;
+      options: { label: string; description: string; preview?: string }[] }] };
+    text: string;                                 // plain-text version
+  };
+};
+```
 
 ## Fingerprints
 
@@ -738,6 +878,14 @@ state's nested cap is one quarter of its current share, within that allowance;
 in a planned flow, nested check candidates are bounded only by the state deadline. Standalone library probes retain the per-state
 budget. Zero never disables a budget. Placement defaults are unchanged.
 
+`checks.probe.flowBudgetMs` is the run target in non-negative integer
+milliseconds. It is optional and has no schema default: an omitted key resolves
+to 400000 in code, so existing configuration hashes are unchanged. `0` means no
+target: each state's lease is the capture's remaining lifetime, and the nested
+and held-replay fractions are off. It is scheduling, so it is excluded from the
+captured-settings identity. `run.json` records the effective target as
+`probe.flowBudgetMs` for web runs; older runs omit it.
+
 `checks.probe.enabled` defaults to `true` (it was `false` through v0.8.0), so
 web flows probe once per state at the first selected viewport unless it is set
 to `false` or a state sets `probe: false`. Generated toggle-combination states
@@ -802,6 +950,22 @@ time descending with stable coordinate/selector/name ties. Entries contain
 `state`, `viewport`, `colorScheme`, `selector`, `name`, `elapsedMs` and `outcome`
 (`completed` or `timed-out`). Stored reviews replay those historical timings;
 old records omit the list. Timings never participate in finding identity.
+`run.json` timings also optionally carry `capture`, a phase timing (`status`,
+`ms`) for the wall clock from browser (or Electron) launch to the last tuple
+settled; older records omit it. Check JSON adds `timing`: `totalMs`,
+`phases.{build,serverStart,capture,probe,checks}` (phase timings; `probe` is
+summed lane time, included in `capture`), `slowest` (`build`, `server start`,
+`capture`, `probe` or `checks`), `probeIncludedInCapture: true`, and
+`historical: true` for `--from`/`--latest`. A `--gate` check's summary adds
+`gate` (`plan`, `skippedWork`, `estimateMs`, `budgetMs`).
+
+Probe artifacts optionally carry `fingerprints`, a map from control identity
+key to a SHA-1 of the control's identity, rounded bounding box, a fixed set
+of computed styles and trimmed text, recorded on every probed run. The build
+gate (`idiom check --gate`) compares against them to probe only controls that
+render differently; controls it leaves out are `not-reached` with
+`skipped: "not reached: gate: unchanged since <runId>"`. Older artifacts omit
+the map.
 
 `run.json` also records `capture.reducedMotion`, the `prefers-reduced-motion`
 mode every tuple was captured under (`project.capture.reducedMotion`). State

@@ -1,4 +1,11 @@
-import { ran, relation, round, unavailable, verify } from "./shared.js";
+import {
+  isSpacingEligible,
+  ran,
+  relation,
+  round,
+  unavailable,
+  verify,
+} from "./shared.js";
 import type {
   DeterministicCheck,
   FieldGroupMember,
@@ -59,8 +66,17 @@ export const fieldGroupCheck: DeterministicCheck = {
         ? `the helper ${member.selector}`
         : `the "${text}" helper (${member.selector})`;
     };
+    // Artifacts captured before field groups skipped excluded subtrees still
+    // carry their members; drop any whose element spacing rules skip.
+    const fieldGroups = observation.fieldGroups.map((group) => ({
+      ...group,
+      members: group.members.filter((member) => {
+        const element = bySelector.get(member.selector);
+        return element === undefined || isSpacingEligible(element);
+      }),
+    }));
     const candidates: FindingCandidate[] = [];
-    for (const group of observation.fieldGroups) {
+    for (const group of fieldGroups) {
       const name = nameOf(group);
       for (let index = 1; index < group.members.length; index += 1) {
         const first = group.members[index - 1] as FieldGroupMember;
@@ -89,9 +105,7 @@ export const fieldGroupCheck: DeterministicCheck = {
         });
       }
     }
-    const groups = observation.fieldGroups.filter(
-      (group) => group.members.length > 0,
-    );
+    const groups = fieldGroups.filter((group) => group.members.length > 0);
     const previousByRegion = new Map<string, FieldGroupObservation>();
     for (const second of groups) {
       const first = previousByRegion.get(second.region);

@@ -1,5 +1,5 @@
 import { pixelTolerance, spacingOnScale } from "../system/learn/normalize.js";
-import { isVisuallyHidden, verify } from "./shared.js";
+import { isSpacingEligible, isVisuallyHidden, verify } from "./shared.js";
 import type {
   CheckTuple,
   FindingCandidate,
@@ -21,6 +21,7 @@ export function authoredSpacing(
   if (
     !element.visible ||
     isVisuallyHidden(element) ||
+    !isSpacingEligible(element) ||
     element.authoredProperties === undefined
   )
     return [];

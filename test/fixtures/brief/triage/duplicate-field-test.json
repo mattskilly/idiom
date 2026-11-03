@@ -1,0 +1,9 @@
+{
+  "recorded": "idiom brief triage --json via claude-code claude-sonnet-5-5, rubric v1, 2026-10-31",
+  "request": "Add a test for duplicate form field names.",
+  "response": {
+    "verdict": "no design decision",
+    "reason": "Adding a test is the 'tests' non-trigger; it changes nothing users see or interact with.",
+    "questions": []
+  }
+}

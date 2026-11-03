@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,8 @@ import {
   startServer,
 } from "../src/capture/process.js";
 import { type CaptureDependencies, runCapture } from "../src/capture/run.js";
+import { run } from "../src/cli.js";
+import { RUN_FAILURE_EXIT_CODE, RunFailure } from "../src/errors.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
 
@@ -177,6 +179,7 @@ describe("startServer readiness timeout", () => {
     expect(error?.message).toMatch(
       new RegExp(
         `^application server was not ready at http://127\\.0\\.0\\.1:${port}/ within 1000ms: booting pid=\\d+ `,
+        "m",
       ),
     );
     expect(error?.message).toContain(REDACTED);
@@ -286,7 +289,7 @@ describe("startServer spawn error", () => {
           teardownTimeoutMs: 100,
         },
       }),
-    ).rejects.toThrow(/^application server could not start: .*ENOENT/);
+    ).rejects.toThrow(/^application server could not start: .*ENOENT/m);
     if (owned === undefined) throw new Error("server was never owned");
     expect(owned.process.pid).toBeUndefined();
     await expect(owned.stop()).resolves.toBeUndefined();
@@ -413,5 +416,133 @@ describe("server build failure", () => {
     for (const directory of [finalDirectory, stagingDirectory, dataDirectory]) {
       await expect(access(directory)).rejects.toMatchObject({ code: "ENOENT" });
     }
+  });
+});
+
+describe("startServer one-line failure", () => {
+  test("an exit leads with the cause, keeps the detail and names the missing variable", async () => {
+    const port = await freePort();
+    const spawn = vi.fn(() => {
+      const fake = fakeChild();
+      queueMicrotask(() => {
+        fake.stdout.write("starting\n");
+        fake.stderr.write(`token ${SECRET}\nError: DATABASE_URL is not set\n`);
+        fake.finish(1);
+      });
+      return fake.child;
+    });
+    const error = await startServer({
+      projectDirectory: process.cwd(),
+      project: project({ start: "start-cmd", port }),
+      environment: environment(),
+      dependencies: {
+        spawn: spawn as unknown as SpawnProcess,
+        fetch: rejectingFetch(),
+        sleep: sleep10,
+        teardownTimeoutMs: 100,
+      },
+    }).then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(RunFailure);
+    const failure = error as RunFailure;
+    expect(failure.stage).toBe("server");
+    expect(failure.cause).toBe("server-exited");
+    expect(failure.message.split("\n")[0]).toBe(
+      `server failed to start: exit 1 — token ${REDACTED} / Error: DATABASE_URL is not set`,
+    );
+    expect(failure.message).not.toContain(SECRET);
+    expect(failure.detail).toMatch(
+      /^application server exited before readiness \(exit 1\):/,
+    );
+    expect(failure.hint).toBe(
+      "add DATABASE_URL to server.env in .idiom/project.json",
+    );
+  });
+
+  test("a timeout names the ready URL in its cause and hint", async () => {
+    const port = await freePort();
+    const spawn = vi.fn(() => fakeChild().child);
+    let clock = 0;
+    const error = await startServer({
+      projectDirectory: process.cwd(),
+      project: project({ start: "start-cmd", port, startupTimeoutMs: 50 }),
+      environment: environment(),
+      dependencies: {
+        spawn: spawn as unknown as SpawnProcess,
+        fetch: rejectingFetch(),
+        sleep: sleep10,
+        now: () => {
+          clock += 100;
+          return clock;
+        },
+        teardownTimeoutMs: 100,
+      },
+    }).then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(RunFailure);
+    const failure = error as RunFailure;
+    expect(failure.cause).toBe("server-timeout");
+    expect(failure.headline).toBe(
+      `server failed to start: timeout after 50ms waiting for http://127.0.0.1:${port}/ — no output`,
+    );
+    expect(failure.detail).toMatch(/^application server was not ready at/);
+    expect(failure.hint).toContain("server.readyUrl");
+  });
+
+  test("a real failing start survives capture cleanup and exits 2 from the CLI", async () => {
+    const directory = await temporaryDirectory();
+    await mkdir(join(directory, ".idiom", "flows"), { recursive: true });
+    const port = await freePort();
+    const config = JSON.parse(
+      JSON.stringify(
+        project({
+          build: "true",
+          start: node("console.error('boom'); process.exit(3)"),
+          port,
+          startupTimeoutMs: 5_000,
+        }),
+      ),
+    );
+    await writeFile(
+      join(directory, ".idiom", "project.json"),
+      JSON.stringify(config),
+    );
+    await writeFile(
+      join(directory, ".idiom", "flows", "fail.json"),
+      JSON.stringify({
+        id: "fail",
+        title: "Fail",
+        intent: [],
+        setup: [],
+        states: [{ id: "state", description: "State", url: "/", expect: {} }],
+      }),
+    );
+    const browserLauncher = vi.fn(async () => {
+      throw new Error("browser must not launch");
+    });
+    const stderr: string[] = [];
+    const code = await run(
+      ["node", "idiom", "capture", "fail", "--project", directory],
+      {
+        cwd: directory,
+        stdout: () => undefined,
+        stderr: (message) => stderr.push(message),
+        capture: {
+          browserLauncher,
+          snapshotSource: async () => ({ commit: "fixture", dirty: false }),
+          inheritedEnvironment: environment(),
+        },
+      },
+    );
+    expect(code).toBe(RUN_FAILURE_EXIT_CODE);
+    expect(stderr.join("").split("\n")[0]).toBe(
+      "server failed to start: exit 3 — boom",
+    );
+    expect(stderr.join("")).toContain("Fix: ");
+    expect(browserLauncher).not.toHaveBeenCalled();
   });
 });

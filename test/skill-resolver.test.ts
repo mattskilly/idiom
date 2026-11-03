@@ -38,7 +38,11 @@ test("Claude Code uses configured model, schema and tool-free subscription trans
     expect(
       JSON.parse(request.args[request.args.indexOf("--json-schema") + 1]),
     ).toMatchObject({ additionalProperties: false });
-    expect(request.environment.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(request.environment).toEqual({
+      PATH: process.env.PATH,
+      HOME: "/example/home",
+      CLAUDE_CODE_OAUTH_TOKEN: "subscription-token",
+    });
     expect(request.stdin).toContain("untrusted data");
     expect(request.signal).toBeInstanceOf(AbortSignal);
     return {
@@ -60,6 +64,13 @@ test("Claude Code uses configured model, schema and tool-free subscription trans
       createClient,
       environment: {
         ANTHROPIC_API_KEY: "never-pass-me",
+        ANTHROPIC_AUTH_TOKEN: "never-pass-me",
+        ANTHROPIC_BASE_URL: "https://proxy.example.test",
+        ANTHROPIC_CUSTOM_HEADERS: "X-Route: metered",
+        CLAUDE_CODE_USE_BEDROCK: "1",
+        AWS_BEARER_TOKEN_BEDROCK: "never-pass-me",
+        CLAUDE_CODE_OAUTH_TOKEN: "subscription-token",
+        HOME: "/example/home",
         PATH: process.env.PATH,
       },
     })(await input()),
@@ -125,9 +136,13 @@ test("Anthropic request uses schema, exact model, key and cancellation, with no 
       configuration: configuration("anthropic"),
       createClient,
       runner,
-      environment: { ANTHROPIC_API_KEY: "test-key" },
+      environment: {
+        ANTHROPIC_API_KEY: "test-key",
+        ANTHROPIC_BASE_URL: "https://proxy.example.test",
+      },
     })(await input()),
   ).toEqual(proposal);
+  expect(createClient).toHaveBeenCalledWith("test-key");
   expect(create).toHaveBeenCalledOnce();
   expect(runner).not.toHaveBeenCalled();
 });

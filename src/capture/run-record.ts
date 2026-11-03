@@ -38,6 +38,8 @@ export const runRecordSchema = z
         fallback: z.boolean(),
         intended: z.array(coordinateSchema),
         executed: z.array(coordinateSchema),
+        /** Effective probe run target in ms; 0 = no target. Absent in older runs. */
+        flowBudgetMs: z.number().int().min(0).optional(),
       })
       .strict(),
     timings: z
@@ -52,6 +54,7 @@ export const runRecordSchema = z
         ),
         probe: phaseTimingSchema,
         checks: phaseTimingSchema,
+        capture: phaseTimingSchema.optional(),
       })
       .strict(),
     /** The prefers-reduced-motion mode every tuple was captured under. */

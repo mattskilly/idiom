@@ -1,5 +1,4 @@
-import type { Dirent } from "node:fs";
-import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { readDecisionLog } from "../decisions/log.js";
 import { IdiomError } from "../errors.js";
@@ -13,11 +12,21 @@ import {
   persistCatalogFindingNames,
 } from "../review/catalog.js";
 import { lineageDecision } from "../review/lifecycle.js";
+import {
+  indexTrackerTickets,
+  resolveEmbeddedTicket,
+  TRACKER_TICKET_STATES,
+  type TrackerTicketState,
+} from "../tickets/embedded.js";
+import {
+  lineageMentionedBy,
+  type MalformedTicket,
+  malformedFromFindingNames,
+  unionMalformed,
+} from "../tickets/index.js";
 import { rankTicketRecords } from "../tickets/ranking.js";
 import { renderTicket, ticketIdsForIdentities } from "../tickets/render.js";
 import { parseFindingBlocks } from "../verify/spec.js";
-
-const TICKET_STATES = ["triage", "ready", "doing", "done"] as const;
 
 export type TicketOutcome =
   | {
@@ -31,7 +40,7 @@ export type TicketOutcome =
       findingId: string;
       ticketId: string;
       path: string;
-      state?: (typeof TICKET_STATES)[number] | undefined;
+      state?: TrackerTicketState | undefined;
       unchanged: boolean;
     }
   | {
@@ -39,12 +48,18 @@ export type TicketOutcome =
       findingId: string;
       status: "ticketed" | "verified-fixed";
       path?: string | undefined;
-      state?: (typeof TICKET_STATES)[number] | undefined;
+      state?: TrackerTicketState | undefined;
     }
   | {
       kind: "conflict";
       findingId: string;
       ticketId: string;
+      paths: string[];
+    }
+  | {
+      /** A malformed tracker ticket may own this lineage; nothing was emitted. */
+      kind: "blocked";
+      findingId: string;
       paths: string[];
     };
 
@@ -53,6 +68,8 @@ export type TicketsResult = {
   outputDirectory: string;
   outcomes: TicketOutcome[];
   ineligible: string[];
+  /** Tracker tickets whose embedded records don't parse; reported, not thrown. */
+  malformed: MalformedTicket[];
 };
 
 async function exists(path: string): Promise<boolean> {
@@ -63,74 +80,6 @@ async function exists(path: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
-}
-
-type EmbeddedTicket = {
-  path: string;
-  state: (typeof TICKET_STATES)[number];
-};
-
-type TrackerIndex = {
-  contents: Map<string, string>;
-  embedded: Map<string, EmbeddedTicket[]>;
-};
-
-function identityKey(identity: {
-  findingId: string;
-  fingerprint: string;
-}): string {
-  return JSON.stringify([identity.findingId, identity.fingerprint]);
-}
-
-async function indexTrackerTickets(trackerRoot: string): Promise<TrackerIndex> {
-  const contents = new Map<string, string>();
-  const embedded = new Map<string, EmbeddedTicket[]>();
-  for (const state of TICKET_STATES) {
-    const directory = join(trackerRoot, state);
-    let entries: Dirent[];
-    try {
-      entries = await readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw new IdiomError(
-        `cannot enumerate ticket tracker ${directory}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    for (const entry of entries
-      .filter(
-        (candidate) => candidate.isFile() && candidate.name.endsWith(".md"),
-      )
-      .sort((left, right) => left.name.localeCompare(right.name))) {
-      const path = join(directory, entry.name);
-      let source: string;
-      try {
-        source = await readFile(path, "utf8");
-      } catch (error) {
-        throw new IdiomError(
-          `cannot read tracker ticket ${path}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-      contents.set(path, source);
-      try {
-        for (const finding of parseFindingBlocks(source)) {
-          for (const findingId of [finding.id, ...(finding.idAliases ?? [])]) {
-            const key = identityKey({
-              findingId,
-              fingerprint: finding.fingerprint,
-            });
-            const matches = embedded.get(key) ?? [];
-            matches.push({ path, state });
-            embedded.set(key, matches);
-          }
-        }
-      } catch (error) {
-        throw new IdiomError(
-          `cannot parse tracker ticket ${path}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-  }
-  return { contents, embedded };
 }
 
 function lifecycleResolutionStatus(
@@ -148,17 +97,6 @@ function lifecycleResolutionStatus(
     )
   )
     return "ticketed";
-  return undefined;
-}
-
-function embeddedTicketForLineage(
-  index: TrackerIndex,
-  lineage: ReturnType<typeof findCatalogLineage>,
-): EmbeddedTicket | undefined {
-  for (const identity of lineage.identities) {
-    const match = index.embedded.get(identityKey(identity))?.[0];
-    if (match !== undefined) return match;
-  }
   return undefined;
 }
 
@@ -287,13 +225,32 @@ export async function ticketsCommand(options: {
       ...lineage.identities,
       { fingerprint: firstIdentity.fingerprint, findingId: lineage.id },
     ]);
+    // Before the located branch: ticketBytesAreKnown would re-parse a
+    // malformed same-name ticket and throw.
+    const blockers = trackerIndex.malformed.filter((ticket) =>
+      lineageMentionedBy(
+        {
+          path: ticket.path,
+          source: trackerIndex.contents.get(ticket.path) ?? "",
+        },
+        lineage,
+      ),
+    );
+    if (blockers.length > 0) {
+      outcomes.push({
+        kind: "blocked",
+        findingId: lineage.id,
+        paths: blockers.map((ticket) => ticket.path),
+      });
+      continue;
+    }
     if (accepted && trackerOutput) {
       const located: Array<{
-        state: (typeof TICKET_STATES)[number];
+        state: TrackerTicketState;
         path: string;
         source: string;
       }> = [];
-      for (const state of TICKET_STATES) {
+      for (const state of TRACKER_TICKET_STATES) {
         for (const candidateId of candidateTicketIds) {
           const path = join(defaultRoot, state, `${candidateId}.md`);
           const source = trackerIndex.contents.get(path);
@@ -385,7 +342,20 @@ export async function ticketsCommand(options: {
     }
 
     const lifecycleStatus = lifecycleResolutionStatus(lineage);
-    const embeddedTicket = embeddedTicketForLineage(trackerIndex, lineage);
+    const embedded = resolveEmbeddedTicket(trackerIndex, lineage);
+    if (embedded.kind === "conflict") {
+      outcomes.push({
+        kind: "conflict",
+        findingId: lineage.id,
+        ticketId: renderTicket(
+          canonicalTicketOptions(catalog, record, outputDirectory),
+        ).id,
+        paths: embedded.paths,
+      });
+      continue;
+    }
+    const embeddedTicket =
+      embedded.kind === "single" ? embedded.ticket : undefined;
     if (lifecycleStatus !== undefined || embeddedTicket !== undefined) {
       const status = lifecycleStatus ?? "ticketed";
       if (lifecycleStatus === undefined) {
@@ -469,6 +439,10 @@ export async function ticketsCommand(options: {
     outputDirectory,
     outcomes,
     ineligible,
+    malformed: unionMalformed(
+      trackerIndex.malformed,
+      malformedFromFindingNames(catalog.names.malformedTickets),
+    ),
   };
 }
 

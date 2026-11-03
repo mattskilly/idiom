@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Palette</title>
+    <style>
+      body { font: 16px/1.4 system-ui, sans-serif; margin: 32px; color: #222; }
+      .palette { display: flex; gap: 16px; }
+      /* The wrapper rule draws a square frame around each swatch slot... */
+      .palette .swatch { border: 1px solid #999; border-radius: 0; padding: 2px; display: inline-flex; }
+      /* ...and the trigger inside draws its own pill. */
+      .pill { border: 1px solid #555; border-radius: 999px; width: 48px; height: 24px; padding: 0; background: transparent; }
+    </style>
+  </head>
+  <body>
+    <h1>Brand colours</h1>
+    <div class="palette">
+      <span class="swatch" id="swatch-a"><button class="pill" id="pill-a" aria-label="Primary"></button></span>
+      <span class="swatch" id="swatch-b"><button class="pill" id="pill-b" aria-label="Accent"></button></span>
+      <span class="swatch" id="swatch-c"><button class="pill" id="pill-c" aria-label="Neutral"></button></span>
+    </div>
+  </body>
+</html>

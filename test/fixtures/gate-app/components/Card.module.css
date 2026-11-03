@@ -1,0 +1,11 @@
+.card {
+  border: 1px solid #c9ced6;
+  border-radius: 8px;
+  padding: 16px;
+  background: #ffffff;
+  color: #1f2933;
+}
+
+.card button {
+  color: #1f4fd1;
+}

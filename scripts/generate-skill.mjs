@@ -4,29 +4,29 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-// Only these two layout differences separate the portable skill from the
-// plugin/project template. Keep the finite output map reviewable and stable.
+// Only the init reference's location separates the portable skill from the
+// project template. Keep the finite output map reviewable and stable.
+// Each plugin root carries an identical copy: skills/idiom for the portable
+// and Codex plugin, plugins/claude/skills/idiom for the Claude plugin.
 export async function renderSkill() {
   const source = await readFile(join(root, "templates/idiom/SKILL.md"), "utf8");
   const boundary = source.indexOf("\n---\n", 4);
   if (!source.startsWith("---\n") || boundary < 0)
     throw new Error("Canonical skill has no frontmatter");
-  const frontmatter = source
-    .slice(0, boundary)
-    .replace("\ndisable-model-invocation: true", "");
+  const frontmatter = source.slice(0, boundary);
   const body = source
     .slice(boundary)
     .replace(
       "`init.md` beside this file",
       "`references/init.md` relative to this file",
     );
-  return {
-    "skills/idiom/SKILL.md": frontmatter + body,
-    "skills/idiom/references/init.md": await readFile(
-      join(root, "templates/idiom/init.md"),
-      "utf8",
-    ),
-  };
+  const init = await readFile(join(root, "templates/idiom/init.md"), "utf8");
+  const files = {};
+  for (const base of ["skills/idiom", "plugins/claude/skills/idiom"]) {
+    files[`${base}/SKILL.md`] = frontmatter + body;
+    files[`${base}/references/init.md`] = init;
+  }
+  return files;
 }
 
 async function main() {

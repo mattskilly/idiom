@@ -35,7 +35,10 @@ import {
   groupFindings,
   observationLoader,
 } from "../src/tickets/cluster.js";
-import { emitClusterTickets } from "../src/tickets/emit.js";
+import {
+  emitClusterTickets,
+  renderClusterTicketsResult,
+} from "../src/tickets/emit.js";
 import { resolveTicketTarget } from "../src/tickets/target.js";
 import { parseFindingBlocks } from "../src/verify/spec.js";
 
@@ -594,25 +597,114 @@ test("multiple owners conflict per member while unrelated members still publish"
   ).toHaveLength(11);
 });
 
-test("malformed embedded records fail closed with a path before mutation", async () => {
-  const { directory } = await clusterFixture();
+test("a malformed unrelated ticket is reported while accepted members still publish", async () => {
+  const { directory, findings } = await clusterFixture();
+  await accept(directory, findings);
   const root = join(directory, "target/custom-state");
   await mkdir(root, { recursive: true });
-  const namesBefore = await readFile(
-    join(directory, ".idiom/finding-names.json"),
-    "utf8",
-  );
   const path = join(root, "broken.md");
   await writeFile(path, "```idiom:finding\n{}");
-  await expect(
-    clusterTicketsCommand({
-      project: directory,
-      out: join(directory, "target"),
-    }),
-  ).rejects.toThrow(path);
+  const result = await clusterTicketsCommand({
+    project: directory,
+    out: join(directory, "target"),
+  });
+  expect(result.malformed).toEqual([
+    {
+      path,
+      state: "custom-state",
+      error: expect.stringContaining(`cannot parse tracker ticket ${path}: `),
+    },
+  ]);
   expect(
-    await readFile(join(directory, ".idiom/finding-names.json"), "utf8"),
-  ).toBe(namesBefore);
+    result.outcomes
+      .filter((o) => o.kind === "created")
+      .flatMap((o) => o.findingIds),
+  ).toHaveLength(12);
+  expect(result.outcomes.some((o) => o.kind === "blocked")).toBe(false);
+  const rendered = renderClusterTicketsResult(result);
+  expect(rendered).toContain(
+    `malformed tracker ticket: cannot parse tracker ticket ${path}: `,
+  );
+  expect(rendered.split("\n")[0]).not.toContain("blocked");
+});
+
+test("a duplicate embedded identity is reported per ticket while members still publish", async () => {
+  const { directory, findings } = await clusterFixture();
+  await accept(directory, findings);
+  const root = join(directory, ".autobuild/tickets/done");
+  await mkdir(root, { recursive: true });
+  const unrelated = findingSchema.parse({
+    ...findings[0],
+    id: "IDM-elsewhere-0001",
+    idAliases: undefined,
+    fingerprint: "elsewhere-fingerprint",
+  });
+  const path = join(root, "duplicate.md");
+  await writeFile(
+    path,
+    block(unrelated) + block({ ...unrelated, explanation: "Changed." }),
+  );
+  const result = await clusterTicketsCommand({ project: directory });
+  expect(result.malformed.map((ticket) => ticket.path)).toEqual([path]);
+  expect(result.malformed[0]?.error).toMatch(/incompatible|ambiguous/);
+  expect(
+    result.outcomes
+      .filter((o) => o.kind === "created")
+      .flatMap((o) => o.findingIds),
+  ).toHaveLength(12);
+});
+
+test("a malformed ticket naming one member blocks only that member", async () => {
+  const { directory, findings, run } = await clusterFixture();
+  const first = findings[0];
+  if (!first) throw new Error("fixture missing");
+  await accept(directory, findings);
+  const root = join(directory, ".autobuild/tickets/done");
+  await mkdir(root, { recursive: true });
+  const path = join(root, "hand-edited.md");
+  await writeFile(
+    path,
+    `\`\`\`idiom:finding\n${JSON.stringify({ id: first.id, fingerprint: first.fingerprint, bogus: true })}\n\`\`\`\n`,
+  );
+  const result = await clusterTicketsCommand({ project: directory });
+  const blocked = result.outcomes.filter((o) => o.kind === "blocked");
+  expect(blocked).toEqual([
+    { kind: "blocked", findingId: expect.any(String), paths: [path] },
+  ]);
+  expect(
+    result.outcomes
+      .filter((o) => o.kind === "created")
+      .flatMap((o) => o.findingIds),
+  ).toHaveLength(11);
+  const persisted = JSON.parse(
+    await readFile(join(run, "findings.json"), "utf8"),
+  ) as Finding[];
+  expect(persisted.find((item) => item.id === first.id)?.status).toBe("open");
+  const rendered = renderClusterTicketsResult(result);
+  expect(rendered.split("\n")[0]).toContain(", 1 blocked, ");
+  expect(rendered).toContain(
+    `${blocked[0]?.findingId}: blocked by malformed tracker ticket — ${path}`,
+  );
+});
+
+test("a malformed same-name cluster file blocks its members on retry", async () => {
+  const { directory, findings } = await clusterFixture();
+  await accept(directory, findings);
+  const out = join(directory, "target");
+  const first = await clusterTicketsCommand({ project: directory, out });
+  const created = first.outcomes.find((o) => o.kind === "created");
+  if (created?.kind !== "created") throw new Error("expected a created ticket");
+  await writeFile(created.path, "```idiom:finding\n{}\n```\n");
+  const retry = await clusterTicketsCommand({ project: directory, out });
+  expect(retry.outcomes.filter((o) => o.kind === "blocked")).toEqual(
+    created.findingIds.map((findingId) => ({
+      kind: "blocked",
+      findingId,
+      paths: [created.path],
+    })),
+  );
+  expect(retry.malformed.map((ticket) => ticket.path)).toEqual([created.path]);
+  expect(retry.outcomes.some((o) => o.kind === "conflict")).toBe(false);
 });
 
 test("malformed declared observations name their artifact; legacy absence stays singleton", async () => {

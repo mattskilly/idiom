@@ -66,6 +66,8 @@ type NoiseWindow = Window & {
  * observes.
  */
 export function installNoiseRecorder(): void {
+  // Opaque-origin frames (sandboxed srcdoc) block callbacks and some APIs.
+  if (window !== window.top && self.origin === "null") return;
   const scope = window as NoiseWindow;
   if (scope.__idiomNoiseLog) return;
   const BATCH_GAP_MS = 100;

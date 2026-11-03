@@ -8,18 +8,24 @@ import {
   AnthropicCritiqueError,
   type AnthropicRequest,
   type MessageClient,
+  TruncatedCritiqueError,
 } from "../src/critique/anthropic.js";
 import {
+  CLAUDE_CODE_CRITIQUE_TIMEOUT_MS,
   ClaudeCodeCritiqueAdapter,
   ClaudeCodeCritiqueError,
+  ClaudeCodeEvidenceBudgetError,
   type ClaudeCodeRunner,
   type ClaudeCodeRunRequest,
+  CritiqueProcessTimeoutError,
 } from "../src/critique/claude-code.js";
 import {
   buildCritiqueContext,
   tupleDesignImages,
 } from "../src/critique/context.js";
 import { critiquePrompt } from "../src/critique/prompt.js";
+import { describeCritiqueFailure } from "../src/critique/provider.js";
+import { TEXT_REFERENCE_LIMIT } from "../src/critique/reference-bound.js";
 import {
   MalformedCritiqueError,
   modelResponseJsonSchema,
@@ -306,6 +312,90 @@ describe("Anthropic critique adapter", () => {
     });
   });
 
+  test.each([
+    {
+      name: "a text response cut off at max_tokens",
+      stop_reason: "max_tokens",
+      content: [{ type: "text", text: '{"findings":[{"cat' }],
+    },
+    {
+      name: "a thinking-only response cut off at max_tokens",
+      stop_reason: "max_tokens",
+      content: [{ type: "thinking", thinking: "unfinished" }],
+    },
+    {
+      name: "a response stopped by the context window",
+      stop_reason: "model_context_window_exceeded",
+      content: [{ type: "text", text: '{"findings":[' }],
+    },
+  ])(
+    "reports $name as truncation without a repair retry",
+    async ({ stop_reason, content }) => {
+      const create = vi.fn(async () => ({ stop_reason, content }));
+      const adapter = new AnthropicCritiqueAdapter({
+        model: "configured-model",
+        client: { messages: { create } },
+      });
+      const failure = await adapter.critique(await input()).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(TruncatedCritiqueError);
+      expect(failure).toBeInstanceOf(AnthropicCritiqueError);
+      expect(failure).not.toBeInstanceOf(MalformedCritiqueError);
+      expect(failure).toMatchObject({
+        stopReason: stop_reason,
+        maxTokens: 16000,
+      });
+      expect((failure as Error).message).toMatch(
+        new RegExp(`stop_reason ${stop_reason}, max_tokens 16000`),
+      );
+      expect((failure as Error).message).toContain("thinking");
+      expect(create).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  test("keeps the bounded repair for a complete but malformed response", async () => {
+    const create = vi.fn(async () =>
+      create.mock.calls.length === 1
+        ? {
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: "not json" }],
+          }
+        : { stop_reason: "end_turn", ...response([candidate]) },
+    );
+    const adapter = new AnthropicCritiqueAdapter({
+      model: "configured-model",
+      client: { messages: { create } },
+    });
+    await expect(adapter.critique(await input())).resolves.toEqual(
+      critiqueResult([candidate]),
+    );
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  test("reports a truncated repair response as truncation", async () => {
+    const create = vi.fn(async () =>
+      create.mock.calls.length === 1
+        ? {
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: "not json" }],
+          }
+        : {
+            stop_reason: "max_tokens",
+            content: [{ type: "text", text: '{"findings":[' }],
+          },
+    );
+    const adapter = new AnthropicCritiqueAdapter({
+      model: "configured-model",
+      client: { messages: { create } },
+    });
+    await expect(adapter.critique(await input())).rejects.toBeInstanceOf(
+      TruncatedCritiqueError,
+    );
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
   test("rejects an image above the 10 MB base64 limit before transport", async () => {
     const critiqueInput = await input();
     const screenshot = critiqueInput.screenshots[0];
@@ -432,7 +522,14 @@ describe("Claude Code critique adapter", () => {
       projectDirectory: dirname(referencePath),
       environment: {
         PATH: "/example/bin",
+        HOME: "/example/home",
+        CLAUDE_CODE_OAUTH_TOKEN: "subscription-token",
         ANTHROPIC_API_KEY: "sk-ant-must-not-pass",
+        ANTHROPIC_AUTH_TOKEN: "token-must-not-pass",
+        ANTHROPIC_BASE_URL: "https://proxy.example.test",
+        ANTHROPIC_CUSTOM_HEADERS: "X-Route: metered",
+        CLAUDE_CODE_USE_BEDROCK: "1",
+        AWS_BEARER_TOKEN_BEDROCK: "bedrock-must-not-pass",
       },
       runner,
     });
@@ -442,8 +539,11 @@ describe("Claude Code critique adapter", () => {
     expect(requests).toHaveLength(1);
     const request = requests[0];
     expect(request?.executable).toBe("claude");
-    expect(request?.environment.PATH).toBe("/example/bin");
-    expect(request?.environment).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(request?.environment).toEqual({
+      PATH: "/example/bin",
+      HOME: "/example/home",
+      CLAUDE_CODE_OAUTH_TOKEN: "subscription-token",
+    });
     expect(request?.args).toEqual([
       "-p",
       "--output-format",
@@ -460,6 +560,9 @@ describe("Claude Code critique adapter", () => {
       "--no-session-persistence",
       "--no-chrome",
     ]);
+    expect(request?.label).toBe("Claude Code");
+    expect(request?.timeoutMs).toBe(CLAUDE_CODE_CRITIQUE_TIMEOUT_MS);
+    expect(CLAUDE_CODE_CRITIQUE_TIMEOUT_MS).toBe(600_000);
     expect(request?.stdin).toContain("PRODUCT.md");
     expect(request?.stdin).toContain("state-0/desktop");
     expect(request?.stdin).toContain("reference:checkout shell");
@@ -509,6 +612,28 @@ describe("Claude Code critique adapter", () => {
     },
   );
 
+  test("accepts a rating-surface finding on the first request", async () => {
+    const ratingUi = {
+      ...candidate,
+      explanation:
+        "The star-rating control renders grey stars and the score readout is clipped.",
+    };
+    const requests: ClaudeCodeRunRequest[] = [];
+    const runner: ClaudeCodeRunner = vi.fn(async (request) => {
+      requests.push(request);
+      return cliResult({ findings: [ratingUi] });
+    });
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      runner,
+    });
+    await expect(adapter.critique(await input())).resolves.toEqual(
+      critiqueResult([ratingUi]),
+    );
+    expect(requests).toHaveLength(1);
+  });
+
   test("stops after two semantic failures without returning partial findings", async () => {
     const runner = vi.fn(async () =>
       cliResult({ findings: [{ ...candidate, screenshots: ["unknown"] }] }),
@@ -557,19 +682,6 @@ describe("Claude Code critique adapter", () => {
       }),
     ],
     [
-      "error envelope",
-      async () => ({
-        stdout: JSON.stringify({
-          type: "result",
-          subtype: "error",
-          is_error: true,
-        }),
-        stderr: "",
-        exitCode: 0,
-        signal: null,
-      }),
-    ],
-    [
       "missing structured output",
       async () => ({
         stdout: JSON.stringify({
@@ -594,10 +706,202 @@ describe("Claude Code critique adapter", () => {
         .critique(await input())
         .catch((error) => error);
       expect(failure).toBeInstanceOf(ClaudeCodeCritiqueError);
+      expect((failure as ClaudeCodeCritiqueError).kind).toBe("unavailable");
       expect(String(failure)).toContain("claude auth login");
       expect(String(failure)).not.toContain("secret-value");
     },
   );
+
+  test("an is_error envelope stays a failure even with structured output present", async () => {
+    const runner = vi.fn(async () => ({
+      stdout: JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        result: "API Error: 500 overloaded",
+        structured_output: { findings: [candidate] },
+      }),
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    }));
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      runner,
+    });
+    const failure = await adapter
+      .critique(await input())
+      .catch((error) => error);
+    expect(failure).toBeInstanceOf(ClaudeCodeCritiqueError);
+    expect((failure as ClaudeCodeCritiqueError).kind).toBe("execution");
+    expect(String(failure)).toContain("API Error: 500 overloaded");
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+
+  test("an unauthenticated envelope with empty stderr names the CLI's own diagnostic", async () => {
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      runner: async () => ({
+        stdout: JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: true,
+          result: "Not logged in - Please run /login",
+        }),
+        stderr: "",
+        exitCode: 1,
+        signal: null,
+      }),
+    });
+    const failure = await adapter
+      .critique(await input())
+      .catch((error) => error);
+    expect(failure).toBeInstanceOf(ClaudeCodeCritiqueError);
+    expect((failure as ClaudeCodeCritiqueError).kind).toBe("unavailable");
+    expect((failure as ClaudeCodeCritiqueError).detail).not.toBe("exit 1");
+    const reason = describeCritiqueFailure(failure, {});
+    expect(reason).toContain("unavailable or not authenticated");
+    expect(reason).toContain("claude auth login");
+    expect(reason).toContain("Not logged in - Please run /login");
+  });
+
+  test.each([
+    [
+      "error_max_turns",
+      {
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: true,
+        errors: ["Reached maximum number of turns (8)"],
+      },
+      1,
+      "Reached maximum number of turns (8)",
+    ],
+    [
+      "error_during_execution",
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: false,
+        errors: ["Tool execution aborted", 42],
+      },
+      0,
+      "Tool execution aborted",
+    ],
+  ])(
+    "reports an authenticated %s envelope as an execution failure",
+    async (subtype, envelope, exitCode, errorText) => {
+      const adapter = new ClaudeCodeCritiqueAdapter({
+        model: "configured",
+        projectDirectory: process.cwd(),
+        runner: async () => ({
+          stdout: JSON.stringify(envelope),
+          stderr: "",
+          exitCode,
+          signal: null,
+        }),
+      });
+      const failure = await adapter
+        .critique(await input())
+        .catch((error) => error);
+      expect(failure).toBeInstanceOf(ClaudeCodeCritiqueError);
+      expect((failure as ClaudeCodeCritiqueError).kind).toBe("execution");
+      const reason = describeCritiqueFailure(failure, {});
+      expect(reason).toContain(
+        "Claude Code ran but the critique session failed",
+      );
+      expect(reason).toContain(subtype);
+      expect(reason).toContain(errorText);
+      expect(reason).not.toContain("unavailable or not authenticated");
+      expect(reason).not.toContain("claude auth login");
+      expect(reason.length).toBeLessThanOrEqual(600);
+    },
+  );
+
+  test("sanitizes secrets in an execution envelope's diagnostics", async () => {
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      runner: async () => ({
+        stdout: JSON.stringify({
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          errors: [
+            "request failed; api_key=sk-ant-secret-value",
+            "authorization: Bearer sk-ant-oat01-LIVETOKEN456",
+          ],
+        }),
+        stderr: "",
+        exitCode: 1,
+        signal: null,
+      }),
+    });
+    const failure = await adapter
+      .critique(await input())
+      .catch((error) => error);
+    expect((failure as ClaudeCodeCritiqueError).kind).toBe("execution");
+    const reason = describeCritiqueFailure(failure, {});
+    for (const rendering of [String(failure), reason]) {
+      expect(rendering).toContain("[redacted]");
+      expect(rendering).not.toContain("secret-value");
+      expect(rendering).not.toContain("LIVETOKEN456");
+    }
+  });
+
+  test("a success envelope that carries a result string still yields findings", async () => {
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      runner: async () => ({
+        stdout: JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "done",
+          structured_output: { findings: [candidate] },
+        }),
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+      }),
+    });
+    await expect(adapter.critique(await input())).resolves.toEqual(
+      critiqueResult([candidate]),
+    );
+  });
+
+  test("a timed-out session fails once, with stall wording, and no retry", async () => {
+    const runner = vi.fn(async () => {
+      throw new CritiqueProcessTimeoutError(
+        "Claude Code",
+        CLAUDE_CODE_CRITIQUE_TIMEOUT_MS,
+      );
+    });
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      runner,
+    });
+    const failure = await adapter
+      .critique(await input())
+      .catch((error) => error);
+    expect(failure).toBeInstanceOf(ClaudeCodeCritiqueError);
+    expect((failure as ClaudeCodeCritiqueError).timeoutMs).toBe(600_000);
+    expect(String(failure)).toContain("did not finish within 10 minutes");
+    expect(runner).toHaveBeenCalledTimes(1);
+    const reason = describeCritiqueFailure(failure, {});
+    expect(reason).toContain(
+      "Claude Code critique did not finish within 10 minutes and was stopped",
+    );
+    expect(reason).toContain("model.fallback");
+    expect(reason).not.toContain("unavailable or not authenticated");
+    expect(reason).not.toContain("claude auth login");
+    expect(reason).not.toContain("diagnostic:");
+    expect(reason.length).toBeLessThanOrEqual(600);
+  });
 
   test("redacts bare API and OAuth tokens from Claude Code diagnostics", async () => {
     const adapter = new ClaudeCodeCritiqueAdapter({
@@ -711,6 +1015,37 @@ describe("model response validation", () => {
     expect(() =>
       parseModelResponse(JSON.stringify({ findings: [invalid] }), [screenshot]),
     ).toThrow(MalformedCritiqueError);
+  });
+
+  test("accepts a finding that names a rating surface the interface shows", () => {
+    const ratingUi = {
+      ...candidate,
+      rule: "DESIGN.md: rating controls use the accent star glyph",
+      explanation:
+        "The star-rating control renders grey stars and the score readout is clipped.",
+    };
+    expect(
+      parseModelResponse(JSON.stringify({ findings: [ratingUi] }), [
+        screenshot,
+      ]),
+    ).toEqual(critiqueResult([ratingUi]));
+  });
+
+  test("diagnoses a model evaluation with its excerpt instead of accepting it", () => {
+    const invalid = {
+      ...candidate,
+      explanation: "Overall design score: 7/10.",
+    };
+    let error: unknown;
+    try {
+      parseModelResponse(JSON.stringify({ findings: [invalid] }), [screenshot]);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(MalformedCritiqueError);
+    const issues = (error as MalformedCritiqueError).issues.join("\n");
+    expect(issues).toContain("design-rating language is forbidden");
+    expect(issues).toContain('"Overall design score: 7/10"');
   });
 
   test("rejects surrounding prose and fences", () => {
@@ -1216,5 +1551,307 @@ describe("intended design image critique", () => {
     expect(manifest).toContain(
       critiqueInput.designImages?.[0]?.readPath ?? "missing",
     );
+  });
+});
+
+describe("text reference bound in prompts", () => {
+  const truncationInstruction =
+    "Some text references are truncated excerpts (marked truncated)";
+
+  test("small references and anti-references are included in full", async () => {
+    const critiqueInput = await input();
+    critiqueInput.references.push(
+      {
+        label: "reference:brand.md",
+        polarity: "reference",
+        kind: "text",
+        content: "Use the editorial type scale.",
+      },
+      {
+        label: "anti-reference:chrome.md",
+        polarity: "anti-reference",
+        kind: "text",
+        content: "Avoid booking-widget chrome.",
+      },
+    );
+    const prompt = critiquePrompt(critiqueInput, critiqueInput.screenshots);
+    expect(prompt).toContain(
+      JSON.stringify(
+        [
+          {
+            label: "reference:brand.md",
+            polarity: "reference",
+            content: "Use the editorial type scale.",
+          },
+          {
+            label: "anti-reference:chrome.md",
+            polarity: "anti-reference",
+            content: "Avoid booking-widget chrome.",
+          },
+        ],
+        null,
+        2,
+      ),
+    );
+    expect(prompt).not.toContain("[reference truncated");
+    expect(prompt).not.toContain('"truncated"');
+    expect(prompt).not.toContain(truncationInstruction);
+  });
+
+  test("an oversized anti-reference is bounded and marked", async () => {
+    const critiqueInput = await input();
+    const content = `${"x".repeat(TEXT_REFERENCE_LIMIT)}TAIL-SENTINEL`;
+    critiqueInput.references.push({
+      label: "anti-reference:huge.md",
+      polarity: "anti-reference",
+      kind: "text",
+      content,
+    });
+    const prompt = critiquePrompt(critiqueInput, critiqueInput.screenshots);
+    expect(prompt).not.toContain("TAIL-SENTINEL");
+    expect(prompt).toContain(
+      `[reference truncated: first ${TEXT_REFERENCE_LIMIT} of ${content.length} characters included]`,
+    );
+    expect(prompt).toContain('"truncated": {');
+    expect(prompt).toContain(`"includedChars": ${TEXT_REFERENCE_LIMIT}`);
+    expect(prompt).toContain(`"totalChars": ${content.length}`);
+    expect(prompt).toContain('"polarity": "anti-reference"');
+    expect(prompt).toContain(truncationInstruction);
+  });
+
+  test("every batch request carries the bounded reference", async () => {
+    const requests: AnthropicRequest[] = [];
+    const adapter = new AnthropicCritiqueAdapter({
+      model: "configured-model",
+      client: client(async (request) => {
+        requests.push(request);
+        return response([]);
+      }),
+    });
+    const critiqueInput = await input(28);
+    critiqueInput.references.push({
+      label: "reference:huge.md",
+      polarity: "reference",
+      kind: "text",
+      content: `${"x".repeat(TEXT_REFERENCE_LIMIT)}TAIL-SENTINEL`,
+    });
+    await adapter.critique(critiqueInput);
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      const content = request.messages[0]?.content;
+      if (!Array.isArray(content)) throw new Error("expected content blocks");
+      const prompt = content
+        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+        .join("\n");
+      expect(prompt).toContain("[reference truncated: first 12000 of");
+      expect(prompt).not.toContain("TAIL-SENTINEL");
+    }
+  });
+});
+
+describe("Claude Code critique evidence budget", () => {
+  const smallLimits = { images: 2, imageBytes: 1024 * 1024, domChars: 1_000 };
+
+  function sessionCandidate(state: string): ModelFindingCandidate {
+    return {
+      ...candidate,
+      state,
+      screenshots: [`${state}/desktop`],
+    };
+  }
+
+  test("a small capture keeps one session, the unchanged prompt, and no evidence-limit record", async () => {
+    const critiqueInput = await input(2);
+    const requests: ClaudeCodeRunRequest[] = [];
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      runner: async (request) => {
+        requests.push(request);
+        return cliResult({ findings: [candidate] });
+      },
+    });
+    const result = await adapter.critique(critiqueInput);
+    expect(result).toEqual(critiqueResult([candidate]));
+    expect(result).not.toHaveProperty("evidenceLimits");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.stdin).not.toContain("This is session");
+    expect(requests[0]?.stdin).toContain(
+      critiquePrompt(critiqueInput, critiqueInput.screenshots),
+    );
+  });
+
+  test("an over-budget capture splits into bounded sessions and records the split", async () => {
+    const critiqueInput = await input(6);
+    critiqueInput.domExcerpts = critiqueInput.screenshots.map((item) => ({
+      label: item.label,
+      state: item.state,
+      viewport: item.viewport,
+      content: `dom for ${item.label}`,
+    }));
+    const requests: ClaudeCodeRunRequest[] = [];
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      limits: smallLimits,
+      statImage: async () => 1024,
+      runner: async (request) => {
+        requests.push(request);
+        return cliResult({
+          findings: [sessionCandidate(`state-${requests.length - 1}`)],
+        });
+      },
+    });
+    const result = await adapter.critique(critiqueInput);
+    expect(requests).toHaveLength(3);
+    for (const [index, request] of requests.entries()) {
+      expect(request.stdin).toContain(`This is session ${index + 1} of 3`);
+      for (const screenshot of critiqueInput.screenshots) {
+        const visible = screenshot.state === `state-${index}`;
+        expect(request.stdin.includes(screenshot.readPath)).toBe(visible);
+        expect(request.stdin.includes(`dom for ${screenshot.label}`)).toBe(
+          visible,
+        );
+      }
+    }
+    expect(result.findings.map((item) => item.state)).toEqual([
+      "state-0",
+      "state-1",
+      "state-2",
+    ]);
+    expect(result.evidenceLimits).toEqual({
+      provider: "claude-code",
+      limits: smallLimits,
+      sessions: 3,
+      omitted: [],
+    });
+  });
+
+  test("repair is per session and bounded to that session's evidence", async () => {
+    const critiqueInput = await input(4);
+    const requests: ClaudeCodeRunRequest[] = [];
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      limits: smallLimits,
+      statImage: async () => 1024,
+      runner: async (request) => {
+        requests.push(request);
+        if (requests.length === 1)
+          return cliResult({ findings: [sessionCandidate("state-0")] });
+        if (requests.length === 2)
+          return cliResult({
+            findings: [{ ...sessionCandidate("state-1"), screenshots: [] }],
+          });
+        return cliResult({ findings: [sessionCandidate("state-1")] });
+      },
+    });
+    const result = await adapter.critique(critiqueInput);
+    expect(requests).toHaveLength(3);
+    expect(requests[2]?.stdin).toContain("## Rejected structured output");
+    expect(requests[2]?.stdin).toContain("This is session 2 of 2");
+    expect(requests[2]?.stdin).not.toContain(
+      critiqueInput.screenshots[0]?.readPath,
+    );
+    expect(result.findings).toHaveLength(2);
+  });
+
+  test("a session citing a screenshot from another session is rejected", async () => {
+    const critiqueInput = await input(4);
+    const runner = vi.fn(async () =>
+      cliResult({ findings: [sessionCandidate("state-0")] }),
+    );
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      limits: smallLimits,
+      statImage: async () => 1024,
+      runner,
+    });
+    await expect(adapter.critique(critiqueInput)).rejects.toBeInstanceOf(
+      MalformedCritiqueError,
+    );
+    // Session 1 accepted; session 2 failed its first answer and its repair.
+    expect(runner).toHaveBeenCalledTimes(3);
+  });
+
+  test("any failing session fails the whole critique", async () => {
+    const critiqueInput = await input(4);
+    let calls = 0;
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      limits: smallLimits,
+      statImage: async () => 1024,
+      runner: async () => {
+        calls += 1;
+        return calls === 1
+          ? cliResult({ findings: [sessionCandidate("state-0")] })
+          : { stdout: "", stderr: "boom", exitCode: 1, signal: null };
+      },
+    });
+    await expect(adapter.critique(critiqueInput)).rejects.toBeInstanceOf(
+      ClaudeCodeCritiqueError,
+    );
+  });
+
+  test("records omitted evidence on the result", async () => {
+    const critiqueInput = await input(4);
+    const huge = critiqueInput.screenshots[0]?.readPath;
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      limits: smallLimits,
+      statImage: async (path) => (path === huge ? 3 * 1024 * 1024 : 1024),
+      runner: async () => cliResult({ findings: [] }),
+    });
+    const result = await adapter.critique(critiqueInput);
+    expect(result.evidenceLimits?.omitted).toEqual([
+      {
+        label: "state-0/desktop",
+        kind: "captured-screenshot",
+        reason: "file is 3 MB; session image budget is 1 MB",
+      },
+    ]);
+  });
+
+  test("throws a budget error naming the limit when every screenshot is omitted", async () => {
+    const critiqueInput = await input(2);
+    const runner = vi.fn(async () => cliResult({ findings: [] }));
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      limits: smallLimits,
+      statImage: async () => 2 * 1024 * 1024,
+      runner,
+    });
+    const failure = await adapter
+      .critique(critiqueInput)
+      .catch((error) => error);
+    expect(failure).toBeInstanceOf(ClaudeCodeEvidenceBudgetError);
+    expect(runner).not.toHaveBeenCalled();
+    const reason = describeCritiqueFailure(failure, {});
+    expect(reason).toBe(
+      "Claude Code critique evidence exceeds the per-session budget (2 images, 1 MB of images, 1,000 DOM characters): all 2 captured screenshots were omitted",
+    );
+  });
+
+  test("a missing image file fails the critique instead of being skipped", async () => {
+    const critiqueInput = await input(1);
+    critiqueInput.screenshots.push({
+      label: "state-1/desktop",
+      path: "state-1/desktop/screenshot.png",
+      readPath: "/does/not/exist.png",
+      state: "state-1",
+      viewport: "desktop",
+    });
+    const runner = vi.fn(async () => cliResult({ findings: [] }));
+    const adapter = new ClaudeCodeCritiqueAdapter({
+      model: "configured",
+      projectDirectory: process.cwd(),
+      runner,
+    });
+    await expect(adapter.critique(critiqueInput)).rejects.toThrow(/ENOENT/);
+    expect(runner).not.toHaveBeenCalled();
   });
 });

@@ -158,8 +158,12 @@ export const unexplainedControlCheck: DeterministicCheck = {
         continue;
       }
       if (tooltip || meaningful(signals.name, visible)) {
+        // Default mode counts a native title as the explanation: the browser
+        // shows it on hover, after a delay no probe window observes. Projects
+        // that require painted explanations opt into `explanation: "visible"`.
+        if (signals.title?.trim()) continue;
         // A painted text glyph ("?") explains nothing on screen, whatever its
-        // accessible name or native title says. Report it only when the probe
+        // accessible name says. Report it only when the probe
         // sampled both hover and focus and neither showed a tooltip.
         const painted = signals.explanation?.visibleText;
         if (
@@ -213,7 +217,7 @@ export const unexplainedControlCheck: DeterministicCheck = {
                 ),
               }
             : {}),
-          explanation: `${element.selector} shows "${glyph}" with no painted label and no tooltip observed on hover or focus; its accessible name ${JSON.stringify(signals.name)}${signals.title === undefined ? " is" : " and native title are"} not visible.`,
+          explanation: `${element.selector} shows "${glyph}" with no painted label and no tooltip observed on hover or focus; its accessible name ${JSON.stringify(signals.name)} is not visible.`,
           acceptance: [
             `${element.selector} has a visible label, painted aria-describedby text, or a tooltip that appears on hover and focus.`,
           ],

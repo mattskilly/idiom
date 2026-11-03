@@ -3,6 +3,7 @@ import { a11yLabelCheck } from "./a11y-label.js";
 import { adjacentGapCheck } from "./adjacent-gap.js";
 import { alarmAtRestCheck } from "./alarm-at-rest.js";
 import { bandEdgesCheck } from "./band-edges.js";
+import { briefMismatchCheck } from "./brief-mismatch.js";
 import { brokenImageCheck } from "./broken-image.js";
 import { brokenLinkCheck } from "./broken-link.js";
 import { clippedTextCheck } from "./clipped-text.js";
@@ -18,6 +19,7 @@ import { deadAffordanceCheck } from "./dead-affordance.js";
 import { deadControlCheck } from "./dead-control.js";
 import { designDriftCheck } from "./design-drift.js";
 import { dialogShellCheck } from "./dialog-shell.js";
+import { disabledHighlightCheck } from "./disabled-highlight.js";
 import { disguisedControlCheck } from "./disguised-control.js";
 import { duplicateEntryCheck } from "./duplicate-entry.js";
 import { elementOverlapCheck } from "./element-overlap.js";
@@ -51,15 +53,25 @@ import {
 } from "./missing-state.js";
 import { motionCheck } from "./motion.js";
 import { nativeControlCheck } from "./native-control.js";
+import { nestedBorderCheck } from "./nested-border.js";
 import { orphanWordCheck } from "./orphan-word.js";
 import { overflowClipCheck } from "./overflow-clip.js";
 import { pageContentCheck } from "./page-content.js";
+import { parentSelectionCheck } from "./parent-selection.js";
 import { primaryRegionCheck } from "./primary-region.js";
 import { progressAffordanceCheck } from "./progress-affordance.js";
 import { publishedBudgetCheck } from "./published-budget.js";
 import { responsiveBreakCheck } from "./responsive-break.js";
+import {
+  revealedAncestor,
+  revealedIgnoredRules,
+  revealedKey,
+  revealedTuples,
+  scopeRevealedCandidate,
+} from "./revealed.js";
 import { scaleConformanceCheck } from "./scale-conformance.js";
 import { selectedStateCheck } from "./selected-state.js";
+import { selectionOutlineCheck } from "./selection-outline.js";
 import { shellVisibilityCheck } from "./shell-visibility.js";
 import { siblingChromeCheck } from "./sibling-chrome.js";
 import { spacingRhythmCheck } from "./spacing-rhythm.js";
@@ -151,6 +163,24 @@ export const signalChecks: DeterministicCheck[] = [
   doubleSubmitCheck,
   errorStateMissingCheck,
   retryBlockedCheck,
+  nestedBorderCheck,
+  parentSelectionCheck,
+  selectionOutlineCheck,
+  disabledHighlightCheck,
+  briefMismatchCheck,
+];
+
+/**
+ * Checks run on revealed states (probe-opened disclosures and one-step mode
+ * switches): geometry, gaps, overlaps and native controls.
+ */
+export const revealedStateChecks: DeterministicCheck[] = [
+  adjacentGapCheck,
+  elementOverlapCheck,
+  nativeControlCheck,
+  clippedTextCheck,
+  overflowClipCheck,
+  selectionOutlineCheck,
 ];
 
 export function checksConfigFrom(
@@ -166,6 +196,7 @@ export function checksConfigFrom(
     },
     lineLength: { ...merged.lineLength },
     orphanWord: { ...merged.orphanWord },
+    nestedBorder: { ...merged.nestedBorder },
     images: { ...merged.images },
     layoutShift: { ...merged.layoutShift },
     interactionShift: { ...merged.interactionShift },
@@ -361,6 +392,58 @@ export function runDeterministicChecks(
           checkOrder: deterministicChecks.length + 1 + order,
         })),
       );
+    }
+  }
+  // Revealed states report only what the reveal introduced, attributed to
+  // the tuple that opened them so flow, state and baseline lookups hold.
+  const orderOf = (check: DeterministicCheck) => {
+    const base = deterministicChecks.indexOf(check);
+    return base >= 0
+      ? base
+      : deterministicChecks.length + 1 + signalChecks.indexOf(check);
+  };
+  for (const tuple of tuples) {
+    const revealed = revealedTuples(tuple).sort(
+      (a, b) =>
+        a.revealed.name.split(" › ").length -
+        b.revealed.name.split(" › ").length,
+    );
+    if (revealed.length === 0) continue;
+    const parentKeys = new Set(
+      candidates
+        .filter((entry) => entry.tuple === tuple)
+        .map((entry) => revealedKey(entry.candidate)),
+    );
+    const seen = new Map<string, Set<string>>();
+    for (const { revealed: state, tuple: synthetic } of revealed) {
+      const keys = new Set<string>();
+      seen.set(state.name, keys);
+      for (const check of revealedStateChecks) {
+        const result = check.run({
+          tuple: synthetic,
+          narrowViewport: tuple.width === narrowWidth,
+          config,
+          tuples: [synthetic],
+        });
+        for (const candidate of result.candidates) {
+          if (revealedIgnoredRules.has(candidate.rule)) continue;
+          const key = revealedKey(candidate);
+          keys.add(key);
+          if (parentKeys.has(key)) continue;
+          if (
+            [...seen].some(
+              ([name, earlier]) =>
+                revealedAncestor(name, state.name) && earlier.has(key),
+            )
+          )
+            continue;
+          candidates.push({
+            tuple,
+            candidate: scopeRevealedCandidate(tuple, state, candidate),
+            checkOrder: orderOf(check),
+          });
+        }
+      }
     }
   }
   return {

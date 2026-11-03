@@ -1,6 +1,6 @@
 {
   "name": "@mattskilly/idiom",
-  "version": "0.16.1",
+  "version": "0.18.0",
   "description": "Design acceptance for AI-built software.",
   "type": "module",
   "license": "Apache-2.0",
@@ -31,8 +31,8 @@
   "files": [
     "dist/",
     "templates/",
-    ".claude-plugin/",
-    "hooks/",
+    ".claude-plugin/marketplace.json",
+    "plugins/claude/",
     "server.json",
     "skills/",
     "plugin.json",
@@ -69,7 +69,6 @@
     "@defrex/autobuild": "1.0.1",
     "@modelcontextprotocol/client": "2.4.0",
     "@types/node": "^26.2.0",
-    "@types/pixelmatch": "^5.2.6",
     "@types/pngjs": "^6.0.5",
     "@vercel/blob": "2.8.2",
     "@vercel/functions": "3.10.4",

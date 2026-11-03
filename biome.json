@@ -13,7 +13,7 @@
       "!test/fixtures/**/*.html",
       "!test/fixtures/mcp-registry/server.schema.json",
       "scripts/**",
-      "hooks/**",
+      "plugins/**",
       "*.json",
       "site/*.ts",
       "site/hosted.css"

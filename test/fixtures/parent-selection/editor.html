@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Page editor</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; color: #111827; }
+      #site-nav { display: flex; gap: 16px; list-style: none; margin: 0; padding: 12px 24px; }
+      #site-nav a { color: #1d4ed8; }
+      #canvas { padding: 24px; display: grid; gap: 24px; }
+      .block { display: flex; align-items: center; gap: 24px; padding: 16px 24px; border-radius: 8px; }
+      .block.is-selected { box-shadow: 0 0 0 2px #2563eb; }
+      .logo { font-weight: 700; margin-right: auto; }
+      nav.block a { color: #1d4ed8; text-decoration: none; }
+      .cta { background: #111827; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; font: inherit; }
+      .cta-ghost { border: 1px solid #111827; border-radius: 6px; padding: 7px 13px; }
+      .hero { flex-direction: column; align-items: flex-start; min-height: 160px; }
+      [role="grid"] { display: grid; grid-template-columns: repeat(3, 160px); gap: 16px; }
+      .tile { height: 96px; border: 1px solid #d1d5db; border-radius: 8px; display: grid; place-items: center; }
+      .tile.is-selected { border-color: #2563eb; }
+    </style>
+  </head>
+  <body>
+    <ul id="site-nav">
+      <li><a id="docs-link" href="#docs">Docs</a></li>
+      <li><a id="blog-link" href="#blog">Blog</a></li>
+    </ul>
+    <main id="canvas">
+      <nav id="nav-block" class="block" tabindex="0" aria-label="Navigation block">
+        <span class="logo">Acme</span>
+        <a id="nav-home" href="/home">Home</a>
+        <a id="nav-pricing" href="/pricing">Pricing</a>
+        <button id="nav-cta" class="cta" type="button">Get started</button>
+        <div id="nav-demo" class="cta-ghost">Book demo</div>
+        <a id="nav-delete" href="#">Delete block</a>
+        <div id="nav-remove" class="cta-ghost">Remove block</div>
+      </nav>
+      <section id="hero-block" class="block hero" tabindex="0" aria-label="Hero block">
+        <h1>Build pages your way</h1>
+        <p>Drag blocks onto the canvas and edit them in place.</p>
+      </section>
+      <div role="grid" aria-label="Templates">
+        <div id="tile-a" class="tile" tabindex="0" role="button">Blank</div>
+        <div id="tile-b" class="tile" tabindex="0" role="button">Landing</div>
+        <div id="tile-c" class="tile" tabindex="0" role="button">Pricing page</div>
+      </div>
+    </main>
+    <script>
+      {
+      const canvas = document.getElementById("canvas");
+      // The canvas selects the block under any click, links and buttons included.
+      canvas.addEventListener("click", (event) => {
+        const block = event.target.closest(".block");
+        if (!block) return;
+        event.preventDefault();
+        for (const other of canvas.querySelectorAll(".block")) {
+          other.classList.remove("is-selected");
+          other.removeAttribute("aria-selected");
+        }
+        block.classList.add("is-selected");
+        block.setAttribute("aria-selected", "true");
+      });
+      // A template tile selects itself.
+      for (const tile of document.querySelectorAll(".tile"))
+        tile.addEventListener("click", () => {
+          for (const other of document.querySelectorAll(".tile")) {
+            other.classList.remove("is-selected");
+            other.removeAttribute("data-selected");
+          }
+          tile.classList.add("is-selected");
+          tile.setAttribute("data-selected", "true");
+        });
+      // A route list marks the current item's wrapper.
+      for (const link of document.querySelectorAll("#site-nav a"))
+        link.addEventListener("click", (event) => {
+          event.preventDefault();
+          for (const item of document.querySelectorAll("#site-nav li"))
+            item.classList.remove("active");
+          link.parentElement.classList.add("active");
+        });
+      }
+    </script>
+  </body>
+</html>

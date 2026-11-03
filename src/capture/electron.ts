@@ -8,7 +8,7 @@ import {
 } from "playwright";
 import { IdiomError } from "../errors.js";
 import type { ElectronFlow } from "../schemas/flow.js";
-import { checkMarks } from "../schemas/project.js";
+import { briefMarks, checkMarks } from "../schemas/project.js";
 import { deterministicScreenshotOptions } from "./browser.js";
 import { type AxeFactory, collectPageEvidence } from "./page.js";
 import { expandDataDirectory, expandEnvironment } from "./process.js";
@@ -363,6 +363,8 @@ export function createElectronLauncher(
             if (attribute !== undefined) {
               await application.context().addInitScript(
                 ({ name, value }) => {
+                  // Opaque-origin frames block the observer's callbacks.
+                  if (window !== window.top && self.origin === "null") return;
                   const apply = () => {
                     if (document.documentElement === null) return false;
                     document.documentElement.setAttribute(name, value);
@@ -431,7 +433,10 @@ export function createElectronLauncher(
               floatingOverlays:
                 tuple.project.checks.shellVisibility?.floatingOverlays,
               fresh: tuple.state.fresh === true,
-              marks: checkMarks(tuple.project.checks),
+              marks: [
+                ...checkMarks(tuple.project.checks),
+                ...briefMarks(tuple.briefSelectors),
+              ],
               emptyState: tuple.project.checks.emptyState,
               bandEdges: tuple.project.checks.bandEdges?.enabled === true,
               wordBreak: tuple.project.checks.wordBreak?.enabled === true,

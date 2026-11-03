@@ -275,6 +275,62 @@ describe("interactionShifts", () => {
     ]);
   });
 
+  test("the region the click opened, and inline validation it raised, are requested shifts", () => {
+    const region = (effectRegion: Partial<ActionTimeline["effectRegion"]>) =>
+      interactionShifts(
+        banner(30, {
+          effectRegion: {
+            control: "button#show",
+            controls: [],
+            ...effectRegion,
+          },
+        }),
+        viewport,
+        settings,
+      );
+    // The banner is the panel the click expanded: its push was asked for.
+    expect(region({ opened: "div.banner" })).toEqual([]);
+    // The banner is the validation message the click raised.
+    expect(region({ validated: ["div.banner"] })).toEqual([]);
+    // Ambiguous (nothing recorded) or another region: the push still reports.
+    expect(region({})).toHaveLength(1);
+    expect(region({ opened: "aside.inspector" })).toHaveLength(1);
+    expect(region({ validated: ["p.error"] })).toHaveLength(1);
+  });
+  test("a cause that merely contains the opened region is not requested", () => {
+    // The banner holds a small opened region; the banner's own push is not
+    // inside that region, so it still reports.
+    const timeline = banner(30, {
+      effectRegion: {
+        control: "button#show",
+        controls: [],
+        opened: "div.banner > span",
+      },
+    });
+    for (const frame of timeline.frames.slice(1))
+      frame.elements.push({
+        selector: "div.banner > span",
+        rect: rect([24, 12, 200, 24]),
+        offset: { x: 0, y: 0 },
+      });
+    expect(interactionShifts(timeline, viewport, settings)).toHaveLength(1);
+  });
+  test("a late cause inside the opened region still reports", () => {
+    expect(
+      interactionShifts(
+        banner(700, {
+          effectRegion: {
+            control: "button#show",
+            controls: [],
+            opened: "div.banner",
+          },
+        }),
+        viewport,
+        settings,
+      ),
+    ).toHaveLength(1);
+  });
+
   const local = (time: number) =>
     action(
       [

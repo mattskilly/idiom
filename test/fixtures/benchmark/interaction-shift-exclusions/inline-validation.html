@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inline validation</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d1d1f; }
+  main { max-width: 480px; margin: 0 auto; padding: 24px; }
+  label { display: block; margin-top: 16px; }
+  input { display: block; width: 100%; box-sizing: border-box; padding: 8px; }
+  .error { margin: 4px 0 0; color: #b42318; }
+  button { margin-top: 24px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Teammate details</h1>
+  <!-- A long form: taller than the viewport, so it is not one small effect region. -->
+  <form id="invite" novalidate>
+    <label for="role">Role</label>
+    <input id="role" value="Editor">
+    <label for="note">Note</label>
+    <input id="note">
+    <label for="field-0">Team</label>
+    <input id="field-0">
+    <label for="field-1">Location</label>
+    <input id="field-1">
+    <label for="field-2">Time zone</label>
+    <input id="field-2">
+    <label for="field-3">Manager</label>
+    <input id="field-3">
+    <label for="field-4">Start date</label>
+    <input id="field-4">
+    <label for="field-5">Phone</label>
+    <input id="field-5">
+    <label for="field-6">Desk</label>
+    <input id="field-6">
+    <label for="field-7">Cost centre</label>
+    <input id="field-7">
+    <label for="field-8">Title</label>
+    <input id="field-8">
+    <label for="field-9">Pronouns</label>
+    <input id="field-9">
+    <label for="field-10">Language</label>
+    <input id="field-10">
+    <label for="email">Email</label>
+    <input id="email" type="email" aria-describedby="email-error">
+    <button id="check" type="button">Check details</button>
+  </form>
+  <p class="fine">We only use these details to set up the account.</p>
+</main>
+<script>
+  // Checking with an empty email marks it invalid and shows the message under it.
+  document.getElementById("check").addEventListener("click", () => {
+    const email = document.getElementById("email");
+    if (email.value.trim() === "") {
+      email.setAttribute("aria-invalid", "true");
+      if (document.getElementById("email-error")) return;
+      const error = document.createElement("p");
+      error.className = "error";
+      error.id = "email-error";
+      error.textContent = "Enter an email address.";
+      email.after(error);
+    }
+  });
+</script>
+</body>
+</html>

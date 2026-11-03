@@ -1,0 +1,18 @@
+{
+  "recorded": "idiom brief triage --json via claude-code claude-sonnet-5-5, rubric v1, 2026-10-31",
+  "request": "Let users change a section's background image.",
+  "response": {
+    "verdict": "design decision",
+    "reason": "Adds a new control and interaction for changing a section's background image (new-control-or-surface, new-interaction-or-mode, per-item-addition), and may expose a raw technical input like a URL (raw-technical-input).",
+    "questions": [
+      "Where does the change-background control live (on each section, in a toolbar, or in a settings panel), and how large is it next to the section it sits in?",
+      "How is the control reached with a mouse (on hover), on touch, and from the keyboard, given that a hover-only control does not exist on touch?",
+      "Do users upload a file, pick from a gallery, or paste a URL, and if a URL, are they typing a raw technical value that needs a friendlier alternative?",
+      "What placeholder or default does the input show, and does it look like the images users can already replace or like something they cannot?",
+      "Is the control added to every section in the repeated list, and does it change each section's height or density?",
+      "What does the user see while the image loads or if it fails, and how do they preview, confirm, or cancel a change?",
+      "How do users remove the image or revert to the default background, and what is that action called?",
+      "How are image fit, cropping, and text legibility over the image handled, and does the user control them?"
+    ]
+  }
+}

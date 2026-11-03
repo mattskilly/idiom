@@ -69,6 +69,13 @@ export const docsGroups = [
           "The project file, flows and states, checks, baselines, Autobuild and the GitHub Action.",
       },
       {
+        slug: "brief",
+        source: "docs/brief.md",
+        title: "Design decision briefs",
+        description:
+          "Before an agent writes a UI ticket: triage the design decision, research it, ask the requester and store the decided brief.",
+      },
+      {
         slug: "mcp",
         source: "docs/mcp.md",
         title: "MCP",
@@ -428,7 +435,7 @@ export async function buildDocs({ root, outputDirectory, siteCss, meta }) {
 
 > ${overview.description}
 
-Install with \`npm install -g ${repository}/releases/download/v${version}/mattskilly-idiom-${version}.tgz\` (or \`npm install -g @mattskilly/idiom\` once npm serves this release), run \`idiom quick http://localhost:3000\` for a review with no setup. For Claude Code, use \`/plugin marketplace add mattskilly/idiom\` then \`/plugin install idiom@idiom\`; for Codex use \`codex plugin marketplace add mattskilly/idiom\` then \`codex plugin add idiom@idiom\`. The plugin bundles MCP and the skill, with a runtime pinned to its release. Claude also adds UI reminders. Update Claude with \`/plugin marketplace update idiom\`, \`/plugin update idiom@idiom\` and \`/reload-plugins\`; update Codex with \`codex plugin marketplace upgrade idiom\`, \`codex plugin add idiom@idiom\` and a new session. Open source under Apache-2.0: ${repository}
+Install with \`npm install -g @mattskilly/idiom\`, run \`idiom quick http://localhost:3000\` for a review with no setup. For Claude Code, use \`/plugin marketplace add mattskilly/idiom\` then \`/plugin install idiom@idiom\`; for Codex use \`codex plugin marketplace add mattskilly/idiom\`, \`codex plugin add idiom@idiom\` and \`codex mcp add idiom -- npx -y --package=${repository}/releases/download/v${version}/mattskilly-idiom-${version}.tgz idiom mcp\`. The plugin bundles MCP and the skill, with a runtime pinned to its release. Claude also adds UI reminders. Before writing a ticket or code that involves a design decision, agents run \`idiom brief triage\` (MCP \`idiom_brief_triage\`) and follow it. Update Claude with \`/plugin marketplace update idiom\`, \`/plugin update idiom@idiom\` and \`/reload-plugins\`; update Codex with \`codex plugin marketplace upgrade idiom\`, \`codex plugin add idiom@idiom\` and a new session. Open source under Apache-2.0: ${repository}
 
 ${docsGroups.map((group) => `## ${group.label}\n\n${list(group)}`).join("\n\n")}
 

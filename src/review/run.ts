@@ -15,9 +15,17 @@ import {
 import { projectChecksConfig } from "../checks/project-config.js";
 import { runDeterministicChecks } from "../checks/registry.js";
 import { scaleQuestions } from "../checks/scale-conformance.js";
+import type { CheckTuple } from "../checks/types.js";
 import { computeFlowStateCoverage } from "../coverage/states.js";
 import type { ClaudeCodeRunner } from "../critique/claude-code.js";
-import { buildCritiqueContext } from "../critique/context.js";
+import {
+  buildCritiqueContext,
+  loadReferenceContext,
+} from "../critique/context.js";
+import {
+  type DeterministicContextLimit,
+  deterministicContextLimit,
+} from "../critique/deterministic-bound.js";
 import type { CritiqueProcessRunner } from "../critique/process.js";
 import {
   type CritiqueAdapterLike,
@@ -29,8 +37,17 @@ import {
   describeCritiqueFailure,
   safeDegradationReason,
 } from "../critique/provider.js";
+import {
+  type TruncatedReference,
+  truncatedTextReferences,
+} from "../critique/reference-bound.js";
 import { validateCritiqueResult } from "../critique/schema.js";
-import { decisionViews, readDecisionLog } from "../decisions/log.js";
+import type { CritiqueEvidenceLimits } from "../critique/types.js";
+import {
+  decisionViews,
+  readDecisionLog,
+  ruleRejection,
+} from "../decisions/log.js";
 import { tupleDesigns } from "../design/evidence.js";
 import { IdiomError } from "../errors.js";
 import type { ReportCoverage } from "../report/coverage.js";
@@ -65,7 +82,11 @@ import {
   loadRunTuples,
   resolveStoredRun,
 } from "./artifacts.js";
-import { loadReviewCatalog, persistCatalogFindingNames } from "./catalog.js";
+import {
+  isCatalogDecisionTarget,
+  loadReviewCatalog,
+  persistCatalogFindingNames,
+} from "./catalog.js";
 import { attachCrops } from "./crops.js";
 import { attachFilmstrips } from "./filmstrips.js";
 import { scaleQuestionDecisions } from "./scale-questions.js";
@@ -97,7 +118,7 @@ import {
   writeGroups,
 } from "./groups.js";
 import { renderReviewHtmlReport } from "./html-report.js";
-import { FindingNamingSession } from "./names.js";
+import { FindingNamingSession, findingNameDivergenceWarning } from "./names.js";
 import {
   buildIssueRankingContext,
   type IssueRankingContext,
@@ -155,10 +176,18 @@ export type ReviewRunResult = PaintedCoverageReport & {
   designSystemQuestions: UnruledDecision[];
   discardedDecisionObservations: number;
   outcome: ReviewOutcome;
+  /** Text references the main model pass saw in bounded form; absent when none. */
+  truncatedReferences?: TruncatedReference[] | undefined;
+  /** Prompts whose deterministic findings context was bounded; absent when none. */
+  deterministicContextLimits?: DeterministicContextLimit[] | undefined;
+  /** Set when the Claude Code critique split or left out evidence; absent otherwise. */
+  critiqueEvidenceLimits?: CritiqueEvidenceLimits | undefined;
   /** Sweep mode only: the per-surface record written to sweep.json. */
   sweep?: { path: string; surfaces: SweepSurface[] } | undefined;
   /** The advisory design-intent review written to advisory.json. */
   advisory?: { path: string; review: AdvisoryReview } | undefined;
+  /** One line when the primary checkout's finding names diverged. */
+  findingNameWarning?: string | undefined;
 };
 
 /** Only capture execution failures are recoverable at the product controller. */
@@ -230,6 +259,27 @@ export function withFallback(
   };
 }
 
+/** Stable prefix of the reason a capture with no screenshots degrades with. */
+export const NO_REVIEWABLE_SCREENSHOTS_REASON = "no reviewable screenshots";
+
+/** Whether any captured tuple carries a screenshot the model can review. */
+export function hasReviewableScreenshot(
+  tuples: readonly CheckTuple[],
+): boolean {
+  return tuples.some((tuple) => tuple.screenshotPath !== undefined);
+}
+
+/** The degraded outcome for a capture that left the model nothing to review. */
+export function noReviewableScreenshotsOutcome(
+  tuples: readonly CheckTuple[],
+): ReviewOutcome {
+  const count = tuples.length;
+  return {
+    kind: "degraded",
+    reason: `${NO_REVIEWABLE_SCREENSHOTS_REASON}: 0 of ${count} capture tuple${count === 1 ? "" : "s"} produced a screenshot, so model critique did not run`,
+  };
+}
+
 async function loadSpec(
   validated: ValidationResult,
 ): Promise<{ file: string; content: string } | undefined> {
@@ -257,6 +307,17 @@ export async function runReview(options: {
   port?: number | undefined;
   /** Refetch pinned Figma frames when this review captures. */
   refreshDesign?: boolean | undefined;
+  /** Probe run target for this capture only (`--probe-budget`); 0 = no target. */
+  probeBudgetMs?: number | undefined;
+  /** Build gate capture levers; see `runCapture`. */
+  probeDisabled?: boolean | undefined;
+  probeRegions?:
+    | ReadonlyMap<string, import("../capture/probe.js").ProbeRegion>
+    | undefined;
+  reuseServer?: boolean | undefined;
+  inputIdentity?: string | undefined;
+  /** `idiom check --gate`: rendered under **Build gate** in the report. */
+  gateReport?: import("../gate/types.js").GateReportSection | undefined;
   from?: string | undefined;
   latest?: boolean | undefined;
   deterministicOnly?: boolean | undefined;
@@ -275,6 +336,8 @@ export async function runReview(options: {
    * true runs it even beside deterministic-only checks.
    */
   advisory?: boolean | undefined;
+  /** Ignore the primary checkout's finding names (throwaway worktrees). */
+  isolatedRegistry?: boolean | undefined;
   dependencies?: ReviewDependencies | undefined;
 }): Promise<ReviewRunResult> {
   if (options.materializeAllDeterministic && !options.deterministicOnly)
@@ -330,6 +393,13 @@ export async function runReview(options: {
     throw new IdiomError(
       "scope flags cannot be combined with --from or --latest; they select a fresh capture",
     );
+  if (
+    options.probeBudgetMs !== undefined &&
+    (options.from !== undefined || options.latest === true)
+  )
+    throw new IdiomError(
+      "--probe-budget cannot be combined with --from or --latest; it requires a fresh capture",
+    );
   let runDirectory: string;
   if (options.latest === true && options.from !== undefined)
     throw new IdiomError("--latest and --from are mutually exclusive");
@@ -354,6 +424,11 @@ export async function runReview(options: {
       scope: options.scope,
       port: options.port,
       refreshDesign: options.refreshDesign,
+      probeBudgetMs: options.probeBudgetMs,
+      probeDisabled: options.probeDisabled,
+      probeRegions: options.probeRegions,
+      reuseServer: options.reuseServer,
+      inputIdentity: options.inputIdentity,
       dependencies: options.dependencies?.capture,
     }).catch((error) => {
       checkCancelled();
@@ -432,26 +507,21 @@ export async function runReview(options: {
   };
   const catalog = await loadReviewCatalog({
     project: validated.projectDirectory,
+    isolatedRegistry: options.isolatedRegistry,
   });
+  const findingNameWarning = findingNameDivergenceWarning(catalog.names);
   const naming = new FindingNamingSession(catalog.names);
   const decisions = await readDecisionLog(validated.projectDirectory);
   const views = decisionViews(decisions);
   const ruleRejections = [...views.byRuleFingerprint.values()].filter(
     (decision) => {
-      if (decision.decision !== "reject") return false;
+      if (ruleRejection([decision.fingerprint], decisions) === undefined)
+        return false;
       const lineage = catalog.lineages.find((candidate) =>
         candidate.fingerprints.includes(decision.fingerprint),
       );
       if (lineage === undefined) return true;
-      return (
-        decisions
-          .filter(
-            (candidate) =>
-              candidate.scope === "rule" &&
-              lineage.fingerprints.includes(candidate.fingerprint),
-          )
-          .at(-1)?.decision === "reject"
-      );
+      return ruleRejection(lineage.fingerprints, decisions) !== undefined;
     },
   );
 
@@ -484,6 +554,9 @@ export async function runReview(options: {
     ...deterministic.suppressed,
   ];
   let outcome: ReviewOutcome;
+  let truncatedReferences: TruncatedReference[] = [];
+  let deterministicContextLimits: DeterministicContextLimit[] = [];
+  let critiqueEvidenceLimits: CritiqueEvidenceLimits | undefined;
   let unruledDecisions: UnruledDecision[] = [];
   let aggregatedDecisions: AggregatedDecision[] = [];
   let discardedDecisionObservations = 0;
@@ -497,6 +570,8 @@ export async function runReview(options: {
 
   if (options.deterministicOnly === true) {
     outcome = { kind: "deterministic-only" };
+  } else if (!hasReviewableScreenshot(loaded.tuples)) {
+    outcome = noReviewableScreenshotsOutcome(loaded.tuples);
   } else if (sweepMode) {
     const deterministicFindings = finalizeFindings({
       runId: loaded.runId,
@@ -510,6 +585,9 @@ export async function runReview(options: {
           override.match.flow === options.flow),
     );
     try {
+      truncatedReferences = truncatedTextReferences(
+        await loadReferenceContext(validated.projectDirectory),
+      );
       const sweep = await sweepCritique({
         projectDirectory: validated.projectDirectory,
         runDirectory,
@@ -529,6 +607,9 @@ export async function runReview(options: {
         describeFailure,
       });
       sweepSurfaces = sweep.surfaces;
+      deterministicContextLimits = sweep.surfaces.flatMap(
+        (surface) => surface.deterministicContextLimit ?? [],
+      );
       discardedDecisionObservations = sweep.discardedDecisionObservations;
       aggregatedDecisions = aggregateDecisionObservations({
         observations: sweep.decisionObservations,
@@ -598,6 +679,10 @@ export async function runReview(options: {
         deterministicFindings,
         modelCandidateAllowance: validated.project.model.maxFindings,
       });
+      truncatedReferences = truncatedTextReferences(context.references);
+      deterministicContextLimits = [
+        deterministicContextLimit(context.deterministicFindings),
+      ].flatMap((limit) => limit ?? []);
       const adapter = createReviewCritiqueAdapter({
         model: validated.project.model,
         projectDirectory: validated.projectDirectory,
@@ -612,6 +697,7 @@ export async function runReview(options: {
         designImages: context.designImages,
       });
       const candidates = critique.findings;
+      critiqueEvidenceLimits = critique.evidenceLimits;
       discardedDecisionObservations = critique.discardedDecisionObservations;
       aggregatedDecisions = aggregateDecisionObservations({
         observations: critique.decisionObservations,
@@ -707,6 +793,15 @@ export async function runReview(options: {
     selection.deferred,
     loaded.tuples,
   );
+  // This run overwrites its own findings.json with material findings only, so
+  // an occurrence there cannot keep a deferred id decidable.
+  const deferredDecisionTargets = new Set(
+    deferredFindings
+      .filter((finding) =>
+        isCatalogDecisionTarget(catalog, finding.id, runDirectory),
+      )
+      .map((finding) => finding.id),
+  );
   const deterministicOccurrences =
     options.includeDeterministicOccurrences === true
       ? await attachVisualEvidence(
@@ -754,27 +849,31 @@ export async function runReview(options: {
     flow: options.flow,
     commit: loaded.commit,
     build: loaded.build,
-    reportCoverage: buildReviewCoverage({
-      record: loaded.record,
-      collapsedTupleKeys: loaded.collapsedTupleKeys,
-      flow: record.flow,
-      project: validated.project,
-      tuples: loaded.tuples,
-      commit: loaded.commit,
-      allFlows:
-        surfaceFlows.length === 0
-          ? [record.flow]
-          : surfaceFlows.map(({ flow }) => flow),
-      stateCoverage: computeFlowStateCoverage({
-        project: validated.project,
-        flow: record.flow,
-        runId: loaded.runId,
-        commit: loaded.commit,
+    reportCoverage: {
+      ...buildReviewCoverage({
         record: loaded.record,
-        tuples: loaded.tuples,
         collapsedTupleKeys: loaded.collapsedTupleKeys,
+        flow: record.flow,
+        project: validated.project,
+        tuples: loaded.tuples,
+        commit: loaded.commit,
+        briefs: checksConfig.briefs,
+        allFlows:
+          surfaceFlows.length === 0
+            ? [record.flow]
+            : surfaceFlows.map(({ flow }) => flow),
+        stateCoverage: computeFlowStateCoverage({
+          project: validated.project,
+          flow: record.flow,
+          runId: loaded.runId,
+          commit: loaded.commit,
+          record: loaded.record,
+          tuples: loaded.tuples,
+          collapsedTupleKeys: loaded.collapsedTupleKeys,
+        }),
       }),
-    }),
+      ...(options.gateReport === undefined ? {} : { gate: options.gateReport }),
+    },
     findings,
     unruledDecisions,
     discardedDecisionObservations,
@@ -782,11 +881,17 @@ export async function runReview(options: {
     coverage: reviewed.coverage,
     captureCoverage: reviewed.captureCoverage,
     deferred: deferredFindings,
+    deferredDecisionTargets,
     groups,
     ...(reviewed.narrowWidth === undefined
       ? {}
       : { narrowWidth: reviewed.narrowWidth }),
     outcome,
+    truncatedReferences,
+    ...(deterministicContextLimits.length === 0
+      ? {}
+      : { deterministicContextLimits }),
+    ...(critiqueEvidenceLimits === undefined ? {} : { critiqueEvidenceLimits }),
     ...(advisory === undefined ? {} : { advisory: advisory.review }),
     suppressed: dedupeSuppressedFindings(suppressed),
     severityOverrides: selection.orderedDrafts.flatMap((draft) =>
@@ -905,7 +1010,13 @@ export async function runReview(options: {
     designSystemQuestions,
     discardedDecisionObservations,
     outcome,
+    ...(truncatedReferences.length === 0 ? {} : { truncatedReferences }),
+    ...(deterministicContextLimits.length === 0
+      ? {}
+      : { deterministicContextLimits }),
+    ...(critiqueEvidenceLimits === undefined ? {} : { critiqueEvidenceLimits }),
     ...(sweep === undefined ? {} : { sweep }),
     ...(advisory === undefined ? {} : { advisory }),
+    ...(findingNameWarning === undefined ? {} : { findingNameWarning }),
   };
 }

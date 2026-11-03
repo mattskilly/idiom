@@ -1,4 +1,11 @@
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -33,6 +40,7 @@ import { checkCommand, renderCheckSummary } from "../src/commands/check.js";
 import { decideCommand } from "../src/commands/decide.js";
 import { reviewCommand } from "../src/commands/review.js";
 import type { ModelFindingCandidate } from "../src/critique/types.js";
+import { IdiomError, RunFailure } from "../src/errors.js";
 import { loadRunTuples } from "../src/review/artifacts.js";
 import { loadReviewCatalog } from "../src/review/catalog.js";
 import {
@@ -943,7 +951,7 @@ test("identity aliases match only inside the same tuple, and raw suppressed cand
   ).toEqual([light]);
 });
 
-test("per-tuple finalization reuses canonical names and every catalog status without copying a representative's severity", async () => {
+test("per-tuple finalization reuses canonical names and every catalog status (terminal results republish as ticketed) without copying a representative's severity", async () => {
   const { project, commit: sha } = await setup({ mobile: true });
   await storedBaselineRun(project, "initial", sha, [
     { mismatches: [missing()] },
@@ -1000,9 +1008,14 @@ test("per-tuple finalization reuses canonical names and every catalog status wit
       "blocker",
       "minor",
     ]);
+    // A past verification result is history; the re-observation is ticketed work again.
+    const republished =
+      status === "verified-fixed" || status === "verify-failed"
+        ? "ticketed"
+        : status;
     expect(occurrences.map((finding) => finding.status)).toEqual([
-      status,
-      status,
+      republished,
+      republished,
     ]);
   }
   // Persisted catalog status is authoritative for both ordinary review and the gate.
@@ -1718,3 +1731,74 @@ test("manual record validates the requested manifest identity before capture", a
     baselineRecordCommand({ project, flow: "alias", from: "absent" }),
   ).rejects.toThrow("does not match the manifest id");
 });
+
+test("review refuses an unusable finding-name registry before it captures", async () => {
+  const { project, commit: sha } = await setup();
+  const primary = await mkdtemp(join(tmpdir(), "idiom-baseline-primary-"));
+  directories.push(primary);
+  await mkdir(join(primary, ".idiom"), { recursive: true });
+  await writeFile(
+    join(primary, ".idiom", "finding-names.json"),
+    '{"version":1,"entries":"nope"}',
+  );
+  let captured = false;
+  const capture = {
+    get browserLauncher(): never {
+      captured = true;
+      throw new Error("capture ran");
+    },
+    get process(): never {
+      captured = true;
+      throw new Error("capture ran");
+    },
+  };
+  const fresh = (options: { isolatedRegistry?: boolean } = {}) =>
+    reviewCommand({
+      project,
+      flow: "studio",
+      deterministicOnly: true,
+      gitTopology: async () => primary,
+      ...options,
+      dependencies: { capture },
+    }).catch((error: unknown) => error);
+
+  const refused = await fresh();
+  expect(refused).toBeInstanceOf(RunFailure);
+  expect(refused).toMatchObject({
+    stage: "preflight",
+    cause: "finding-name-registry",
+  });
+  expect((refused as RunFailure).hint).toContain("--isolated-registry");
+  expect(captured).toBe(false);
+
+  const isolated = await fresh({ isolatedRegistry: true });
+  expect(isolated).not.toMatchObject({ cause: "finding-name-registry" });
+
+  captured = false;
+  const localPath = join(project, ".idiom", "finding-names.json");
+  await writeFile(localPath, "not json");
+  const local = await reviewCommand({
+    project,
+    flow: "studio",
+    deterministicOnly: true,
+    dependencies: { capture },
+  }).catch((error: unknown) => error);
+  expect(local).toMatchObject({
+    stage: "preflight",
+    cause: "finding-name-registry",
+  });
+  expect(captured).toBe(false);
+
+  // A stored run captures nothing, so it skips the preflight; the catalog
+  // load still refuses as before.
+  await storedBaselineRun(project, "initial", sha);
+  const stored = await reviewCommand({
+    project,
+    flow: "studio",
+    from: "initial",
+    deterministicOnly: true,
+  }).catch((error: unknown) => error);
+  expect(stored).toBeInstanceOf(IdiomError);
+  expect(stored).not.toBeInstanceOf(RunFailure);
+  expect((stored as Error).message).toContain("finding-name registry");
+}, 60_000);

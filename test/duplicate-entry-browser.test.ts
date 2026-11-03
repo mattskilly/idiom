@@ -109,3 +109,29 @@ test("stored artifacts without primary keep grouping focus signatures", () => {
   expect(candidates([focus("#a", true), focus("#b", true)])).toEqual([]);
   expect(candidates([focus("#a", false), focus("#b", false)])).toHaveLength(1);
 });
+
+test("two adjacent toolbar triggers that open the same menu are one finding", async () => {
+  const { duplicates, result } = await review("adjacent-menu.html");
+  expect(duplicates).toHaveLength(1);
+  const finding = duplicates[0];
+  expect(finding?.rule).toBe("idiom:redundant-entry-point");
+  expect(finding?.explanation).toContain("#grip");
+  expect(finding?.explanation).toContain("#more");
+  expect(finding?.explanation).toContain("Cut, Copy, Paste");
+  expect(finding?.fingerprintHint).toBe(
+    "idiom:redundant-entry-point|menu|#grip,#more",
+  );
+  expect(result("#grip")?.menu?.items.map((item) => item.name)).toEqual([
+    "Cut",
+    "Copy",
+    "Paste",
+  ]);
+}, 60_000);
+
+test("distant triggers for one menu, and adjacent triggers for different menus, are not duplicates", async () => {
+  const { duplicates, result } = await review("distant-menu.html");
+  expect(duplicates).toEqual([]);
+  expect(result("#actions")?.menu?.items).toHaveLength(3);
+  expect(result("#clipboard")?.menu?.items).toHaveLength(3);
+  expect(result("#format")?.menu?.items).toHaveLength(3);
+}, 60_000);

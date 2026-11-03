@@ -3,6 +3,16 @@ import { join } from "node:path";
 import type { ProductionBuild } from "../capture/types.js";
 import { coverageStatusText, paintedCoverageText } from "../checks/painted.js";
 import type { CheckCoverage, CheckTuple } from "../checks/types.js";
+import { describeEvidenceLimits } from "../critique/claude-code-sessions.js";
+import {
+  type DeterministicContextLimit,
+  deterministicContextSentence,
+} from "../critique/deterministic-bound.js";
+import {
+  type TruncatedReference,
+  truncatedReferencesSentence,
+} from "../critique/reference-bound.js";
+import type { CritiqueEvidenceLimits } from "../critique/types.js";
 import { tupleDesigns } from "../design/evidence.js";
 import type { DesignDescriptor } from "../design/types.js";
 import {
@@ -34,6 +44,13 @@ export type ReviewOutcome =
 
 export function fallbackSentence(fallback: OutcomeFallback): string {
   return `Model layer completed using fallback provider ${fallback.to} after ${fallback.from} failed: ${fallback.reason}.`;
+}
+
+/** A degradation reason as a sentence: terminal punctuation added only when missing. */
+export function degradedReasonSentence(reason: string): string {
+  const trimmed = reason.trimEnd();
+  if (trimmed === "" || /[.!?…]["'”’)\]]*$/u.test(trimmed)) return trimmed;
+  return `${trimmed}.`;
 }
 
 /** What a page review (`idiom review --page`) judged, for the report header. */
@@ -251,6 +268,16 @@ export function advisoryMarkdown(review: AdvisoryReview): string[] {
       `Status: ${pattern.status}${pattern.reason === undefined ? "" : ` (${text(pattern.reason)})`}`,
       "",
     );
+    if ((pattern.truncatedReferences ?? []).length > 0)
+      lines.push(
+        text(truncatedReferencesSentence(pattern.truncatedReferences ?? [])),
+        "",
+      );
+    if (pattern.deterministicContextLimit !== undefined)
+      lines.push(
+        text(deterministicContextSentence([pattern.deterministicContextLimit])),
+        "",
+      );
     if (pattern.status === "ok" && pattern.findings.length === 0)
       lines.push("No advisory findings.", "");
     for (const { aspect, section, sectionHeading, finding } of pattern.findings)
@@ -279,6 +306,13 @@ export function advisoryMarkdown(review: AdvisoryReview): string[] {
   return lines;
 }
 
+/** Explains the per-entry decision label on deferred findings. */
+export const DEFERRED_DECISION_LEGEND =
+  "Each entry is marked: `decision target` ids already have a catalog lineage and can be passed to `idiom decide --finding <id>`; `report-only` ids name the finding in this report only and are not `idiom decide --finding` targets.";
+
+export const MATERIAL_DECISION_NOTE =
+  "Actionable findings above are recorded in findings.json and can be passed to `idiom decide --finding <id>`.";
+
 export function renderReport(options: {
   flow: string;
   commit: string;
@@ -294,8 +328,16 @@ export function renderReport(options: {
   outcome: ReviewOutcome;
   page?: PageReviewScope | undefined;
   advisory?: AdvisoryReview | undefined;
+  /** Text references the model saw in bounded form. */
+  truncatedReferences?: TruncatedReference[] | undefined;
+  /** Prompts whose deterministic findings context was bounded. */
+  deterministicContextLimits?: DeterministicContextLimit[] | undefined;
+  /** Set when the Claude Code critique split or left out evidence. */
+  critiqueEvidenceLimits?: CritiqueEvidenceLimits | undefined;
   suppressed?: SuppressedFinding[] | undefined;
   deferred?: Finding[] | undefined;
+  /** Deferred ids `idiom decide --finding` accepts; absent means all are report-only. */
+  deferredDecisionTargets?: ReadonlySet<string> | undefined;
   groups?: FindingGroup[] | undefined;
   severityOverrides?:
     | Array<{
@@ -307,6 +349,24 @@ export function renderReport(options: {
     | undefined;
 }): string {
   const axisAware = options.tuples.some((tuple) => tuple.colorSchemeAxis);
+  const truncatedReferencesLines =
+    (options.truncatedReferences ?? []).length === 0
+      ? []
+      : [
+          text(truncatedReferencesSentence(options.truncatedReferences ?? [])),
+          "",
+        ];
+  const deterministicContextLines =
+    (options.deterministicContextLimits ?? []).length === 0
+      ? []
+      : [
+          text(
+            deterministicContextSentence(
+              options.deterministicContextLimits ?? [],
+            ),
+          ),
+          "",
+        ];
   const heading =
     options.outcome.kind === "full"
       ? "Full"
@@ -348,6 +408,11 @@ export function renderReport(options: {
         ? "Model layer: completed successfully."
         : `Model layer: ${text(fallbackSentence(options.outcome.fallback))}`,
       "",
+      ...truncatedReferencesLines,
+      ...deterministicContextLines,
+      ...(options.critiqueEvidenceLimits === undefined
+        ? []
+        : [text(describeEvidenceLimits(options.critiqueEvidenceLimits)), ""]),
     );
   } else if (options.outcome.kind === "deterministic-only") {
     lines.push("Model layer: skipped by choice (`--deterministic-only`).", "");
@@ -355,8 +420,10 @@ export function renderReport(options: {
     lines.push(
       "## Model layer did not run",
       "",
-      `${text(options.outcome.reason)} Deterministic findings remain available.`,
+      `${text(degradedReasonSentence(options.outcome.reason))} Deterministic findings remain available.`,
       "",
+      ...truncatedReferencesLines,
+      ...deterministicContextLines,
     );
   }
   if (options.page !== undefined)
@@ -653,12 +720,19 @@ export function renderReport(options: {
   if ((options.deferred?.length ?? 0) === 0) {
     lines.push("None.", "");
   } else {
+    lines.push(DEFERRED_DECISION_LEGEND, "");
+    if (options.outcome.kind !== "quick" && options.page === undefined)
+      lines.push(MATERIAL_DECISION_NOTE, "");
     for (const finding of options.deferred ?? []) {
       const severityOverride = options.severityOverrides?.find(
         (item) => item.fingerprint === finding.fingerprint,
       );
+      const decisionLabel =
+        options.deferredDecisionTargets?.has(finding.id) === true
+          ? `Decision target: \`idiom decide --finding ${finding.id}\``
+          : "Report-only: not an `idiom decide --finding` target";
       lines.push(
-        `- ${finding.id} (${finding.severity}) — Layer: ${finding.layer}${finding.basisDetails?.kind === "judged" && finding.basisDetails.confidence !== undefined ? ` · Confidence: ${finding.basisDetails.confidence}` : ""} — ${text(finding.flow)} / ${text(finding.state)} / ${text(finding.viewport)}${finding.colorScheme === undefined ? "" : ` / ${finding.colorScheme}`}${finding.combination === undefined ? "" : ` [${text(finding.combination)}]`} — ${text(basisDescription(finding))} — ${text(finding.explanation)}${severityOverride === undefined ? "" : ` — Severity override: ${severityOverride.original} -> ${severityOverride.effective} by rule ${text(severityOverride.override.id)} (${text(severityOverride.override.reason)})`}`,
+        `- ${finding.id} (${finding.severity}) — ${decisionLabel} — Layer: ${finding.layer}${finding.basisDetails?.kind === "judged" && finding.basisDetails.confidence !== undefined ? ` · Confidence: ${finding.basisDetails.confidence}` : ""} — ${text(finding.flow)} / ${text(finding.state)} / ${text(finding.viewport)}${finding.colorScheme === undefined ? "" : ` / ${finding.colorScheme}`}${finding.combination === undefined ? "" : ` [${text(finding.combination)}]`} — ${text(basisDescription(finding))} — ${text(finding.explanation)}${severityOverride === undefined ? "" : ` — Severity override: ${severityOverride.original} -> ${severityOverride.effective} by rule ${text(severityOverride.override.id)} (${text(severityOverride.override.reason)})`}`,
       );
       if (finding.evidence.designDrift)
         lines.push(

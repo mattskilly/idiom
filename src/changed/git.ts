@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { IdiomError } from "../errors.js";
@@ -115,4 +117,40 @@ export async function collectChanges(
       .sort()
       .map((path) => ({ path, absolute: resolve(repository, path) })),
   };
+}
+
+/**
+ * Content identity of the working tree: HEAD's tree, the binary diff against
+ * it, and every untracked file's content. Equal identities mean equal build
+ * inputs, whatever commit or dirt the tree is at.
+ */
+export async function workingTreeIdentity(
+  repository: string,
+  git: GitRead = readGit,
+): Promise<string> {
+  const hash = createHash("sha256");
+  hash.update((await git(repository, ["rev-parse", "HEAD^{tree}"])).trim());
+  hash.update("\0");
+  hash.update(await git(repository, ["diff", "--binary", "HEAD", "--"]));
+  hash.update("\0");
+  const untracked = (
+    await git(repository, ["ls-files", "--others", "--exclude-standard", "-z"])
+  )
+    .split("\0")
+    .filter(Boolean)
+    .sort();
+  for (const path of untracked) {
+    hash.update(`${path}\0`);
+    try {
+      hash.update(
+        createHash("sha256")
+          .update(await readFile(resolve(repository, path)))
+          .digest("hex"),
+      );
+    } catch {
+      hash.update("unreadable");
+    }
+    hash.update("\0");
+  }
+  return `sha256:${hash.digest("hex")}`;
 }

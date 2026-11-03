@@ -41,6 +41,7 @@ export class ScrollbarController {
         hidden: false,
       });
       this.script = await this.page.addInitScript((key: string) => {
+        if (window !== window.top && self.origin === "null") return;
         // Constructed sheets work under restrictive style-src CSP. A layer and
         // zero specificity let normal author scrollbar sizing/hiding win.
         const sheet = new CSSStyleSheet();
@@ -75,13 +76,15 @@ export class ScrollbarController {
     await this.bounded(async () => {
       await script?.dispose();
       if (this.page.isClosed()) return;
+      // Hide first: removing the sheet rebuilds the scrollbars, and they must
+      // be rebuilt under the hidden emulation or they keep their gutter.
+      await this.session.send("Emulation.setScrollbarsHidden", {
+        hidden: true,
+      });
       await this.page.evaluate((key) => {
         const cleanup = Reflect.get(window, key);
         if (typeof cleanup === "function") cleanup();
       }, this.key);
-      await this.session.send("Emulation.setScrollbarsHidden", {
-        hidden: true,
-      });
     });
   }
 

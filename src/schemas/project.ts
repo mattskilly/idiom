@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { validGlob } from "../../hooks/lib.mjs";
+import { validGlob } from "../../plugins/claude/hooks/lib.mjs";
 import { filmstripConfigSchema } from "../checks/filmstrip-schema.js";
 import { parseCssColor } from "../checks/shared.js";
 import { designTokensSchema } from "../system/learn/schema.js";
@@ -388,6 +388,12 @@ export const checksConfigSchema = z
         waitMs: z.number().int().min(0).default(350),
         controlTimeoutMs: z.number().int().positive().default(5000),
         stateTimeoutMs: z.number().int().positive().default(60000),
+        /** Run target for the whole probe in ms (resolved default 400000); 0 = no target. No zod default: keeps config hashes stable. */
+        flowBudgetMs: z.number().int().min(0).optional(),
+        /** Open disclosures and check what they reveal (resolved default true). No zod default. */
+        disclosures: z.boolean().optional(),
+        /** Revealed-state observations per state (resolved default 12); 0 = none. No zod default. */
+        maxRevealed: z.number().int().min(0).optional(),
       })
       .strict()
       .default({
@@ -400,6 +406,27 @@ export const checksConfigSchema = z
         controlTimeoutMs: 5000,
         stateTimeoutMs: 60000,
       }),
+    /**
+     * `idiom check --gate`: the build gate's wall-clock budget (resolved
+     * default 180000) and globs of changed files that never affect the UI.
+     * No zod default: keeps config hashes stable.
+     */
+    gate: z
+      .object({
+        budgetMs: z.number().int().min(1).optional(),
+        nonUi: z
+          .array(
+            z
+              .string()
+              .refine(
+                validGlob,
+                "must be a project-relative glob using *, ? or **; braces, negation and extglobs are unsupported",
+              ),
+          )
+          .optional(),
+      })
+      .strict()
+      .optional(),
     disguisedControl: z
       .object({ placeholderPatterns: regexList, ignore: selectorList })
       .strict()
@@ -539,6 +566,10 @@ export const checksConfigSchema = z
       })
       .strict()
       .prefault({}),
+    nestedBorder: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
     images: z
       .object({
         enabled: z.boolean().default(true),
@@ -584,9 +615,15 @@ export type CheckMark = {
     | "naming"
     | "cta"
     | "adjacent-region"
-    | "sibling-region";
+    | "sibling-region"
+    | "brief";
   selector: string;
 };
+
+/** A decided brief's assertion selectors, resolved like configured marks. */
+export function briefMarks(selectors: readonly string[] = []): CheckMark[] {
+  return selectors.map((selector) => ({ purpose: "brief" as const, selector }));
+}
 
 /**
  * Configured selectors the capture resolves into the observation artifact,
@@ -690,6 +727,148 @@ const coverageSchema = z
   .object({ exclude: z.array(z.string().trim().min(1)).default([]) })
   .strict();
 
+const briefSectionContents = [
+  "decision",
+  "options",
+  "criteria",
+  "outOfScope",
+  "evidence",
+  "references",
+  "text",
+] as const;
+export type BriefSectionContent = (typeof briefSectionContents)[number];
+
+const briefSectionSchema = z
+  .object({
+    heading: z.string().trim().min(1).max(80),
+    content: z.enum(briefSectionContents),
+    /** Fixed Markdown for a `text` section; required there and nowhere else. */
+    body: z.string().trim().min(1).optional(),
+  })
+  .strict();
+export type BriefSection = z.infer<typeof briefSectionSchema>;
+
+const briefReferenceSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    /** Documented tiers: bar, always, floor. */
+    tier: z
+      .string()
+      .trim()
+      .regex(/^[a-z][a-z0-9-]*$/, "must be a lowercase tier such as bar"),
+    note: z.string().trim().min(1),
+    url: z.string().url().optional(),
+  })
+  .strict();
+export type BriefReference = z.infer<typeof briefReferenceSchema>;
+
+/** Sections the rendered brief must carry exactly once. */
+const requiredBriefSections = ["decision", "criteria", "evidence"] as const;
+
+/** `idiom brief`: the bar-setting products and the brief's ticket headings. */
+export const briefConfigSchema = z
+  .object({
+    $comment: z.string().optional(),
+    ticketTemplate: z
+      .object({ sections: z.array(briefSectionSchema).min(1) })
+      .strict()
+      .optional(),
+    references: z.array(briefReferenceSchema).default([]),
+    /** `idiom brief "<request>" --research`: the run's wall-clock budget. */
+    researchBudgetMs: z.number().int().min(60_000).max(3_600_000).optional(),
+    /** Web searches allowed per research question. */
+    researchMaxSearches: z.number().int().min(1).max(20).optional(),
+  })
+  .strict()
+  .superRefine((brief, context) => {
+    const sections = brief.ticketTemplate?.sections;
+    if (sections === undefined) return;
+    const seen = new Map<string, number>();
+    for (const [index, section] of sections.entries()) {
+      const path = ["ticketTemplate", "sections", index];
+      if (section.content === "text" && section.body === undefined)
+        context.addIssue({
+          code: "custom",
+          path: [...path, "body"],
+          message: "a text section needs a body",
+        });
+      if (section.content !== "text" && section.body !== undefined)
+        context.addIssue({
+          code: "custom",
+          path: [...path, "body"],
+          message: "only a text section takes a body",
+        });
+      if (section.content === "text") continue;
+      const prior = seen.get(section.content);
+      if (prior !== undefined)
+        context.addIssue({
+          code: "custom",
+          path: [...path, "content"],
+          message: `${JSON.stringify(section.content)} already appears at sections[${prior}]`,
+        });
+      else seen.set(section.content, index);
+    }
+    for (const content of requiredBriefSections)
+      if (!seen.has(content))
+        context.addIssue({
+          code: "custom",
+          path: ["ticketTemplate", "sections"],
+          message: `must include a ${JSON.stringify(content)} section`,
+        });
+  });
+export type BriefConfig = z.infer<typeof briefConfigSchema>;
+
+/** Autobuild's spec standard. */
+export const DEFAULT_BRIEF_TICKET_TEMPLATE: BriefSection[] = [
+  { heading: "What and why", content: "decision" },
+  { heading: "Acceptance criteria", content: "criteria" },
+  { heading: "Out of scope", content: "outOfScope" },
+  { heading: "Evidence", content: "evidence" },
+];
+
+export const DEFAULT_BRIEF_RESEARCH_BUDGET_MS = 900_000;
+export const DEFAULT_BRIEF_RESEARCH_MAX_SEARCHES = 5;
+
+/** `checks.gate.budgetMs` when unset: three minutes. */
+export const DEFAULT_GATE_BUDGET_MS = 180_000;
+
+export type GateSettings = { budgetMs: number; nonUi: string[] };
+
+export function resolveGateConfig(project: {
+  checks: {
+    gate?:
+      | { budgetMs?: number | undefined; nonUi?: string[] | undefined }
+      | undefined;
+  };
+}): GateSettings {
+  return {
+    budgetMs: project.checks.gate?.budgetMs ?? DEFAULT_GATE_BUDGET_MS,
+    nonUi: project.checks.gate?.nonUi ?? [],
+  };
+}
+
+export type BriefSettings = {
+  sections: BriefSection[];
+  references: BriefReference[];
+  researchBudgetMs: number;
+  researchMaxSearches: number;
+};
+
+export function briefSettings(
+  project: { brief?: BriefConfig | undefined } | undefined,
+): BriefSettings {
+  return {
+    sections:
+      project?.brief?.ticketTemplate?.sections ?? DEFAULT_BRIEF_TICKET_TEMPLATE,
+    references: project?.brief?.references ?? [],
+    researchBudgetMs:
+      project?.brief?.researchBudgetMs ?? DEFAULT_BRIEF_RESEARCH_BUDGET_MS,
+    researchMaxSearches:
+      project?.brief?.researchMaxSearches ??
+      DEFAULT_BRIEF_RESEARCH_MAX_SEARCHES,
+  };
+}
+
 const projectInputSchema = z
   .object({
     version: z.literal(1),
@@ -709,6 +888,8 @@ const projectInputSchema = z
         env: z.record(z.string(), z.string()),
         production: productionSchema.optional(),
         startupTimeoutMs: z.number().default(60_000),
+        /** Reuse a server already answering at readyUrl instead of starting one. No default. */
+        reuse: z.boolean().optional(),
       })
       .strict(),
     viewports: z.array(viewportSchema).default([
@@ -727,6 +908,11 @@ const projectInputSchema = z
         colorScheme: colorSchemeSchema.default("light"),
         colorSchemeAttribute: htmlAttributeNameSchema.optional(),
         reducedMotion: z.boolean().default(true),
+        /**
+         * Make navigator.webdriver read false, for apps that turn motion off
+         * under automation. No default: keeps existing config hashes stable.
+         */
+        hideWebdriver: z.boolean().optional(),
         fullPage: z.boolean().default(true),
         settleMs: z.number().default(250),
         animationSettleMs: z.number().finite().nonnegative().default(1500),
@@ -770,6 +956,14 @@ const projectInputSchema = z
       .optional(),
     checks: checksConfigSchema.default(defaultChecksSettings),
     coverage: coverageSchema.optional(),
+    brief: briefConfigSchema.optional(),
+    findingNames: z
+      .object({
+        /** Skip the primary checkout's finding-name memory; for throwaway worktrees. */
+        isolatedRegistry: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     model: z
       .object({
         provider: critiqueProviderSchema,

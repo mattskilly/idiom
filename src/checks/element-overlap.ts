@@ -23,6 +23,12 @@ function isBadge(element: ObservedElementV2): boolean {
  * Overlays (dialogs, menus, popovers, fixed layers) are separate layers and
  * never compared with the page beneath them. Overlaps no hit-test point
  * could sample (below the fold, geometry only) are reported as minor.
+ *
+ * The deliberate exception is `idiom:popover-covers-control`: an open,
+ * non-modal overlay whose box covers a visible, enabled field outside it, or
+ * the control that opened it beyond its anchor edge. A field the overlay
+ * hides is major when the hit test confirms it; the trigger, or a cover
+ * below the fold, is minor.
  */
 export const elementOverlapCheck: DeterministicCheck = {
   id: "element-overlap",
@@ -35,7 +41,12 @@ export const elementOverlapCheck: DeterministicCheck = {
         this.id,
         "observations predate overlap signals (recapture)",
       );
-    const gate = paintedGate(tuple, ["idiom:elements-overlap"]);
+    const gate = paintedGate(tuple, [
+      "idiom:elements-overlap",
+      ...(observation.popoverCovers === undefined
+        ? []
+        : ["idiom:popover-covers-control"]),
+    ]);
     const bySelector = new Map(
       observation.elements.map((element) => [element.selector, element]),
     );
@@ -90,6 +101,45 @@ export const elementOverlapCheck: DeterministicCheck = {
         ],
         verification: verify(this.id, {
           selectors: [overlap.a, overlap.b],
+          overlap: { width, height },
+          viewportWidth: tuple.width,
+        }),
+      });
+    }
+    for (const cover of observation.popoverCovers ?? []) {
+      if (
+        !gate.allows(
+          "idiom:popover-covers-control",
+          cover.overlay,
+          cover.target,
+        )
+      )
+        continue;
+      const geometryOnly = cover.samples === 0;
+      const width = round(cover.rect.width);
+      const height = round(cover.rect.height);
+      const what =
+        cover.targetRole === "field"
+          ? `the field ${cover.target}`
+          : `the control that opened it (${cover.target}) beyond its anchor edge`;
+      candidates.push({
+        category: this.id,
+        severity:
+          cover.targetRole === "field" && !geometryOnly ? "major" : "minor",
+        rule: "idiom:popover-covers-control",
+        selectorHint: cover.overlay,
+        fingerprintHint: `${cover.overlay} | ${cover.target}`,
+        explanation: `The open overlay ${cover.overlay} covers ${what} by ${width}×${height}px at ${tuple.width}px${
+          geometryOnly
+            ? " (below the fold, geometry only)"
+            : ` (${cover.hits}/${cover.samples} hit-test points land on the overlay)`
+        }.`,
+        acceptance: [
+          `While ${cover.overlay} is open, ${cover.target} stays visible and reachable: the overlay closes, or opens where it does not cover it, at ${tuple.width}px.`,
+        ],
+        verification: verify(this.id, {
+          selectors: [cover.overlay, cover.target],
+          targetRole: cover.targetRole,
           overlap: { width, height },
           viewportWidth: tuple.width,
         }),

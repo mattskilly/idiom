@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "app": { "name": "Gate fixture", "framework": "nextjs" },
+  "server": {
+    "build": "node -e 0",
+    "start": "node server.mjs",
+    "readyUrl": "http://127.0.0.1:3170/ready",
+    "port": 3170,
+    "env": { "PORT": "3170" }
+  },
+  "viewports": [
+    { "name": "desktop", "width": 1280, "height": 800 },
+    { "name": "mobile", "width": 390, "height": 844 }
+  ],
+  "colorSchemes": ["light", "dark"],
+  "capture": { "settleMs": 50 },
+  "design": {},
+  "model": { "provider": "anthropic", "model": "unused" }
+}

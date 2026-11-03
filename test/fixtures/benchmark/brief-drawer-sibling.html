@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Add drawer</title>
+<style>
+body { margin: 0; font: 14px/1.4 system-ui, sans-serif; color: #111; background: #fff; }
+.drawer { display: grid; grid-template-columns: repeat(3, 120px); gap: 12px; padding: 16px; width: 384px; }
+.drawer-item { display: flex; flex-direction: column; gap: 0; }
+.tile { box-sizing: border-box; height: 56px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; background: #f6f6f6; }
+.pin { box-sizing: border-box; height: 44px; width: 100%; margin: 0; border: 1px solid #999; border-radius: 6px; background: #fff; color: #111; font: inherit; }
+</style>
+<body><main><h1>Add</h1><section class="drawer" aria-label="Add drawer">
+<div class="drawer-item"><div class="tile">Heading</div><button class="pin" type="button">Pin Heading</button></div>
+<div class="drawer-item"><div class="tile">Text</div><button class="pin" type="button">Pin Text</button></div>
+<div class="drawer-item"><div class="tile">Image</div><button class="pin" type="button">Pin Image</button></div>
+</section></main></body></html>

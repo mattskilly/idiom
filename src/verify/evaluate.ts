@@ -495,9 +495,15 @@ export function evaluateVerification(options: {
       finding,
       acceptance,
       status: locus.changed ? "fixed" : "reproduced",
-      reason: locus.changed
-        ? `negotiated ${calibration.negotiated} evidence changed within ${locus.source}`
-        : `negotiated ${calibration.negotiated} evidence is unchanged within ${locus.source}`,
+      reason: `${
+        locus.changed
+          ? `negotiated ${calibration.negotiated} evidence changed within ${locus.source}`
+          : `negotiated ${calibration.negotiated} evidence is unchanged within ${locus.source}`
+      }${
+        locus.pairTextSuppression.paths.length === 0
+          ? ""
+          : `; pair-level text suppression on ${locus.pairTextSuppression.paths.length} path(s)`
+      }`,
       locus,
     };
   });

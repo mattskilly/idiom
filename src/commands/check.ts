@@ -15,14 +15,17 @@ import {
   summarizeFinding,
 } from "../baseline/summary.js";
 import type { CaptureScope } from "../capture/scope.js";
+import { type CheckTiming, checkTiming } from "../capture/timings.js";
 import type { ProductionBuild } from "../capture/types.js";
 import type { PaintedCoverageReport } from "../checks/painted.js";
 import { projectChecksConfig } from "../checks/project-config.js";
+import { briefCoverageLines } from "../coverage/briefs.js";
+import { probeCoverageLines } from "../coverage/probe.js";
 import {
   type FlowStateCoverage,
   stateCoverageLine,
 } from "../coverage/states.js";
-import { IdiomError } from "../errors.js";
+import { IdiomError, RunFailure } from "../errors.js";
 import { acceptanceText, basisDescription } from "../findings/presentation.js";
 import { loadRunTuples, resolveStoredRun } from "../review/artifacts.js";
 import { describeSpread, isRepeated } from "../review/groups.js";
@@ -35,6 +38,7 @@ import { type CheckGroup, projectIssueSummary } from "../review/summary.js";
 
 export type { CheckGroup } from "../review/summary.js";
 
+import { preflightRun, validateForRun } from "../preflight.js";
 import type { ReviewOutcome } from "../review/report.js";
 import {
   type ReviewDependencies,
@@ -54,6 +58,10 @@ import { deterministicFingerprintSet } from "../verify/evaluate.js";
 export type CheckSummary = PaintedCoverageReport & {
   scope?: import("../capture/run-record.js").RunRecord | undefined;
   timings?: import("../capture/timings.js").RunTimings | undefined;
+  /** Wall clock and per-phase breakdown; the CLI's last `Timing:` line. */
+  timing?: CheckTiming | undefined;
+  /** `idiom check --gate`: the plan this flow ran under and what it skipped. */
+  gate?: import("../gate/types.js").GateReportSection | undefined;
   coverage?: import("../report/coverage.js").ReportCoverage | undefined;
   tickets?: ClusterTicketsResult | undefined;
   build?: ProductionBuild | undefined;
@@ -77,6 +85,8 @@ export type CheckSummary = PaintedCoverageReport & {
   advisory?: CheckAdvisory | undefined;
   /** Repeated off-scale values held as questions instead of findings. */
   designSystemQuestions?: CheckDesignSystemQuestion[] | undefined;
+  /** One line when the primary checkout's finding names diverged. */
+  findingNameWarning?: string | undefined;
 };
 
 export type CheckDesignSystemQuestion = {
@@ -126,6 +136,17 @@ export type CheckOptions = {
   port?: number | undefined;
   /** Refetch pinned Figma frames. */
   refreshDesign?: boolean | undefined;
+  /** Probe run target for this run only (`--probe-budget`); 0 = no target. */
+  probeBudgetMs?: number | undefined;
+  /** Reuse a server already answering at `server.readyUrl` (`--reuse-server`). */
+  reuseServer?: boolean | undefined;
+  /** Build gate levers (`idiom check --gate`); never set by a plain check. */
+  probeDisabled?: boolean | undefined;
+  probeRegions?:
+    | ReadonlyMap<string, import("../capture/probe.js").ProbeRegion>
+    | undefined;
+  inputIdentity?: string | undefined;
+  gateReport?: import("../gate/types.js").GateReportSection | undefined;
   from?: string | undefined;
   latest?: boolean | undefined;
   /** Report only findings this stored run did not already have. */
@@ -136,6 +157,8 @@ export type CheckOptions = {
   emitTickets?: string | undefined;
   /** Also run the advisory design-intent review; never affects the gate. */
   advisory?: boolean | undefined;
+  /** Ignore the primary checkout's finding names (throwaway worktrees). */
+  isolatedRegistry?: boolean | undefined;
   dependencies?: ReviewDependencies | undefined;
 };
 
@@ -157,6 +180,8 @@ export async function checkWithReview(
     recordAgentCheck?: boolean;
   },
 ): Promise<{ summary: CheckSummary; review: ReviewRunResult }> {
+  const clock = options.dependencies?.monotonicNow ?? (() => performance.now());
+  const started = clock();
   const {
     baseline,
     sinceBaseline,
@@ -182,11 +207,12 @@ export async function checkWithReview(
   let recordedMode = all !== true && baseline === undefined;
   let baselineNotApplied: string | undefined;
   let bootstrap: Parameters<typeof recordBaseline>[0] | undefined;
+  // Preflight: everything that can refuse the run does so here, before a
+  // server starts or a capture begins.
+  const validated = await validateForRun(options);
+  const flow = validated.flows[0]?.flow;
+  if (flow === undefined) throw new IdiomError(`unknown flow ${options.flow}`);
   if (recordedMode) {
-    const validated = await validateProject(options);
-    const flow = validated.flows[0]?.flow;
-    if (flow === undefined)
-      throw new IdiomError(`unknown flow ${options.flow}`);
     const { selected, path } = await resolveRunBaseline({
       validated,
       flow,
@@ -195,9 +221,12 @@ export async function checkWithReview(
     });
     if (selected === undefined) {
       if (sinceBaseline === true || baselineFile !== undefined)
-        throw new IdiomError(
-          `no recorded baseline for "${flow.id}" reachable from HEAD in ${path}; run idiom baseline record ${flow.id} on a clean committed tree and commit it`,
-        );
+        throw new RunFailure({
+          stage: "preflight",
+          cause: "baseline-missing",
+          headline: `no recorded baseline for "${flow.id}" reachable from HEAD in ${path}`,
+          hint: `run idiom baseline record ${flow.id} on a clean committed tree and commit it`,
+        });
       if (bootstrapBaseline === false) {
         recordedMode = false;
         baselineNotApplied =
@@ -206,6 +235,21 @@ export async function checkWithReview(
         bootstrap = { validated, flow, runDirectory: "", requireHead: true };
     }
   }
+  await preflightRun({
+    validated,
+    baseline:
+      bootstrap !== undefined &&
+      options.from === undefined &&
+      options.latest !== true
+        ? "record-from-fresh-capture"
+        : "none",
+    allHint: true,
+    capture:
+      options.from === undefined && options.latest !== true
+        ? { prod: options.prod }
+        : undefined,
+    isolatedRegistry: options.isolatedRegistry,
+  });
   const recording =
     recordAgentCheck === true &&
     options.from === undefined &&
@@ -226,20 +270,22 @@ export async function checkWithReview(
   });
   options.dependencies?.capture?.signal?.throwIfAborted();
   if (captureFailureIsError) {
-    const validated = await validateProject(options);
-    const flow = validated.flows[0]?.flow;
-    if (flow) {
-      const loaded = await loadRunTuples(validated, flow, result.runDirectory);
-      const failures = loaded.tuples.flatMap((tuple) =>
-        tuple.failure
-          ? [`${tuple.failure.stage}: ${tuple.failure.message}`]
-          : [],
-      );
-      if (failures.length)
-        throw new IdiomError(
-          `Capture failed: ${failures.join("; ")}. Reports: ${result.reportPath}, ${result.htmlReportPath}`,
-        );
-    }
+    const loaded = await loadRunTuples(validated, flow, result.runDirectory);
+    const failures = loaded.tuples.flatMap((tuple) =>
+      tuple.failure ? [`${tuple.failure.stage}: ${tuple.failure.message}`] : [],
+    );
+    if (failures.length)
+      throw new RunFailure({
+        stage: "capture",
+        cause: "capture-failed",
+        headline: `capture failed: ${failures.length} tuple(s): ${(failures[0] as string).split("\n")[0]}`,
+        detail: `Capture failed: ${failures.join("; ")}. Reports: ${result.reportPath}, ${result.htmlReportPath}`,
+        hint: failures.some((failure) =>
+          /executable doesn't exist|playwright install/i.test(failure),
+        )
+          ? "npx playwright install chromium, then rerun"
+          : "open the report for each failed tuple, fix the flow or the app, and rerun",
+      });
   }
   const baselineRecorded =
     bootstrap === undefined
@@ -384,6 +430,8 @@ export async function checkWithReview(
       })),
     };
   }
+  if (result.findingNameWarning !== undefined)
+    summary.findingNameWarning = result.findingNameWarning;
   summary.scope = result.scope;
   summary.timings = result.timings;
   summary.coverage = result.reportCoverage;
@@ -435,6 +483,7 @@ export async function checkWithReview(
       out: emitTickets,
       rootCauses,
       issueScores,
+      isolatedRegistry: options.isolatedRegistry,
       selection: { policy: "current-run", records },
     });
   }
@@ -444,6 +493,8 @@ export async function checkWithReview(
     result.reportCoverage,
     options.dependencies?.capture?.signal,
   );
+  if (options.gateReport !== undefined) summary.gate = options.gateReport;
+  summary.timing = checkTiming(result.timings, clock() - started);
   return { summary, review: result };
 }
 
@@ -477,7 +528,13 @@ export function renderCheckSummary(
     summary.baselineRecorded === undefined
       ? ""
       : `Automatically recorded baseline at ${summary.baselineRecorded.commit.slice(0, 12)} → ${summary.baselineRecorded.path}. Commit this file${summary.baselineRecorded.pixelCount > 0 ? ` and ${summary.baselineRecorded.pixelDirectory}` : ""}. Use idiom baseline accept ${summary.flow} after intentional changes.\n`;
-  const covered = withStateCoverage(output, summary.coverage?.stateCoverage);
+  const covered = withBriefCoverage(
+    withProbeCoverage(
+      withStateCoverage(output, summary.coverage?.stateCoverage),
+      summary.coverage,
+    ),
+    summary.coverage,
+  );
   return (
     notice +
     (summary.tickets === undefined
@@ -501,6 +558,46 @@ function withStateCoverage(
   if (last.startsWith("Full report: "))
     return `${[...lines.slice(0, -1), line, last].join("\n")}\n`;
   return `${[...lines, line].join("\n")}\n`;
+}
+
+/**
+ * How much of each state the interaction probe exercised, with a warning
+ * when too much went unreached; placed like the state coverage line.
+ */
+function withProbeCoverage(
+  output: string,
+  coverage: CheckSummary["coverage"],
+): string {
+  const probe = coverage?.probeCoverage;
+  if (probe === undefined) return output;
+  const { header, states, warning } = probeCoverageLines(
+    probe,
+    coverage?.stateLabels,
+  );
+  const block = [
+    header,
+    ...states.map((line) => `  ${line}`),
+    ...(warning === undefined ? [] : [`Warning: ${warning}`]),
+  ];
+  const lines = output.replace(/\n$/, "").split("\n");
+  const last = lines.at(-1) ?? "";
+  if (last.startsWith("Full report: "))
+    return `${[...lines.slice(0, -1), ...block, last].join("\n")}\n`;
+  return `${[...lines, ...block].join("\n")}\n`;
+}
+
+/** Which decided briefs were checked; placed like the state coverage line. */
+function withBriefCoverage(
+  output: string,
+  coverage: CheckSummary["coverage"],
+): string {
+  if (coverage?.briefCoverage === undefined) return output;
+  const block = briefCoverageLines(coverage.briefCoverage);
+  const lines = output.replace(/\n$/, "").split("\n");
+  const last = lines.at(-1) ?? "";
+  if (last.startsWith("Full report: "))
+    return `${[...lines.slice(0, -1), ...block, last].join("\n")}\n`;
+  return `${[...lines, ...block].join("\n")}\n`;
 }
 
 /**

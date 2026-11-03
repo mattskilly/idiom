@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Docked panel and banner</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d1d1f; }
+  .layout { display: flex; align-items: flex-start; }
+  .rail { width: 64px; padding: 16px 8px; border-right: 1px solid #ddd; }
+  .inspector { width: 280px; padding: 16px; border-right: 1px solid #ddd; background: #f7f7f8; }
+  main { flex: 1; padding: 24px; }
+  .canvas { height: 320px; border: 1px dashed #aaa; }
+  .banner { box-sizing: border-box; height: 48px; padding: 12px 24px; background: #fff4d6; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="rail"><button id="inspect" type="button" aria-expanded="false">Inspect</button></nav>
+  <main>
+    <h1>Canvas</h1>
+    <p class="hint">Select a layer to edit its properties.</p>
+    <div class="canvas"></div>
+  </main>
+</div>
+<script>
+  // The user asked for the inspector: it docks beside the rail and pushes the canvas.
+  document.getElementById("inspect").addEventListener("click", (event) => {
+    const button = event.currentTarget;
+    if (button.getAttribute("aria-expanded") === "true") return;
+    button.setAttribute("aria-expanded", "true");
+    const panel = document.createElement("aside");
+    panel.className = "inspector";
+    panel.setAttribute("aria-label", "Inspector");
+    panel.innerHTML = "<h2>Inspector</h2><p>No layer selected.</p>";
+    button.closest(".rail").after(panel);
+    // Unrelated to the panel: a banner inserted at the top pushes everything.
+    const banner = document.createElement("div");
+    banner.className = "banner";
+    banner.setAttribute("role", "status");
+    banner.textContent = "Autosave is on.";
+    document.body.prepend(banner);
+  });
+</script>
+</body>
+</html>

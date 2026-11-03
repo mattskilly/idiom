@@ -328,7 +328,11 @@ export const adjacentGapCheck: DeterministicCheck = {
           ? observed.elements
           : observed.elements.filter(isElementPainted);
       const rawBoxes = observed.elements.filter((element) => {
-        if (isVisuallyHidden(element) || excludedTags.has(element.tag))
+        if (
+          isVisuallyHidden(element) ||
+          element.spacingExcluded !== undefined ||
+          excludedTags.has(element.tag)
+        )
           return false;
         if (
           element.styles.display === "inline" ||

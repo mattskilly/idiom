@@ -14,6 +14,11 @@ import { basename, dirname, join } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { planAutobuildWiring } from "../autobuild/wiring.js";
+import {
+  type BriefInstructionOutcome,
+  briefInstructionLines,
+  offerBriefInstruction,
+} from "../brief/instruction.js";
 import { sanitizeCritiqueDiagnostic } from "../critique/claude-code.js";
 import {
   type GenerateFlow,
@@ -71,7 +76,8 @@ export type InitConfirmationRequest =
       kind: "replace-autobuild-skill";
       prompt: string;
       path: string;
-    };
+    }
+  | { kind: "offer-brief-instruction"; prompt: string; path: string };
 
 export type Confirmation = (
   request: InitConfirmationRequest,
@@ -93,6 +99,8 @@ export type InitResult = {
   skipped: string[];
   skillWarnings?: string[];
   autobuild: AutobuildInitOutcome;
+  /** The offer to add the idiom brief instruction to CLAUDE.md or AGENTS.md. */
+  briefInstruction: BriefInstructionOutcome[];
   systemLearning: {
     kind:
       | "not-detected"
@@ -230,7 +238,7 @@ async function installSkills(
   else result.skipped.push(claudeSkillPath);
 }
 
-async function defaultConfirmation(
+export async function defaultConfirmation(
   request: InitConfirmationRequest,
 ): Promise<boolean> {
   const readline = createInterface({ input: stdin, output: stdout });
@@ -547,6 +555,7 @@ export async function initProject(options: {
     unchanged: [],
     skipped: [],
     autobuild: { kind: "not-detected" },
+    briefInstruction: [],
     systemLearning: { kind: "not-detected" },
     flows: { kind: "not-requested" },
   };
@@ -696,6 +705,13 @@ export async function initProject(options: {
       );
     }
   }
+  result.briefInstruction = await offerBriefInstruction({
+    projectDirectory,
+    interactive:
+      options.yes !== true &&
+      (options.confirm !== undefined || stdin.isTTY === true),
+    confirm,
+  });
   const sources = await discoverSources(projectDirectory);
   if (sources.length) {
     if (options.yes || (!options.confirm && !stdin.isTTY)) {
@@ -854,5 +870,6 @@ export function initSummaryLines(result: InitResult): string[] {
     lines.push("Make this addition by hand:");
     lines.push(result.autobuild.addition);
   }
+  lines.push(...briefInstructionLines(result.briefInstruction));
   return lines;
 }

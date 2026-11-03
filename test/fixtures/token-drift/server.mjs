@@ -4,7 +4,10 @@ import { createServer } from "node:http";
 const port = Number(process.env.PORT);
 const primitives = await readFile(new URL("primitives.css", import.meta.url));
 const theme = await readFile(new URL("theme.css", import.meta.url));
-const page = `<!doctype html>
+// Reacts to the mutations token normalization once made in the captured page
+// (probe children of body, root font-size writes) and to focus changes.
+const observer = await readFile(new URL("observer.js", import.meta.url));
+const page = (extra = "") => `<!doctype html>
   <link rel="stylesheet" href="/primitives.css">
   <link rel="stylesheet" href="/theme.css">
   <style>
@@ -19,7 +22,7 @@ const page = `<!doctype html>
   <p id="muted">Muted foreground</p>
   <p id="accent">Accent</p>
   <p id="direct">Direct token</p>
-  <p id="undeclared">Undeclared color</p>`;
+  <p id="undeclared">Undeclared color</p>${extra}`;
 
 const server = createServer((request, response) => {
   if (request.url === "/primitives.css") {
@@ -33,7 +36,9 @@ const server = createServer((request, response) => {
     return;
   }
   response.writeHead(200, { "content-type": "text/html" });
-  response.end(page);
+  response.end(
+    request.url === "/observed" ? page(`<script>${observer}</script>`) : page(),
+  );
 });
 
 server.listen(port, "127.0.0.1");

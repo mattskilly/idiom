@@ -21,23 +21,36 @@ import {
   groupFindings,
   observationLoader,
 } from "./cluster.js";
-import { indexTickets, readIndexedTicket, ticketsForLineage } from "./index.js";
+import {
+  indexTickets,
+  type MalformedTicket,
+  malformedFromFindingNames,
+  malformedTickets,
+  malformedTicketsForLineage,
+  readIndexedTicket,
+  ticketsForLineage,
+  unionMalformed,
+} from "./index.js";
 import { rankClusters, type TicketScores } from "./ranking.js";
 import { renderClusterTicket } from "./render.js";
 import { sweepTicketEvidence } from "./sweep-evidence.js";
-import { resolveTicketTarget } from "./target.js";
+import { physicalPath, resolveTicketTarget } from "./target.js";
 
 export type ClusterTicketOutcome =
   | { kind: "created"; findingIds: string[]; ticketId: string; path: string }
   | { kind: "already-emitted"; findingId: string; path: string; state: string }
   | { kind: "already-resolved"; findingId: string; status: string }
-  | { kind: "conflict"; findingId: string; paths: string[] };
+  | { kind: "conflict"; findingId: string; paths: string[] }
+  /** A malformed tracker ticket may own this lineage; nothing was emitted. */
+  | { kind: "blocked"; findingId: string; paths: string[] };
 export type ClusterTicketsResult = {
   projectDirectory: string;
   outputDirectory: string;
   createdPaths: string[];
   outcomes: ClusterTicketOutcome[];
   ineligible: string[];
+  /** Tracker tickets whose embedded records don't parse; reported, not thrown. */
+  malformed: MalformedTicket[];
   omittedCount?: number;
   selectedClusters?: FindingCluster[];
 };
@@ -49,6 +62,8 @@ export type ClusterTicketsOptions = {
   /** Root cause per source finding id (before lineage canonicalisation). */
   rootCauses?: ReadonlyMap<string, ClusterCause> | undefined;
   issueScores?: TicketScores | undefined;
+  /** Ignore the primary checkout's finding names; defaults to the config. */
+  isolatedRegistry?: boolean | undefined;
 };
 
 export async function emitClusterTickets(
@@ -92,6 +107,17 @@ export async function emitClusterTickets(
     createdPaths: [],
     outcomes: [],
     ineligible: [],
+    malformed: unionMalformed(
+      malformedTickets(index),
+      await Promise.all(
+        malformedFromFindingNames(catalog.names.malformedTickets).map(
+          async (ticket) => ({
+            ...ticket,
+            path: await physicalPath(ticket.path),
+          }),
+        ),
+      ),
+    ),
     omittedCount: 0,
     selectedClusters: [],
   };
@@ -106,6 +132,15 @@ export async function emitClusterTickets(
     const lineage = findCatalogLineage(catalog, id);
     const accepted =
       lineageDecision(lineage, decisions, record)?.decision === "accept";
+    const blockers = malformedTicketsForLineage(index, lineage);
+    if (blockers.length > 0) {
+      result.outcomes.push({
+        kind: "blocked",
+        findingId: id,
+        paths: blockers.map((ticket) => ticket.path),
+      });
+      continue;
+    }
     if (accepted) acceptedIds.add(id);
     const owners = ticketsForLineage(index, lineage);
     if (owners.length > 1) {
@@ -250,6 +285,19 @@ export async function emitClusterTickets(
       existed = true;
     }
     const published = await readIndexedTicket(path, target.root, "triage");
+    if (published.error !== undefined) {
+      // Only an existing same-name file can be malformed; it owns nothing provably.
+      for (const member of cluster.members)
+        result.outcomes.push({
+          kind: "blocked",
+          findingId: member.id,
+          paths: [path],
+        });
+      result.malformed = unionMalformed(result.malformed, [
+        { path, state: published.state, error: published.error },
+      ]);
+      continue;
+    }
     index.push(published);
     if (existed) {
       // A same-name file is only a retry when its embedded identities cover each member.
@@ -307,18 +355,26 @@ export function renderClusterTicketsResult(
   const conflicts = result.outcomes.filter(
     (outcome) => outcome.kind === "conflict",
   ).length;
-  const skipped = result.outcomes.length - created - conflicts;
+  const blocked = result.outcomes.filter(
+    (outcome) => outcome.kind === "blocked",
+  ).length;
+  const skipped = result.outcomes.length - created - conflicts - blocked;
   return [
-    `Tickets: ${created} created, ${skipped} skipped, ${conflicts} conflict(s), ${result.ineligible.length} ineligible — ${result.outputDirectory}`,
+    `Tickets: ${created} created, ${skipped} skipped, ${conflicts} conflict(s), ${blocked > 0 ? `${blocked} blocked, ` : ""}${result.ineligible.length} ineligible — ${result.outputDirectory}`,
     ...result.outcomes.map((outcome) =>
       outcome.kind === "created"
         ? `${outcome.findingIds.join(", ")}: created ${outcome.path}`
         : outcome.kind === "conflict"
           ? `${outcome.findingId}: conflict — ${outcome.paths.join(", ")}`
-          : outcome.kind === "already-emitted"
-            ? `${outcome.findingId}: already emitted in ${outcome.state} — ${outcome.path}`
-            : `${outcome.findingId}: already resolved (${outcome.status})`,
+          : outcome.kind === "blocked"
+            ? `${outcome.findingId}: blocked by malformed tracker ticket — ${outcome.paths.join(", ")}`
+            : outcome.kind === "already-emitted"
+              ? `${outcome.findingId}: already emitted in ${outcome.state} — ${outcome.path}`
+              : `${outcome.findingId}: already resolved (${outcome.status})`,
     ),
     ...result.ineligible.map((id) => `${id}: not eligible; no ticket emitted`),
+    ...result.malformed.map(
+      (ticket) => `malformed tracker ticket: ${ticket.error}`,
+    ),
   ].join("\n");
 }

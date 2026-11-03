@@ -2,7 +2,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { AnthropicCritiqueAdapter } from "../src/critique/anthropic.js";
+import {
+  AnthropicCritiqueAdapter,
+  TruncatedCritiqueError,
+} from "../src/critique/anthropic.js";
 import {
   ClaudeCodeCritiqueAdapter,
   ClaudeCodeCritiqueError,
@@ -203,6 +206,25 @@ describe("FallbackCritiqueAdapter", () => {
     expect(run.events[0]?.reason).toContain("usage limit reached");
   });
 
+  test("reports an authenticated execution failure without auth wording", async () => {
+    const run = adapters(
+      async () => {
+        throw new ClaudeCodeCritiqueError(
+          "exit 1: error_max_turns: Reached maximum number of turns (8)",
+          { kind: "execution" },
+        );
+      },
+      async () => empty,
+    );
+    await expect(run.adapter.critique(await input())).resolves.toBe(empty);
+    expect(run.events).toHaveLength(1);
+    expect(run.events[0]?.reason).toContain(
+      "Claude Code ran but the critique session failed",
+    );
+    expect(run.events[0]?.reason).toContain("error_max_turns");
+    expect(run.events[0]?.reason).not.toContain("claude auth login");
+  });
+
   test("names both providers and both reasons when both fail", async () => {
     const run = adapters(
       async () => {
@@ -240,6 +262,13 @@ describe("describeCritiqueFailure", () => {
     expect(describeCritiqueFailure(new Error("plain failure"), {})).toBe(
       "plain failure",
     );
+    const truncated = describeCritiqueFailure(
+      new TruncatedCritiqueError("claude-opus-5", "max_tokens", 16000),
+      {},
+    );
+    expect(truncated).toContain("stop_reason max_tokens, max_tokens 16000");
+    expect(truncated).toContain("thinking");
+    expect(truncated).not.toMatch(/malformed/i);
   });
 });
 

@@ -399,7 +399,7 @@ describe("landing-page copy follows the shipped command surface", () => {
           "codex plugin add idiom@idiom",
           `codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v${packageJson.version}/mattskilly-idiom-${packageJson.version}.tgz idiom mcp`,
           `npx playwright@${packageJson.dependencies.playwright} install chromium`,
-          `npm install -g https://github.com/mattskilly/idiom/releases/download/v${packageJson.version}/mattskilly-idiom-${packageJson.version}.tgz`,
+          "npm install -g @mattskilly/idiom",
           "idiom quick http://localhost:3000",
           "npx skills add mattskilly/idiom --skill idiom",
         ];
@@ -436,12 +436,12 @@ describe("landing-page copy follows the shipped command surface", () => {
   test("the version pin forces a re-audit, and marketplace and CLI installs stay current", () => {
     // Bump this literal deliberately at every release; the page must be
     // re-read against the shipped CLI each time.
-    expect(packageJson.version).toBe("0.16.1");
+    expect(packageJson.version).toBe("0.18.0");
     expect(source).toContain("npm install -g @mattskilly/idiom");
-    // While npm lags, the page installs the GitHub release tarball, which
-    // must name the current version.
+    // The CLI installs from npm; the Codex MCP launcher pins the GitHub
+    // release tarball, which must name the current version.
     const releaseUrl = `https://github.com/mattskilly/idiom/releases/download/v${packageJson.version}/mattskilly-idiom-${packageJson.version}.tgz`;
-    expect(source).toContain(`npm install -g ${releaseUrl}`);
+    expect(source).not.toContain(`npm install -g ${releaseUrl}`);
     expect(source).not.toMatch(/git\+ssh|\bbun add\b/);
     for (const command of [
       "/plugin marketplace add mattskilly/idiom",

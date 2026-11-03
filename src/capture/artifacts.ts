@@ -383,6 +383,10 @@ export async function writeTupleArtifacts(options: {
       endedAt: result?.endedAt ?? options.fallbackTimestamp,
     },
     status: result?.status ?? null,
+    ...(result?.consoleProvenance === true ? { consoleProvenance: true } : {}),
+    ...(result?.documentUrl === undefined
+      ? {}
+      : { documentUrl: result.documentUrl }),
     expectations: {
       passed: passed(tuple),
       mismatches: result?.mismatches ?? [],

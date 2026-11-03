@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { BriefCheck } from "../brief/assertions.js";
+import { loadBriefChecks } from "../brief/store.js";
 import {
   type InferredComponent,
   inferDesignComponents,
@@ -78,6 +80,8 @@ export type DesignBrief = {
   checks?: ChecksSettings | undefined;
   /** Component sizes inferred from the design file (explicit config wins). */
   inferredComponents?: InferredComponent[] | undefined;
+  /** Decided design briefs relevant to the flow (all of them project-wide). */
+  decidedBriefs?: BriefCheck[] | undefined;
 };
 
 export type ContextDependencies = {
@@ -100,7 +104,9 @@ function trackerLabel(lifecycle: FindingLifecycle | undefined): string {
   const ticket = lifecycle?.ticket;
   if (ticket === undefined) return "none";
   if (ticket.state === undefined) return "unknown state";
-  return ticket.state === "custom" ? "custom checkpoint" : ticket.state;
+  return ticket.state === "checkpointed"
+    ? "checkpointed, no tracker ticket found"
+    : ticket.state;
 }
 
 function collectAcceptedWork(
@@ -189,8 +195,22 @@ export async function collectDesignBrief(options: {
     additionalTrackerRoots,
   });
 
+  const decidedBriefs = (
+    await loadBriefChecks(context.projectDirectory)
+  ).filter((brief) => {
+    if (options.flow === undefined) return true;
+    const assertions = brief.criteria.flatMap(
+      (criterion) => criterion.assertions,
+    );
+    return (
+      assertions.length === 0 ||
+      assertions.some((assertion) => assertion.flow === options.flow)
+    );
+  });
+
   return {
     flow: options.flow,
+    ...(decidedBriefs.length === 0 ? {} : { decidedBriefs }),
     design: parsedLaw.prose,
     rulings: parsedLaw.resolutions,
     product,
@@ -285,6 +305,25 @@ function prohibitionEntry(prohibition: BriefProhibition): string[] {
     rejections,
     applies,
     `  First observed: ${prohibition.surface}`,
+  ];
+}
+
+function decidedBriefEntry(
+  brief: BriefCheck,
+  flow: string | undefined,
+): string[] {
+  const linked = brief.criteria.some(
+    (criterion) => criterion.assertions.length > 0,
+  );
+  return [
+    `- ${inline(brief.title)} (.idiom/briefs/${brief.slug}.md)${flow !== undefined && !linked ? " — not linked to a flow" : ""}`,
+    `  Decision: ${inline(brief.decision)}`,
+    ...(brief.eligible === true
+      ? brief.criteria.map(
+          (criterion) =>
+            `  - ${criterion.assertions.length > 0 ? "[checked] " : ""}${inline(criterion.statement)}`,
+        )
+      : [`  Not checked: ${inline(brief.eligible.reason)}`]),
   ];
 }
 
@@ -421,6 +460,22 @@ function buildSections(brief: DesignBrief): Section[] {
       unit: "entries",
       spaced: true,
     },
+    ...(brief.decidedBriefs === undefined
+      ? []
+      : [
+          {
+            // Decisions the requester made; code must honour them.
+            title: "Decided design briefs",
+            priority: 0,
+            markers: [],
+            entries: brief.decidedBriefs.map((decided) =>
+              decidedBriefEntry(decided, brief.flow),
+            ),
+            emptyText: "No decided design briefs.",
+            unit: "entries" as const,
+            spaced: true,
+          },
+        ]),
     ...(brief.checks === undefined
       ? []
       : [

@@ -116,15 +116,26 @@ export const tokenDriftCheck: DeterministicCheck = {
         candidates: [],
       };
     }
-    const allowed = new Set(observations.tokens.normalizedValues);
+    const tokens = observations.tokens;
+    const allowed = new Set(tokens.normalizedValues);
+    const contextAllowed = (tokens.contexts ?? []).map(
+      (context) => new Set(context.normalizedValues),
+    );
     const candidates = [];
     for (const element of observations.elements) {
       if (!element.visible) continue;
+      // Colours inside a subtree that overrides colour-scheme or a referenced
+      // custom property resolve against that subtree; radii never vary by it.
+      const context =
+        element.tokenContext === undefined
+          ? undefined
+          : tokens.contexts?.[element.tokenContext];
       for (const [property, value] of contributingStyles(element)) {
         const kind = property.toLowerCase().includes("radius")
           ? "radius"
           : "color";
-        const typed = observations.tokens.typedValues;
+        const scoped = kind === "color" && context !== undefined;
+        const typed = scoped ? context.typedValues : tokens.typedValues;
         if (typed !== undefined) {
           const applicable = typed.filter((t) => t.kind === kind);
           if (
@@ -132,7 +143,13 @@ export const tokenDriftCheck: DeterministicCheck = {
             applicable.some((t) => coveredValue(kind, t.value, value, element))
           )
             continue;
-        } else if (allowed.has(value)) continue;
+        } else if (
+          (scoped
+            ? contextAllowed[element.tokenContext as number]
+            : allowed
+          )?.has(value)
+        )
+          continue;
         candidates.push({
           category: this.id,
           severity: "minor" as const,

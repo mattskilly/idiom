@@ -35,6 +35,19 @@ export type LearnWrite = {
   after: string;
 };
 
+/** A decided brief's size assertion, promoted to a state invariant. */
+export type PromotedInvariant = {
+  name: string;
+  selector: string;
+  width?: number | { min: number; max: number } | undefined;
+  height?: number | { min: number; max: number } | undefined;
+  tolerance: number;
+};
+
+export type DraftInterpretation =
+  | Interpretation
+  | { kind: "brief-invariants"; invariants: PromotedInvariant[] };
+
 export type LearnDraft = {
   kind: LearnedKind;
   id: string;
@@ -122,8 +135,10 @@ export async function draftLearning(options: {
   flow: FlowRecord;
   state: string;
   observation: string;
-  interpretation: Interpretation;
+  interpretation: DraftInterpretation;
   capture?: StateCapture | undefined;
+  /** The decided brief the rejection is about; recorded as provenance. */
+  brief?: string | undefined;
   selectors?: string[] | undefined;
   screenshot?: string | undefined;
   wording?: string | undefined;
@@ -203,6 +218,34 @@ export async function draftLearning(options: {
   let target: LearnedEntry["target"];
   let rulingNames: RulingNamesState | undefined;
   let ruling: RulingResolution | undefined;
+  const editStateInvariants = async (items: unknown[]) => {
+    const path = options.flow.file;
+    const before = await readFile(path, "utf8");
+    const value = record(JSON.parse(before));
+    const state = (Array.isArray(value.states) ? value.states : [])
+      .map(record)
+      .find((candidate) => candidate.id === options.state);
+    if (state === undefined)
+      throw new IdiomError(
+        `${display(path)} declares no state ${JSON.stringify(options.state)}`,
+      );
+    const index = (value.states as unknown[]).findIndex(
+      (candidate) => record(candidate).id === options.state,
+    );
+    let after = before;
+    for (const item of items) {
+      list(state, "invariants").push(item);
+      after = edited(after, ["states", index, "invariants"], item, value);
+    }
+    const parsed = flowSchema.safeParse(value);
+    if (!parsed.success)
+      throw new IdiomError(
+        `the learned invariant would make ${display(path)} invalid: ${issues(parsed.error)}`,
+      );
+    writes.push({ path, displayPath: display(path), before, after });
+    diffs.push(fileDiff(display(path), before, after));
+    return display(path);
+  };
 
   switch (interpretation.kind) {
     case "component": {
@@ -245,34 +288,17 @@ export async function draftLearning(options: {
           ? {}
           : { height: interpretation.height }),
       };
-      const path = options.flow.file;
-      const before = await readFile(path, "utf8");
-      const value = record(JSON.parse(before));
-      const state = (Array.isArray(value.states) ? value.states : [])
-        .map(record)
-        .find((candidate) => candidate.id === options.state);
-      if (state === undefined)
-        throw new IdiomError(
-          `${display(path)} declares no state ${JSON.stringify(options.state)}`,
-        );
-      list(state, "invariants").push(entry);
-      const index = (value.states as unknown[]).findIndex(
-        (candidate) => record(candidate).id === options.state,
-      );
-      const after = edited(
-        before,
-        ["states", index, "invariants"],
-        entry,
-        value,
-      );
-      const parsed = flowSchema.safeParse(value);
-      if (!parsed.success)
-        throw new IdiomError(
-          `the learned invariant would make ${display(path)} invalid: ${issues(parsed.error)}`,
-        );
-      writes.push({ path, displayPath: display(path), before, after });
-      diffs.push(fileDiff(display(path), before, after));
-      target = { file: display(path), selector };
+      target = { file: await editStateInvariants([entry]), selector };
+      break;
+    }
+    case "brief-invariants": {
+      entry = interpretation.invariants;
+      target = {
+        file: await editStateInvariants(interpretation.invariants),
+        selector: interpretation.invariants
+          .map((invariant) => invariant.selector)
+          .join(", "),
+      };
       break;
     }
     case "glossary": {
@@ -347,8 +373,12 @@ export async function draftLearning(options: {
         fingerprint,
         choiceKey,
         outcome: "rule",
-        wording: options.wording?.trim() || sentence(options.observation),
-        reason: `Learned from human review of ${options.flow.flow.id}/${options.state}`,
+        wording:
+          options.wording?.trim() ||
+          (options.brief === undefined
+            ? sentence(options.observation)
+            : `${sentence(options.observation).replace(/[.!?]$/, "")} (from brief ${options.brief}).`),
+        reason: `Learned from human review of ${options.flow.flow.id}/${options.state}${options.brief === undefined ? "" : ` against brief ${options.brief}`}`,
         recordedAt: options.recordedAt,
       };
       const after = appendRuling(before, ruling);
@@ -365,6 +395,10 @@ export async function draftLearning(options: {
     }
   }
 
+  const learnedKind: LearnedKind =
+    interpretation.kind === "brief-invariants"
+      ? "invariant"
+      : interpretation.kind;
   const logPath = join(projectDirectory, ".idiom", "learned.jsonl");
   const logBefore = await optionalText(logPath);
   const count = (logBefore ?? "")
@@ -384,7 +418,7 @@ export async function draftLearning(options: {
     flow: options.flow.flow.id,
     state: options.state,
     observation: options.observation.trim(),
-    kind: interpretation.kind,
+    kind: learnedKind,
     target,
     entry,
     ...(options.capture === undefined
@@ -399,6 +433,7 @@ export async function draftLearning(options: {
           },
         }),
     ...(screenshot === undefined ? {} : { screenshot }),
+    ...(options.brief === undefined ? {} : { brief: options.brief }),
   });
   const logAfter = `${logBefore ?? ""}${logBefore === undefined || logBefore.endsWith("\n") || logBefore === "" ? "" : "\n"}${JSON.stringify(learned)}\n`;
   writes.push({
@@ -414,7 +449,7 @@ export async function draftLearning(options: {
     );
 
   return {
-    kind: interpretation.kind,
+    kind: learnedKind,
     id,
     writes,
     copies,

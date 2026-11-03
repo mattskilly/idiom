@@ -10,11 +10,11 @@ You need Node 20 or later and an app running locally. The first review takes a f
 ## 1. Install
 
 ```sh
-npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz
+npm install -g @mattskilly/idiom
 npx playwright@1.62.1 install chromium
 ```
 
-The first line installs the CLI from the GitHub release. npm still serves an older release; once the current one is published there, `npm install -g @mattskilly/idiom` works too. The second line installs the browser Idiom captures with, once per machine.
+The first line installs the CLI from npm (`bun add -g @mattskilly/idiom` works too). The second line installs the browser Idiom captures with, once per machine.
 
 ## 2. Review a page
 
@@ -40,7 +40,7 @@ For Codex, in your shell:
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.18.0/mattskilly-idiom-0.18.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.
@@ -71,6 +71,8 @@ idiom fix home            # hand the top findings to your agent
 idiom verify home         # prove they are gone
 ```
 
+If the app will not start, `idiom doctor home` boots the server once with your settings, times each step and suggests the fix.
+
 See [Configuration](/docs/configuration#flows) for the flow format and [Testing loading, empty and error states](/docs/testing-loading-empty-error-states) for forcing the hard states.
 
 ## 5. Gate pull requests
@@ -81,3 +83,5 @@ idiom check home --fail-on major  # later runs fail only on new problems
 ```
 
 The first check on a clean commit records a baseline. After that, `check` reports only findings the baseline didn't have, and `idiom baseline accept home` accepts intentional changes. The [GitHub Action](/docs/configuration#github-action) runs this on every pull request and posts one comment.
+
+To gate every build an agent makes, use `idiom check home --gate --fail-on major`. It checks only what the change affects within a 3-minute budget, skips docs- and test-only changes in under a second, and ends with a `Timing:` line. Keep the full check on a schedule.

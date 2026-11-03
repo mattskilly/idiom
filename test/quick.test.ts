@@ -187,6 +187,12 @@ test("quick review captures the complete grid and emits standard capped findings
     report.indexOf("## page-1"),
   );
   expect(report).toContain("## Evaluated but not selected");
+  // Quick ids never enter the catalog, so nothing past the cap is decidable.
+  expect(report).toContain(
+    "Report-only: not an `idiom decide --finding` target",
+  );
+  expect(report).not.toContain("Decision target:");
+  expect(report).not.toContain("Actionable findings above are recorded");
   expect(report).toContain("| spacing-rhythm | unavailable |");
   expect(report).toContain(
     "not evaluated: observations version 1 lacks structural geometry",

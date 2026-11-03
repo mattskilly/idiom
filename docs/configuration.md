@@ -24,7 +24,9 @@ Edit the generated `.idiom/project.json` so its server contract starts this appl
 
 The configured `port` is a template, not a pin. Each capture serves the application on a free port of its own and passes it as `PORT`; the configured port is swapped, as a whole number, into `readyUrl`, `server.env` values, the `build`/`start` commands and every state URL, so two captures of the same project (two worktrees, or a capture beside a running benchmark) never collide. Read `PORT` in your start command (most dev servers already do). To choose the port yourself, pass `--port <n>` to `capture`, `check`, `sweep` or `baseline record`, or set `IDIOM_PORT` (the only way for `verify` and `explore`). An application that cannot take a port sets `"fixedPort": true` in `server` and is served on `port` exactly as configured; `--port` or `IDIOM_PORT` naming another port is then an error.
 
-Before starting the application, Idiom checks the ready URL: if anything already answers there, the capture stops with `cannot start application server: <readyUrl> already answers — port <port> in use by another process` instead of capturing a server it did not start. Console, DOM and accessibility evidence is recorded against the configured origin, so finding identity, decisions and baselines do not change with the port; each tuple's metadata keeps the origin actually served and records the configured one as `canonicalOrigin`.
+To capture a dev server that is already running instead (a build loop, an agent session), set `"reuse": true` in `server` or pass `--reuse-server` to `check`. When the ready URL answers 200 within two seconds, capture uses that server at the configured origin and never builds, starts or stops it; the timing line reports `build reused, server start reused`. Otherwise the capture starts its own server as usual. The server at `readyUrl` is captured as-is: make sure it serves this checkout. `idiom check --gate` verifies reuse against `server.production.distDir/BUILD_ID` when it can ([commands.md](commands.md#gate-a-build)). `server.reuse` has no default and is not part of any baseline or capture-settings identity.
+
+Before starting the application, Idiom checks the ready URL: if anything already answers there, the capture stops with `server failed to start: port <port> in use — <readyUrl> already answers`, followed by `cannot start application server: <readyUrl> already answers — port <port> in use by another process`, instead of capturing a server it did not start. Any server that exits or never becomes ready ends the run the same way: a first line `server failed to start: <exit/signal or timeout> — <last stderr lines, redacted>`, the existing detail, a `Fix:` line, and exit code `2` (see [Exit codes and setup failures](commands.md#exit-codes-and-setup-failures)). Run `idiom doctor [flow]` to boot the server once with these settings and see which step fails. Console, DOM and accessibility evidence is recorded against the configured origin, so finding identity, decisions and baselines do not change with the port; each tuple's metadata keeps the origin actually served and records the configured one as `canonicalOrigin`.
 
 `surfaces` is an ordered project-wide inventory. Each flow in an opted-in
 project names the surface it captures. Idiom can then distinguish the surface
@@ -56,7 +58,11 @@ The interaction probe is on by default for web flows; `checks.probe.enabled: fal
 
 The probe has hard wall-clock budgets. `checks.probe.controlTimeoutMs` defaults to **5000ms** per attempted control, including explanation sampling, the click, its effect window and the cheap restore check. Full replay has its own restore deadline (the larger of the control budget and 15 seconds, bounded by the state's remaining flow share); its expiry is reported as `timed-out: restore` on the control that needed it. The effect window ends after about 150ms with no DOM, URL, focus or network activity, capped by `checks.probe.waitMs` (default 350ms). Tooltip explanation sampling retains its independent hover/focus windows.
 
-`checks.probe.stateTimeoutMs` defaults to **60000ms**. Web capture sizes one aggregate flow allowance from the wall clock. The run aims to finish within 400 seconds, keeping 20 seconds for merging, artifacts and checks. Probing may use the time left before that target on every capture lane, measured when each probe round starts. A round gives each state at most this duration, and the first round always gets at least this duration per lane. Later rounds run while unfinished work and wall time remain. Each round divides its allowance in proportion to assigned control counts, with one unit for a state's enumeration bookkeeping when it has no assigned controls. No state's share runs past the target. A finished state returns unused time to unfinished states, extending running deadlines as well as queued shares. Ordinary nested menu, panel and tab items have an additional cap of a quarter of their state's current share; they still count toward the flow allowance. In a planned flow, nested check candidates (the ranks below) are bounded only by the state deadline. This cap prevents nested work from consuming the whole share. Discovery follows at most three reveal steps and 20 controls per revealed surface. Standalone library probes without a flow allocation retain a per-state deadline. Expired attempts retain their selector and partial effects with `status: "timed-out"`, `timeoutScope` and a `skipped` reason. Their incomplete evidence cannot establish dead controls or duplicate entries. A timed-out page is retired; later assigned controls replay on a replacement. Native dialogs, print, file choosers, downloads and popups are suppressed throughout probing, and the mutation guard covers both the page and its context, including a popup's first request. Only declared state replay may send mutating requests.
+`checks.probe.stateTimeoutMs` defaults to **60000ms**. Web capture sizes one aggregate flow allowance from the wall clock. The run aims to finish within the flow target, `checks.probe.flowBudgetMs` (default **400000ms**, 400 seconds), keeping 20 seconds for merging, artifacts and checks. `idiom check --probe-budget <ms>` overrides it for one run. Probing may use the time left before that target on every capture lane, measured when each probe round starts. A round gives each state at most this duration, and the first round always gets at least this duration per lane. Later rounds run while unfinished work and wall time remain. Each round divides its allowance in proportion to assigned control counts, with one unit for a state's enumeration bookkeeping when it has no assigned controls. No state's share runs past the target. A finished state returns unused time to unfinished states, extending running deadlines as well as queued shares. Ordinary nested menu, panel and tab items have an additional cap of a quarter of their state's current share; they still count toward the flow allowance. In a planned flow, nested check candidates (the ranks below) are bounded only by the state deadline. This cap prevents nested work from consuming the whole share. Discovery follows at most three reveal steps and 20 controls per revealed surface. Standalone library probes without a flow allocation retain a per-state deadline. Expired attempts retain their selector and partial effects with `status: "timed-out"`, `timeoutScope` and a `skipped` reason. Their incomplete evidence cannot establish dead controls or duplicate entries. A timed-out page is retired; later assigned controls replay on a replacement. Native dialogs, print, file choosers, downloads and popups are suppressed throughout probing, and the mutation guard covers both the page and its context, including a popup's first request. Only declared state replay may send mutating requests.
+
+`checks.probe.flowBudgetMs: 0` (or `--probe-budget 0`) sets no flow target. Each state probes until its controls are done, including nested menu items and held replays: `stateTimeoutMs`, the nested-menu cap and the held-replay reserve no longer apply. Per-control timeouts, `maxControls`, repeated-row sampling, intent and destructive skips, and `capture.maxMinutes` still do. A state that is still probing near the end of the capture lifetime stops there, and its remaining controls are reported `not reached: capture.maxMinutes`. For very large apps, raise `capture.maxMinutes` with it.
+
+Probe coverage is always reported. `idiom check` prints one line per probed state: completed, timed out and not-reached counts, skipped controls when there are any, and the most common not-reached reason. It adds a warning when more than 10% of the run's probe candidates were not reached. `report.md` and `report.html` carry the same counts under **Interaction probe**, and `--json` and MCP `idiom_check` include them as `coverage.probeCoverage`, with the target that applied (`flowBudgetMs`, also recorded in `run.json`).
 
 After the clicks, the probe runs a **held replay** of every probe click and web step whose action sent fetch, XHR or document requests (web steps first, at most six per state). Each replay restores a fresh copy, repeats the action and holds its same-site fetch/XHR requests (and a full-page navigation) for `checks.loading.delayMs` (default **1500ms**; it must exceed `checks.progressWithinMs`) to see what a user on a slow network sees. Held requests then go through the same mutation guard as any probe click, so the replay never sends a request the probe would not; for a pending non-safe request it activates the trigger once more and records any duplicate, which is aborted. Each replay costs about one restore plus `delayMs` and its settle, counted against the state's probe budget. Once an action qualifies, the clicks stop when less than the smaller of 30% of the state budget and two replays' worth remains; the controls left are reported `not reached: held replay reserve`. A replay that still does not fit is noted in coverage, never timed out. The replays feed `loading-state-missing` and `double-submit`.
 
@@ -73,6 +79,8 @@ The probe's own check candidates run first, ranked across the flow before any or
 `capture.maxMinutes` defaults to **30** (finite positive fractional minutes are allowed). This single budget covers the complete capture, including setup/build, readiness, launch, measurement, tuples, artifact publication and teardown, with or without probing and for web or Electron. Expiry fails with the state, viewport, scheme and step in progress (`pending` coordinates during setup). Resource cleanup has at most **5 seconds** of additional grace after the deadline. Zero never means unlimited.
 
 Colour scheme is an opt-in capture axis. `colorSchemes` defaults to the existing `capture.colorScheme`, and a flow may narrow it with its own `colorSchemes` list. Each selected state is captured at every selected viewport and scheme. The scheme is applied through Playwright's `prefers-color-scheme` emulation; `capture.colorSchemeAttribute` can additionally name an HTML attribute such as `data-theme`, whose value is set before application scripts run. `idiom validate` prints the effective schemes for every flow. If a complete multi-scheme capture renders one declared scheme identically to the preceding declared scheme across the full stable semantic profile, review emits a `missing-state` blocker naming the inert scheme.
+
+Some apps turn their own motion off when `navigator.webdriver` is true, so captures of them never see the animations a person sees. `capture.hideWebdriver: true` makes `navigator.webdriver` read `false` in every page and frame of the capture, including probe replays; a flow's own `"hideWebdriver": true` (or `false`) sets it for that flow alone, whether its states are routes, pages or steps. It has no default and does not change `capture.reducedMotion`, which still sets `prefers-reduced-motion`. Electron capture does not apply it.
 
 ## Flows
 
@@ -419,6 +427,8 @@ Production capture uses the same free-port mechanism as every capture (see the s
 
 To reuse production output across flows and scoped reruns, opt in with `server.production.reuseBuild: true`. The default is false. The local cache lives under `.idiom/cache/production/` and is ignored for source identity. Admission requires a clean source snapshot, the same commit, canonical project/output paths, build/start configuration and effective build environment, plus matching cached build identity. Input and environment values are hashed in metadata. Dirty sources build afresh; changed inputs, missing/corrupt output or IDs, and an unavailable saved port cause a rebuild. An application with a constant `BUILD_ID` cannot bypass these checks.
 
+`idiom check --gate` reuses production builds without the setting and on a dirty tree: for that run it keys the cache on a working-tree content identity (HEAD's tree, the binary diff against it, and every untracked file's content) instead of the commit, so a build round whose inputs did not change since the last gated run restores the cached output (`build reused`). Every other admission check still applies.
+
 Reuse always runs setup, starts an owned server and captures the selected tuples again. For clean reusable builds, setup and build/start environments share a stable cache-owned `${dataDir}` pathname, emptied before each run and removed after shutdown. The saved production port is reserved before setup/build so embedded client origins remain valid. A busy saved port selects a new one and rebuilds. The development port is unchanged. Cached output is copied into the owned output directory; pre-existing application output is restored after shutdown on hits and misses. An exclusive output lock spans preparation through restoration and data cleanup; overlapping captures fail with a retry message. Failed or cancelled build/start attempts do not publish cache entries. With reuse disabled, the existing temporary-data and fresh-build path remains in use.
 
 ## Checks
@@ -480,6 +490,7 @@ Besides the original ten checks, `check` and `review` run additional checks buil
 | `interaction-shift` | on by default (`checks.interactionShift`), major: content outside what a probe click or web step changes moves at least 4px (`minDistance`) without animation because content was inserted, removed or resized; content arriving more than 500ms after input is reported even inside the action's own region |
 | `loading-state-missing` | on by default (needs the probe): an action whose result waits on a fetch/XHR request but shows no pending feedback within `checks.progressWithinMs` while the probe holds the response for `checks.loading.delayMs`; client-side route changes that leave the main content empty or unchanged |
 | `double-submit` | on by default (needs the probe): a trigger left enabled while its POST/PUT/PATCH/DELETE is pending, where a second activation issues a duplicate (observed and aborted, never sent) |
+| `nested-border` | on by default (`checks.nestedBorder`): a bordered box hugging one differently shaped bordered child within 4px |
 
 Every rule, with why it matters, its severity, its source and how to configure or decide it, is listed in [rules.md](rules.md).
 
@@ -537,6 +548,7 @@ The font, link, focus, typography, image, layout-shift and interaction-shift che
     "focusVisible": { "enabled": true, "ignore": [".map-canvas"] },
     "lineLength": { "enabled": true, "max": 90 },
     "orphanWord": { "enabled": true, "maxChars": 7 },
+    "nestedBorder": { "enabled": true },
     "images": { "enabled": true, "distortionTolerance": 0.03 },
     "layoutShift": { "enabled": true, "max": 0.1 },
     "interactionShift": { "enabled": true, "minDistance": 4 }
@@ -607,6 +619,8 @@ Configure the craft checks in `.idiom/project.json` (every field is optional); l
   }
 }
 ```
+
+`checks.centeringTolerance` below 1.5px is raised to 1.5px, and large type allows 8% of its font size: font metrics and pixel-snapped line boxes alone put a symmetric label up to about 1.4px off its centre.
 
 `adjacent-gap` compares interactive controls with each other wherever they sit, so a stepper's −/+ buttons touching their number input, or a composer field's focus ring meeting Send, are reported. A non-interactive bordered shape (a card, a chip) is compared only with neighbours in the same direct parent. Layout regions are never compared: landmarks and `nav`, `main`, `aside`, `header`, `footer`, `section`, `article`, `form` and `dialog` (or the matching roles), direct children of a dialog, and panels that hold a heading or a bordered group of controls. Add selectors to `checks.adjacentGap.regions` for any other region that is flush by design; they are resolved at capture. Non-interactive boxes no larger than `checks.adjacentGap.indicatorMax` (default 16px) in both dimensions, such as status dots and badges, are indicators and are skipped; set it to 0 to compare them. A shape wrapped in an extra unbordered `div` on one side has a different parent and is not compared. Captures from before `outline-offset` was recorded measure the ring by its width alone.
 
@@ -816,11 +830,35 @@ Every matched list is judged on its own and `items` is scoped to it; hidden item
 
 The interaction probe is on by default for web flows, and it clicks things. Turn it off with `"checks": { "probe": { "enabled": false } }`, or per state with `"probe": false`. It runs at each state’s designated coordinate in a disposable context, using the flow assignment and restore ladder described above, never clicks controls whose names look destructive (delete, publish, sign out, pay, …) or match `probe.skip`, and records each control's observable effect. To probe only some states, set `checks.probe.enabled: false` and give those states `"probe": true`.
 
-Set `checks.probe.respectControlIntent` to `true` to skip already-selected options and drag handles (dogfooding request #54). It defaults to `false` and has no effect when probing is off. Omitted or false preserves legacy probe behavior.
+The probe opens disclosures and checks what they reveal. Every `<details>` summary, `aria-haspopup` control and `aria-expanded` control it reaches is a disclosure. When one opens, the probe finds what it revealed (its `aria-controls` target, its open `<details>`, a newly opened region, or a newly visible positioned element near the trigger), probes that surface's controls as nested items even when it is a plain positioned `div`, and observes the revealed page in place. A nested item one step below a disclosure that switches it into a new mode (a new field appears or a surface opens, without navigating) is observed the same way, named `<disclosure> › <item>`. The geometry, gap, overlap and native-control checks then run on each revealed state ([rules](rules.md)). `checks.probe.disclosures` (default `true`) turns the revealed observations off; `checks.probe.maxRevealed` (default **12**, `0` records none) caps them per state, and the rest are recorded unavailable with the reason `revealed-state limit (checks.probe.maxRevealed)`. A revealed observation runs inside the control's own attempt (or the nested-menu) budget and takes at most 3 seconds; one that runs out of time is recorded unavailable and never turns the control into a timeout. A revealed state is observed once, at the state that opened it; reused results do not carry it.
+
+Disclosures the probe never opened are listed by `idiom coverage` (text and `--json`), `idiom coverage --states` and the report's coverage section, with the reason (not reached, skipped, timed out, or no probe at that state). A disclosure counts as opened when the probe completed a click on it or any captured state shows it open. Captures from before the inventory say so instead of passing.
+
+The probe never clicks a control whose click is a no-op by design: a selected tab or option (`aria-selected="true"`), a checked radio or menu radio (`aria-checked="true"`, a `:checked` radio or its label) and the current item (`aria-current`). Their hover and focus are still sampled for tooltips. Switches and checkboxes toggle, so they are still clicked. Set `checks.probe.respectControlIntent` to `true` to also skip pressed toggles (`aria-pressed`), any other `aria-checked`/`aria-selected` control and drag handles, before sampling. It defaults to `false` and has no effect when probing is off.
 
 With this setting, controls with `aria-pressed`, `aria-selected` or `aria-checked` equal to `"true"`, a meaningful `aria-current`, or a checked native radio are recorded with an `already selected: …` skip reason before hover or click. Empty `aria-current` and `aria-current="false"` mean no current item. Drag handles are recorded with a `drag handle: …` reason when `draggable="true"`, their `aria-roledescription` contains “drag”, or their name contains the whole word move, drag or reorder. These records retain the control's name, selector and region, including menu items; the probe does not first select a sibling. Checked radios and selected tab/radio role elements receive explicit skip records without expanding probing to unselected inputs or links.
 
 The same option records real `filechooser` events and supported native picker activation as `filechooser`/`picker` effects. No file selection or value change is required, and no files are supplied. Successful native `showPicker()` calls and uncanceled, enabled color-input activation count; canceled clicks, disabled inputs, unsupported text inputs, range inputs with datalist ticks, listbox selects (`multiple` or `size` greater than 1), and inert picker-named buttons receive no picker exemption. Single-select dropdowns with omitted `size` or `size="1"` remain eligible. Opened non-file pickers are dismissed with Escape after recording. These effects prevent dead-control findings and count as primary actions rather than duplicate focus destinations. Recapture after enabling the option: offline review honors recorded skips/effects regardless of current settings, while older captures still load with their original evidence.
+
+### Build gate
+
+`idiom check --gate` ([commands.md](commands.md#gate-a-build)) reads an optional `checks.gate` block:
+
+```json
+{
+  "checks": {
+    "gate": {
+      "budgetMs": 180000,
+      "nonUi": ["server/**", "scripts/**", "migrations/**"]
+    }
+  }
+}
+```
+
+- `budgetMs` — the gate's wall-clock budget in positive integer milliseconds (default **180000**, three minutes). `--budget` overrides it for one run.
+- `nonUi` — project-relative globs (`*`, `?`, `**`) of changed files that never affect what renders. A change touching only these, documentation, tests, CI configuration and lockfiles skips the gate. Use it for server-only directories when the import graph is incomplete (any dynamic or unresolvable import), which turns the gate's graph-based non-UI detection off.
+
+Neither key has a default in the stored configuration, and the block is excluded from baseline configuration hashes and capture-settings identity: it changes what the gate selects, never what a check reports.
 
 ## Rules
 
@@ -836,6 +874,28 @@ Configure a project-relative or absolute local directory in `.idiom/project.json
 }
 ```
 
+A baseline is recorded only from a clean tree. `check` (when it would record the first baseline) and `baseline record|accept` check this before they start the server. These paths never make the tree dirty, because Idiom writes them during a run:
+
+- `.idiom/finding-names.json`
+- `.idiom/ruling-names.json`
+- `.idiom/reports/`
+- `.idiom/cache/`
+- `.idiom/agent-hooks/`
+
+Git-ignored paths never count either. Untracked files that are not ignored do count, and so does the baseline directory itself: commit a recorded baseline before the next run records again.
+
+## Finding names
+
+In a linked Git worktree, finding names union `.idiom/finding-names.json` with the primary checkout's, so a worktree keeps the names main already gave its findings. When the two disagree, this checkout's names win and the run prints one warning line (see [finding names](commands.md#review)). A throwaway worktree that should not consult the primary at all can opt out:
+
+```json
+{
+  "findingNames": { "isolatedRegistry": true }
+}
+```
+
+The `--isolated-registry` flag on `check`, `review` and `baseline record|accept` does the same for one run and overrides the key.
+
 ## Coverage
 
 Leave internal fixtures and frozen prototypes out with `coverage.exclude` in `.idiom/project.json`:
@@ -846,18 +906,59 @@ Leave internal fixtures and frozen prototypes out with `coverage.exclude` in `.i
 
 A glob starting with `/` matches the route; any other matches the project-relative source file. `**` crosses path segments, `*` and `?` stay within one, everything else is literal (so `/p/[id]` names that dynamic route), and a trailing `/**` also matches its base (`/lab/**` matches `/lab`). Source globs exclude only that source, so a route another app also serves stays listed. The header says how many routes were excluded (`6 found, 3 excluded (coverage.exclude), …`), and `--json` lists them under `excluded`. With `--crawl`, sources are URLs, so only route globs apply.
 
+## Briefs
+
+`idiom brief` reads an optional `brief` block (see the [design decision briefs guide](brief.md)). `idiom init` scaffolds it with an empty `references` list and a `$comment` explaining it:
+
+```json
+{
+  "brief": {
+    "references": [
+      { "name": "Linear", "tier": "bar", "note": "Dense lists that stay calm" },
+      { "name": "Figma", "tier": "always", "note": "Canvas tile controls appear on hover and stay small" },
+      { "name": "Platform defaults", "tier": "floor", "note": "Never below native control sizes and contrast" }
+    ]
+  }
+}
+```
+
+`brief.references` names the products that set the bar for this project's UI: `name`, a lowercase `tier` (`bar`: match or beat it; `always`: always compare against it; `floor`: never fall below it), a `note` on what to take from it and an optional `url`. Triage reads them with PRODUCT.md (`design.productFile`) as context.
+
+`brief.researchBudgetMs` (default `900000`, 15 minutes; 60000–3600000) is the wall-clock budget for `idiom brief "<request>" --research`, covering triage, research and options. `brief.researchMaxSearches` (default `5`; 1–20) bounds the web searches for each research question. See [brief.md](brief.md#two-ways-to-research).
+
+`brief.ticketTemplate.sections` changes the rendered brief's headings. The default follows autobuild's spec standard: `What and why` (`decision`), `Acceptance criteria` (`criteria`), `Out of scope` (`outOfScope`) and `Evidence` (`evidence`). Each section is `{ "heading", "content" }`, with `content` one of `decision`, `options`, `criteria`, `outOfScope`, `evidence`, `references` or `text`; a `text` section carries a fixed `body`:
+
+```json
+{
+  "brief": {
+    "ticketTemplate": {
+      "sections": [
+        { "heading": "What and why", "content": "decision" },
+        { "heading": "Why (evidence)", "content": "evidence" },
+        { "heading": "Acceptance criteria", "content": "criteria" },
+        { "heading": "Out of scope", "content": "outOfScope" }
+      ]
+    }
+  }
+}
+```
+
+`decision`, `criteria` and `evidence` must each appear exactly once, and no kind other than `text` may repeat. The `brief` block does not affect check results or baseline hashes.
+
 ## Autobuild
 
 Add the command under the existing `[commands]` table, append `"idiom-check"` to the existing `[verify].steps` array, and add the verify table:
 
 ```toml
 [commands]
-idiom-check = "idiom check studio-lab --since-baseline --fail-on major"
+idiom-check = "idiom check --gate --fail-on major"
 
 [verify.idiom-check]
 kind = "check"
 command = "idiom-check"
 ```
+
+The gate checks only what the build changed, within `checks.gate.budgetMs`, and skips at once when no UI file changed. Run the full check on a schedule (nightly CI or cron) for complete coverage: `idiom check studio-lab --since-baseline --fail-on major`. If the gate is slow, its last stderr line (`Timing: …; slowest: …`) says where the time went.
 
 ## GitHub Action
 

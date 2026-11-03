@@ -16,7 +16,11 @@ import type { BrowserLauncher, TupleResult } from "../src/capture/types.js";
 import { run } from "../src/cli.js";
 import { initProject } from "../src/commands/init.js";
 import { instructionCommand } from "../src/commands/instruction.js";
-import { ClaudeCodeCritiqueError } from "../src/critique/claude-code.js";
+import {
+  CLAUDE_CODE_CRITIQUE_TIMEOUT_MS,
+  ClaudeCodeCritiqueError,
+} from "../src/critique/claude-code.js";
+import { runCritiqueProcess } from "../src/critique/process.js";
 import type {
   CritiqueInput,
   ModelFindingCandidate,
@@ -1110,7 +1114,11 @@ test("full review publishes fake model findings with layer labels", async () => 
 
 test("the default Claude Code provider publishes screenshot-citing findings without an API key", async () => {
   const fixture = await captureFixture(false, 5, "claude-code");
-  const requests: Array<{ stdin: string; environment: NodeJS.ProcessEnv }> = [];
+  const requests: Array<{
+    stdin: string;
+    environment: NodeJS.ProcessEnv;
+    timeoutMs?: number | undefined;
+  }> = [];
   const code = await run(
     ["node", "idiom", "review", "fixture", "--project", fixture.directory],
     {
@@ -1163,6 +1171,7 @@ test("the default Claude Code provider publishes screenshot-citing findings with
   expect(requests).toHaveLength(1);
   expect(requests[0]?.stdin).toContain("state/desktop");
   expect(requests[0]?.environment).not.toHaveProperty("ANTHROPIC_API_KEY");
+  expect(requests[0]?.timeoutMs).toBe(CLAUDE_CODE_CRITIQUE_TIMEOUT_MS);
   const findings = JSON.parse(
     await readFile(
       join(
@@ -1181,6 +1190,50 @@ test("the default Claude Code provider publishes screenshot-citing findings with
       evidence: { screenshots: ["state/desktop/screenshot.png"] },
     },
   ]);
+});
+
+test("a stalled Claude Code session is stopped and the review degrades", async () => {
+  const fixture = await captureFixture(false, 5, "claude-code");
+  const stderr: string[] = [];
+  const code = await run(
+    ["node", "idiom", "review", "fixture", "--project", fixture.directory],
+    {
+      stdout: () => undefined,
+      stderr: (message) => stderr.push(message),
+      review: {
+        environment: {},
+        capture: {
+          browserLauncher: fixture.browserLauncher,
+          inheritedEnvironment: { PATH: process.env.PATH },
+          snapshotSource: async () => ({ commit: "abc123", dirty: false }),
+        },
+        claudeCodeRunner: (request) =>
+          runCritiqueProcess({
+            ...request,
+            executable: process.execPath,
+            args: ["-e", "setInterval(() => {}, 1000)"],
+            timeoutMs: 500,
+          }),
+      },
+    },
+  );
+  expect(code).toBe(0);
+  const reports = await readdir(join(fixture.directory, ".idiom", "reports"));
+  const runDirectory = join(
+    fixture.directory,
+    ".idiom",
+    "reports",
+    reports[0] ?? "",
+  );
+  const findings = JSON.parse(
+    await readFile(join(runDirectory, "findings.json"), "utf8"),
+  ) as Array<{ layer: string }>;
+  const report = await readFile(join(runDirectory, "report.md"), "utf8");
+  expect(report).toContain("# Degraded review: fixture");
+  expect(report).toContain("did not finish within");
+  expect(stderr.join("")).toContain("did not finish within");
+  expect(stderr.join("")).not.toContain("claude auth login");
+  expect(findings.every((finding) => finding.layer !== "model")).toBe(true);
 });
 
 test.each([
@@ -1456,6 +1509,69 @@ test("Claude Code failure preserves both fixed prerequisites after sanitizing a 
   expect(report).toContain("ANTHROPIC\\_API\\_KEY is not set");
   expect(report).not.toContain("super-secret");
   expect(report).not.toContain("other-secret");
+});
+
+async function claudeCodeEnvelopeReview(envelope: Record<string, unknown>) {
+  const fixture = await captureFixture(false, 5, "claude-code");
+  const stderr: string[] = [];
+  const code = await run(
+    ["node", "idiom", "review", "fixture", "--project", fixture.directory],
+    {
+      stdout: () => undefined,
+      stderr: (message) => stderr.push(message),
+      review: {
+        environment: {},
+        capture: {
+          browserLauncher: fixture.browserLauncher,
+          inheritedEnvironment: { PATH: process.env.PATH },
+          snapshotSource: async () => ({ commit: "abc123", dirty: false }),
+        },
+        claudeCodeRunner: async () => ({
+          stdout: JSON.stringify(envelope),
+          stderr: "",
+          exitCode: 1,
+          signal: null,
+        }),
+      },
+    },
+  );
+  const reports = await readdir(join(fixture.directory, ".idiom", "reports"));
+  const report = await readFile(
+    join(fixture.directory, ".idiom", "reports", reports[0] ?? "", "report.md"),
+    "utf8",
+  );
+  return { code, warning: stderr.join(""), report };
+}
+
+test("an authenticated Claude Code session failure is not reported as an auth problem", async () => {
+  const { code, warning, report } = await claudeCodeEnvelopeReview({
+    type: "result",
+    subtype: "error_max_turns",
+    is_error: true,
+    errors: ["Reached maximum number of turns (8)"],
+  });
+  expect(code).toBe(0);
+  expect(warning).toContain("Claude Code ran but the critique session failed");
+  expect(warning).toContain("Reached maximum number of turns (8)");
+  expect(warning).not.toContain("claude auth login");
+  expect(warning).not.toContain("unavailable or not authenticated");
+  expect(report).toContain("Claude Code ran but the critique session failed");
+  expect(report).toContain("Reached maximum number of turns");
+});
+
+test("an unauthenticated Claude Code envelope surfaces the CLI's own message", async () => {
+  const { code, warning } = await claudeCodeEnvelopeReview({
+    type: "result",
+    subtype: "success",
+    is_error: true,
+    result: "Not logged in - Please run /login",
+  });
+  expect(code).toBe(0);
+  expect(warning).toContain(
+    "Claude Code CLI is unavailable or not authenticated",
+  );
+  expect(warning).toContain("claude auth login");
+  expect(warning).toContain("Not logged in - Please run /login");
 });
 
 test("Claude Code failure with an API key explains the explicit provider switch", async () => {
@@ -1812,7 +1928,8 @@ test.each(["capture", "check"])(
         ],
         { stdout: () => {}, stderr: (message) => errors.push(message) },
       ),
-    ).toBe(1);
+      // check refuses in preflight (exit 2); raw capture keeps exit 1.
+    ).toBe(command === "check" ? 2 : 1);
     expect(errors.join("\n")).toMatch(
       /server.production.*"build".*"start".*"distDir".*"env"/s,
     );
@@ -1873,4 +1990,40 @@ test("tickets --cluster preserves repeated finding selection and reports grouped
     }),
   ).toBe(0);
   expect(output.join("\n")).toContain("Tickets: 0 created");
+});
+
+test("check --probe-budget parses non-negative milliseconds and needs a fresh capture", async () => {
+  const f = await captureFixture(false);
+  const errors: string[] = [];
+  const invoke = (args: string[]) =>
+    run(
+      [
+        "node",
+        "idiom",
+        "check",
+        "--all",
+        "fixture",
+        ...args,
+        "--project",
+        f.directory,
+      ],
+      {
+        stdout: () => {},
+        stderr: (message) => errors.push(message),
+      },
+    );
+  for (const value of ["-5", "abc", "1.5"]) {
+    expect(await invoke(["--probe-budget", value])).toBe(1);
+    expect(errors.at(-1)).toContain("must be a non-negative integer");
+  }
+  // Parsed values reach the review: a stored run cannot honour them.
+  for (const value of ["0", "120000"]) {
+    expect(await invoke(["--probe-budget", value, "--from", "missing"])).toBe(
+      1,
+    );
+    expect(errors.at(-1)).toContain(
+      "--probe-budget cannot be combined with --from or --latest",
+    );
+  }
+  expect(await readdir(join(f.directory, ".idiom", "reports"))).toEqual([]);
 });

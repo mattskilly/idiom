@@ -678,7 +678,7 @@ test("accepted work excludes completed lineages and honors flow scope", async ()
   expect(all).toContain(
     "  Acceptance:\n  - The target is at least 44px.\n  - Spacing is preserved.",
   );
-  expect(all).toContain("  Tracker: custom checkpoint");
+  expect(all).toContain("  Tracker: checkpointed, no tracker ticket found");
   expect(all).toContain("- finding-2");
   expect(all).toContain("- finding-4");
   expect(all).toContain("  Verification: verify-failed");
@@ -953,7 +953,9 @@ test("tracker state resolves through the primary checkout and marks a missing st
   );
   expect(unresolved).toContain("- finding-1");
   expect(unresolved).toContain("- finding-2");
-  expect(unresolved).toContain("  Tracker: custom checkpoint");
+  expect(unresolved).toContain(
+    "  Tracker: checkpointed, no tracker ticket found",
+  );
   expect(unresolved).toContain(TRACKER_STATE_UNAVAILABLE);
 });
 

@@ -468,8 +468,9 @@ for (const status of ["ticketed", "verified-fixed", "verify-failed"] as const) {
       flow: "settings",
     });
     expect(snapshot.raw).toHaveLength(2);
+    // check --all re-observed the findings: a past verification result is not carried onto them.
     expect(
-      snapshot.records.every((record) => record.finding.status === status),
+      snapshot.records.every((record) => record.finding.status === "ticketed"),
     ).toBe(true);
     expect(snapshot.eligible).toHaveLength(0);
     expect(await eligibleRecords(snapshot)).toHaveLength(0);

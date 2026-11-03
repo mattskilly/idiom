@@ -603,6 +603,7 @@ test("origin canonicalization and review mapping apply the same transform", () =
       },
     ],
     axe: { nested: [text] },
+    documentUrl: `${actual}/a`,
     mismatches: [],
     startedAt: "",
     endedAt: "",
@@ -615,6 +616,7 @@ test("origin canonicalization and review mapping apply the same transform", () =
     dom: expected,
     console: [{ text: expected, location: { url: `${configured}/a` } }],
     axe: { nested: [expected] },
+    documentUrl: `${configured}/a`,
   });
   expect(canonicalizeOrigin(result, configured, configured)).toBe(result);
 });

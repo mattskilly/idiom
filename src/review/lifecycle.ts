@@ -1,6 +1,12 @@
 import { access } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type { Decision } from "../schemas/decision.js";
+import {
+  indexTrackerTickets,
+  resolveEmbeddedTicket,
+  type TrackerIndex,
+  type TrackerTicketState,
+} from "../tickets/embedded.js";
 import { ticketIdsForIdentities } from "../tickets/render.js";
 import type {
   CatalogFinding,
@@ -27,9 +33,12 @@ export type FindingLifecycle = {
   ticket?:
     | {
         id?: string | undefined;
-        state?: (typeof TRACKER_STATES)[number] | "custom" | undefined;
+        /** `checkpointed`: the catalog records a ticket, but no tracker holds one. */
+        state?: (typeof TRACKER_STATES)[number] | "checkpointed" | undefined;
         paths: string[];
         conflict: boolean;
+        /** How the ticket was found: by its generated filename, or embedded in a consolidated ticket. */
+        source?: "generated" | "consolidated" | undefined;
       }
     | undefined;
   verification?: "verified-fixed" | "verify-failed" | undefined;
@@ -86,9 +95,61 @@ export async function anyTrackerRootExists(
   return false;
 }
 
+/**
+ * The ticket holding this lineage's embedded record, resolved exactly as
+ * `idiom tickets` does. Generated filenames take precedence; this is only the
+ * fallback. Indexes are in root order, project first.
+ */
+function consolidatedTicket(
+  lineage: FindingLineage,
+  indexes: readonly TrackerIndex[],
+): FindingLifecycle["ticket"] {
+  const located: Array<{ state: TrackerTicketState; path: string }> = [];
+  const conflicting: string[] = [];
+  const seen = new Set<string>();
+  for (const index of indexes) {
+    const resolution = resolveEmbeddedTicket(index, lineage);
+    if (resolution.kind === "conflict") {
+      for (const path of resolution.paths)
+        if (!conflicting.includes(path)) conflicting.push(path);
+    } else if (resolution.kind === "single") {
+      // The same ticket visible from two roots is one ticket, never a conflict.
+      const key = `${resolution.ticket.state}/${basename(resolution.ticket.path)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      located.push(resolution.ticket);
+    }
+  }
+  // State outer, root inner, as the generated-filename lookup orders them.
+  located.sort(
+    (left, right) =>
+      TRACKER_STATES.indexOf(left.state) - TRACKER_STATES.indexOf(right.state),
+  );
+  const first = located[0];
+  if (first !== undefined) {
+    const paths = [
+      ...located.map((ticket) => ticket.path),
+      ...conflicting.filter(
+        (path) => !located.some((ticket) => ticket.path === path),
+      ),
+    ];
+    return {
+      id: basename(first.path, ".md"),
+      state: first.state,
+      paths,
+      conflict: paths.length > 1,
+      source: "consolidated",
+    };
+  }
+  if (conflicting.length > 0)
+    return { paths: conflicting, conflict: true, source: "consolidated" };
+  return undefined;
+}
+
 async function lineageTicket(
   lineage: FindingLineage,
   roots: readonly string[],
+  indexes: readonly TrackerIndex[],
 ): Promise<FindingLifecycle["ticket"]> {
   const ticketIds = ticketIdsForIdentities([
     ...lineage.identities,
@@ -124,8 +185,11 @@ async function lineageTicket(
       state: located[0]?.state,
       paths: located.map((item) => item.path),
       conflict: located.length > 1,
+      source: "generated",
     };
   }
+  const consolidated = consolidatedTicket(lineage, indexes);
+  if (consolidated !== undefined) return consolidated;
   if (
     lineage.occurrences.some((occurrence) =>
       ["ticketed", "verified-fixed", "verify-failed"].includes(
@@ -133,7 +197,7 @@ async function lineageTicket(
       ),
     )
   ) {
-    return { state: "custom", paths: [], conflict: false };
+    return { state: "checkpointed", paths: [], conflict: false };
   }
   return undefined;
 }
@@ -151,17 +215,23 @@ export async function reduceLifecycles(options: {
     options.catalog.projectDirectory,
     options.additionalTrackerRoots,
   );
+  // Indexed once per call: every lineage is resolved against the same reads.
+  const indexes = await Promise.all(roots.map(indexTrackerTickets));
   const output: FindingLifecycle[] = [];
   for (const lineage of options.catalog.lineages) {
-    const decision = lineageDecision(lineage, options.decisions);
-    const ticket = await lineageTicket(lineage, roots);
-    const verification = [...lineage.occurrences]
-      .reverse()
-      .map((occurrence) => occurrence.finding.status)
-      .find(
-        (status): status is "verified-fixed" | "verify-failed" =>
-          status === "verified-fixed" || status === "verify-failed",
-      );
+    // Judge the current occurrence, as ticket eligibility and the decide prompt do.
+    const decision = lineageDecision(
+      lineage,
+      options.decisions,
+      lineage.latest,
+    );
+    const ticket = await lineageTicket(lineage, roots, indexes);
+    // Verification describes the current occurrence; a re-observed lineage needs fresh evaluation.
+    const latestStatus = lineage.latest.finding.status;
+    const verification =
+      latestStatus === "verified-fixed" || latestStatus === "verify-failed"
+        ? latestStatus
+        : undefined;
     const path = ["open"];
     if (decision !== undefined)
       path.push(decision.decision === "accept" ? "approved" : "rejected");
@@ -197,6 +267,13 @@ export async function reduceLifecycles(options: {
   return output;
 }
 
+function ticketLabel(ticket: FindingLifecycle["ticket"]): string {
+  if (ticket === undefined) return "none";
+  if (ticket.state === "checkpointed")
+    return "checkpointed — no tracker ticket found";
+  return `${ticket.id ?? "unknown ticket"}${ticket.state === undefined ? "" : ` (${ticket.state})`}${ticket.source === "consolidated" ? " — consolidated" : ""}${ticket.conflict ? " — conflict" : ""}`;
+}
+
 export function renderLifecycleList(lifecycles: FindingLifecycle[]): string {
   if (lifecycles.length === 0) return "No reviewed findings.\n";
   const lines: string[] = [];
@@ -218,11 +295,10 @@ export function renderLifecycleList(lifecycles: FindingLifecycle[]): string {
           ? "none"
           : `${lifecycle.decision.decision} (${lifecycle.decision.scope})${lifecycle.decision.reason === undefined ? "" : ` — ${lifecycle.decision.reason}`}`
       }`,
-      `  Ticket: ${
-        lifecycle.ticket === undefined
-          ? "none"
-          : `${lifecycle.ticket.id ?? "custom checkpoint"}${lifecycle.ticket.state === undefined ? "" : ` (${lifecycle.ticket.state})`}${lifecycle.ticket.conflict ? " — conflict" : ""}`
-      }`,
+      `  Ticket: ${ticketLabel(lifecycle.ticket)}`,
+      ...(lifecycle.ticket === undefined || lifecycle.ticket.paths.length === 0
+        ? []
+        : [`  Ticket path: ${lifecycle.ticket.paths.join(", ")}`]),
       `  Verification: ${lifecycle.verification ?? "none"}`,
       `  Lifecycle: ${lifecycle.path.join(" -> ")}`,
       "",

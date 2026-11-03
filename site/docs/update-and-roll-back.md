@@ -9,23 +9,23 @@ Update the CLI once, then run `idiom upgrade` in each project to bring its vendo
 
 ## Update or pin the CLI
 
-While npm publication is on hold, the latest released CLI is available from its GitHub Release tarball:
+Install the latest released CLI from npm:
 
 ```sh
-npm install -g https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz
+npm install -g @mattskilly/idiom@latest
 idiom --version
 ```
 
 `idiom upgrade` needs 0.16.0 or later. Read the [changelog](https://github.com/mattskilly/idiom/blob/main/CHANGELOG.md) when choosing a version.
 
-For a project dependency, pin the release tarball and commit the package manifest and lockfile:
+For a project dependency, pin an exact version and commit the package manifest and lockfile:
 
 ```sh
-npm install --save-dev --save-exact https://github.com/mattskilly/idiom/releases/download/v0.16.1/mattskilly-idiom-0.16.1.tgz
+npm install --save-dev --save-exact @mattskilly/idiom@0.18.0
 npx --no-install idiom --version
 ```
 
-Once the desired release is published to npm, a registry pin such as `@mattskilly/idiom@<version>` is another option. Do not assume an unreleased version exists on npm. Use the project's installed CLI when upgrading that project's skills.
+Every release's tarball is also attached to its [GitHub release](https://github.com/mattskilly/idiom/releases) (`mattskilly-idiom-<version>.tgz`), and `npm install` accepts that URL too. Do not assume an unreleased version exists on npm. Use the project's installed CLI when upgrading that project's skills.
 
 ## Update each project's skills
 

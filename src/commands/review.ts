@@ -5,6 +5,7 @@ import {
   summarizeBaselineComparison,
   summarizeFinding,
 } from "../baseline/summary.js";
+import { preflightFindingNameRegistry } from "../review/names.js";
 import {
   type PageReviewDependencies,
   type PageReviewResult,
@@ -18,6 +19,7 @@ import {
 import { type Finding, findingSchema } from "../schemas/finding.js";
 import { isPublishedFlow } from "../schemas/flow.js";
 import { validateProject } from "../validation.js";
+import type { GitTopology } from "../verify/baseline.js";
 
 export type PublishedBudgetViolation = {
   id: string;
@@ -53,6 +55,10 @@ export async function reviewCommand(options: {
   latest?: boolean | undefined;
   deterministicOnly?: boolean | undefined;
   sinceBaseline?: boolean | undefined;
+  /** Ignore the primary checkout's finding names (throwaway worktrees). */
+  isolatedRegistry?: boolean | undefined;
+  /** Test seam: resolves the primary checkout for the registry preflight. */
+  gitTopology?: GitTopology | undefined;
   dependencies?: ReviewDependencies | undefined;
 }): Promise<
   ReviewRunResult & {
@@ -63,20 +69,26 @@ export async function reviewCommand(options: {
     publishedBudget?: { violations: PublishedBudgetViolation[] };
   }
 > {
-  const { sinceBaseline, ...reviewOptions } = options;
+  const { sinceBaseline, gitTopology, ...reviewOptions } = options;
+  const validated = await validateProject({
+    project: options.project,
+    cwd: options.cwd,
+    flow: options.flow,
+  });
+  // A fresh capture is the expensive part; refuse an unusable registry first.
+  if (options.from === undefined && options.latest !== true)
+    await preflightFindingNameRegistry({
+      projectDirectory: validated.projectDirectory,
+      gitTopology,
+      isolatedRegistry: options.isolatedRegistry,
+    });
   const result = await runReview({
     ...reviewOptions,
     ...(sinceBaseline === true
       ? { includeDeterministicOccurrences: true }
       : {}),
   });
-  const published = (
-    await validateProject({
-      project: options.project,
-      cwd: options.cwd,
-      flow: options.flow,
-    })
-  ).flows.some(({ flow }) => isPublishedFlow(flow));
+  const published = validated.flows.some(({ flow }) => isPublishedFlow(flow));
   let material: Finding[] | undefined;
   const readMaterial = async () => {
     material ??= findingSchema

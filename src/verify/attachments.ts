@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
@@ -71,6 +72,36 @@ export function canonicalAttachmentKind(ordinal: number): string {
   return `idiom-before-after-${ordinal.toString().padStart(3, "0")}`;
 }
 
+function compositeSegment(raw: string): string {
+  if (/^[A-Za-z0-9._-]+$/.test(raw) && !raw.includes("..")) return raw;
+  const stem = raw.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/\.{2,}/g, "-");
+  const hash = createHash("sha256").update(raw).digest("hex").slice(0, 8);
+  return `${stem}-${hash}`;
+}
+
+/**
+ * Composite file name for a tuple. Ordinary state and viewport ids keep their
+ * names; any other id becomes a sanitized stem plus a short hash, so the
+ * composite is always a single file directly in the output directory.
+ */
+export function compositeArtifactName(coordinate: {
+  state: string;
+  viewport: string;
+  colorScheme?: "light" | "dark" | undefined;
+  combination?: string | undefined;
+}): string {
+  const scheme =
+    coordinate.colorScheme === undefined ? "" : `-${coordinate.colorScheme}`;
+  const combination =
+    coordinate.combination === undefined
+      ? ""
+      : `-${coordinate.combination.replace(/[^A-Za-z0-9._-]+/g, "-")}`;
+  const name = `before-after-${compositeSegment(coordinate.state)}-${compositeSegment(coordinate.viewport)}${scheme}${combination}.png`;
+  if (/[/\\]/.test(name))
+    throw new IdiomError(`unsafe composite artifact name: ${name}`);
+  return name;
+}
+
 export function createAttachmentManifest(
   tuples: CaptureTupleSelection[],
 ): AttachmentManifest {
@@ -87,7 +118,7 @@ export function createAttachmentManifest(
         ...(tuple.colorScheme === undefined
           ? {}
           : { colorScheme: tuple.colorScheme }),
-        path: `before-after-${tuple.state}-${tuple.viewport}${tuple.colorScheme === undefined ? "" : `-${tuple.colorScheme}`}.png`,
+        path: compositeArtifactName(tuple),
       };
     }),
   };

@@ -1,11 +1,13 @@
 import {
   access,
+  lstat,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
   rename,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -474,6 +476,76 @@ test("custom drafts are no-overwrite without suppressing canonical tracker emiss
   ).toBe("ticketed");
 });
 
+test("a canonical lifecycle checkpoint suppresses a later custom draft", async () => {
+  const accepted = finding("IDM-run-0001", "phone", "accepted");
+  const { directory, run } = await fixture([accepted]);
+  await appendDecision({
+    projectDirectory: directory,
+    finding: accepted,
+    decision: "accept",
+    scope: "instance",
+  });
+  const lifecycleStatus = async () =>
+    (
+      JSON.parse(
+        await readFile(join(run, "findings.json"), "utf8"),
+      ) as Finding[]
+    )[0]?.status;
+
+  const canonical = await ticketsCommand({ project: directory });
+  expect(canonical.outcomes[0]).toMatchObject({
+    kind: "created",
+    findingId: "finding-1",
+    path: expect.stringContaining("/.autobuild/tickets/triage/"),
+  });
+  const canonicalPath =
+    canonical.outcomes[0]?.kind === "created" ? canonical.outcomes[0].path : "";
+  expect(await lifecycleStatus()).toBe("ticketed");
+
+  // With the canonical tracker ticket present, the draft resolves to it.
+  const out = join(directory, "ticket-drafts");
+  const withTicket = await ticketsCommand({ project: directory, out });
+  expect(withTicket.outcomes).toHaveLength(1);
+  expect(withTicket.outcomes[0]).toMatchObject({
+    kind: "already-resolved",
+    findingId: "finding-1",
+    status: "ticketed",
+    path: canonicalPath,
+    state: "triage",
+  });
+  expect(withTicket.ineligible).toEqual([]);
+  await expect(access(out)).rejects.toMatchObject({ code: "ENOENT" });
+
+  // Without any tracker ticket, the persisted checkpoint alone suppresses it.
+  await rm(canonicalPath);
+  for (const selection of [undefined, ["finding-1"]]) {
+    const result = await ticketsCommand({
+      project: directory,
+      out,
+      ...(selection ? { findingIds: selection } : {}),
+    });
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0]).toMatchObject({
+      kind: "already-resolved",
+      findingId: "finding-1",
+      status: "ticketed",
+    });
+    const outcome = result.outcomes[0] as { path?: string; state?: string };
+    expect(outcome.path).toBeUndefined();
+    expect(outcome.state).toBeUndefined();
+    await expect(access(out)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await lifecycleStatus()).toBe("ticketed");
+  }
+
+  // The checkpoint also keeps canonical output from recreating the ticket.
+  const again = await ticketsCommand({ project: directory });
+  expect(again.outcomes[0]).toMatchObject({
+    kind: "already-resolved",
+    findingId: "finding-1",
+    status: "ticketed",
+  });
+});
+
 test("a schema-valid hand-authored rule acceptance remains actionable", async () => {
   const item = finding("IDM-run-0001", "phone", "defensive-accept");
   const { directory } = await fixture([item]);
@@ -766,23 +838,319 @@ test("consolidated tracker records resolve exact historical identities without b
   expect(secondPersisted[0]?.status).toBe("ticketed");
 });
 
-test("malformed embedded tracker records fail closed with the ticket path", async () => {
-  const item = finding("IDM-run-0001", "phone", "malformed-tracker");
+async function writeTracker(
+  directory: string,
+  state: string,
+  name: string,
+  body: string,
+): Promise<string> {
+  const path = join(directory, ".autobuild", "tickets", state, name);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, body);
+  return path;
+}
+
+async function persistedStatuses(run: string): Promise<string[]> {
+  return (
+    JSON.parse(await readFile(join(run, "findings.json"), "utf8")) as Finding[]
+  ).map((item) => item.status);
+}
+
+test.each([
+  ["schema-invalid", "```idiom:finding\n{}\n```\n", "invalid idiom:finding"],
+  [
+    "malformed JSON",
+    "```idiom:finding\n{\n```\n",
+    "malformed idiom:finding JSON",
+  ],
+  [
+    "unterminated",
+    "```idiom:finding\n{}\n",
+    "unterminated idiom:finding block",
+  ],
+])(
+  "a %s unrelated tracker ticket is reported while a valid accepted finding still emits",
+  async (_label, body, reason) => {
+    const item = finding("IDM-run-0001", "phone", "malformed-tracker");
+    const { directory, run } = await fixture([item]);
+    await acceptAll(directory, [item]);
+    const malformedPath = await writeTracker(
+      directory,
+      "done",
+      "malformed.md",
+      body,
+    );
+
+    const result = await ticketsCommand({ project: directory });
+
+    expect(result.outcomes).toEqual([
+      expect.objectContaining({ kind: "created", findingId: "finding-1" }),
+    ]);
+    expect(result.malformed).toEqual([
+      {
+        path: malformedPath,
+        state: "done",
+        error: expect.stringContaining(
+          `cannot parse tracker ticket ${malformedPath}: ${reason}`,
+        ),
+      },
+    ]);
+    expect(await persistedStatuses(run)).toEqual(["ticketed"]);
+  },
+);
+
+test("a duplicate embedded identity in an unrelated ticket is reported without blocking emission", async () => {
+  const item = finding("IDM-run-0001", "phone", "valid-fingerprint");
+  const { directory, run } = await fixture([item]);
+  await acceptAll(directory, [item]);
+  const other = finding("IDM-other-0001", "desktop", "other-fingerprint");
+  const changed = { ...other, explanation: "A different body." };
+  const duplicatePath = await writeTracker(
+    directory,
+    "doing",
+    "duplicate.md",
+    `${findingBlock(other)}\n\n${findingBlock(changed)}\n`,
+  );
+
+  const result = await ticketsCommand({ project: directory });
+
+  expect(result.outcomes).toEqual([
+    expect.objectContaining({ kind: "created", findingId: "finding-1" }),
+  ]);
+  expect(result.malformed).toHaveLength(1);
+  expect(result.malformed[0]?.path).toBe(duplicatePath);
+  expect(result.malformed[0]?.state).toBe("doing");
+  expect(result.malformed[0]?.error).toMatch(
+    new RegExp(
+      `^cannot parse tracker ticket ${duplicatePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: .*(incompatible|ambiguous)`,
+    ),
+  );
+  expect(await persistedStatuses(run)).toEqual(["ticketed"]);
+});
+
+test("a malformed ticket naming a lineage blocks only that lineage", async () => {
+  const named = finding("IDM-run-0001", "phone", "named-fingerprint");
+  const unrelated = finding("IDM-run-0002", "desktop", "unrelated-fingerprint");
+  const { directory, run } = await fixture([named, unrelated]);
+  await acceptAll(directory, [named, unrelated]);
+  const malformedPath = await writeTracker(
+    directory,
+    "done",
+    "hand-edited.md",
+    `\`\`\`idiom:finding\n${JSON.stringify({ id: named.id, fingerprint: named.fingerprint, bogus: true })}\n\`\`\`\n`,
+  );
+
+  const result = await ticketsCommand({ project: directory });
+
+  expect(result.outcomes).toEqual([
+    { kind: "blocked", findingId: "finding-1", paths: [malformedPath] },
+    expect.objectContaining({ kind: "created", findingId: "finding-2" }),
+  ]);
+  expect(result.malformed.map((ticket) => ticket.path)).toEqual([
+    malformedPath,
+  ]);
+  const triage = join(directory, ".autobuild", "tickets", "triage");
+  expect(await readdir(triage)).toHaveLength(1);
+  expect(await persistedStatuses(run)).toEqual(["open", "ticketed"]);
+  // The name minted for the blocked lineage is provisional: not persisted.
+  const registry = JSON.parse(
+    await readFile(join(directory, ".idiom", "finding-names.json"), "utf8"),
+  ) as { next: number; entries: Array<{ name: string }> };
+  expect(registry.entries.map((entry) => entry.name)).toEqual(["finding-2"]);
+  expect(registry.next).toBe(3);
+});
+
+test("a malformed ticket at the lineage's generated filename blocks it", async () => {
+  const item = finding("IDM-run-0001", "phone", "owned-fingerprint");
+  const { directory, run } = await fixture([item]);
+  await acceptAll(directory, [item]);
+  const ownedPath = await writeTracker(
+    directory,
+    "triage",
+    `${ticketId(item.fingerprint, item.id)}.md`,
+    "# Hand edited\n\n```idiom:finding\n{}\n```\n",
+  );
+
+  const result = await ticketsCommand({ project: directory });
+
+  expect(result.outcomes).toEqual([
+    { kind: "blocked", findingId: "finding-1", paths: [ownedPath] },
+  ]);
+  expect(await persistedStatuses(run)).toEqual(["open"]);
+});
+
+test("embedded reconciliation proceeds beside a malformed unrelated ticket", async () => {
+  const item = finding("IDM-run-0001", "phone", "consolidated-fingerprint");
+  const { directory, run } = await fixture([item]);
+  await acceptAll(directory, [item]);
+  const consolidatedPath = await writeTracker(
+    directory,
+    "done",
+    "combined.md",
+    `# Combined\n\n${findingBlock(item)}\n`,
+  );
+  await writeTracker(
+    directory,
+    "done",
+    "broken.md",
+    "```idiom:finding\n{}\n```\n",
+  );
+
+  const result = await ticketsCommand({ project: directory });
+
+  expect(result.outcomes).toEqual([
+    {
+      kind: "already-resolved",
+      findingId: "finding-1",
+      status: "ticketed",
+      path: consolidatedPath,
+      state: "done",
+    },
+  ]);
+  expect(result.malformed).toHaveLength(1);
+  expect(await persistedStatuses(run)).toEqual(["ticketed"]);
+});
+
+test("an embedded identity in two tracker tickets is a conflict, not the first ticket", async () => {
+  const item = finding("IDM-run-0001", "phone", "duplicated-fingerprint");
+  const unrelated = finding("IDM-run-0002", "desktop", "unrelated-fingerprint");
+  const { directory, run } = await fixture([item, unrelated]);
+  await acceptAll(directory, [item, unrelated]);
+  const readyPath = await writeTracker(
+    directory,
+    "ready",
+    "combined-a.md",
+    `# Combined A\n\n${findingBlock(item)}\n`,
+  );
+  const donePath = await writeTracker(
+    directory,
+    "done",
+    "combined-b.md",
+    `# Combined B\n\n${findingBlock(item)}\n`,
+  );
+
+  const result = await ticketsCommand({ project: directory });
+
+  expect(result.outcomes).toEqual([
+    {
+      kind: "conflict",
+      findingId: "finding-1",
+      ticketId: expect.any(String),
+      paths: [readyPath, donePath],
+    },
+    expect.objectContaining({ kind: "created", findingId: "finding-2" }),
+  ]);
+  const triage = join(directory, ".autobuild", "tickets", "triage");
+  const createdOutcome = result.outcomes[1];
+  expect(await readdir(triage)).toEqual([
+    createdOutcome?.kind === "created" ? `${createdOutcome.ticketId}.md` : "",
+  ]);
+  expect(await persistedStatuses(run)).toEqual(["open", "ticketed"]);
+});
+
+test("an unaccepted lineage embedded twice in one state is a conflict", async () => {
+  const item = finding("IDM-run-0001", "phone", "unaccepted-duplicate");
+  const { directory, run } = await fixture([item]);
+  const firstPath = await writeTracker(
+    directory,
+    "done",
+    "first.md",
+    `${findingBlock(item)}\n`,
+  );
+  const secondPath = await writeTracker(
+    directory,
+    "done",
+    "second.md",
+    `${findingBlock(item)}\n`,
+  );
+
+  const result = await ticketsCommand({ project: directory });
+
+  expect(result.outcomes).toEqual([
+    {
+      kind: "conflict",
+      findingId: "finding-1",
+      ticketId: expect.any(String),
+      paths: [firstPath, secondPath],
+    },
+  ]);
+  expect(result.ineligible).toEqual([]);
+  expect(await persistedStatuses(run)).toEqual(["open"]);
+});
+
+test("a ticketed lineage embedded in two tickets is a conflict, not already-resolved", async () => {
+  const item = finding("IDM-run-0001", "phone", "ticketed-duplicate");
+  item.status = "ticketed";
   const { directory } = await fixture([item]);
   await acceptAll(directory, [item]);
-  const malformedPath = join(
+  const firstPath = await writeTracker(
     directory,
-    ".autobuild",
-    "tickets",
+    "doing",
+    "first.md",
+    `${findingBlock(item)}\n`,
+  );
+  const secondPath = await writeTracker(
+    directory,
     "done",
-    "malformed.md",
+    "second.md",
+    `${findingBlock(item)}\n`,
   );
-  await mkdir(dirname(malformedPath), { recursive: true });
-  await writeFile(malformedPath, "```idiom:finding\n{}\n```\n");
 
-  await expect(ticketsCommand({ project: directory })).rejects.toThrow(
-    `cannot parse tracker ticket ${malformedPath}: invalid idiom:finding`,
+  const result = await ticketsCommand({ project: directory });
+
+  expect(result.outcomes).toEqual([
+    {
+      kind: "conflict",
+      findingId: "finding-1",
+      ticketId: expect.any(String),
+      paths: [firstPath, secondPath],
+    },
+  ]);
+});
+
+test("one ticket repeating an embedded block resolves to that ticket, not a conflict", async () => {
+  const item = finding("IDM-run-0001", "phone", "repeated-block-fingerprint");
+  const { directory, run } = await fixture([item]);
+  await acceptAll(directory, [item]);
+  const path = await writeTracker(
+    directory,
+    "done",
+    "combined.md",
+    `${findingBlock(item)}\n\n${findingBlock(item)}\n`,
   );
+
+  const result = await ticketsCommand({ project: directory });
+
+  expect(result.malformed).toEqual([]);
+  expect(result.outcomes).toEqual([
+    {
+      kind: "already-resolved",
+      findingId: "finding-1",
+      status: "ticketed",
+      path,
+      state: "done",
+    },
+  ]);
+  expect(await persistedStatuses(run)).toEqual(["ticketed"]);
+});
+
+test("a malformed ticket mentioning finding-12 does not block finding-1", async () => {
+  const item = finding("finding-1", "phone", "boundary-fingerprint");
+  const { directory } = await fixture([item]);
+  await acceptAll(directory, [item]);
+  await writeTracker(
+    directory,
+    "done",
+    "other.md",
+    'Relates to finding-12 and finding-1x.\n\n```idiom:finding\n{"id":"finding-12"}\n```\n',
+  );
+
+  const result = await ticketsCommand({ project: directory });
+
+  expect(result.outcomes).toEqual([
+    expect.objectContaining({ kind: "created", findingId: "finding-1" }),
+  ]);
+  expect(result.malformed).toHaveLength(1);
 });
 
 test("an instance acceptance does not authorize ticketing a later commit", async () => {
@@ -846,4 +1214,131 @@ test("legacy publication follows severity then score and retries retain ticket i
   expect(
     retry.outcomes.map((o) => ("ticketId" in o ? o.ticketId : "")),
   ).toEqual(first.outcomes.map((o) => ("ticketId" in o ? o.ticketId : "")));
+});
+
+async function linkTracker(
+  directory: string,
+  state: string,
+  name: string,
+  body: string,
+): Promise<{ link: string; target: string }> {
+  const target = join(directory, "elsewhere", name);
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, body);
+  const link = join(directory, ".autobuild", "tickets", state, name);
+  await mkdir(dirname(link), { recursive: true });
+  await symlink(target, link);
+  return { link, target };
+}
+
+test.each(["regular", "symlink"] as const)(
+  "a %s ticket at the generated filename prevents a duplicate",
+  async (form) => {
+    const item = finding("IDM-run-0001", "phone", "linked-fingerprint");
+    const { directory, run } = await fixture([item]);
+    await acceptAll(directory, [item]);
+    const first = await ticketsCommand({ project: directory });
+    const createdPath =
+      first.outcomes[0]?.kind === "created" ? first.outcomes[0].path : "";
+    const name = createdPath.split("/").at(-1) ?? "";
+    const tracker = join(directory, ".autobuild", "tickets");
+    const destination = join(tracker, "ready", name);
+    await mkdir(dirname(destination), { recursive: true });
+    const target = join(directory, "elsewhere", name);
+    const bytes = await readFile(createdPath, "utf8");
+    if (form === "regular") {
+      await rename(createdPath, destination);
+    } else {
+      await mkdir(dirname(target), { recursive: true });
+      await rename(createdPath, target);
+      await symlink(target, destination);
+    }
+
+    const retry = await ticketsCommand({ project: directory });
+
+    expect(retry.outcomes[0]).toMatchObject({
+      kind: "already-emitted",
+      state: "ready",
+      path: destination,
+      unchanged: true,
+    });
+    expect(await readdir(join(tracker, "triage"))).toEqual([]);
+    expect(await persistedStatuses(run)).toEqual(["ticketed"]);
+    if (form === "symlink") {
+      expect((await lstat(destination)).isSymbolicLink()).toBe(true);
+      expect(await readFile(target, "utf8")).toBe(bytes);
+    }
+  },
+);
+
+test("a symlinked ticket's embedded identity resolves the lineage", async () => {
+  const item = finding("IDM-run-0001", "phone", "linked-embedded-fingerprint");
+  const { directory, run } = await fixture([item]);
+  await acceptAll(directory, [item]);
+  const { link } = await linkTracker(
+    directory,
+    "done",
+    "combined.md",
+    `# Combined\n\n${findingBlock(item)}\n`,
+  );
+
+  const result = await ticketsCommand({ project: directory });
+
+  expect(result.outcomes).toEqual([
+    {
+      kind: "already-resolved",
+      findingId: "finding-1",
+      status: "ticketed",
+      path: link,
+      state: "done",
+    },
+  ]);
+  await expect(
+    access(join(directory, ".autobuild", "tickets", "triage")),
+  ).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await persistedStatuses(run)).toEqual(["ticketed"]);
+});
+
+test("a malformed symlinked ticket naming a lineage blocks it", async () => {
+  const item = finding("IDM-run-0001", "phone", "linked-malformed-fingerprint");
+  const { directory, run } = await fixture([item]);
+  await acceptAll(directory, [item]);
+  const { link } = await linkTracker(
+    directory,
+    "done",
+    "hand-edited.md",
+    `\`\`\`idiom:finding\n${JSON.stringify({ id: item.id, fingerprint: item.fingerprint, bogus: true })}\n\`\`\`\n`,
+  );
+
+  const result = await ticketsCommand({ project: directory });
+
+  expect(result.outcomes).toEqual([
+    { kind: "blocked", findingId: "finding-1", paths: [link] },
+  ]);
+  expect(result.malformed.map((ticket) => ticket.path)).toEqual([link]);
+  expect(await persistedStatuses(run)).toEqual(["open"]);
+});
+
+test("dangling and directory symlinks in the tracker are not tickets", async () => {
+  const item = finding("IDM-run-0001", "phone", "unrelated-link-fingerprint");
+  const { directory } = await fixture([item]);
+  await acceptAll(directory, [item]);
+  const ready = join(directory, ".autobuild", "tickets", "ready");
+  await mkdir(join(directory, "elsewhere", "folder.md"), { recursive: true });
+  await mkdir(ready, { recursive: true });
+  await symlink(
+    join(directory, "elsewhere", "missing.md"),
+    join(ready, "dangling.md"),
+  );
+  await symlink(
+    join(directory, "elsewhere", "folder.md"),
+    join(ready, "folder.md"),
+  );
+
+  const result = await ticketsCommand({ project: directory });
+
+  expect(result.outcomes).toEqual([
+    expect.objectContaining({ kind: "created", findingId: "finding-1" }),
+  ]);
+  expect(result.malformed).toEqual([]);
 });

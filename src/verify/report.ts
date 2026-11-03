@@ -11,6 +11,7 @@ import {
 } from "../report/coverage.js";
 import type { AttachmentManifest } from "./attachments.js";
 import type { VerificationEvaluation } from "./evaluate.js";
+import { TEXT_BOUNDARY } from "./profile.js";
 
 function cell(value: string): string {
   return value.replaceAll("|", "\\|").replace(/\r?\n/g, "<br>");
@@ -31,6 +32,19 @@ function reductionText(evaluation: VerificationEvaluation): string[] {
       );
     return lines;
   });
+}
+
+function pairSuppressionText(evaluation: VerificationEvaluation): string[] {
+  const lines = evaluation.findings.flatMap((verdict) => {
+    const suppression = verdict.locus?.pairTextSuppression;
+    if (suppression === undefined || suppression.paths.length === 0) return [];
+    return [
+      `- \`${verdict.finding.id}\` (${verdict.locus?.source}): text omitted on all compared sides for ${suppression.paths.map((path) => `\`${path}\``).join(", ")} (${TEXT_BOUNDARY}-character boundary reached on at least one side); historical records affected: ${suppression.historicalRecords}, current: ${suppression.currentRecords}.`,
+    ];
+  });
+  return lines.length === 0
+    ? []
+    : ["### Pair-level text suppression", "", ...lines, ""];
 }
 
 export function renderVerificationReport(options: {
@@ -112,7 +126,7 @@ export function renderVerificationReport(options: {
     "",
     "## Calibration and comparison basis",
     "",
-    "`v2-full` includes visible rendered structure, normalized direct text, allow-listed semantic/presentation attributes, expanded computed styles, and stable-island-relative geometry. It excludes serialized HTML, comments, hidden/forbidden elements, URL/data attributes, and raw document dimensions. `v1-compatible` additionally reduces to rendered legacy subtree text below the 500-character boundary, shared legacy styles, and reconstructed ancestor-relative geometry; all v2-only fields are excluded.",
+    "`v2-full` includes visible rendered structure, normalized direct text, allow-listed semantic/presentation attributes, expanded computed styles, and stable-island-relative geometry. It excludes serialized HTML, comments, hidden/forbidden elements, URL/data attributes, and raw document dimensions. `v1-compatible` additionally reduces to rendered legacy subtree text below the 500-character boundary, shared legacy styles, and reconstructed ancestor-relative geometry; all v2-only fields are excluded. When any compared side reaches the boundary, text for that subtree is omitted on every compared side.",
     "",
     ...reductionText(evaluation),
     "",
@@ -138,6 +152,7 @@ export function renderVerificationReport(options: {
         .replace(/$/, " |"),
     ),
     "",
+    ...pairSuppressionText(evaluation),
     ...evaluation.findings.flatMap((verdict) => [
       `### ${cell(verdict.finding.id)} acceptance`,
       "",

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { createBudget, recordEdit } from "../hooks/lib.mjs";
+import { createBudget, recordEdit } from "../plugins/claude/hooks/lib.mjs";
 import {
   beginCheckRecording,
   completeCheckRecording,

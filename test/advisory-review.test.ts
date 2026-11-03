@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { chromium } from "playwright";
 import { afterAll, afterEach, beforeAll, expect, test } from "vitest";
 import { run } from "../src/cli.js";
+import { critiquePrompt } from "../src/critique/prompt.js";
+import { TEXT_REFERENCE_LIMIT } from "../src/critique/reference-bound.js";
 import {
   type CritiqueInput,
   critiqueResult,
@@ -285,8 +287,12 @@ test("review critiques each declared pattern with its intent and keeps the resul
   expect(report).toContain(": spacing (major, advisory)");
   expect(report).toContain(": coherence (major, advisory)");
   expect(report).toContain("read as broken thumbnails");
+  expect(report).not.toContain("Text references truncated");
   const html = await readFile(result.htmlReportPath, "utf8");
   expect(html).toContain("<h2>Advisory design review</h2>");
+  for (const pattern of advisory.patterns)
+    expect(pattern).not.toHaveProperty("truncatedReferences");
+  expect(result).not.toHaveProperty("truncatedReferences");
 
   const findings = JSON.parse(
     await readFile(result.findingsPath, "utf8"),
@@ -524,6 +530,121 @@ test("an explicit file reference is sent as a pattern reference", async () => {
       }),
     ]),
   );
+}, 120_000);
+
+test("an oversized pattern file reference is bounded and reported", async () => {
+  const project = await advisoryProject({
+    content: {
+      patterns: [
+        {
+          ...declaredContent.patterns[1],
+          reference: "design/logo-bar.md",
+        },
+      ],
+    },
+  });
+  const content = `${"x".repeat(TEXT_REFERENCE_LIMIT)}TAIL-SENTINEL`;
+  await mkdir(join(project, "design"), { recursive: true });
+  await writeFile(join(project, "design", "logo-bar.md"), content);
+  const { inputs, critique } = stub();
+  const result = await runReview({
+    project,
+    flow: "studio-lab",
+    from: runId,
+    dependencies: { critique },
+  });
+  const truncated = [
+    {
+      label: "pattern:logo-marquee",
+      polarity: "reference",
+      totalChars: content.length,
+      includedChars: TEXT_REFERENCE_LIMIT,
+    },
+  ];
+  expect(result.advisory?.review.patterns[0]?.truncatedReferences).toEqual(
+    truncated,
+  );
+  const input = inputs.find((item) => item.page?.pattern !== undefined);
+  if (input === undefined) throw new Error("no pattern critique input");
+  expect(critiquePrompt(input, input.screenshots)).not.toContain(
+    "TAIL-SENTINEL",
+  );
+  const advisory = JSON.parse(
+    await readFile(join(result.runDirectory, "advisory.json"), "utf8"),
+  ) as AdvisoryReview;
+  expect(advisory.patterns[0]?.truncatedReferences).toEqual(truncated);
+  const report = await readFile(result.reportPath, "utf8");
+  const section = report.slice(report.indexOf("## Advisory design review"));
+  expect(section).toContain(
+    `Text references truncated for the model (limit 12,000 characters each): pattern:logo-marquee (${content.length.toLocaleString("en-US")} characters, first 12,000 sent).`,
+  );
+  const html = await readFile(result.htmlReportPath, "utf8");
+  expect(html).toContain("pattern:logo-marquee (12,013 characters");
+}, 120_000);
+
+test("advisory deterministic-only review reports an oversized .idiom reference per pattern", async () => {
+  const project = await advisoryProject();
+  await writeFile(
+    join(project, ".idiom", "references", "brand.md"),
+    `${"x".repeat(TEXT_REFERENCE_LIMIT + 10)}TAIL-SENTINEL`,
+  );
+  const { inputs, critique } = stub();
+  const result = await runReview({
+    project,
+    flow: "studio-lab",
+    from: runId,
+    deterministicOnly: true,
+    advisory: true,
+    dependencies: { critique },
+  });
+  expect(inputs.length).toBeGreaterThan(0);
+  const ran = (result.advisory?.review.patterns ?? []).filter(
+    (pattern) => pattern.status !== "skipped",
+  );
+  expect(ran.length).toBeGreaterThan(0);
+  for (const pattern of ran)
+    expect(
+      pattern.truncatedReferences?.map((item) => item.label),
+      pattern.id,
+    ).toEqual(["reference:brand.md"]);
+  expect(result.truncatedReferences).toBeUndefined();
+  const report = await readFile(result.reportPath, "utf8");
+  const advisoryStart = report.indexOf("## Advisory design review");
+  expect(advisoryStart).toBeGreaterThan(-1);
+  expect(report.slice(0, advisoryStart)).not.toContain(
+    "Text references truncated",
+  );
+  expect(report.slice(advisoryStart)).toContain(
+    "Text references truncated for the model (limit 12,000 characters each): reference:brand.md (12,023 characters, first 12,000 sent).",
+  );
+}, 120_000);
+
+test("an oversized .idiom reference is reported for the main model pass", async () => {
+  const project = await advisoryProject({ content: null });
+  await writeFile(
+    join(project, ".idiom", "references", "brand.md"),
+    `${"x".repeat(TEXT_REFERENCE_LIMIT + 10)}TAIL-SENTINEL`,
+  );
+  const { critique } = stub();
+  const result = await runReview({
+    project,
+    flow: "studio-lab",
+    from: runId,
+    dependencies: { critique },
+  });
+  expect(result.outcome).toEqual({ kind: "full" });
+  expect(result.truncatedReferences).toEqual([
+    {
+      label: "reference:brand.md",
+      polarity: "reference",
+      totalChars: TEXT_REFERENCE_LIMIT + 23,
+      includedChars: TEXT_REFERENCE_LIMIT,
+    },
+  ]);
+  const sentence =
+    "Text references truncated for the model (limit 12,000 characters each): reference:brand.md (12,023 characters, first 12,000 sent).";
+  expect(await readFile(result.reportPath, "utf8")).toContain(sentence);
+  expect(await readFile(result.htmlReportPath, "utf8")).toContain(sentence);
 }, 120_000);
 
 test("deterministic-only review runs no advisory pass and --advisory needs content", async () => {

@@ -19,15 +19,17 @@ export function settingsHash(value: unknown): string {
 
 /** Include declarations used at capture time by predicates, without storing URLs, env or resources. */
 export function capturePredicateIdentity(project: Project, flow: Flow): string {
-  // Scheduling (lane/link concurrency, capture deadline) never changes a predicate.
+  // Scheduling (lane/link concurrency, capture deadline, probe flow target) never changes a predicate.
   const {
     concurrency: _lanes,
     maxMinutes: _deadline,
     ...capture
   } = project.capture;
+  const { gate: _gate, ...rest } = project.checks;
   const checks = {
-    ...project.checks,
+    ...rest,
     links: { ...project.checks.links, concurrency: undefined },
+    probe: { ...project.checks.probe, flowBudgetMs: undefined },
   };
   return settingsHash({
     checks,

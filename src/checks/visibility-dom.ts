@@ -10,6 +10,8 @@ type VisibilityResult = {
 
 type VisibilityDom = {
   painted(element: Element): PaintedFact;
+  /** Why spacing rules skip it: in a subtree the user cannot see or reach. */
+  excluded(element: Element): string | undefined;
   measure(element: Element, within?: Element): VisibilityGeometry;
   extent(element: Element, stop: Element): Rect | undefined;
   client(element: Element): Rect;
@@ -28,6 +30,8 @@ declare global {
 export function installVisibilityDom(
   query?: VisibilityQuery,
 ): VisibilityResult | undefined {
+  // Opaque-origin frames (sandboxed srcdoc) block callbacks and some APIs.
+  if (window !== window.top && self.origin === "null") return;
   const box = (r: DOMRect): Rect => ({
     x: r.x,
     y: r.y,
@@ -337,8 +341,31 @@ export function installVisibilityDom(
     }
     return { value: true };
   };
+  // A closed disclosure, an inert or hidden subtree, or a skipped
+  // content-visibility subtree still has layout boxes for spacing to measure.
+  const excluded = (element: Element): string | undefined => {
+    for (
+      let current: Element | null = element;
+      current;
+      current = current.parentElement
+    ) {
+      if (current.hasAttribute("hidden")) return "hidden";
+      if (current.hasAttribute("inert")) return "inert";
+      if (current === element) continue;
+      if (getComputedStyle(current).contentVisibility === "hidden")
+        return "content-visibility-hidden";
+      if (current instanceof HTMLDetailsElement && !current.open) {
+        const summary = [...current.children].find(
+          (child) => child.tagName === "SUMMARY",
+        );
+        if (!summary?.contains(element)) return "closed-details";
+      }
+    }
+    return undefined;
+  };
   window.__idiomVisibility = {
     painted,
+    excluded,
     measure,
     client,
     extent: (element, stop) => {

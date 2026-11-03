@@ -5,6 +5,9 @@ export function normalizeConsoleIdentity(value: string): string {
   return value.trim().replace(/\s+/g, " ") || "<empty message>";
 }
 
+/** Chromium never sends a fragment, so a failing request's URL has none. */
+const withoutFragment = (url: string) => url.split("#", 1)[0] ?? url;
+
 function isExpectedDocumentLoadError(
   tuple: CheckTuple,
   record: CheckTuple["console"][number],
@@ -15,12 +18,20 @@ function isExpectedDocumentLoadError(
     response === undefined ||
     response.expectedStatus === 200 ||
     response.actualStatus !== response.expectedStatus ||
-    record.location?.url !== response.url ||
+    record.location === undefined ||
+    withoutFragment(record.location.url) !==
+      withoutFragment(response.finalUrl ?? response.url) ||
     record.location.lineNumber !== 0 ||
     record.location.columnNumber !== 0
   ) {
     return false;
   }
+  // A same-URL subresource fails with an identical message; only the
+  // main-frame document's own record is the expected one.
+  if (record.request !== undefined) {
+    if (record.request.resourceType !== "document" || !record.request.mainFrame)
+      return false;
+  } else if (tuple.consoleProvenance === true) return false;
   const message = normalizeConsoleIdentity(record.text);
   return new RegExp(
     `^Failed to load resource: the server responded with a status of ${response.expectedStatus}(?: \\([^()]*\\))?$`,

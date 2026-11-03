@@ -97,6 +97,14 @@ test("Claude preflight is tool-free, safe, and contains no product path", async 
   const calls: ClaudeCodeRunRequest[] = [];
   const adapter = new ClaudeCodeExplorationAdapter({
     model: "model",
+    environment: {
+      PATH: "/example/bin",
+      ANTHROPIC_API_KEY: "must-not-pass",
+      ANTHROPIC_AUTH_TOKEN: "must-not-pass",
+      ANTHROPIC_BASE_URL: "https://proxy.example.test",
+      CLAUDE_CODE_USE_VERTEX: "1",
+      CLAUDE_CODE_SKIP_VERTEX_AUTH: "1",
+    },
     runner: vi.fn(async (call) => {
       calls.push(call);
       return {
@@ -112,6 +120,7 @@ test("Claude preflight is tool-free, safe, and contains no product path", async 
     }),
   });
   await adapter.preflight();
+  expect(calls[0]?.environment).toEqual({ PATH: "/example/bin" });
   expect(calls[0]?.args).toContain("--safe-mode");
   expect(calls[0]?.args).not.toContain("--add-dir");
   expect(

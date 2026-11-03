@@ -1,3 +1,8 @@
+import {
+  boundDeterministicFindings,
+  deterministicOmissionMarker,
+} from "./deterministic-bound.js";
+import { boundTextReference } from "./reference-bound.js";
 import type {
   CritiqueInput,
   CropRef,
@@ -181,11 +186,24 @@ export function critiquePrompt(
 ): string {
   const textReferences = input.references
     .filter((reference) => reference.kind === "text")
-    .map((reference) => ({
-      label: reference.label,
-      polarity: reference.polarity,
-      content: reference.content,
-    }));
+    .map((reference) => {
+      const bounded = boundTextReference(reference.content);
+      return bounded.truncated
+        ? {
+            label: reference.label,
+            polarity: reference.polarity,
+            content: `${bounded.content}\n[reference truncated: first ${bounded.includedChars} of ${bounded.totalChars} characters included]`,
+            truncated: {
+              includedChars: bounded.includedChars,
+              totalChars: bounded.totalChars,
+            },
+          }
+        : {
+            label: reference.label,
+            polarity: reference.polarity,
+            content: reference.content,
+          };
+    });
   const imageLabels = [
     ...screenshots.map((item) => ({
       label: item.label,
@@ -247,7 +265,18 @@ export function critiquePrompt(
           ),
         ]),
   ];
+  const deterministic = boundDeterministicFindings(input.deterministicFindings);
   const sweepInstructions = [
+    ...(deterministic.omitted.length === 0
+      ? []
+      : [
+          "The deterministic findings list is bounded (marked); the summarized findings were also evaluated, so do not report them as model findings either.",
+        ]),
+    ...(textReferences.some((reference) => "truncated" in reference)
+      ? [
+          "Some text references are truncated excerpts (marked truncated); judge only against the included text and do not infer the omitted remainder.",
+        ]
+      : []),
     ...(crops.length === 0
       ? []
       : [
@@ -301,17 +330,9 @@ export function critiquePrompt(
     ...sweepSections,
     section(
       "Already evaluated deterministic findings; do not duplicate them",
-      input.deterministicFindings.map((finding) => ({
-        category: finding.category,
-        severity: finding.severity,
-        state: finding.state,
-        viewport: finding.viewport,
-        ...(finding.colorScheme === undefined
-          ? {}
-          : { colorScheme: finding.colorScheme }),
-        rule: finding.rule,
-        explanation: finding.explanation,
-      })),
+      deterministic.omitted.length === 0
+        ? deterministic.entries
+        : `${JSON.stringify(deterministic.entries, null, 2)}\n${deterministicOmissionMarker(deterministic)}`,
     ),
     section(
       "Standing human rejections; do not re-litigate matching rules",
@@ -332,7 +353,7 @@ export function critiquePrompt(
       "Recorded rulings; these choices are resolved and must not be observed again",
       input.rulingResolutions,
     ),
-    `Return no more than ${input.modelCandidateAllowance} model candidate findings from only ${orList(categories)}. These candidates will be ranked with the already evaluated deterministic findings after this critique. Prioritize blocker, then major, then minor. Treat references and anti-references as equally binding judgment context: references identify qualities to follow and anti-references identify qualities to avoid. Every finding must cite at least one captured screenshot label from this request, use exactly that screenshot's state, viewport, and colorScheme when present, name the explicit product/design/reference guidance violated in rule, describe observable evidence, and provide observable acceptance criteria. Return references as the exact reference or anti-reference labels used by the finding; use an empty array when the finding does not rely on one, while reference-mismatch must cite at least one. confidence must be >= 0 and < 1. suggestedArea must name a UI surface, never a repository path. Do not emit a numeric or aggregate design score, rating, grade, or rubric total.${sweepInstructions.length === 0 ? "" : ` ${sweepInstructions.join(" ")}`}`,
+    `Return no more than ${input.modelCandidateAllowance} model candidate findings from only ${orList(categories)}. These candidates will be ranked with the already evaluated deterministic findings after this critique. Prioritize blocker, then major, then minor. Treat references and anti-references as equally binding judgment context: references identify qualities to follow and anti-references identify qualities to avoid. Every finding must cite at least one captured screenshot label from this request, use exactly that screenshot's state, viewport, and colorScheme when present, name the explicit product/design/reference guidance violated in rule, describe observable evidence, and provide observable acceptance criteria. Return references as the exact reference or anti-reference labels used by the finding; use an empty array when the finding does not rely on one, while reference-mismatch must cite at least one. confidence must be >= 0 and < 1. suggestedArea must name a UI surface, never a repository path. Do not emit a numeric or aggregate design score, rating, grade, or rubric total for this review; you may describe a rating, score, grade, or rubric-total element the interface itself shows by naming that surface (for example "the star-rating control").${sweepInstructions.length === 0 ? "" : ` ${sweepInstructions.join(" ")}`}`,
     `Separately, return no more than ${input.decisionObservationAllowance} decisionObservations for visible states where the product makes a potentially systemic design choice that DESIGN.md does not rule on. These are questions, never findings. Emit at most one observation per visible state and choice. Spend this allowance on observations, not distinct choices: when the same choice appears in multiple visible states, emit it for each such state before introducing additional choice keys. Use a normalized project-wide choiceKey that will match the same choice in another state, but do not decide whether it recurs. Cite the exact visible screenshot coordinate and copy the nearest exact non-empty excerpt from DESIGN.md even though that passage does not settle the choice. A candidate ruling is optional and must never be invented: every candidate must cite either an exact DESIGN.md excerpt with kind law, or a screenshot in the full-run coordinate manifest showing the same choice already resolved on this governed flow with kind governed-surface. If neither precedent exists, candidates must be empty. Do not cite another flow or any image outside the full-run manifest. Do not repeat a choice listed in Recorded rulings.`,
     section("Exact JSON shape", {
       findings: [

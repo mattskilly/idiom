@@ -3,8 +3,9 @@ import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { readDecisionLog } from "../decisions/log.js";
-import { IdiomError } from "../errors.js";
+import { IdiomError, RunFailure } from "../errors.js";
 import { type Finding, findingSchema } from "../schemas/finding.js";
+import { mentionsToken } from "../tickets/mentions.js";
 import { type GitTopology, primaryCheckout } from "../verify/baseline.js";
 import { parseFindingBlocks } from "../verify/spec.js";
 
@@ -112,6 +113,20 @@ export type FindingNamesState = {
   path: string;
   registry: FindingNameRegistry;
   changed: boolean;
+  /**
+   * Inherited (primary checkout) names skipped because they conflict with
+   * this checkout's; `path` is the primary registry, or its `.idiom`
+   * directory when only evidence conflicted.
+   */
+  divergence?: { path: string; skipped: number } | undefined;
+  /** This checkout's tracker tickets whose embedded records don't parse. */
+  malformedTickets: Array<{ path: string; error: string }>;
+  /**
+   * Names minted this run for lineages a malformed own ticket mentions; used
+   * in memory but never persisted, since the unreadable block may claim a
+   * different name.
+   */
+  provisional?: string[] | undefined;
 };
 
 type Observation = {
@@ -228,11 +243,20 @@ function compatible(left: Finding, right: Finding): boolean {
   );
 }
 
-function mergeRegistries(
-  registries: Array<{ path: string; registry: FindingNameRegistry }>,
-): FindingNameRegistry {
+type RegistryInput = {
+  path: string;
+  registry: FindingNameRegistry;
+  /** Read from the primary checkout: merged only where it fits. */
+  inherited: boolean;
+};
+
+function mergeRegistries(registries: RegistryInput[]): {
+  registry: FindingNameRegistry;
+  skipped: FindingNameEntry[];
+} {
   const output: FindingNameEntry[] = [];
-  for (const { path, registry } of registries) {
+  const skipped: FindingNameEntry[] = [];
+  for (const { path, registry, inherited } of registries) {
     for (const entry of registry.entries) {
       const identityOverlaps = (candidate: FindingNameEntry) =>
         candidate.fingerprints.some((value) =>
@@ -243,23 +267,32 @@ function mergeRegistries(
         (candidate) =>
           candidate.name === entry.name || identityOverlaps(candidate),
       );
-      if (matches.length > 1)
-        throw new IdiomError(
-          `conflicting finding-name registry ${path}: entry ${entry.name} joins unrelated existing entries`,
-        );
       const match = matches[0];
+      const conflict =
+        matches.length > 1
+          ? `entry ${entry.name} joins unrelated existing entries`
+          : match === undefined
+            ? undefined
+            : match.name === entry.name && !identityOverlaps(match)
+              ? `${entry.name} is allocated to unrelated identities`
+              : match.name !== entry.name
+                ? `identity is named both ${match.name} and ${entry.name}`
+                : undefined;
+      if (conflict !== undefined) {
+        // The current checkout's names win; the primary's conflicting entry
+        // sits this run out.
+        if (inherited) {
+          skipped.push(entry);
+          continue;
+        }
+        throw new IdiomError(
+          `conflicting finding-name registry ${path}: ${conflict}`,
+        );
+      }
       if (match === undefined) {
         output.push({ ...entry });
         continue;
       }
-      if (match.name === entry.name && !identityOverlaps(match))
-        throw new IdiomError(
-          `conflicting finding-name registry ${path}: ${entry.name} is allocated to unrelated identities`,
-        );
-      if (match.name !== entry.name)
-        throw new IdiomError(
-          `conflicting finding-name registry ${path}: identity is named both ${match.name} and ${entry.name}`,
-        );
       match.fingerprints = unique([
         ...match.fingerprints,
         ...entry.fingerprints,
@@ -267,11 +300,16 @@ function mergeRegistries(
       match.legacyIds = unique([...match.legacyIds, ...entry.legacyIds]);
     }
   }
-  return normalizedRegistry({
-    version: 1,
-    next: Math.max(1, ...registries.map(({ registry }) => registry.next)),
-    entries: output,
-  });
+  return {
+    // `next` spans both files so a new local name never reuses a number the
+    // primary already spent.
+    registry: normalizedRegistry({
+      version: 1,
+      next: Math.max(1, ...registries.map(({ registry }) => registry.next)),
+      entries: output,
+    }),
+    skipped,
+  };
 }
 
 async function reportObservations(root: string): Promise<Observation[]> {
@@ -326,8 +364,19 @@ async function reportObservations(root: string): Promise<Observation[]> {
 
 const TICKET_STATES = ["triage", "ready", "doing", "done"] as const;
 
-async function ticketObservations(root: string): Promise<Observation[]> {
+type MalformedTicketSource = { path: string; error: string; source: string };
+
+/**
+ * A ticket whose `idiom:finding` blocks don't parse is reported, not thrown:
+ * it contributes no observations so unrelated lineages still resolve. Read
+ * and enumeration failures stay fatal.
+ */
+async function ticketObservations(root: string): Promise<{
+  observations: Observation[];
+  malformed: MalformedTicketSource[];
+}> {
   const observations: Observation[] = [];
+  const malformed: MalformedTicketSource[] = [];
   for (const state of TICKET_STATES) {
     const directory = join(root, state);
     let entries: Dirent[];
@@ -343,13 +392,24 @@ async function ticketObservations(root: string): Promise<Observation[]> {
       .filter((item) => item.isFile() && item.name.endsWith(".md"))
       .sort((left, right) => left.name.localeCompare(right.name))) {
       const path = join(directory, entry.name);
-      let findings: Finding[];
+      let source: string;
       try {
-        findings = parseFindingBlocks(await readFile(path, "utf8"));
+        source = await readFile(path, "utf8");
       } catch (error) {
         throw new IdiomError(
           `cannot parse tracker ticket ${path}: ${error instanceof Error ? error.message : String(error)}`,
         );
+      }
+      let findings: Finding[];
+      try {
+        findings = parseFindingBlocks(source);
+      } catch (error) {
+        malformed.push({
+          path,
+          error: `cannot parse tracker ticket ${path}: ${error instanceof Error ? error.message : String(error)}`,
+          source,
+        });
+        continue;
       }
       for (const [index, finding] of findings.entries())
         observations.push({
@@ -361,9 +421,13 @@ async function ticketObservations(root: string): Promise<Observation[]> {
         });
     }
   }
-  return observations;
+  return { observations, malformed };
 }
 
+/**
+ * Folds one record into the lineages. Every refusal happens before any
+ * mutation, so a caller may catch it and skip the record safely — keep it so.
+ */
 function observe(lineages: BootstrapLineage[], observation: Observation): void {
   const identifiers = unique([observation.id, ...observation.aliases]);
   const matches = lineages.filter(
@@ -430,59 +494,231 @@ async function primaryFor(
   }
 }
 
+/**
+ * An explicit override, else `findingNames.isolatedRegistry` from the
+ * project config. Read raw so every catalog reader agrees without plumbing;
+ * a missing or malformed config means "not isolated" (validation reports it).
+ */
+async function resolveIsolation(
+  projectDirectory: string,
+  override: boolean | undefined,
+): Promise<boolean> {
+  if (override !== undefined) return override;
+  try {
+    const value: unknown = JSON.parse(
+      await readFile(join(projectDirectory, ".idiom", "project.json"), "utf8"),
+    );
+    const findingNames =
+      typeof value === "object" && value !== null
+        ? (value as { findingNames?: unknown }).findingNames
+        : undefined;
+    return (
+      typeof findingNames === "object" &&
+      findingNames !== null &&
+      (findingNames as { isolatedRegistry?: unknown }).isolatedRegistry === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function readRegistries(
+  path: string,
+  primary: string | undefined,
+): Promise<{
+  present: RegistryInput[];
+  merged: FindingNameRegistry;
+  skipped: FindingNameEntry[];
+  primaryPath: string | undefined;
+}> {
+  const primaryPath =
+    primary === undefined
+      ? undefined
+      : join(primary, ".idiom", "finding-names.json");
+  const present: RegistryInput[] = [];
+  for (const candidate of unique([
+    path,
+    ...(primaryPath === undefined ? [] : [primaryPath]),
+  ])) {
+    const registry = await readRegistry(candidate);
+    if (registry !== undefined)
+      present.push({
+        path: candidate,
+        registry,
+        inherited: candidate !== path,
+      });
+  }
+  const { registry: merged, skipped } = mergeRegistries(present);
+  return { present, merged, skipped, primaryPath };
+}
+
+/**
+ * Resolves finding names without persisting, run before any capture so a
+ * corrupt registry or a conflict in this checkout's own evidence refuses the
+ * run in seconds, not after it. Divergence from the primary is not a refusal.
+ */
+export async function preflightFindingNameRegistry(options: {
+  projectDirectory: string;
+  gitTopology?: GitTopology | undefined;
+  isolatedRegistry?: boolean | undefined;
+}): Promise<void> {
+  const projectDirectory = resolve(options.projectDirectory);
+  try {
+    await loadFindingNames({
+      projectDirectory,
+      gitTopology: options.gitTopology,
+      isolatedRegistry: options.isolatedRegistry,
+    });
+  } catch (error) {
+    if (!(error instanceof IdiomError) || error instanceof RunFailure)
+      throw error;
+    const primary = (await resolveIsolation(
+      projectDirectory,
+      options.isolatedRegistry,
+    ))
+      ? undefined
+      : await primaryFor(projectDirectory, options.gitTopology);
+    const inherited =
+      primary !== undefined && error.message.includes(join(primary, ".idiom"));
+    throw new RunFailure({
+      stage: "preflight",
+      cause: "finding-name-registry",
+      headline: `finding-name registry refused: ${error.message}`,
+      hint: inherited
+        ? `fix or restore the primary checkout's .idiom/finding-names.json, or pass --isolated-registry`
+        : "fix or restore .idiom/finding-names.json (git checkout -- .idiom/finding-names.json) and rerun",
+    });
+  }
+}
+
+/** The one warning line for a divergent primary registry, if any. */
+export function findingNameDivergenceWarning(
+  state: Pick<FindingNamesState, "divergence">,
+): string | undefined {
+  const divergence = state.divergence;
+  if (divergence === undefined || divergence.skipped === 0) return undefined;
+  const entries = divergence.skipped === 1 ? "entry" : "entries";
+  return `Warning: finding-name registry diverges from the primary checkout: skipped ${divergence.skipped} conflicting ${entries} from ${divergence.path}; this checkout's names win (pass --isolated-registry to ignore the primary's names)`;
+}
+
+function touches(observation: Observation, shadowed: Set<string>): boolean {
+  return (
+    shadowed.has(observation.fingerprint) ||
+    shadowed.has(observation.id) ||
+    observation.aliases.some((alias) => shadowed.has(alias))
+  );
+}
+
+/**
+ * Whether an inherited record would extend a named lineage only by claiming
+ * its name, with no shared fingerprint or legacy id — a different finding
+ * allocated the same number elsewhere.
+ */
+function claimsByNameOnly(
+  lineages: readonly BootstrapLineage[],
+  observation: Observation,
+): boolean {
+  const identifiers = [observation.id, ...observation.aliases];
+  return lineages.some(
+    (lineage) =>
+      lineage.name !== undefined &&
+      identifiers.includes(lineage.name) &&
+      !lineage.fingerprints.includes(observation.fingerprint) &&
+      !identifiers.some((id) => lineage.legacyIds.includes(id)),
+  );
+}
+
 export async function loadFindingNames(options: {
   projectDirectory: string;
   additionalReportRoots?: readonly string[] | undefined;
   additionalTrackerRoots?: readonly string[] | undefined;
   gitTopology?: GitTopology | undefined;
+  /** Ignore the primary checkout's names; defaults to the project config. */
+  isolatedRegistry?: boolean | undefined;
 }): Promise<FindingNamesState> {
   const projectDirectory = resolve(options.projectDirectory);
   const path = join(projectDirectory, ".idiom", "finding-names.json");
-  const primary = await primaryFor(projectDirectory, options.gitTopology);
-  const registryPaths = unique([
+  const primary = (await resolveIsolation(
+    projectDirectory,
+    options.isolatedRegistry,
+  ))
+    ? undefined
+    : await primaryFor(projectDirectory, options.gitTopology);
+  const { present, merged, skipped, primaryPath } = await readRegistries(
     path,
-    ...(primary === undefined
-      ? []
-      : [join(primary, ".idiom", "finding-names.json")]),
-  ]);
-  const present: Array<{ path: string; registry: FindingNameRegistry }> = [];
-  for (const candidate of registryPaths) {
-    const registry = await readRegistry(candidate);
-    if (registry !== undefined) present.push({ path: candidate, registry });
-  }
-  const merged = mergeRegistries(present);
+    primary,
+  );
   const lineages: BootstrapLineage[] = merged.entries.map((entry) => ({
     name: entry.name,
     fingerprints: [...entry.fingerprints],
     legacyIds: [...entry.legacyIds],
     sources: ["finding-name registry"],
   }));
+  const shadowed = new Set(
+    skipped.flatMap((entry) => [
+      entry.name,
+      ...entry.fingerprints,
+      ...entry.legacyIds,
+    ]),
+  );
 
-  const roots = [projectDirectory, ...(primary === undefined ? [] : [primary])];
-  for (const root of roots) {
-    for (const [index, decision] of (await readDecisionLog(root)).entries()) {
-      observe(lineages, {
+  const decisionObservations = async (root: string) =>
+    (await readDecisionLog(root)).map(
+      (decision, index): Observation => ({
         id: decision.findingId,
         aliases: [],
         fingerprint: decision.fingerprint,
         source: `${join(root, ".idiom", "decisions.jsonl")}:${index + 1}`,
-      });
+      }),
+    );
+  const ownReports = join(projectDirectory, ".idiom", "reports");
+  const ownTickets = join(projectDirectory, ".autobuild", "tickets");
+
+  // This checkout's evidence first, and strictly: a conflict here cannot be
+  // resolved. Inherited evidence follows so it never founds a lineage that a
+  // local record then collides with.
+  const ownTicketEvidence = await ticketObservations(ownTickets);
+  for (const observation of [
+    ...(await decisionObservations(projectDirectory)),
+    ...(await reportObservations(ownReports)),
+    ...ownTicketEvidence.observations,
+  ])
+    observe(lineages, observation);
+
+  const inheritedReports = unique([
+    ...(primary === undefined ? [] : [join(primary, ".idiom", "reports")]),
+    ...(options.additionalReportRoots ?? []).map((root) => resolve(root)),
+  ]).filter((root) => root !== ownReports);
+  const inheritedTickets = unique([
+    ...(primary === undefined ? [] : [join(primary, ".autobuild", "tickets")]),
+    ...(options.additionalTrackerRoots ?? []).map((root) => resolve(root)),
+  ]).filter((root) => root !== ownTickets);
+  let skippedRecords = 0;
+  const inherited: Observation[] = [
+    ...(primary === undefined ? [] : await decisionObservations(primary)),
+  ];
+  for (const root of inheritedReports)
+    inherited.push(...(await reportObservations(root)));
+  for (const root of inheritedTickets) {
+    const evidence = await ticketObservations(root);
+    inherited.push(...evidence.observations);
+    skippedRecords += evidence.malformed.length;
+  }
+  for (const observation of inherited) {
+    if (
+      touches(observation, shadowed) ||
+      claimsByNameOnly(lineages, observation)
+    ) {
+      skippedRecords += 1;
+      continue;
+    }
+    try {
+      observe(lineages, observation);
+    } catch (error) {
+      if (!(error instanceof IdiomError)) throw error;
+      skippedRecords += 1;
     }
   }
-  const reportRoots = unique([
-    ...roots.map((root) => join(root, ".idiom", "reports")),
-    ...(options.additionalReportRoots ?? []).map((root) => resolve(root)),
-  ]);
-  for (const root of reportRoots)
-    for (const observation of await reportObservations(root))
-      observe(lineages, observation);
-  const trackerRoots = unique([
-    ...roots.map((root) => join(root, ".autobuild", "tickets")),
-    ...(options.additionalTrackerRoots ?? []).map((root) => resolve(root)),
-  ]);
-  for (const root of trackerRoots)
-    for (const observation of await ticketObservations(root))
-      observe(lineages, observation);
 
   const claimed = new Set(
     lineages.flatMap((lineage) =>
@@ -494,12 +730,21 @@ export async function loadFindingNames(options: {
     1,
     ...[...claimed].map((name) => (findingNameNumber(name) ?? 0) + 1),
   );
+  const provisional = new Set<string>();
   for (const lineage of lineages) {
     if (lineage.name !== undefined) continue;
     while (claimed.has(`finding-${next}`)) next += 1;
     lineage.name = `finding-${next}`;
     claimed.add(lineage.name);
     next += 1;
+    if (
+      ownTicketEvidence.malformed.some((ticket) =>
+        [...lineage.fingerprints, ...lineage.legacyIds].some((value) =>
+          mentionsToken(ticket.source, value),
+        ),
+      )
+    )
+      provisional.add(lineage.name);
   }
   const registry = normalizedRegistry({
     version: 1,
@@ -511,12 +756,33 @@ export async function loadFindingNames(options: {
     })),
   });
   const local = present.find((item) => item.path === path)?.registry;
+  const divergent = skipped.length + skippedRecords;
   return {
     projectDirectory,
     path,
     registry,
     changed:
-      local === undefined || registryText(local) !== registryText(registry),
+      local === undefined ||
+      registryText(local) !==
+        registryText(persistableRegistry(registry, provisional)),
+    malformedTickets: ownTicketEvidence.malformed.map(({ path, error }) => ({
+      path,
+      error,
+    })),
+    ...(provisional.size === 0 ? {} : { provisional: [...provisional] }),
+    ...(divergent === 0
+      ? {}
+      : {
+          divergence: {
+            path:
+              skipped.length > 0 && primaryPath !== undefined
+                ? primaryPath
+                : primary === undefined
+                  ? (inheritedReports[0] ?? inheritedTickets[0] ?? path)
+                  : join(primary, ".idiom"),
+            skipped: divergent,
+          },
+        }),
   };
 }
 
@@ -524,7 +790,10 @@ export async function persistFindingNames(
   state: FindingNamesState,
 ): Promise<string> {
   if (!state.changed) return state.path;
-  const registry = normalizedRegistry(state.registry);
+  const registry = persistableRegistry(
+    state.registry,
+    new Set(state.provisional ?? []),
+  );
   await mkdir(join(state.path, ".."), { recursive: true });
   const temporary = `${state.path}.tmp-${process.pid}-${Date.now()}`;
   try {
@@ -535,9 +804,22 @@ export async function persistFindingNames(
       `cannot persist finding-name registry ${state.path}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  state.registry = registry;
+  // Provisional names stay in memory so this run's lookups still resolve.
+  if (state.provisional === undefined || state.provisional.length === 0)
+    state.registry = registry;
   state.changed = false;
   return state.path;
+}
+
+/** The registry minus names minted provisionally this run; `next` stays advanced. */
+function persistableRegistry(
+  registry: FindingNameRegistry,
+  provisional: ReadonlySet<string>,
+): FindingNameRegistry {
+  return normalizedRegistry({
+    ...registry,
+    entries: registry.entries.filter((entry) => !provisional.has(entry.name)),
+  });
 }
 
 function entryForIdentity(

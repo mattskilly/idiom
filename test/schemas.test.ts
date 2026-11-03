@@ -158,6 +158,24 @@ describe("schema behavior", () => {
     ).toBe(false);
   });
 
+  test("accepts findingNames.isolatedRegistry and rejects unknown keys", async () => {
+    const legacy = (await json(
+      "examples/booking/.idiom/project.json",
+    )) as Record<string, unknown>;
+    expect(
+      projectSchema.parse({
+        ...legacy,
+        findingNames: { isolatedRegistry: true },
+      }).findingNames,
+    ).toEqual({ isolatedRegistry: true });
+    expect(
+      projectSchema.safeParse({
+        ...legacy,
+        findingNames: { isolatedRegistry: true, shared: false },
+      }).success,
+    ).toBe(false);
+  });
+
   test("accepts codex and an opt-in fallback naming a different provider", async () => {
     const legacy = (await json("examples/booking/.idiom/project.json")) as {
       model: Record<string, unknown>;

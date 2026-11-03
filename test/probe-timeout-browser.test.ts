@@ -270,6 +270,50 @@ test("state budget wins inside a control and preserves its selector", async () =
   }
 }, 3000);
 
+test("with no flow target, a state cut by the capture lifetime names capture.maxMinutes", async () => {
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await restore(page);
+    await page.locator("#print").evaluate((button) => {
+      button.addEventListener("click", () => {
+        let tick = 0;
+        setInterval(() => {
+          button.setAttribute("data-tick", String(++tick));
+        }, 25);
+      });
+    });
+    // In a no-target run the state's lease is the capture's remaining
+    // lifetime; a short state timeout stands in for a nearly spent one.
+    const result = await probeControls({
+      page,
+      restore,
+      skip: [],
+      maxControls: 10,
+      waitMs: 3000,
+      controlTimeoutMs: 5000,
+      stateTimeoutMs: 600,
+      unbounded: true,
+    });
+    const unreached = result.results.filter(
+      (control) => control.status === "not-reached",
+    );
+    expect(
+      unreached.some(
+        (control) => control.skipped === "not reached: capture.maxMinutes",
+      ),
+    ).toBe(true);
+    expect(
+      unreached.every(
+        (control) =>
+          !/state budget|flow budget share/.test(control.skipped ?? ""),
+      ),
+    ).toBe(true);
+  } finally {
+    await context.close();
+  }
+}, 3000);
+
 test("nested menu restoration consumes the item's budget and later controls survive", async () => {
   const context = await browser.newContext();
   try {

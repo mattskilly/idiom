@@ -1,11 +1,13 @@
 import { appendFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { briefSelectorsFor } from "../brief/assertions.js";
+import { loadBriefChecks } from "../brief/store.js";
 import { loadDesignComponents } from "../checks/design-components.js";
 import { loadTokenDeclarations } from "../checks/observe.js";
 import { linkRecording, recordingKey } from "../checks/temporal-evidence.js";
 import { captureDesigns, figmaFrameLoader } from "../design/capture.js";
 import { classifyDocument } from "../document.js";
-import { IdiomError } from "../errors.js";
+import { IdiomError, RunFailure } from "../errors.js";
 import { capturePredicateIdentity } from "../findings/settings.js";
 import {
   buildReviewCoverage,
@@ -49,6 +51,7 @@ import {
   requestedPort,
   reservePort,
 } from "./port.js";
+import type { ProbeRegion } from "./probe.js";
 import {
   createFlowProbeBudget,
   type ProbeBudgetLease,
@@ -66,6 +69,7 @@ import {
   prepareProduction,
   runServerBuild,
   runSetupSteps,
+  serverAnswers,
   startServer,
 } from "./process.js";
 import { createReplayLedger, type ReplayLedger } from "./replay-ledger.js";
@@ -474,9 +478,14 @@ function mapResult(
             evidenceMap,
           ) as TupleResult["timelines"],
         };
+  const documentUrl =
+    result.documentUrl === undefined
+      ? {}
+      : { documentUrl: map(result.documentUrl) };
   if (result.ok) {
     return {
       ...result,
+      ...documentUrl,
       dom: domMap(result.dom),
       console: records,
       axe,
@@ -486,6 +495,7 @@ function mapResult(
   }
   return {
     ...result,
+    ...documentUrl,
     ...(result.dom === undefined ? {} : { dom: domMap(result.dom) }),
     console: records,
     axe,
@@ -558,8 +568,35 @@ type CaptureOptions = {
   deduplicateCombinations?: boolean | undefined;
   /** Refetch pinned Figma frames instead of reusing the cache. */
   refreshDesign?: boolean | undefined;
+  /** Overrides checks.probe.flowBudgetMs for this run (`--probe-budget`); 0 = no target. */
+  probeBudgetMs?: number | undefined;
+  /** The build gate trimmed the probe away: no tuple is probed this run. */
+  probeDisabled?: boolean | undefined;
+  /** The build gate's changed region, keyed `state\0viewport\0scheme`. */
+  probeRegions?: ReadonlyMap<string, ProbeRegion> | undefined;
+  /** Reuse a server already answering at `server.readyUrl` (`--reuse-server`). */
+  reuseServer?: boolean | undefined;
+  /** Working-tree content identity: keys the production build cache on a dirty tree. */
+  inputIdentity?: string | undefined;
   dependencies?: CaptureDependencies | undefined;
 };
+
+/** A browser that cannot launch ends the run as a setup failure; aborts stay aborts. */
+function browserLaunchFailure(error: unknown, signal: AbortSignal): unknown {
+  if (signal.aborted || error instanceof RunFailure) return error;
+  if (error instanceof Error && error.name === "AbortError") return error;
+  const message = error instanceof Error ? error.message : String(error);
+  const first = message.split("\n").find((line) => line.trim() !== "");
+  return new RunFailure({
+    stage: "capture",
+    cause: "browser-launch",
+    headline: `capture failed to start: browser launch — ${first?.trim() ?? "no message"}`,
+    detail: message,
+    hint: /executable doesn't exist|playwright install/i.test(message)
+      ? "npx playwright install chromium"
+      : "rerun with the same Playwright version Idiom installs",
+  });
+}
 
 export async function runCapture(
   options: CaptureOptions,
@@ -577,12 +614,23 @@ async function captureOwned(
 ): Promise<CaptureRunResult> {
   const selection = resolveCaptureScope(options);
   const selectedTuples = selection.selected;
+  const briefChecks = await loadBriefChecks(options.projectDirectory);
   const probePolicy = probeCoordinates(
     options.project,
     options.flow,
     selectedTuples,
   );
+  if (options.probeDisabled === true && probePolicy.policy !== "unsupported")
+    probePolicy.intended = [];
   const probeKeys = new Set(probePolicy.intended.map(captureTupleKey));
+  // The probe's run target: test override, then the run's flag, then config.
+  const wallTarget =
+    options.dependencies?.probeWallTargetMs ??
+    options.probeBudgetMs ??
+    options.project.checks.probe.flowBudgetMs ??
+    PROBE_WALL_TARGET_MS;
+  /** No flow target: states probe until their work or the capture lifetime ends. */
+  const unbounded = wallTarget === 0;
   const clock = options.dependencies?.monotonicNow ?? (() => performance.now());
   const runStarted = clock();
   const timings: RunRecord["timings"] = {
@@ -601,6 +649,11 @@ async function captureOwned(
     throw new IdiomError(
       `production capture requires server.production; ${productionConfigExample}`,
     );
+  // A run that could not happen keeps its type (and exit code) through cleanup.
+  const cleanupFailure = (failure: unknown, error: unknown) =>
+    failure instanceof RunFailure
+      ? failure.withDetail(`; cleanup failed: ${String(error)}`)
+      : new IdiomError(`${String(failure)}; cleanup failed: ${String(error)}`);
   const asCaptureError = (error: unknown) =>
     error instanceof IdiomError
       ? error
@@ -666,6 +719,9 @@ async function captureOwned(
       dataDirectory: workspace.dataDirectory,
       commit: source.commit,
       dirty: source.dirty,
+      ...(options.inputIdentity === undefined
+        ? {}
+        : { inputIdentity: options.inputIdentity }),
       port: requestedPort({
         flag: options.port,
         environment: inherited,
@@ -680,6 +736,9 @@ async function captureOwned(
   let build: ProductionBuild | undefined;
   let project = options.project;
   let server: OwnedServer | undefined;
+  let reusedServer = false;
+  /** Browser (or Electron) launch: the capture phase's wall clock starts here. */
+  let captureStarted: number | undefined;
   let reservation: PortReservation | undefined;
   let browser: BrowserSession | undefined;
   let electron: ElectronSession | undefined;
@@ -697,7 +756,11 @@ async function captureOwned(
   let completed: CaptureRunResult | undefined;
   let failure: unknown;
   try {
-    if (productionRequested && options.project.server.production?.reuseBuild) {
+    if (
+      productionRequested &&
+      (options.project.server.production?.reuseBuild ||
+        options.inputIdentity !== undefined)
+    ) {
       owner.stage("production preparation");
       production = await owner.acquire(prepareRuntime(), (runtime) =>
         runtime.close(),
@@ -741,6 +804,19 @@ async function captureOwned(
         timings.build = production.timings.build;
         timings.start = production.timings.start;
         assertNotInterrupted();
+      } else if (
+        (options.reuseServer ?? options.project.server.reuse === true) &&
+        (await serverAnswers(options.project.server.readyUrl, {
+          fetch: processDependencies.fetch,
+          signal: owner.signal,
+        }))
+      ) {
+        // Someone else's server: never built, started or stopped by this run.
+        owner.stage("server reuse");
+        reusedServer = true;
+        project = options.project;
+        timings.build = { status: "reused", ms: 0 };
+        timings.start = { status: "reused", ms: 0 };
       } else {
         let port = explicitPort;
         if (port === undefined) {
@@ -768,7 +844,7 @@ async function captureOwned(
           ).values(),
         ],
       });
-      if (!productionRequested) {
+      if (!productionRequested && !reusedServer) {
         const buildStarted = clock();
         owner.stage("server build");
         const serverEnvironment = await runServerBuild({
@@ -810,12 +886,17 @@ async function captureOwned(
         assertNotInterrupted();
       }
       owner.stage("browser launch");
+      captureStarted = clock();
       if (server) owner.own(server, (value) => value.stop());
       browser = await owner.acquire(
         (
           options.dependencies?.browserLauncher ??
           createBrowserLauncher({ monotonicNow: clock })
-        )({ signal: owner.signal, onActivity: owner.stage }),
+        )({ signal: owner.signal, onActivity: owner.stage }).catch(
+          (error: unknown) => {
+            throw browserLaunchFailure(error, owner.signal);
+          },
+        ),
         (value) => value.close(),
       );
       assertNotInterrupted();
@@ -826,6 +907,8 @@ async function captureOwned(
           resolution,
         ]),
       );
+      const hideWebdriver =
+        options.flow.hideWebdriver ?? project.capture.hideWebdriver;
       const tupleHealth = (
         state: (typeof selectedTuples)[number]["state"],
       ) => ({
@@ -894,6 +977,7 @@ async function captureOwned(
               viewport: selected.viewport,
               colorScheme: selected.colorScheme,
               navigationUrl: resolution.value.navigationUrl,
+              hideWebdriver,
               health: tupleHealth(selected.state),
               tokens,
             },
@@ -1018,6 +1102,11 @@ async function captureOwned(
               options.flow,
               resolution.value.state,
             ),
+            briefSelectors: briefSelectorsFor(
+              briefChecks,
+              options.flow.id,
+              resolution.value.state.id,
+            ),
             project,
             filmstripRequests: options.filmstripRequests?.filter(
               (r) =>
@@ -1030,6 +1119,7 @@ async function captureOwned(
             viewport: selected.viewport,
             colorScheme: selected.colorScheme,
             navigationUrl: resolution.value.navigationUrl,
+            hideWebdriver,
             health: tupleHealth(selected.state),
             tokens,
             designComponents,
@@ -1048,6 +1138,14 @@ async function captureOwned(
                   probeBudget: probePass
                     ? probeBudgets.get(tupleId(selected))
                     : undefined,
+                  ...(unbounded ? { probeUnbounded: true } : {}),
+                  ...(options.probeRegions?.has(tupleId(selected))
+                    ? {
+                        probeRegion: options.probeRegions.get(
+                          tupleId(selected),
+                        ),
+                      }
+                    : {}),
                 }
               : {}),
             ...(isPublishedFlow(options.flow) ? { published: true } : {}),
@@ -1357,10 +1455,49 @@ async function captureOwned(
         // The flow's probe time is sized from the wall clock: rounds continue
         // while unfinished work and time before the run's target remain. A
         // round gives each state at most one state budget, and the first
-        // round never less than one state budget per lane.
-        const wallTarget =
-          options.dependencies?.probeWallTargetMs ?? PROBE_WALL_TARGET_MS;
-        const flowDeadline = runStarted + wallTarget - PROBE_WALL_RESERVE_MS;
+        // round never less than one state budget per lane. With no target
+        // (0), the deadline is the capture lifetime's end instead: finite
+        // (maxMinutes is finite) and clamped, so no Deadline sees Infinity.
+        const flowDeadline = unbounded
+          ? clock() +
+            Math.min(
+              2_147_483_647,
+              Math.max(0, owner.deadline.remaining() - PROBE_WALL_RESERVE_MS),
+            )
+          : runStarted + wallTarget - PROBE_WALL_RESERVE_MS;
+        const roundBudget = (
+          round: number,
+          work: Array<{ id: string; count: number }>,
+          lanes: number,
+        ) => {
+          const wallLeft = Math.max(0, flowDeadline - clock());
+          if (unbounded) {
+            // Every state may use the whole time left; equal shares, so a
+            // refund never lifts a lease past the capture's end. A state
+            // deadline must be positive, hence the 1ms minimum.
+            const left = Math.max(1, wallLeft);
+            return {
+              totalMs: left * work.length,
+              work: work.map((item) => ({ ...item, count: 1 })),
+              limit: {
+                deadlineAt: Math.max(flowDeadline, clock() + 1),
+                now: clock,
+              },
+            };
+          }
+          const floor = round === 1 ? stateTimeoutMs * lanes : 0;
+          return {
+            totalMs: Math.max(
+              floor,
+              Math.min(stateTimeoutMs * work.length, wallLeft * lanes),
+            ),
+            work,
+            limit: {
+              deadlineAt: Math.max(flowDeadline, clock() + floor / lanes),
+              now: clock,
+            },
+          };
+        };
         for (let round = 1; ; round += 1) {
           const work = selectedTuples.flatMap((selected, index) => {
             if (
@@ -1392,18 +1529,14 @@ async function captureOwned(
           });
           if (work.length === 0) break;
           const lanes = Math.min(concurrency, work.length);
-          const wallLeft = Math.max(0, flowDeadline - clock());
-          const floor = round === 1 ? stateTimeoutMs * lanes : 0;
-          const totalMs = Math.max(
-            floor,
-            Math.min(stateTimeoutMs * work.length, wallLeft * lanes),
-          );
+          const { totalMs, ...grant } = roundBudget(round, work, lanes);
           // A follow-up round needs room for at least one control per lane.
           if (round > 1 && totalMs < PROBE_MIN_ROUND_MS * lanes) break;
-          const budgets = createFlowProbeBudget(totalMs, work, {
-            deadlineAt: Math.max(flowDeadline, clock() + floor / lanes),
-            now: clock,
-          });
+          const budgets = createFlowProbeBudget(
+            totalMs,
+            grant.work,
+            grant.limit,
+          );
           probeBudgets = budgets;
           const ids = new Set(work.map((item) => item.id));
           // Each state probes in its own fresh context on the capture pool;
@@ -1576,6 +1709,7 @@ async function captureOwned(
     } else {
       timings.build = { status: "unsupported", ms: 0 };
       timings.start = { status: "unsupported", ms: 0 };
+      captureStarted = clock();
       owner.stage("Electron session");
       electron = await owner.acquire(
         (options.dependencies?.electronLauncher ?? createElectronLauncher())({
@@ -1597,6 +1731,11 @@ async function captureOwned(
           onActivity: owner.stage,
           shell: options.flow.shell,
           invariants: effectiveInvariants(options.flow, selected.state),
+          briefSelectors: briefSelectorsFor(
+            briefChecks,
+            options.flow.id,
+            selected.state.id,
+          ),
           project: options.project,
           state:
             selected.state as import("../schemas/flow.js").ElectronFlowState,
@@ -1626,6 +1765,11 @@ async function captureOwned(
       }
     }
 
+    if (captureStarted !== undefined)
+      timings.capture = {
+        status: "measured",
+        ms: Math.max(0, clock() - captureStarted),
+      };
     const figma = figmaFrameLoader({
       projectDirectory: options.projectDirectory,
       refresh: options.refreshDesign,
@@ -1721,7 +1865,10 @@ async function captureOwned(
       declared: selection.declared.map(coordinate),
       selected: selectedTuples.map(coordinate),
       viewports: selectViewports(options.project, options.flow),
-      probe: probePolicy,
+      probe:
+        probePolicy.policy === "unsupported"
+          ? probePolicy
+          : { ...probePolicy, flowBudgetMs: wallTarget },
       timings,
       capture: { reducedMotion: options.project.capture.reducedMotion },
     });
@@ -1775,9 +1922,7 @@ async function captureOwned(
       failure =
         failure === undefined
           ? asCaptureError(error)
-          : new IdiomError(
-              `${String(failure)}; cleanup failed: ${String(error)}`,
-            );
+          : cleanupFailure(failure, error);
     }
     try {
       if (!owner.signal.aborted) owner.stage("workspace cleanup");
@@ -1786,9 +1931,7 @@ async function captureOwned(
       failure =
         failure === undefined
           ? asCaptureError(error)
-          : new IdiomError(
-              `${String(failure)}; cleanup failed: ${String(error)}`,
-            );
+          : cleanupFailure(failure, error);
     }
   }
   if (failure !== undefined) throw failure;

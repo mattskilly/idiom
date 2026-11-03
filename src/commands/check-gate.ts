@@ -1,0 +1,153 @@
+import { type CheckTiming, combineCheckTimings } from "../capture/timings.js";
+import { workingTreeIdentity } from "../changed/git.js";
+import { IdiomError } from "../errors.js";
+import { type GatePlanOptions, planGate } from "../gate/plan.js";
+import { gatePlanLine, renderGatePlan } from "../gate/render.js";
+import type {
+  GatePlan,
+  GateServer,
+  GateSkip,
+  GateSkipResult,
+} from "../gate/types.js";
+import {
+  type ChangedCheckEntry,
+  type ChangedCheckOptions,
+  type ChangedCheckResult,
+  checkChanged,
+} from "./check-changed.js";
+
+export type GateCheckOptions = Omit<ChangedCheckOptions, "changed"> & {
+  changed?: true | string | undefined;
+  budgetMs?: number | undefined;
+  reuseServer?: boolean | undefined;
+  /** Receives the plan lines before any server starts (the CLI's stderr). */
+  onPlan?: ((lines: string[]) => void) | undefined;
+  gateDependencies?: GatePlanOptions["dependencies"];
+};
+
+export type GateRunResult = {
+  skipped: false;
+  plan: GatePlan;
+  skippedWork: GateSkip[];
+  estimateMs: number;
+  budgetMs: number;
+  server: GateServer;
+  changed: ChangedCheckResult;
+  timing: CheckTiming;
+};
+export type GateResult = GateSkipResult | GateRunResult;
+
+/**
+ * `idiom check --gate`: plan the cheapest check that still covers the
+ * change, say what it costs and what it leaves out, then run it through the
+ * changed-check controller one flow at a time.
+ */
+export async function checkGate(
+  options: GateCheckOptions,
+): Promise<GateResult> {
+  const started = performance.now();
+  if (options.from !== undefined || options.latest)
+    throw new IdiomError(
+      "--gate requires fresh capture; cannot combine with --from or --latest",
+    );
+  if (
+    options.all ||
+    options.baseline !== undefined ||
+    options.baselineFile !== undefined ||
+    options.sinceBaseline
+  )
+    throw new IdiomError(
+      "--gate chooses its own comparison; drop --all, --baseline, --since-baseline and --baseline-file",
+    );
+  const planned = await planGate({
+    project: options.project,
+    cwd: options.cwd,
+    flow: options.flow,
+    base: options.changed === true ? undefined : options.changed,
+    scope: options.scope,
+    prod: options.prod,
+    probeBudgetMs: options.probeBudgetMs,
+    budgetMs: options.budgetMs,
+    reuseServer: options.reuseServer,
+    dependencies: options.gateDependencies,
+  });
+  if (planned.skipped) return planned;
+  const { execution, ...plan } = planned;
+  options.onPlan?.(renderGatePlan(plan));
+  options.dependencies?.capture?.signal?.throwIfAborted();
+  const inputIdentity = execution.production
+    ? await workingTreeIdentity(execution.selection.git.repository)
+    : undefined;
+  const checks: ChangedCheckEntry[] = [];
+  let checkedStates = 0;
+  let findingNameWarning: string | undefined;
+  const {
+    budgetMs: _budget,
+    onPlan: _onPlan,
+    gateDependencies: _dependencies,
+    reuseServer: _reuse,
+    ...shared
+  } = options;
+  const section = {
+    plan: gatePlanLine(plan),
+    skippedWork: plan.skippedWork,
+    estimateMs: plan.estimate.totalMs,
+    budgetMs: plan.budgetMs,
+  };
+  for (const { flow } of execution.validated.flows) {
+    const scope = execution.scopes.get(flow.id);
+    if (!scope) {
+      if (options.flow === undefined) continue;
+      checks.push({
+        flow: flow.id,
+        status: "not-checked",
+        reason: "no affected states after the gate's plan",
+      });
+      continue;
+    }
+    options.dependencies?.capture?.signal?.throwIfAborted();
+    const result = await checkChanged({
+      ...shared,
+      flow: flow.id,
+      changed: execution.selection.git.resolvedBase,
+      scope,
+      sinceBaseline: plan.baselines[flow.id] === true,
+      ...(plan.probeBudgetMs === undefined
+        ? {}
+        : { probeBudgetMs: plan.probeBudgetMs }),
+      ...(execution.probeDisabled ? { probeDisabled: true } : {}),
+      probeRegions: execution.probeRegions.get(flow.id),
+      // Explicit either way: a rejected reuse must not fall back to server.reuse.
+      reuseServer: execution.reuseServer,
+      ...(inputIdentity === undefined ? {} : { inputIdentity }),
+      gateReport: {
+        ...section,
+        skippedWork: plan.skippedWork.filter((skip) => skip.flow === flow.id),
+      },
+    });
+    checks.push(...result.checks);
+    checkedStates += result.checkedStates;
+    findingNameWarning ??= result.findingNameWarning;
+  }
+  const timings = checks.flatMap((entry) =>
+    entry.status === "checked" && entry.summary.timing
+      ? [entry.summary.timing]
+      : [],
+  );
+  const changed: ChangedCheckResult = {
+    selection: execution.selection,
+    checks,
+    checkedStates,
+    ...(findingNameWarning === undefined ? {} : { findingNameWarning }),
+  };
+  return {
+    skipped: false,
+    plan,
+    skippedWork: plan.skippedWork,
+    estimateMs: plan.estimate.totalMs,
+    budgetMs: plan.budgetMs,
+    server: plan.server,
+    changed,
+    timing: combineCheckTimings(timings, performance.now() - started),
+  };
+}

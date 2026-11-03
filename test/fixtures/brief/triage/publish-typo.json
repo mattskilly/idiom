@@ -1,0 +1,9 @@
+{
+  "recorded": "idiom brief triage --json via claude-code claude-sonnet-5-5, rubric v1, 2026-10-31",
+  "request": "Fix the typo in the Publish dialog.",
+  "response": {
+    "verdict": "no design decision",
+    "reason": "A typo fix in the Publish dialog is a copy-fix: it changes wording only, with no change in meaning, controls, behavior or layout.",
+    "questions": []
+  }
+}

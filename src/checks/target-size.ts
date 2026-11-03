@@ -5,6 +5,7 @@ import type {
   DeterministicCheck,
   ObservationArtifact,
   ObservedElement,
+  ObservedElementV2,
   Rect,
 } from "./types.js";
 
@@ -26,6 +27,18 @@ export function inputClass(
   )
     return { kind: "touch", minimum: settings.coarse };
   return { kind: "fine", minimum: settings.fine };
+}
+
+// No role-based exception: an inline anchor acting as a button or other
+// widget is a control, so only link-role text anchors keep WCAG 2.5.8's
+// inline exemption.
+function inlineTextLink(element: ObservedElement): boolean {
+  if (element.inlineTextTarget !== true) return false;
+  const v2 = element as Partial<ObservedElementV2>;
+  const role = (v2.signals?.role ?? v2.attributes?.role ?? "")
+    .trim()
+    .toLowerCase();
+  return role === "" || role === "link";
 }
 
 type Target = {
@@ -120,7 +133,7 @@ export const targetSizeCheck: DeterministicCheck = {
       targets
         .filter(
           (candidate) =>
-            !candidate.element.inlineTextTarget &&
+            !inlineTextLink(candidate.element) &&
             !candidate.sized &&
             !(spacing && sufficientlySpaced(candidate, targets)),
         )

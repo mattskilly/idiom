@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><title>Motion opt-in</title><link rel="icon" href="data:,">
+<style>
+  .pulse { width: 40px; height: 40px; background: #36c; }
+  [data-motion="on"] .pulse { animation: pulse 400ms ease-out; }
+  @keyframes pulse { from { opacity: 0; } to { opacity: 1; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Motion opt-in</h1>
+  <!-- The app disables its animation under automation, as many test-aware apps do. -->
+  <div class="pulse"></div>
+  <p id="motion"></p>
+  <button id="again" type="button">Again</button>
+</main>
+<script>
+  const motion = () => {
+    const on = !navigator.webdriver;
+    document.body.dataset.motion = on ? "on" : "off";
+    document.querySelector("#motion").textContent = on ? "motion on" : "motion off";
+  };
+  motion();
+  document.querySelector("#again").onclick = motion;
+</script>
+</body>
+</html>

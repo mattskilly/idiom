@@ -189,12 +189,14 @@ test("packed runtime dependencies exclude hosted SDKs and retain deployment inpu
 test("packed discovery manifest and portable skill match their tracked sources", async () => {
   for (const file of [
     "server.json",
-    ".claude-plugin/plugin.json",
+    "plugins/claude/.claude-plugin/plugin.json",
     ".claude-plugin/marketplace.json",
     ".agents/plugins/marketplace.json",
     "plugin.json",
     "skills/idiom/SKILL.md",
     "skills/idiom/references/init.md",
+    "plugins/claude/skills/idiom/SKILL.md",
+    "plugins/claude/skills/idiom/references/init.md",
   ]) {
     expect(packedFiles).toContain(file);
     expect(await readFile(join(runtimeRoot, file), "utf8")).toBe(
@@ -509,13 +511,16 @@ test.each(["legacy", "auto"] as const)(
     try {
       await client.connect(transport);
       expect(client.getServerVersion()?.version).toBe(originalVersion);
-      for (const file of ["plugin.json", ".claude-plugin/plugin.json"]) {
+      for (const file of [
+        "plugin.json",
+        "plugins/claude/.claude-plugin/plugin.json",
+      ]) {
         const plugin = JSON.parse(
           await readFile(join(runtimeRoot, file), "utf8"),
         );
         expect(client.getServerVersion()?.version).toBe(plugin.version);
       }
-      expect((await client.listTools()).tools).toHaveLength(15);
+      expect((await client.listTools()).tools).toHaveLength(20);
       const response = await client.callTool({
         name: "idiom_flows",
         arguments: {},
@@ -543,9 +548,24 @@ test.each(["legacy", "auto"] as const)(
 );
 
 test("packed plugin resolves the existing skill and adjacent init guide and validates with Claude", async () => {
-  expect(packedFiles).toContain(".claude-plugin/plugin.json");
+  const claudeCatalog = JSON.parse(
+    await readFile(
+      join(runtimeRoot, ".claude-plugin/marketplace.json"),
+      "utf8",
+    ),
+  );
+  expect(claudeCatalog.plugins[0].source).toBe("./plugins/claude");
+  const pluginRoot = join(runtimeRoot, claudeCatalog.plugins[0].source);
+  // Claude Code installs dependencies when a plugin root has package.json and
+  // a lockfile; the Claude plugin directory ships neither.
+  expect(
+    packedFiles.filter((file) => /^plugins\/claude\/[^/]+$/.test(file)),
+  ).toEqual([]);
+  expect(packedFiles).not.toContain(".claude-plugin/plugin.json");
+  expect(packedFiles.filter((file) => file.startsWith("hooks/"))).toEqual([]);
+  expect(packedFiles).toContain("plugins/claude/.claude-plugin/plugin.json");
   const manifest = JSON.parse(
-    await readFile(join(runtimeRoot, ".claude-plugin/plugin.json"), "utf8"),
+    await readFile(join(pluginRoot, ".claude-plugin/plugin.json"), "utf8"),
   );
   expect(manifest.mcpServers.idiom).toEqual({
     type: "stdio",
@@ -581,14 +601,14 @@ test("packed plugin resolves the existing skill and adjacent init guide and vali
   expect(manifest.skills).toBeUndefined();
   expect(portable.skills).toBeUndefined();
   for (const file of [
-    "hooks/hooks.json",
-    "hooks/lib.mjs",
-    "hooks/post-tool-use.mjs",
-    "hooks/stop.mjs",
+    "plugins/claude/hooks/hooks.json",
+    "plugins/claude/hooks/lib.mjs",
+    "plugins/claude/hooks/post-tool-use.mjs",
+    "plugins/claude/hooks/stop.mjs",
   ])
     expect(packedFiles).toContain(file);
   const hookConfig = JSON.parse(
-    await readFile(join(runtimeRoot, "hooks/hooks.json"), "utf8"),
+    await readFile(join(pluginRoot, "hooks/hooks.json"), "utf8"),
   );
   expect(manifest.hooks).toBeUndefined();
   expect(hookConfig.hooks.PostToolUse[0].matcher).toBe(
@@ -610,7 +630,7 @@ test("packed plugin resolves the existing skill and adjacent init guide and vali
     }>((resolve, reject) => {
       const child = execFile(
         process.execPath,
-        [join(runtimeRoot, `hooks/${entry}.mjs`)],
+        [join(pluginRoot, `hooks/${entry}.mjs`)],
         { cwd: application },
         (error, stdout, stderr) =>
           error ? reject(error) : resolve({ stdout, stderr }),
@@ -639,21 +659,23 @@ test("packed plugin resolves the existing skill and adjacent init guide and vali
   expect((await runHook("stop", {})).decision).toBe("block");
   expect(await runHook("stop", {})).toBeUndefined();
   const packedSkills = packedFiles.filter((file) =>
-    /^skills\/[^/]+\/SKILL\.md$/.test(file),
+    /^(?:plugins\/claude\/)?skills\/[^/]+\/SKILL\.md$/.test(file),
   );
-  expect(packedSkills).toEqual(["skills/idiom/SKILL.md"]);
-  expect(
-    await readFile(join(runtimeRoot, "skills/idiom/SKILL.md"), "utf8"),
-  ).toMatch(/^---\nname: idiom\n[\s\S]*prefer MCP tools/);
-  expect(
-    await readFile(
-      join(runtimeRoot, "skills/idiom/references/init.md"),
-      "utf8",
-    ),
-  ).toContain("idiom init");
+  expect(packedSkills.sort()).toEqual([
+    "plugins/claude/skills/idiom/SKILL.md",
+    "skills/idiom/SKILL.md",
+  ]);
+  for (const base of [runtimeRoot, pluginRoot]) {
+    expect(await readFile(join(base, "skills/idiom/SKILL.md"), "utf8")).toMatch(
+      /^---\nname: idiom\n[\s\S]*prefer MCP tools/,
+    );
+    expect(
+      await readFile(join(base, "skills/idiom/references/init.md"), "utf8"),
+    ).toContain("idiom init");
+  }
   const validation = await execFileAsync(
     "claude",
-    ["plugin", "validate", runtimeRoot],
+    ["plugin", "validate", pluginRoot],
     { timeout: 45000 },
   );
   expect(validation.stdout).toContain("Validation passed");
