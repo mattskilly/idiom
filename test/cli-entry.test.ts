@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { INTERFACE_VERSION } from "../src/interface/version.js";
 import { projectSchema } from "../src/schemas/project.js";
 import { readIdiomSkillTemplate } from "../src/templates.js";
 import { IDIOM_VERSION } from "../src/version.js";
@@ -109,7 +110,7 @@ test.each([
 
     expect(result.code).toBe(0);
     expect(result.stdout).toBe(
-      `${IDIOM_VERSION} (${buildCommit.slice(0, 7)})\n`,
+      `${IDIOM_VERSION} (${buildCommit.slice(0, 7)}) · interface ${INTERFACE_VERSION}\n`,
     );
     expect(result.stderr).toBe("");
   },

@@ -18,6 +18,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { initProject } from "../src/commands/init.js";
+import { INTERFACE_VERSION } from "../src/interface/version.js";
 import { findingSchema } from "../src/schemas/finding.js";
 import { commit, git } from "./baseline-support.js";
 import { changedFixture } from "./changed-support.js";
@@ -218,7 +219,7 @@ test("built CLI runs directly and through an installer-shaped link", async () =>
   const directVersion = await invoke(runtimeEntry, ["--version"]);
   expect(directVersion).toEqual({
     code: 0,
-    stdout: `${originalVersion} (${buildCommit.slice(0, 7)})\n`,
+    stdout: `${originalVersion} (${buildCommit.slice(0, 7)}) · interface ${INTERFACE_VERSION}\n`,
     stderr: "",
   });
 
@@ -250,7 +251,7 @@ test("built CLI reads version from its colocated package metadata", async () => 
     const result = await invoke(runtimeEntry, ["--version"]);
     expect(result).toEqual({
       code: 0,
-      stdout: `9.8.7 (${buildCommit.slice(0, 7)})\n`,
+      stdout: `9.8.7 (${buildCommit.slice(0, 7)}) · interface ${INTERFACE_VERSION}\n`,
       stderr: "",
     });
   } finally {
@@ -295,7 +296,7 @@ test("packed version ignores application metadata, Git HEAD, runtime environment
   });
   expect(result).toEqual({
     code: 0,
-    stdout: `${originalVersion} (${buildCommit.slice(0, 7)})\n`,
+    stdout: `${originalVersion} (${buildCommit.slice(0, 7)}) · interface ${INTERFACE_VERSION}\n`,
     stderr: "",
   });
 }, 60_000);
@@ -520,7 +521,7 @@ test.each(["legacy", "auto"] as const)(
         );
         expect(client.getServerVersion()?.version).toBe(plugin.version);
       }
-      expect((await client.listTools()).tools).toHaveLength(20);
+      expect((await client.listTools()).tools).toHaveLength(22);
       const response = await client.callTool({
         name: "idiom_flows",
         arguments: {},

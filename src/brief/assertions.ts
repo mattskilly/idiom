@@ -1,3 +1,4 @@
+import { settingsHash } from "../findings/settings.js";
 import {
   type BriefAssertion,
   briefAssertionSelectors,
@@ -88,6 +89,15 @@ export function briefCheckFrom(brief: CompleteStoredBrief): BriefCheck {
       assertions: criterion.assertions ?? [],
     })),
   };
+}
+
+/**
+ * A short hash of what an assertion asserts: selector, form, expected values,
+ * tolerance, flow and state. `name` is a label, so renaming never reopens.
+ */
+export function briefAssertionIdentity(assertion: BriefAssertion): string {
+  const { name: _name, ...rest } = assertion;
+  return settingsHash(rest).slice(0, 8);
 }
 
 /** A tuple state `S` or `S.<combination>` belongs to declared state `S`. */

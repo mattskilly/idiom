@@ -16,6 +16,7 @@ import {
 import { afterEach, expect, test, vi } from "vitest";
 import type { BrowserSession } from "../src/capture/types.js";
 import { initProject } from "../src/commands/init.js";
+import { INTERFACE_VERSION } from "../src/interface/version.js";
 import { evidencePath } from "../src/mcp/evidence.js";
 import { createIdiomMcpServer } from "../src/mcp/server.js";
 import { writeUnruledDecisions } from "../src/rulings/artifacts.js";
@@ -41,9 +42,12 @@ const call = (
   args: Record<string, unknown> = {},
 ) => client.callTool({ name, arguments: args }) as Promise<CallToolResult>;
 
-test("uninitialized server advertises exactly twenty described strict schemas and survives tool errors", async () => {
+test("uninitialized server advertises exactly twenty-two described strict schemas and survives tool errors", async () => {
   const directory = await root();
   const client = await connect({ project: directory });
+  expect(client.getServerCapabilities()?.experimental?.idiom).toEqual({
+    interfaceVersion: INTERFACE_VERSION,
+  });
   const { tools } = await client.listTools();
   expect(tools.map((tool) => tool.name).sort()).toEqual([
     "idiom_baseline",
@@ -63,6 +67,8 @@ test("uninitialized server advertises exactly twenty described strict schemas an
     "idiom_init",
     "idiom_issue",
     "idiom_quick",
+    "idiom_ready",
+    "idiom_setup_prompt",
     "idiom_sweep",
     "idiom_tickets",
     "idiom_verify",
@@ -232,7 +238,7 @@ test.each([
         ? "npx playwright install chromium"
         : "Free the configured port",
     );
-    expect((await client.listTools()).tools).toHaveLength(20);
+    expect((await client.listTools()).tools).toHaveLength(22);
   },
 );
 
@@ -310,7 +316,7 @@ test("a persistent SDK session cancels active and queued work, closes late launc
   ).toBe(true);
   const error = await call(client, "idiom_flows");
   expect(error.isError).toBe(true);
-  expect((await client.listTools()).tools).toHaveLength(20);
+  expect((await client.listTools()).tools).toHaveLength(22);
   expect(
     await readFile(join(directory, "missing"), "utf8").catch(() => "absent"),
   ).toBe("absent");

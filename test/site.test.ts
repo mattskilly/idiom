@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { AxeBuilder } from "@axe-core/playwright";
@@ -22,6 +23,19 @@ const socialImagePath = join(root, "site", "social-preview.png");
 const socialImageOutputPath = join(root, "site", "dist", "social-preview.png");
 const packagePath = join(root, "package.json");
 const execFileAsync = promisify(execFile);
+const siteVersionOutputPath = join(root, "site", "dist", "version.txt");
+const releasesPath = join(root, "docs", "releases.md");
+
+// A developer shell or Vercel build may carry these; the default build must
+// derive its marker from git so the assertion below is deterministic.
+function siteBuildEnvironment(overrides: Record<string, string> = {}) {
+  const {
+    VERCEL_GIT_COMMIT_SHA: _vercel,
+    IDIOM_SITE_SOURCE_COMMIT: _override,
+    ...environment
+  } = process.env;
+  return { ...environment, IDIOM_HOSTED_REVIEW: "off", ...overrides };
+}
 
 let source = "";
 let standalone = "";
@@ -41,7 +55,7 @@ beforeAll(async () => {
   ]);
   await execFileAsync(process.execPath, [siteBuildPath], {
     cwd: root,
-    env: { ...process.env, IDIOM_HOSTED_REVIEW: "off" },
+    env: siteBuildEnvironment(),
   });
   [standalone, socialImage, outputSocialImage] = await Promise.all([
     readFile(siteOutputPath, "utf8"),
@@ -436,7 +450,7 @@ describe("landing-page copy follows the shipped command surface", () => {
   test("the version pin forces a re-audit, and marketplace and CLI installs stay current", () => {
     // Bump this literal deliberately at every release; the page must be
     // re-read against the shipped CLI each time.
-    expect(packageJson.version).toBe("0.18.0");
+    expect(packageJson.version).toBe("0.19.0");
     expect(source).toContain("npm install -g @mattskilly/idiom");
     // The CLI installs from npm; the Codex MCP launcher pins the GitHub
     // release tarball, which must name the current version.
@@ -630,4 +644,77 @@ test("the landing and docs describe severity-first ranking and within-tier order
   expect(source).toContain(
     "Ranks findings by severity first, then by how noticeable each is.",
   );
+});
+
+describe("production serves the release", () => {
+  const sourceMeta = (sha: string) =>
+    `<meta name="idiom-source" content="${sha}">`;
+
+  test("the default build marks the commit it was built from", async () => {
+    const head = (
+      await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })
+    ).stdout.trim();
+    expect(head).toMatch(/^[0-9a-f]{40}$/);
+    expect(standalone).toContain(sourceMeta(head));
+    expect(await readFile(siteVersionOutputPath, "utf8")).toBe(`${head}\n`);
+  });
+
+  test("the explicit override beats Vercel's commit, which beats git", async () => {
+    const output = await mkdtemp(join(tmpdir(), "idiom-site-source-"));
+    try {
+      const vercel = "a".repeat(40);
+      const override = "b".repeat(40);
+      const buildWith = (overrides: Record<string, string>) =>
+        execFileAsync(process.execPath, [siteBuildPath], {
+          cwd: root,
+          env: siteBuildEnvironment({
+            IDIOM_SITE_OUTPUT: output,
+            ...overrides,
+          }),
+        });
+      const markers = async () => ({
+        page: await readFile(join(output, "index.html"), "utf8"),
+        version: await readFile(join(output, "version.txt"), "utf8"),
+      });
+
+      await buildWith({ VERCEL_GIT_COMMIT_SHA: vercel });
+      const fromVercel = await markers();
+      expect(fromVercel.page).toContain(sourceMeta(vercel));
+      expect(fromVercel.version).toBe(`${vercel}\n`);
+
+      await buildWith({
+        VERCEL_GIT_COMMIT_SHA: vercel,
+        IDIOM_SITE_SOURCE_COMMIT: override,
+      });
+      const fromOverride = await markers();
+      expect(fromOverride.page).toContain(sourceMeta(override));
+      expect(fromOverride.version).toBe(`${override}\n`);
+
+      await expect(
+        buildWith({ IDIOM_SITE_SOURCE_COMMIT: "nothex" }),
+      ).rejects.toThrow(/IDIOM_SITE_SOURCE_COMMIT must be a 40-character/);
+    } finally {
+      await rm(output, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test("docs/releases.md moves the release branch and names the Vercel setting", async () => {
+    const releases = await readFile(releasesPath, "utf8");
+    expect(releases).toContain(
+      'git push origin "v${version}^{commit}:refs/heads/release"',
+    );
+    expect(releases).toMatch(/Production Branch\*{0,2} = `release`/);
+    expect(releases).toContain("git merge-base --is-ancestor origin/release");
+
+    const hotfix = releases.slice(
+      releases.indexOf("### Fixing the live site between releases"),
+    );
+    expect(hotfix).toContain("`vercel.json`");
+    expect(hotfix).toContain("`api/`");
+
+    const doneWhen = releases.slice(releases.indexOf("## Done when"));
+    expect(releases.indexOf("## Done when")).toBeGreaterThan(-1);
+    expect(doneWhen).toContain("https://idiom.build/version.txt");
+    expect(doneWhen).toContain('<meta name="idiom-source">');
+  });
 });

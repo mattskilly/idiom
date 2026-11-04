@@ -267,13 +267,13 @@ function matchesUI(path, globs = DEFAULT_UI_GLOBS) {
     patterns = globs.map(globRegex);
     compiledGlobs.set(globs, patterns);
   }
-  const normalized = slash(path).replace(/^\.\//, "");
-  return normalized.length > 0 && !normalized.split("/").some((part) => part === ".." || EXCLUDED.has(part)) && patterns.some((pattern) => pattern.test(normalized));
+  const normalized2 = slash(path).replace(/^\.\//, "");
+  return normalized2.length > 0 && !normalized2.split("/").some((part) => part === ".." || EXCLUDED.has(part)) && patterns.some((pattern) => pattern.test(normalized2));
 }
 async function readSmall(path, budget, max = 262144) {
   budget.check();
-  const stat15 = await fs.stat(path);
-  if (!stat15.isFile() || stat15.size > max)
+  const stat16 = await fs.stat(path);
+  if (!stat16.isFile() || stat16.size > max)
     throw new Error("hook metadata too large");
   return fs.readFile(path, { encoding: "utf8", signal: budget.signal });
 }
@@ -431,20 +431,20 @@ async function snapshot(context2, budget, extra = [], scanIgnored = false) {
       budget.check();
       const index = next++;
       const path = candidates[index];
-      const normalized = await normalizePath(context2, path, budget);
-      if (normalized === void 0) continue;
-      const absolute = join(context2.root, normalized);
-      let stat15;
+      const normalized2 = await normalizePath(context2, path, budget);
+      if (normalized2 === void 0) continue;
+      const absolute = join(context2.root, normalized2);
+      let stat16;
       try {
-        stat15 = await fs.lstat(absolute);
+        stat16 = await fs.lstat(absolute);
       } catch (error) {
         if (error.code === "ENOENT" || error.code === "ENOTDIR") continue;
         throw error;
       }
-      if (!stat15.isFile() && !stat15.isSymbolicLink()) continue;
+      if (!stat16.isFile() && !stat16.isSymbolicLink()) continue;
       const digest2 = createHash("sha256");
-      if (stat15.isSymbolicLink()) digest2.update(await fs.readlink(absolute));
-      if (stat15.size <= 65536) {
+      if (stat16.isSymbolicLink()) digest2.update(await fs.readlink(absolute));
+      if (stat16.size <= 65536) {
         digest2.update(await fs.readFile(absolute, { signal: budget.signal }));
       } else {
         for await (const chunk of createReadStream(absolute, {
@@ -455,8 +455,8 @@ async function snapshot(context2, budget, extra = [], scanIgnored = false) {
         }
       }
       entries[index] = [
-        normalized,
-        stat15.isSymbolicLink() ? "symlink" : "file",
+        normalized2,
+        stat16.isSymbolicLink() ? "symlink" : "file",
         digest2.digest("hex")
       ];
     }
@@ -1364,14 +1364,14 @@ function axeViolations(value) {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((entry2) => {
     if (entry2 === null || typeof entry2 !== "object") return [];
-    const record2 = entry2;
-    if (typeof record2.id !== "string" || !Array.isArray(record2.nodes))
+    const record3 = entry2;
+    if (typeof record3.id !== "string" || !Array.isArray(record3.nodes))
       return [];
     return [
       {
-        id: record2.id,
-        ...typeof record2.impact === "string" || record2.impact === null ? { impact: record2.impact } : {},
-        nodes: record2.nodes.filter(
+        id: record3.id,
+        ...typeof record3.impact === "string" || record3.impact === null ? { impact: record3.impact } : {},
+        nodes: record3.nodes.filter(
           (node) => node !== null && typeof node === "object"
         )
       }
@@ -1729,11 +1729,11 @@ function parseFigmaUrl(input) {
     return void 0;
   }
   if (url.protocol !== "https:" || !isFigmaHost(url.hostname)) return void 0;
-  const parts = url.pathname.split("/").filter(Boolean);
-  if (!["design", "file", "proto"].includes(parts[0] ?? "")) return void 0;
-  const key5 = parts[1];
+  const parts2 = url.pathname.split("/").filter(Boolean);
+  if (!["design", "file", "proto"].includes(parts2[0] ?? "")) return void 0;
+  const key5 = parts2[1];
   if (!key5 || !/^[A-Za-z0-9]+$/.test(key5)) return void 0;
-  const branch = parts[2] === "branch" && parts[3] && /^[A-Za-z0-9]+$/.test(parts[3]) ? parts[3] : void 0;
+  const branch = parts2[2] === "branch" && parts2[3] && /^[A-Za-z0-9]+$/.test(parts2[3]) ? parts2[3] : void 0;
   const node = url.searchParams.get("node-id")?.trim();
   const version = url.searchParams.get("version-id")?.trim();
   return {
@@ -2043,7 +2043,7 @@ var init_project = __esm({
       minShare: z7.union([
         shareSchema,
         z7.record(z7.string().trim().min(1), shareSchema).refine(
-          (record2) => Object.keys(record2).length > 0,
+          (record3) => Object.keys(record3).length > 0,
           "must name at least one viewport"
         )
       ])
@@ -2488,6 +2488,8 @@ var init_project = __esm({
         /** Skip the primary checkout's finding-name memory; for throwaway worktrees. */
         isolatedRegistry: z7.boolean().optional()
       }).strict().optional(),
+      /** false turns off the once-a-day check for a newer Idiom release. */
+      updateCheck: z7.boolean().optional(),
       model: z7.object({
         provider: critiqueProviderSchema,
         model: z7.string(),
@@ -3167,8 +3169,8 @@ function tomlFrontMatter(lines2) {
   if (end === -1) return /* @__PURE__ */ new Set();
   return new Set(Array.from({ length: end - 1 }, (_, index) => index + 1));
 }
-function findTicketBriefs(text4) {
-  const lines2 = text4.split(/\r?\n/);
+function findTicketBriefs(text5) {
+  const lines2 = text5.split(/\r?\n/);
   const toml = tomlFrontMatter(lines2);
   const refs = [];
   const slugs = /* @__PURE__ */ new Set();
@@ -3502,18 +3504,36 @@ var init_instruction = __esm({
   }
 });
 
+// src/interface/version.ts
+function jsonPayload(value) {
+  return JSON.stringify(
+    { interfaceVersion: INTERFACE_VERSION, ...value },
+    null,
+    2
+  );
+}
+var INTERFACE_VERSION, EXIT_CODES;
+var init_version = __esm({
+  "src/interface/version.ts"() {
+    "use strict";
+    INTERFACE_VERSION = 1;
+    EXIT_CODES = { ok: 0, failed: 1, "run-failure": 2 };
+  }
+});
+
 // src/errors.ts
 var IdiomError, RUN_FAILURE_EXIT_CODE, RunFailure;
 var init_errors = __esm({
   "src/errors.ts"() {
     "use strict";
+    init_version();
     IdiomError = class extends Error {
       constructor(message) {
         super(message);
         this.name = "IdiomError";
       }
     };
-    RUN_FAILURE_EXIT_CODE = 2;
+    RUN_FAILURE_EXIT_CODE = EXIT_CODES["run-failure"];
     RunFailure = class _RunFailure extends IdiomError {
       stage;
       cause;
@@ -3642,9 +3662,9 @@ async function reservePort(avoid, preferred) {
       try {
         held.push(await listen(address.port, "::"));
       } catch (error) {
-        const code2 = error.code;
-        if (code2 === "EADDRINUSE") continue;
-        if (code2 !== "EAFNOSUPPORT" && code2 !== "EADDRNOTAVAIL" && code2 !== "EPROTONOSUPPORT")
+        const code3 = error.code;
+        if (code3 === "EADDRINUSE") continue;
+        if (code3 !== "EAFNOSUPPORT" && code3 !== "EADDRNOTAVAIL" && code3 !== "EPROTONOSUPPORT")
           throw error;
       }
       return { port: address.port, release: release2 };
@@ -4164,8 +4184,8 @@ var init_flow = __esm({
     });
     projectLogPathSchema = nonblank.refine((path) => {
       const portable = path.replaceAll("\\", "/");
-      const normalized = posix.normalize(portable);
-      return !posix.isAbsolute(portable) && !win32.isAbsolute(path) && normalized !== ".." && !normalized.startsWith("../");
+      const normalized2 = posix.normalize(portable);
+      return !posix.isAbsolute(portable) && !win32.isAbsolute(path) && normalized2 !== ".." && !normalized2.startsWith("../");
     }, "must be a project-relative path that does not escape the project");
     allowSchema = z11.object({
       urls: z11.array(regexpSchema).default([]),
@@ -4694,14 +4714,14 @@ async function sourceStatus(projectDirectory, options = {}) {
     const pathIsExcluded = (path) => excludedDirectories2.some(
       (directory) => path === directory || path.startsWith(`${directory}/`)
     ) || pathIsStagingResidue(path);
-    const records = status.split("\0").filter((record2) => record2.length > 0);
+    const records = status.split("\0").filter((record3) => record3.length > 0);
     const dirtyPaths = [];
     for (let index = 0; index < records.length; index += 1) {
-      const record2 = records[index];
-      if (record2 === void 0) continue;
-      const code2 = record2.slice(0, 2);
-      const paths = [record2.slice(3)];
-      if (/[RC]/.test(code2)) {
+      const record3 = records[index];
+      if (record3 === void 0) continue;
+      const code3 = record3.slice(0, 2);
+      const paths = [record3.slice(3)];
+      if (/[RC]/.test(code3)) {
         const source = records[index + 1];
         if (source !== void 0) paths.push(source);
         index += 1;
@@ -4983,6 +5003,54 @@ var init_resolve = __esm({
   }
 });
 
+// src/findings/settings.ts
+import { createHash as createHash2 } from "crypto";
+function stable(value) {
+  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+  if (value && typeof value === "object")
+    return `{${Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${stable(v)}`).join(",")}}`;
+  return JSON.stringify(value) ?? "undefined";
+}
+function settingsHash(value) {
+  return createHash2("sha256").update(stable(value)).digest("hex");
+}
+function capturePredicateIdentity(project, flow) {
+  const {
+    concurrency: _lanes,
+    maxMinutes: _deadline,
+    ...capture
+  } = project.capture;
+  const { gate: _gate, ...rest } = project.checks;
+  const checks = {
+    ...rest,
+    links: { ...project.checks.links, concurrency: void 0 },
+    probe: { ...project.checks.probe, flowBudgetMs: void 0 }
+  };
+  return settingsHash({
+    checks,
+    capture,
+    invariants: flow.invariants,
+    states: flow.states.map(
+      (state) => Object.fromEntries(
+        Object.entries(state).filter(
+          ([key5]) => !["description", "url", "urlFrom"].includes(key5)
+        )
+      )
+    )
+  });
+}
+function annotateDeclaredExpectations(tuples, flow) {
+  for (const tuple of tuples) {
+    const state = [...flow.states].sort((a, b) => b.id.length - a.id.length).find((s) => tuple.state === s.id || tuple.state.startsWith(`${s.id}.`));
+    if (state) tuple.declaredExpectations = state.expect;
+  }
+}
+var init_settings = __esm({
+  "src/findings/settings.ts"() {
+    "use strict";
+  }
+});
+
 // src/brief/assertions.ts
 function hasBriefAssertions(brief) {
   return (brief.acceptanceCriteria ?? []).some(
@@ -5035,6 +5103,10 @@ function briefCheckFrom(brief) {
     }))
   };
 }
+function briefAssertionIdentity(assertion) {
+  const { name: _name, ...rest } = assertion;
+  return settingsHash(rest).slice(0, 8);
+}
 function briefStateMatches(tupleState, state) {
   return tupleState === state || tupleState.startsWith(`${state}.`);
 }
@@ -5059,6 +5131,7 @@ function briefSelectorsFor(checks, flow, state) {
 var init_assertions = __esm({
   "src/brief/assertions.ts"() {
     "use strict";
+    init_settings();
     init_brief();
   }
 });
@@ -5240,7 +5313,7 @@ function evidenceSection(brief) {
       `Research run: ${brief.researchRun.provider} ${line2(brief.researchRun.model)}, ${researchCostLine(brief.researchRun)}.`
     ],
     "Request:",
-    brief.request.trim().split(/\r?\n/).map((text4) => text4 === "" ? ">" : `> ${text4}`).join("\n")
+    brief.request.trim().split(/\r?\n/).map((text5) => text5 === "" ? ">" : `> ${text5}`).join("\n")
   ];
 }
 function sectionBody(section2, brief, settings) {
@@ -5312,7 +5385,7 @@ var init_render2 = __esm({
 });
 
 // src/brief/store.ts
-import { createHash as createHash2, randomUUID as randomUUID3 } from "crypto";
+import { createHash as createHash3, randomUUID as randomUUID3 } from "crypto";
 import {
   access,
   mkdir as mkdir2,
@@ -5345,10 +5418,10 @@ async function exists2(path) {
     () => false
   );
 }
-function parseStored(text4, slug3) {
+function parseStored(text5, slug3) {
   let json5;
   try {
-    json5 = JSON.parse(text4);
+    json5 = JSON.parse(text5);
   } catch (error) {
     throw new IdiomError(
       `brief ${slug3} is not valid JSON: ${error.message}`
@@ -5424,7 +5497,7 @@ async function recordBrief(options) {
   });
 }
 function requestTitle(request2) {
-  const first = request2.split(/\r?\n/).map((text4) => text4.trim()).find((text4) => text4 !== "") ?? "";
+  const first = request2.split(/\r?\n/).map((text5) => text5.trim()).find((text5) => text5 !== "") ?? "";
   return first.slice(0, 120).trim();
 }
 async function storeResearchedBrief(options) {
@@ -5504,11 +5577,11 @@ function triagesDirectory(projectDirectory) {
   return join3(briefsDirectory(projectDirectory), "triage");
 }
 function triageId(rubricVersion, request2) {
-  return `triage-${createHash2("sha256").update(`${rubricVersion}
+  return `triage-${createHash3("sha256").update(`${rubricVersion}
 ${request2}`).digest("hex").slice(0, 10)}`;
 }
 async function saveTriage(options) {
-  const record2 = storedTriageSchema.parse({
+  const record3 = storedTriageSchema.parse({
     version: 1,
     id: triageId(options.rubricVersion, options.request),
     request: options.request,
@@ -5521,20 +5594,20 @@ async function saveTriage(options) {
   const directory = triagesDirectory(options.projectDirectory);
   await mkdir2(directory, { recursive: true });
   await writeAtomic(
-    join3(directory, `${record2.id}.json`),
-    `${JSON.stringify(record2, null, 2)}
+    join3(directory, `${record3.id}.json`),
+    `${JSON.stringify(record3, null, 2)}
 `
   );
-  return record2;
+  return record3;
 }
 async function readTriage(projectDirectory, id2) {
   if (!briefTriageIdSchema.safeParse(id2).success)
     throw new IdiomError(
       `invalid triage id ${JSON.stringify(id2)}; run idiom brief triage first`
     );
-  let text4;
+  let text5;
   try {
-    text4 = await readFile3(
+    text5 = await readFile3(
       join3(triagesDirectory(projectDirectory), `${id2}.json`),
       "utf8"
     );
@@ -5547,7 +5620,7 @@ async function readTriage(projectDirectory, id2) {
   }
   let json5;
   try {
-    json5 = JSON.parse(text4);
+    json5 = JSON.parse(text5);
   } catch (error) {
     throw new IdiomError(
       `triage ${id2} is not valid JSON: ${error.message}`
@@ -5600,15 +5673,15 @@ function checkedSlug(slug3) {
 async function readBrief(projectDirectory, slug3) {
   const directory = briefsDirectory(projectDirectory);
   const name = checkedSlug(slug3);
-  let text4;
+  let text5;
   try {
-    text4 = await readFile3(join3(directory, `${name}.json`), "utf8");
+    text5 = await readFile3(join3(directory, `${name}.json`), "utf8");
   } catch (error) {
     if (error.code === "ENOENT")
       throw new IdiomError(`no brief named ${name}; run idiom brief list`);
     throw error;
   }
-  const brief = parseStored(text4, name);
+  const brief = parseStored(text5, name);
   const markdown = await readFile3(join3(directory, `${name}.md`), "utf8").catch(
     () => void 0
   );
@@ -5731,7 +5804,7 @@ async function appendDecision(options) {
       );
     }
   }
-  const record2 = decisionSchema.parse({
+  const record3 = decisionSchema.parse({
     at: (options.now?.() ?? /* @__PURE__ */ new Date()).toISOString(),
     commit: options.finding.commit,
     findingId: options.finding.id,
@@ -5744,14 +5817,14 @@ async function appendDecision(options) {
   });
   const prefix = source.length > 0 && !source.endsWith("\n") ? "\n" : "";
   try {
-    await appendFile2(path, `${prefix}${JSON.stringify(record2)}
+    await appendFile2(path, `${prefix}${JSON.stringify(record3)}
 `, "utf8");
   } catch (error) {
     throw new IdiomError(
       `cannot append decision log ${path}: ${error instanceof Error ? error.message : String(error)}`
     );
   }
-  return { path, record: record2 };
+  return { path, record: record3 };
 }
 var init_log = __esm({
   "src/decisions/log.ts"() {
@@ -5762,7 +5835,7 @@ var init_log = __esm({
 });
 
 // src/design/match.ts
-import { createHash as createHash3 } from "crypto";
+import { createHash as createHash4 } from "crypto";
 function contentElements(observation) {
   return observation.elements.filter(
     (e) => e.visible && !isVisuallyHidden(e) && e.rect.width > 0 && e.rect.height > 0 && e.styles.display !== "none" && e.styles.visibility !== "hidden" && Number(e.styles.opacity) !== 0 && ![
@@ -5832,8 +5905,8 @@ function tree(elements) {
         best = c;
     }
     parent.set(e.selector, best);
-    const list5 = children.get(best?.selector);
-    if (list5) list5.push(e);
+    const list6 = children.get(best?.selector);
+    if (list6) list6.push(e);
     else children.set(best?.selector, [e]);
   }
   const enter = /* @__PURE__ */ new Map(), exit = /* @__PURE__ */ new Map(), depth = /* @__PURE__ */ new Map();
@@ -5959,8 +6032,8 @@ function matchElements(design, app) {
         if (used.has(e.selector)) continue;
         const key5 = index?.key.get(e.selector);
         if (!key5) continue;
-        const list5 = result2.get(key5);
-        if (list5) list5.push(e);
+        const list6 = result2.get(key5);
+        if (list6) list6.push(e);
         else result2.set(key5, [e]);
       }
       return result2;
@@ -6076,8 +6149,8 @@ function matchElements(design, app) {
           [byKind, kindOf(o)],
           [byTag, o.tag]
         ]) {
-          const list5 = map.get(key5);
-          if (list5) list5.push(o);
+          const list6 = map.get(key5);
+          if (list6) list6.push(o);
           else map.set(key5, [o]);
         }
       }
@@ -6090,40 +6163,40 @@ function matchElements(design, app) {
       const visit = (e, depth) => depth > 0 && !index.has(e.selector) && !e.interactive && !counterpart(e) && hides(e, 3) ? (t.children.get(e.selector) ?? []).flatMap(
         (c) => visit(c, depth - 1)
       ) : [e];
-      return (list5) => list5.flatMap((e) => visit(e, 3));
+      return (list6) => list6.flatMap((e) => visit(e, 3));
     };
     const dc = expand(D, byDesign, aRaw, byApp)(dRaw), ac = expand(A, byApp, dRaw, byDesign)(aRaw);
-    const intervals = (list5, index) => {
+    const intervals = (list6, index) => {
       const before = [], after = [];
       let last = "start";
-      for (const e of list5) {
+      for (const e of list6) {
         before.push(last);
         last = index.get(e.selector)?.id ?? last;
       }
       last = "end";
-      for (let i = list5.length - 1; i >= 0; i--) {
+      for (let i = list6.length - 1; i >= 0; i--) {
         after[i] = last;
-        const e = list5[i];
+        const e = list6[i];
         last = (e && index.get(e.selector)?.id) ?? last;
       }
-      return list5.map((_, i) => `${before[i]}/${after[i]}`);
+      return list6.map((_, i) => `${before[i]}/${after[i]}`);
     };
     const di = intervals(dc, byDesign), ai = intervals(ac, byApp);
     const open3 = /* @__PURE__ */ new Map();
     for (const [i, a] of ac.entries()) {
       if (byApp.has(a.selector)) continue;
       const key5 = ai[i] ?? "";
-      const list5 = open3.get(key5);
-      if (list5) list5.push(a);
+      const list6 = open3.get(key5);
+      if (list6) list6.push(a);
       else open3.set(key5, [a]);
     }
     const cursor = /* @__PURE__ */ new Map();
     let added = 0;
     for (const [i, d] of dc.entries()) {
       if (byDesign.has(d.selector)) continue;
-      const key5 = di[i] ?? "", list5 = open3.get(key5) ?? [];
-      for (let j = cursor.get(key5) ?? 0; j < list5.length; j++) {
-        const a = list5[j];
+      const key5 = di[i] ?? "", list6 = open3.get(key5) ?? [];
+      for (let j = cursor.get(key5) ?? 0; j < list6.length; j++) {
+        const a = list6[j];
         if (!a || byApp.has(a.selector) || !compatible(a, d)) continue;
         if (!consistent(d, a)) continue;
         add(d, a, "parent-position");
@@ -6171,8 +6244,8 @@ var init_match = __esm({
   "src/design/match.ts"() {
     "use strict";
     init_shared();
-    normalizeText = (text4) => text4.replace(/\s+/g, " ").trim();
-    hash2 = (value) => createHash3("sha256").update(value).digest("hex").slice(0, 24);
+    normalizeText = (text5) => text5.replace(/\s+/g, " ").trim();
+    hash2 = (value) => createHash4("sha256").update(value).digest("hex").slice(0, 24);
     isFigma = (e) => e.attributes["data-idiom-source"] === "figma";
     FIGMA_ID = /^I?\d+:\d+(?:;\d+:\d+)*$/;
     nodeKey = (e) => isFigma(e) ? e.attributes["data-figma-id"] : e.signals?.nodeId;
@@ -6205,8 +6278,8 @@ var init_match = __esm({
         const k = keyFor(e, method, figmaDesign);
         if (!k) continue;
         index.key.set(e.selector, k);
-        const list5 = index.members.get(k);
-        if (list5) list5.push(e);
+        const list6 = index.members.get(k);
+        if (list6) list6.push(e);
         else index.members.set(k, [e]);
         index.left.set(k, (index.left.get(k) ?? 0) + 1);
       }
@@ -6404,7 +6477,7 @@ function measureComparisons(design, app, config, saved) {
     if (!d || !a) continue;
     const comparison2 = (property, dv, av, kind, neighbour, extra) => {
       const layerPath = d.attributes["data-figma-path"], link2 = d.attributes["data-figma-link"];
-      const record2 = {
+      const record3 = {
         key: `${pair.app}\0${property}\0${neighbour?.appSelector ?? ""}`,
         pair,
         property,
@@ -6417,22 +6490,22 @@ function measureComparisons(design, app, config, saved) {
         ...layerPath ? { layerPath } : {},
         ...link2 ? { link: link2 } : {}
       };
-      comparisons.push(record2);
-      return record2;
+      comparisons.push(record3);
+      return record3;
     };
     const compare2 = (property, dv, av, policy, basis, neighbour) => {
       if (dv === void 0 || av === void 0) return;
       const dn = numberValue(dv), an = numberValue(av);
       if (dn !== void 0 && an !== void 0 && policy) {
         const allowance = policyAllowance(config, policy, basis ?? dn);
-        const record2 = comparison2(property, dv, av, "numeric", neighbour, {
+        const record3 = comparison2(property, dv, av, "numeric", neighbour, {
           policy,
           basis: basis ?? dn,
           allowance,
           within: Math.abs(dn - an) <= allowance
         });
-        if (!record2.within)
-          record2.candidate = emit(
+        if (!record3.within)
+          record3.candidate = emit(
             pair,
             property,
             dv,
@@ -6448,11 +6521,11 @@ function measureComparisons(design, app, config, saved) {
             )
           );
       } else {
-        const record2 = comparison2(property, dv, av, "string", neighbour, {
+        const record3 = comparison2(property, dv, av, "string", neighbour, {
           within: String(dv) === String(av)
         });
-        if (!record2.within)
-          record2.candidate = emit(
+        if (!record3.within)
+          record3.candidate = emit(
             pair,
             property,
             dv,
@@ -6515,7 +6588,7 @@ function measureComparisons(design, app, config, saved) {
       );
       const dw = numberValue(d.styles.fontWeight), aw = numberValue(a.styles.fontWeight);
       if (dw !== void 0 && aw !== void 0) {
-        const record2 = comparison2(
+        const record3 = comparison2(
           "fontWeight",
           d.styles.fontWeight,
           a.styles.fontWeight,
@@ -6526,8 +6599,8 @@ function measureComparisons(design, app, config, saved) {
             within: Math.abs(dw - aw) <= settings.fontWeight
           }
         );
-        if (!record2.within)
-          record2.candidate = emit(
+        if (!record3.within)
+          record3.candidate = emit(
             pair,
             "fontWeight",
             d.styles.fontWeight,
@@ -6584,14 +6657,14 @@ function measureComparisons(design, app, config, saved) {
         Math.abs(dc.b - ac.b),
         Math.abs(dc.a - ac.a) * 255
       ) : void 0;
-      const record2 = comparison2(property, dv, av, "color", void 0, {
+      const record3 = comparison2(property, dv, av, "color", void 0, {
         allowance: settings.color,
         within: delta2 !== void 0 ? delta2 <= settings.color : dn === an
       });
-      if (!record2.within)
-        record2.candidate = emit(pair, property, dv, av, settings.color, dn, an);
+      if (!record3.within)
+        record3.candidate = emit(pair, property, dv, av, settings.color, dn, an);
     }
-    const text4 = comparison2(
+    const text5 = comparison2(
       "text",
       d.directText,
       a.directText,
@@ -6601,8 +6674,8 @@ function measureComparisons(design, app, config, saved) {
         within: normalizeText(d.directText) === normalizeText(a.directText)
       }
     );
-    if (!text4.within)
-      text4.candidate = emit(
+    if (!text5.within)
+      text5.candidate = emit(
         pair,
         "text",
         d.directText,
@@ -6678,9 +6751,9 @@ function measureComparisons(design, app, config, saved) {
         const node = map.get(selector);
         if (node && node !== element) found.add(node);
       }
-      const parts = element.structuralPath.split("/");
-      for (let i = 1; i < parts.length; i++) {
-        const node = byPath.get(parts.slice(0, i).join("/"));
+      const parts2 = element.structuralPath.split("/");
+      for (let i = 1; i < parts2.length; i++) {
+        const node = byPath.get(parts2.slice(0, i).join("/"));
         if (node && node !== element) found.add(node);
       }
       return [...found];
@@ -6771,8 +6844,8 @@ function reconcileReferences(references2, tuple, config) {
   for (const reference3 of references2)
     for (const comparison2 of reference3.comparisons) {
       if (comparison2.candidate) compared.add(comparison2.candidate);
-      const list5 = byKey.get(comparison2.key);
-      if (list5) list5.push({ reference: reference3, comparison: comparison2 });
+      const list6 = byKey.get(comparison2.key);
+      if (list6) list6.push({ reference: reference3, comparison: comparison2 });
       else byKey.set(comparison2.key, [{ reference: reference3, comparison: comparison2 }]);
     }
   const output = [];
@@ -7155,8 +7228,8 @@ function parseRulingBlocks(source) {
     const end = suffix.indexOf(RULING_END, cursor + RULING_START.length);
     if (end < 0) corrupt("missing end marker");
     const block = suffix.slice(cursor, end + RULING_END.length);
-    const normalized = block.replace(/\r\n/g, "\n");
-    const lines2 = normalized.split("\n");
+    const normalized2 = block.replace(/\r\n/g, "\n");
+    const lines2 = normalized2.split("\n");
     const metadata2 = lines2[1];
     if (metadata2 === void 0 || !metadata2.startsWith(METADATA_PREFIX) || !metadata2.endsWith(" -->"))
       corrupt("missing canonical metadata line");
@@ -7174,7 +7247,7 @@ function parseRulingBlocks(source) {
       corrupt(
         parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")
       );
-    if (normalized.slice(RULING_START.length).includes(RULING_START) || normalized.slice(0, -RULING_END.length).includes(RULING_END) || lines2.slice(2).some((line3) => line3.startsWith(METADATA_PREFIX)) || (normalized.match(/<!-- idiom:ruling:/g)?.length ?? 0) !== 3)
+    if (normalized2.slice(RULING_START.length).includes(RULING_START) || normalized2.slice(0, -RULING_END.length).includes(RULING_END) || lines2.slice(2).some((line3) => line3.startsWith(METADATA_PREFIX)) || (normalized2.match(/<!-- idiom:ruling:/g)?.length ?? 0) !== 3)
       corrupt("nested or duplicate markers inside a block");
     resolutions.push(parsed.data);
     cursor = end + RULING_END.length;
@@ -7377,11 +7450,11 @@ function regionTest(elements, marked) {
 }
 function keycap(element) {
   if (element.interactive) return false;
-  const text4 = element.text.trim();
-  if (text4 === "" || element.rect.height > 32) return false;
+  const text5 = element.text.trim();
+  if (text5 === "" || element.rect.height > 32) return false;
   if (element.tag === "kbd")
-    return text4.length <= 12 && element.rect.width <= 96;
-  const short = [...graphemes.segment(text4)].length <= 2 || keyNames.has(text4.toLowerCase());
+    return text5.length <= 12 && element.rect.width <= 96;
+  const short = [...graphemes.segment(text5)].length <= 2 || keyNames.has(text5.toLowerCase());
   return short && element.rect.width <= 64;
 }
 function illustrationTest(elements) {
@@ -7705,8 +7778,8 @@ var init_alarm_at_rest = __esm({
         for (const element of icons) {
           if (element.signals.alarm === void 0) continue;
           if (element.tag !== "svg" && /\p{L}{2}/u.test(element.text)) continue;
-          const text4 = element.directText.replace(/\s|\uFE0E|\uFE0F/g, "");
-          const glyph2 = [...text4].find((symbol) => alarmGlyph.test(symbol));
+          const text5 = element.directText.replace(/\s|\uFE0E|\uFE0F/g, "");
+          const glyph2 = [...text5].find((symbol) => alarmGlyph.test(symbol));
           const hint = element.signals.alarm.iconHint?.match(alarmHint)?.[1];
           const painted3 = glyph2 === void 0 && hint === void 0 ? inkOf(element, descendantsOf(element.selector)) : [];
           const hues = new Set(
@@ -7726,12 +7799,12 @@ var init_alarm_at_rest = __esm({
             continue;
           if (exempt(element)) continue;
           if (glyph2 !== void 0) {
-            const code2 = `U+${(glyph2.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`;
+            const code3 = `U+${(glyph2.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`;
             add(
               `glyph:${glyph2}`,
               {
                 rule: "idiom:alarm-glyph-at-rest",
-                label: `the warning glyph "${glyph2}" (${code2})`,
+                label: `the warning glyph "${glyph2}" (${code3})`,
                 params: { glyph: glyph2 }
               },
               element.selector
@@ -7893,13 +7966,13 @@ function displacements(action, threshold = tolerance) {
   );
   for (const frame2 of action.frames)
     for (const element of frame2.elements) {
-      const list5 = samples.get(element.selector) ?? [];
-      list5.push({
+      const list6 = samples.get(element.selector) ?? [];
+      list6.push({
         time: frame2.time,
         view: element.rect,
         page: documentRect(element.rect, element.offset)
       });
-      samples.set(element.selector, list5);
+      samples.set(element.selector, list6);
     }
   const result2 = [];
   const journey = (selector, points, inBaseline) => {
@@ -7994,19 +8067,19 @@ function displacements(action, threshold = tolerance) {
   for (const shift of action.shifts)
     for (const source of shift.sources) {
       if (samples.has(source.selector)) continue;
-      const list5 = shifted.get(source.selector) ?? [
+      const list6 = shifted.get(source.selector) ?? [
         {
           time: shift.time,
           view: source.previousRect,
           page: source.previousRect
         }
       ];
-      list5.push({
+      list6.push({
         time: shift.time,
         view: source.currentRect,
         page: source.currentRect
       });
-      shifted.set(source.selector, list5);
+      shifted.set(source.selector, list6);
     }
   for (const [selector, points] of shifted) {
     const entry2 = journey(selector, points, true);
@@ -8151,9 +8224,10 @@ function evaluateBriefAssertions(tuple, briefs) {
       reason,
       failures: []
     });
-    const judged = (failures2) => ({
+    const judged = (failures2, reason) => ({
       ...base,
       outcome: failures2.length === 0 ? "pass" : "mismatch",
+      ...reason === void 0 ? {} : { reason },
       failures: failures2
     });
     const missing2 = (selector) => judged([
@@ -8287,10 +8361,13 @@ function evaluateBriefAssertions(tuple, briefs) {
       return judged(failures);
     }
     if ("minContrast" in assertion) {
+      const skipped3 = [];
       for (const element of subject.elements) {
         const color = foreground(element, bySelector);
-        if (color === void 0)
-          return unmeasured(`${assertion.selector} has no painted foreground`);
+        if (color === void 0) {
+          skipped3.push(element.selector);
+          continue;
+        }
         const background = effectiveBackground(element, bySelector);
         const blend = (channel2) => color[channel2] * color.a + background[channel2] * (1 - color.a);
         const ratio = contrastRatio(
@@ -8304,7 +8381,12 @@ function evaluateBriefAssertions(tuple, briefs) {
           measured: { ratio, foreground: color, background }
         });
       }
-      return judged(failures);
+      if (skipped3.length === subject.elements.length)
+        return unmeasured(`${assertion.selector} has no painted foreground`);
+      return judged(
+        failures,
+        skipped3.length === 0 ? void 0 : `${skipped3.length} of ${subject.elements.length} ${assertion.selector} matches had no painted foreground and were not measured: ${skipped3.join(", ")}`
+      );
     }
     for (const element of subject.elements)
       for (const axis of ["width", "height"]) {
@@ -8355,11 +8437,12 @@ var init_brief_mismatch = __esm({
         const candidates = [];
         for (const result2 of evaluateBriefAssertions(tuple, briefs)) {
           const { brief, criterion, assertionIndex, form } = result2;
+          const identity7 = briefAssertionIdentity(result2.assertion);
           for (const failure3 of result2.failures)
             candidates.push({
               category: this.id,
               severity: "major",
-              rule: `idiom:brief-mismatch:${brief.slug}:c${criterion.index}:a${assertionIndex}:${form}`,
+              rule: `idiom:brief-mismatch:${brief.slug}:c${criterion.index}:a${assertionIndex}:${form}:${identity7}`,
               selectorHint: failure3.selector,
               explanation: `Brief "${brief.title}" (${brief.slug}), criterion "${criterion.statement}": ${failure3.detail}`,
               acceptance: [`${criterion.statement} (brief ${brief.slug})`],
@@ -8367,6 +8450,7 @@ var init_brief_mismatch = __esm({
                 brief: brief.slug,
                 criterion: criterion.index,
                 assertion: assertionIndex,
+                assertionIdentity: identity7,
                 selector: failure3.selector,
                 measured: failure3.measured
               })
@@ -8398,15 +8482,15 @@ var init_broken_image = __esm({
           );
         const seen = /* @__PURE__ */ new Set();
         const candidates = scan.records.filter(
-          (record2) => record2.broken && !seen.has(record2.selector) && seen.add(record2.selector) !== void 0
-        ).map((record2) => ({
+          (record3) => record3.broken && !seen.has(record3.selector) && seen.add(record3.selector) !== void 0
+        ).map((record3) => ({
           category: this.id,
           severity: "major",
           rule: "idiom:image-broken",
-          selectorHint: record2.selector,
-          explanation: `${record2.selector} did not load${record2.src === "" ? "" : record2.src.startsWith("data:") ? " from its inline data URI" : ` from ${record2.src}`} and renders as a broken image.`,
-          acceptance: [`${record2.selector} loads and shows its image.`],
-          verification: verify(this.id, { selector: record2.selector })
+          selectorHint: record3.selector,
+          explanation: `${record3.selector} did not load${record3.src === "" ? "" : record3.src.startsWith("data:") ? " from its inline data URI" : ` from ${record3.src}`} and renders as a broken image.`,
+          acceptance: [`${record3.selector} loads and shows its image.`],
+          verification: verify(this.id, { selector: record3.selector })
         }));
         return scanResult(this.id, candidates, scan);
       }
@@ -8448,14 +8532,14 @@ var init_broken_link = __esm({
           if (seen.has(key5)) continue;
           seen.add(key5);
           const status = result2.code === null ? result2.reason : `HTTP ${result2.code}`;
-          const text4 = link2.text === "" ? link2.selector : `\u201C${link2.text}\u201D`;
+          const text5 = link2.text === "" ? link2.selector : `\u201C${link2.text}\u201D`;
           candidates.push({
             category: this.id,
             severity: link2.sameOrigin ? "major" : "minor",
             rule: "idiom:broken-link",
             selectorHint: link2.selector,
             fingerprintHint: link2.sameOrigin ? key5 : link2.href,
-            explanation: `The link ${text4} points at ${href2}, which answers ${status}.`,
+            explanation: `The link ${text5} points at ${href2}, which answers ${status}.`,
             acceptance: [
               `${link2.selector} points at a page that answers below 400, or is removed.`
             ],
@@ -8473,10 +8557,10 @@ var init_broken_link = __esm({
 });
 
 // src/checks/clipped-text.ts
-function describeCut(clip2) {
-  const tail = clip2.visibleText.slice(-24);
-  const shown = tail === "" ? "" : ` after "${clip2.visibleText.length > 24 ? "\u2026" : ""}${tail}"`;
-  switch (clip2.cut) {
+function describeCut(clip3) {
+  const tail = clip3.visibleText.slice(-24);
+  const shown = tail === "" ? "" : ` after "${clip3.visibleText.length > 24 ? "\u2026" : ""}${tail}"`;
+  switch (clip3.cut) {
     case "mid-word":
       return `cut mid-word${shown}`;
     case "sliced-line":
@@ -8506,28 +8590,28 @@ var init_clipped_text = __esm({
           );
         const gate = paintedGate(tuple, ["idiom:text-clipped"]);
         const candidates = observation.clippedText.filter(
-          (clip2) => gate.allows("idiom:text-clipped", clip2.selector, clip2.owner)
-        ).map((clip2) => {
-          const owner2 = clip2.owner === clip2.selector ? "its own box" : clip2.owner;
+          (clip3) => gate.allows("idiom:text-clipped", clip3.selector, clip3.owner)
+        ).map((clip3) => {
+          const owner2 = clip3.owner === clip3.selector ? "its own box" : clip3.owner;
           const overflow2 = [
-            clip2.overflow.x > 0 ? `${clip2.overflow.x}px horizontally` : "",
-            clip2.overflow.y > 0 ? `${clip2.overflow.y}px vertically` : ""
+            clip3.overflow.x > 0 ? `${clip3.overflow.x}px horizontally` : "",
+            clip3.overflow.y > 0 ? `${clip3.overflow.y}px vertically` : ""
           ].filter(Boolean).join(" and ");
-          const lines2 = clip2.lines > 1 || clip2.visibleLines !== clip2.lines ? ` ${clip2.visibleLines} of ${clip2.lines} lines are readable;` : "";
+          const lines2 = clip3.lines > 1 || clip3.visibleLines !== clip3.lines ? ` ${clip3.visibleLines} of ${clip3.lines} lines are readable;` : "";
           return {
             category: this.id,
             severity: "major",
             rule: "idiom:text-clipped",
-            selectorHint: clip2.selector,
-            explanation: `The text of ${clip2.selector} runs ${overflow2} past ${owner2}, which hides it;${lines2} ${describeCut(clip2)}, and no ellipsis is shown.`,
+            selectorHint: clip3.selector,
+            explanation: `The text of ${clip3.selector} runs ${overflow2} past ${owner2}, which hides it;${lines2} ${describeCut(clip3)}, and no ellipsis is shown.`,
             acceptance: [
-              `${clip2.selector} fits its box, or truncates with an ellipsis and exposes the full text (title or tooltip).`
+              `${clip3.selector} fits its box, or truncates with an ellipsis and exposes the full text (title or tooltip).`
             ],
             verification: verify(this.id, {
-              selector: clip2.selector,
-              owner: clip2.owner,
-              axis: clip2.axis,
-              cut: clip2.cut
+              selector: clip3.selector,
+              owner: clip3.owner,
+              axis: clip3.axis,
+              cut: clip3.cut
             })
           };
         });
@@ -8832,8 +8916,8 @@ var init_compound_control = __esm({
         };
         const adornments = elements.flatMap((element) => {
           if (inInteractive(element) || isVisuallyHidden(element)) return [];
-          const text4 = element.directText.trim();
-          if (text4.length === 0 || text4.length > tokenMax || /\s/.test(text4) || element.text.trim() !== text4)
+          const text5 = element.directText.trim();
+          if (text5.length === 0 || text5.length > tokenMax || /\s/.test(text5) || element.text.trim() !== text5)
             return [];
           const rect3 = element.signals.textRect ?? element.rect;
           const x = rect3.x + rect3.width / 2;
@@ -8845,7 +8929,7 @@ var init_compound_control = __esm({
           )[0];
           if (input === void 0) return [];
           const side = x > input.rect.x + input.rect.width / 2 ? "suffix" : "prefix";
-          return [{ element, input, text: text4, rect: rect3, side }];
+          return [{ element, input, text: text5, rect: rect3, side }];
         });
         const candidates = [];
         for (const adornment of adornments) {
@@ -8956,16 +9040,16 @@ var init_compound_control = __esm({
 function normalizeConsoleIdentity(value) {
   return value.trim().replace(/\s+/g, " ") || "<empty message>";
 }
-function isExpectedDocumentLoadError(tuple, record2) {
+function isExpectedDocumentLoadError(tuple, record3) {
   const response = tuple.documentResponse;
-  if (record2.type !== "error" || response === void 0 || response.expectedStatus === 200 || response.actualStatus !== response.expectedStatus || record2.location === void 0 || withoutFragment(record2.location.url) !== withoutFragment(response.finalUrl ?? response.url) || record2.location.lineNumber !== 0 || record2.location.columnNumber !== 0) {
+  if (record3.type !== "error" || response === void 0 || response.expectedStatus === 200 || response.actualStatus !== response.expectedStatus || record3.location === void 0 || withoutFragment(record3.location.url) !== withoutFragment(response.finalUrl ?? response.url) || record3.location.lineNumber !== 0 || record3.location.columnNumber !== 0) {
     return false;
   }
-  if (record2.request !== void 0) {
-    if (record2.request.resourceType !== "document" || !record2.request.mainFrame)
+  if (record3.request !== void 0) {
+    if (record3.request.resourceType !== "document" || !record3.request.mainFrame)
       return false;
   } else if (tuple.consoleProvenance === true) return false;
-  const message = normalizeConsoleIdentity(record2.text);
+  const message = normalizeConsoleIdentity(record3.text);
   return new RegExp(
     `^Failed to load resource: the server responded with a status of ${response.expectedStatus}(?: \\([^()]*\\))?$`
   ).test(message);
@@ -8983,36 +9067,36 @@ var init_console_error = __esm({
           return unavailable(this.id, "console.jsonl is unavailable");
         }
         const records = /* @__PURE__ */ new Map();
-        for (const record2 of tuple.console) {
-          if (record2.healthAllowed === true) continue;
-          if (record2.type !== "error" && record2.type !== "pageerror") continue;
-          if (isExpectedDocumentLoadError(tuple, record2)) continue;
+        for (const record3 of tuple.console) {
+          if (record3.healthAllowed === true) continue;
+          if (record3.type !== "error" && record3.type !== "pageerror") continue;
+          if (isExpectedDocumentLoadError(tuple, record3)) continue;
           const selectorHint = [
-            record2.type,
-            record2.location === void 0 ? "page" : `${record2.location.url}:${record2.location.lineNumber}:${record2.location.columnNumber}`,
-            normalizeConsoleIdentity(record2.text)
+            record3.type,
+            record3.location === void 0 ? "page" : `${record3.location.url}:${record3.location.lineNumber}:${record3.location.columnNumber}`,
+            normalizeConsoleIdentity(record3.text)
           ].join(" | ");
           const existing = records.get(selectorHint);
           if (existing === void 0)
-            records.set(selectorHint, { record: record2, count: 1 });
+            records.set(selectorHint, { record: record3, count: 1 });
           else existing.count += 1;
         }
         return ran(
           this.id,
-          [...records].map(([selectorHint, { record: record2, count: count5 }]) => ({
+          [...records].map(([selectorHint, { record: record3, count: count5 }]) => ({
             category: this.id,
             severity: "major",
-            rule: record2.type === "pageerror" ? "idiom:uncaught-page-error" : "idiom:console-error",
+            rule: record3.type === "pageerror" ? "idiom:uncaught-page-error" : "idiom:console-error",
             selectorHint,
-            explanation: `${record2.type === "pageerror" ? "An uncaught page error" : "console.error"} occurred during capture: ${record2.text}${count5 > 1 ? ` (recorded ${count5} times)` : ""}`,
+            explanation: `${record3.type === "pageerror" ? "An uncaught page error" : "console.error"} occurred during capture: ${record3.text}${count5 > 1 ? ` (recorded ${count5} times)` : ""}`,
             acceptance: [
               "The state renders without this error being recorded during capture."
             ],
             verification: verify(this.id, {
-              type: record2.type,
-              text: record2.text
+              type: record3.type,
+              text: record3.text
             }),
-            consoleExcerpt: record2.text
+            consoleExcerpt: record3.text
           }))
         );
       }
@@ -9174,11 +9258,11 @@ function reference(control, elements, hasLabel) {
       (other) => other === element || other.ancestorSelectors.includes(element.selector) || element.ancestorSelectors.includes(other.selector)
     )
   ) : void 0;
-  const text4 = label5?.text.trim().replace(/\s+/g, " ") ?? "";
+  const text5 = label5?.text.trim().replace(/\s+/g, " ") ?? "";
   if (label5?.signals.lineCount === 1 && label5.signals.inkCenterY !== void 0)
     return {
       centre: label5.signals.inkCenterY,
-      against: text4 === "" || text4.length > 40 ? "label's ink centre" : `"${text4}" label's ink centre`
+      against: text5 === "" || text5.length > 40 ? "label's ink centre" : `"${text5}" label's ink centre`
     };
   return {
     centre: control.rect.y + control.rect.height / 2,
@@ -9522,15 +9606,15 @@ function matchCase(word, replacement) {
 function escapePattern(term) {
   return term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-function words(text4) {
-  return text4.split(/\s+/).filter(Boolean);
+function words(text5) {
+  return text5.split(/\s+/).filter(Boolean);
 }
-function normalizedTitle(text4) {
-  return text4.replace(/\s+/g, " ").trim().replace(/^["'“”‘’«»]+\s*|\s*["'“”‘’«»]+$/gu, "");
+function normalizedTitle(text5) {
+  return text5.replace(/\s+/g, " ").trim().replace(/^["'“”‘’«»]+\s*|\s*["'“”‘’«»]+$/gu, "");
 }
-function capitalisedName(text4) {
+function capitalisedName(text5) {
   let capitals = 0;
-  for (const word of words(text4)) {
+  for (const word of words(text5)) {
     if (!/^[\p{L}\p{M}]+(?:['’‐‑-][\p{L}\p{M}]+)*$/u.test(word)) return false;
     if (/^[\p{Lu}\p{Lt}]/u.test(word)) capitals += 1;
     else if (!titleConnectors.has(word)) return false;
@@ -9723,21 +9807,21 @@ var init_copy_lint = __esm({
             "gu"
           )
         );
-        const comparedWords = (text4) => {
+        const comparedWords = (text5) => {
           const named2 = properNouns.flatMap(
-            (pattern) => [...text4.matchAll(pattern)].map(
+            (pattern) => [...text5.matchAll(pattern)].map(
               (match) => [match.index, match.index + match[0].length]
             )
           );
-          return [...text4.matchAll(/\S+/g)].slice(1).filter(
+          return [...text5.matchAll(/\S+/g)].slice(1).filter(
             (match) => !named2.some(
               ([start, end]) => match.index < end && match.index + match[0].length > start
             )
           ).map((match) => match[0]);
         };
-        const maskProperNouns = (text4) => properNouns.reduce(
+        const maskProperNouns = (text5) => properNouns.reduce(
           (masked, pattern) => masked.replace(pattern, (match) => " ".repeat(match.length)),
-          text4
+          text5
         );
         const byPath = new Map(
           (tuple.observations?.version === 2 ? tuple.observations.elements : []).map((element) => [element.structuralPath, element])
@@ -9777,51 +9861,51 @@ var init_copy_lint = __esm({
         };
         const usage = /* @__PURE__ */ new Map();
         for (const element of copy2) {
-          const text4 = element.directText.replace(/\s+/g, " ").trim();
-          const labelLike = words(text4).length <= 4;
-          for (const match of labelLike ? text4.matchAll(camelToken) : []) {
+          const text5 = element.directText.replace(/\s+/g, " ").trim();
+          const labelLike = words(text5).length <= 4;
+          for (const match of labelLike ? text5.matchAll(camelToken) : []) {
             if (camelAllow.has(match[0])) continue;
             report(
               "idiom:engineering-token-in-copy",
               element.selector,
-              `"${text4}" (${element.selector}) shows the code identifier "${match[0]}" to people.`,
+              `"${text5}" (${element.selector}) shows the code identifier "${match[0]}" to people.`,
               `${element.selector} uses a human label instead of "${match[0]}".`,
               "major"
             );
           }
-          for (const match of text4.matchAll(dottedToken))
+          for (const match of text5.matchAll(dottedToken))
             report(
               "idiom:engineering-token-in-copy",
               element.selector,
-              `"${text4}" (${element.selector}) shows the raw token path "${match[0]}".`,
+              `"${text5}" (${element.selector}) shows the raw token path "${match[0]}".`,
               `${element.selector} names the value in words, not as "${match[0]}".`,
               "major"
             );
-          for (const match of labelLike ? text4.matchAll(slashToken) : []) {
+          for (const match of labelLike ? text5.matchAll(slashToken) : []) {
             if (slashAllow.has(match[0])) continue;
             report(
               "idiom:engineering-token-in-copy",
               element.selector,
-              `"${text4}" (${element.selector}) shows the token group path "${match[0]}".`,
+              `"${text5}" (${element.selector}) shows the token group path "${match[0]}".`,
               `${element.selector} uses a human label instead of "${match[0]}".`
             );
           }
-          const stutter = text4.match(xOnX) ?? text4.match(doubled);
+          const stutter = text5.match(xOnX) ?? text5.match(doubled);
           if (stutter !== null)
             report(
               "idiom:repeated-words",
               element.selector,
-              `"${text4}" (${element.selector}) repeats itself ("${stutter[0]}").`,
+              `"${text5}" (${element.selector}) repeats itself ("${stutter[0]}").`,
               `${element.selector} reads naturally without the repeated "${stutter[1]}".`,
               "major"
             );
           for (const entry2 of policies) {
-            if (!entry2.pattern.test(text4)) continue;
+            if (!entry2.pattern.test(text5)) continue;
             report(
               entry2.rule,
               element.selector,
-              `"${text4}" (${element.selector}) uses "${entry2.term}"; replace it with "${entry2.preferred}".`,
-              `${element.selector} replaces "${entry2.term}" with "${entry2.preferred}" within "${text4}".`,
+              `"${text5}" (${element.selector}) uses "${entry2.term}"; replace it with "${entry2.preferred}".`,
+              `${element.selector} replaces "${entry2.term}" with "${entry2.preferred}" within "${text5}".`,
               "minor",
               { term: entry2.term, preferred: entry2.preferred },
               JSON.stringify([
@@ -9832,23 +9916,23 @@ var init_copy_lint = __esm({
             );
           }
           for (const entry2 of glossary)
-            if (entry2.pattern.test(text4))
+            if (entry2.pattern.test(text5))
               report(
                 "idiom:glossary-term",
                 element.selector,
-                `"${text4}" (${element.selector}) uses "${entry2.term}"${entry2.preferred === void 0 ? ", which the glossary bans" : `; the glossary prefers "${entry2.preferred}"`}.`,
+                `"${text5}" (${element.selector}) uses "${entry2.term}"${entry2.preferred === void 0 ? ", which the glossary bans" : `; the glossary prefers "${entry2.preferred}"`}.`,
                 entry2.preferred === void 0 ? `${element.selector} does not use "${entry2.term}".` : `${element.selector} says "${entry2.preferred}" instead of "${entry2.term}".`
               );
           for (const entry2 of schemaWords)
-            if (entry2.pattern.test(text4))
+            if (entry2.pattern.test(text5))
               report(
                 "idiom:schema-word-in-copy",
                 element.selector,
-                `"${text4}" (${element.selector}) exposes the internal schema word "${entry2.word}".`,
+                `"${text5}" (${element.selector}) exposes the internal schema word "${entry2.word}".`,
                 `${element.selector} describes the thing in product language, not as "${entry2.word}".`
               );
           const localeEligible = gate.allows("idiom:mixed-locale-spelling", element) && !linkedTitle(element.structuralPath);
-          const localeText = maskProperNouns(text4);
+          const localeText = maskProperNouns(text5);
           for (const [gb, us] of localePairs) {
             if (!localeEligible) continue;
             if (config.copy.locale !== void 0) {
@@ -9861,7 +9945,7 @@ var init_copy_lint = __esm({
                 report(
                   "idiom:mixed-locale-spelling",
                   element.selector,
-                  `"${text4}" (${element.selector}) uses "${match[0]}"; ${config.copy.locale} prefers "${replacement}".`,
+                  `"${text5}" (${element.selector}) uses "${match[0]}"; ${config.copy.locale} prefers "${replacement}".`,
                   `${element.selector} replaces "${match[0]}" with "${replacement}" for ${config.copy.locale}.`,
                   "minor",
                   {
@@ -9876,10 +9960,10 @@ var init_copy_lint = __esm({
             const pairKey = us;
             const lower = localeText.toLowerCase();
             const found = (word) => new RegExp(`\\b${word}\\b`).test(lower);
-            const record2 = usage.get(pairKey) ?? { gb: [], us: [] };
-            if (found(gb)) record2.gb.push(`${element.selector}|${gb}|${text4}`);
-            if (found(us)) record2.us.push(`${element.selector}|${us}|${text4}`);
-            usage.set(pairKey, record2);
+            const record3 = usage.get(pairKey) ?? { gb: [], us: [] };
+            if (found(gb)) record3.gb.push(`${element.selector}|${gb}|${text5}`);
+            if (found(us)) record3.us.push(`${element.selector}|${us}|${text5}`);
+            usage.set(pairKey, record3);
           }
         }
         const allGb = [...usage.values()].flatMap((entry2) => entry2.gb);
@@ -9887,11 +9971,11 @@ var init_copy_lint = __esm({
         const locale = config.copy.locale ?? (allGb.length > 0 && allUs.length > 0 ? allGb.length > allUs.length ? "en-GB" : "en-US" : void 0);
         const wrong = locale === "en-US" ? allGb : locale === "en-GB" ? allUs : [];
         for (const entry2 of wrong) {
-          const [selector = "document", word = "", text4 = ""] = entry2.split("|");
+          const [selector = "document", word = "", text5 = ""] = entry2.split("|");
           report(
             "idiom:mixed-locale-spelling",
             selector,
-            `"${text4}" (${selector}) spells "${word}" in ${locale === "en-US" ? "British" : "American"} English, while the product is ${locale}${config.copy.locale === void 0 ? " (by majority of observed spellings)" : ""}.`,
+            `"${text5}" (${selector}) spells "${word}" in ${locale === "en-US" ? "British" : "American"} English, while the product is ${locale}${config.copy.locale === void 0 ? " (by majority of observed spellings)" : ""}.`,
             `${selector} uses the ${locale} spelling.`
           );
         }
@@ -9916,8 +10000,8 @@ var init_copy_lint = __esm({
         };
         const siblings = /* @__PURE__ */ new Map();
         for (const element of copy2) {
-          const text4 = element.directText.replace(/\s+/g, " ").trim();
-          if (words(text4).length > 6 || text4.length > 60 || /[.!?]$/.test(text4))
+          const text5 = element.directText.replace(/\s+/g, " ").trim();
+          if (words(text5).length > 6 || text5.length > 60 || /[.!?]$/.test(text5))
             continue;
           if (element.styles.textTransform !== "none") continue;
           if (namedInCollection(element.structuralPath)) continue;
@@ -9931,7 +10015,7 @@ var init_copy_lint = __esm({
           ].join("|");
           siblings.set(key5, [
             ...siblings.get(key5) ?? [],
-            { selector: element.selector, text: text4 }
+            { selector: element.selector, text: text5 }
           ]);
         }
         for (const group of siblings.values()) {
@@ -9975,7 +10059,7 @@ function ownLabel(owner2, elements, bySelector) {
   const ariaLabel = owner2.attributes["aria-label"]?.trim();
   if (ariaLabel) return normalizeLabel(ariaLabel);
   const hidden = (element) => !element.visible || isVisuallyHidden(element) || element.attributes["aria-hidden"] === "true";
-  const parts = [owner2.directText];
+  const parts2 = [owner2.directText];
   for (const element of elements) {
     const index = element.ancestorSelectors.indexOf(owner2.selector);
     if (index < 0 || hidden(element) || nodeIdOf(element) !== void 0)
@@ -9985,9 +10069,9 @@ function ownLabel(owner2, elements, bySelector) {
       (ancestor) => ancestor !== void 0 && (nodeIdOf(ancestor) !== void 0 || ancestor.attributes["aria-hidden"] === "true")
     ))
       continue;
-    parts.push(element.directText);
+    parts2.push(element.directText);
   }
-  return normalizeLabel(parts.filter((part) => part.trim() !== "").join(" "));
+  return normalizeLabel(parts2.filter((part) => part.trim() !== "").join(" "));
 }
 var separators, nodeIdOf, crossSurfaceNamingCheck;
 var init_cross_surface_naming = __esm({
@@ -10145,16 +10229,16 @@ var init_dead_affordance = __esm({
         for (const element of observed3.elements) {
           if (isVisuallyHidden(element)) continue;
           if (element.signals.explanation !== void 0 && (!element.enabled || element.signals.explanation?.nativeDisabled === true) && element.signals.explanation?.inViewport !== false && (element.tag === "button" || element.signals.role === "button")) {
-            const text5 = element.signals.explanation?.visibleText.trim() ?? "";
-            if (strongPhrase.test(text5) || weakPhrase.test(text5))
+            const text6 = element.signals.explanation?.visibleText.trim() ?? "";
+            if (strongPhrase.test(text6) || weakPhrase.test(text6))
               candidates.push({
                 category: this.id,
                 severity: "minor",
                 rule: "idiom:disabled-link-button",
                 selectorHint: element.selector,
-                explanation: `"${text5}" (${element.selector}) reads like navigation but is a disabled button, so the destination is unreachable.`,
+                explanation: `"${text6}" (${element.selector}) reads like navigation but is a disabled button, so the destination is unreachable.`,
                 acceptance: [
-                  `"${text5}" links to its real destination, or is a visible placeholder anchor (href="#") until that destination exists.`
+                  `"${text6}" links to its real destination, or is a visible placeholder anchor (href="#") until that destination exists.`
                 ],
                 verification: verify(this.id, { selector: element.selector })
               });
@@ -10178,11 +10262,11 @@ var init_dead_affordance = __esm({
           }
           if (insideInteractive(element) || excludedTags2.has(element.tag)) continue;
           if (insideIllustration(element) !== void 0) continue;
-          const text4 = element.directText.trim();
-          if (text4 === "" || text4.split(/\s+/).length > 6) continue;
-          if (element.text.trim() !== text4) continue;
-          const strong = strongPhrase.test(text4);
-          const weak = !strong && weakPhrase.test(text4);
+          const text5 = element.directText.trim();
+          if (text5 === "" || text5.split(/\s+/).length > 6) continue;
+          if (element.text.trim() !== text5) continue;
+          const strong = strongPhrase.test(text5);
+          const weak = !strong && weakPhrase.test(text5);
           if (!strong && !weak) continue;
           const parent = byselector.get(element.ancestorSelectors[0] ?? "");
           if (!gate.allows("idiom:dead-link-text", element, parent)) continue;
@@ -10198,9 +10282,9 @@ var init_dead_affordance = __esm({
             severity: "major",
             rule: "idiom:dead-link-text",
             selectorHint: element.selector,
-            explanation: `"${text4}" (${element.selector}) reads like a link or action${linkStyled ? " and is styled like one" : ""}, but it is plain text: clicking it does nothing.`,
+            explanation: `"${text5}" (${element.selector}) reads like a link or action${linkStyled ? " and is styled like one" : ""}, but it is plain text: clicking it does nothing.`,
             acceptance: [
-              `"${text4}" is a real link or button, or a visible placeholder link (href="#") until its destination exists.`
+              `"${text5}" is a real link or button, or a visible placeholder link (href="#") until its destination exists.`
             ],
             verification: verify(this.id, { selector: element.selector })
           });
@@ -10680,7 +10764,7 @@ var init_dialog_shell = __esm({
               );
           }
           if (title !== void 0 && reference3 !== void 0 && population.size >= 2 && Math.abs(title.size - reference3) > 0.5) {
-            const others = [...population.values()].filter(({ text: text4 }) => text4 !== title.text).map(({ text: text4, size: size3 }) => `${JSON.stringify(text4)} ${size3}px`);
+            const others = [...population.values()].filter(({ text: text5 }) => text5 !== title.text).map(({ text: text5, size: size3 }) => `${JSON.stringify(text5)} ${size3}px`);
             emit(
               "title-size",
               "minor",
@@ -10773,22 +10857,22 @@ var init_disabled_highlight = __esm({
 });
 
 // src/checks/disguised-control.ts
-function textCue(text4, configured) {
-  if (configured.some((pattern) => pattern.test(text4))) return "strong";
-  if (strongPlaceholders.some((pattern) => pattern.test(text4))) return "strong";
-  if (inputVerb.test(text4) && ellipsis.test(text4)) return "strong";
-  if (ellipsis.test(text4) || inputVerb.test(text4)) return "weak";
+function textCue(text5, configured) {
+  if (configured.some((pattern) => pattern.test(text5))) return "strong";
+  if (strongPlaceholders.some((pattern) => pattern.test(text5))) return "strong";
+  if (inputVerb.test(text5) && ellipsis.test(text5)) return "strong";
+  if (ellipsis.test(text5) || inputVerb.test(text5)) return "weak";
   return void 0;
 }
 function fieldShaped(element) {
   const { rect: rect3, styles, signals } = element;
   if (rect3.width < 160 || rect3.width < 3 * rect3.height) return false;
   if (signals.lineCount > 1) return false;
-  const text4 = signals.textRect;
-  if (text4 !== void 0) {
+  const text5 = signals.textRect;
+  if (text5 !== void 0) {
     const contentLeft = rect3.x + px(styles.borderLeftWidth) + px(styles.paddingLeft);
     const contentRight = rect3.x + rect3.width - px(styles.borderRightWidth) - px(styles.paddingRight);
-    return text4.x <= contentLeft + 12 && text4.x + text4.width <= contentRight - 40;
+    return text5.x <= contentLeft + 12 && text5.x + text5.width <= contentRight - 40;
   }
   const flexible = /flex|grid/.test(styles.display);
   return ["start", "left", "-webkit-left"].includes(styles.textAlign) && (!flexible || ["normal", "flex-start", "start", "left"].includes(styles.justifyContent));
@@ -10867,12 +10951,12 @@ var init_disguised_control = __esm({
           if (element.signals.role !== "button") continue;
           if (!element.enabled || isVisuallyHidden(element) || isIgnored(element))
             continue;
-          const text4 = element.text.replace(/\s+/g, " ").trim();
-          if (text4 === "" || text4.split(" ").length > 8) continue;
+          const text5 = element.text.replace(/\s+/g, " ").trim();
+          if (text5 === "" || text5.split(" ").length > 8) continue;
           const haspopup = element.signals.haspopup;
-          if (element.attributes.role === "combobox" || haspopup !== void 0 && haspopup !== "false" || withShortcut.has(element.selector) || shortcutHint.test(text4) || busy.test(text4))
+          if (element.attributes.role === "combobox" || haspopup !== void 0 && haspopup !== "false" || withShortcut.has(element.selector) || shortcutHint.test(text5) || busy.test(text5))
             continue;
-          const cue = textCue(text4, configured);
+          const cue = textCue(text5, configured);
           const shaped = fieldShaped(element);
           const styled = shaped && element.rect.height >= 28 && element.rect.height <= 64 && isBounded(element) && fieldBorder(element) && neutralBackground(element) && mutedText(element, bySelector, roots);
           if (!(cue === "strong" || cue === "weak" && shaped || styled)) continue;
@@ -10885,7 +10969,7 @@ var init_disguised_control = __esm({
             severity: "major",
             rule: "idiom:disguised-control",
             selectorHint: element.selector,
-            explanation: `${JSON.stringify(text4)} (${element.selector}) is a button that looks like a text field (${cues.join(" and ")}): people will try to type into it.`,
+            explanation: `${JSON.stringify(text5)} (${element.selector}) is a button that looks like a text field (${cues.join(" and ")}): people will try to type into it.`,
             acceptance: [
               `${element.selector} is either the real input or a clearly labelled button (verb + object, button styling) \u2014 not both.`
             ],
@@ -11446,18 +11530,18 @@ var init_error_text = __esm({
         for (const element of observed3.elements) {
           if (isVisuallyHidden(element) || ["script", "style", "noscript", "template"].includes(element.tag))
             continue;
-          const text4 = element.directText.replace(/\s+/g, " ").trim();
-          if (text4 === "") continue;
+          const text5 = element.directText.replace(/\s+/g, " ").trim();
+          if (text5 === "") continue;
           const match = [...signatures, ...custom].find(
-            (entry2) => entry2.pattern.test(text4)
+            (entry2) => entry2.pattern.test(text5)
           );
           if (match === void 0) continue;
-          const key5 = `${match.label}\0${text4.slice(0, 120)}`;
+          const key5 = `${match.label}\0${text5.slice(0, 120)}`;
           const group = groups.get(key5);
           if (group === void 0)
             groups.set(key5, {
               selectors: [element.selector],
-              text: text4,
+              text: text5,
               label: match.label
             });
           else group.selectors.push(element.selector);
@@ -11802,9 +11886,9 @@ function interactionShifts(action, viewport, settings) {
       ) && (animation.target === candidate2.selector || animation.target === cause.selector || covering.has(animation.target))
     );
     if (animated) continue;
-    const list5 = byCause.get(cause) ?? [];
-    list5.push(candidate2);
-    byCause.set(cause, list5);
+    const list6 = byCause.get(cause) ?? [];
+    list6.push(candidate2);
+    byCause.set(cause, list6);
   }
   const pushedBy = /* @__PURE__ */ new Map();
   for (const [cause, moved] of byCause)
@@ -12636,12 +12720,12 @@ function contentSnaps(tuple, actions, config, motion) {
         if (reduced(action) && !cleared.has(key5)) unjudged += 1;
         continue;
       }
-      const list5 = located.get(key5) ?? /* @__PURE__ */ new Map();
-      located.set(key5, list5);
+      const list6 = located.get(key5) ?? /* @__PURE__ */ new Map();
+      located.set(key5, list6);
       const id2 = identity7(action);
-      const existing = list5.get(id2);
+      const existing = list6.get(id2);
       if (existing && action.confirmation === true) continue;
-      list5.set(id2, {
+      list6.set(id2, {
         name: action.name,
         ...action.selector ? { selector: action.selector } : {},
         source: action.source,
@@ -12663,12 +12747,12 @@ function contentSnaps(tuple, actions, config, motion) {
       (candidate2) => candidate2.key === key5 && isSnapCandidate(candidate2, evidence, minExtentPx)
     ).sort((a, b) => b.extent - a.extent)[0];
     if (!change) continue;
-    const list5 = [...located.get(key5)?.values() ?? []];
-    const first = list5[0];
+    const list6 = [...located.get(key5)?.values() ?? []];
+    const first = list6[0];
     const target2 = visible2.find((element) => element.selector === change.container) ?? visible2.find(
       (element) => element.selector === first?.selector || "structuralPath" in element && element.structuralPath === first?.selector
     );
-    const names = list5.map((action) => action.name);
+    const names = list6.map((action) => action.name);
     const shown = names.slice(0, 3).join(", ") + (names.length > 3 ? ", \u2026" : "");
     const surface = change.containerName || change.container;
     candidates.push({
@@ -12683,7 +12767,7 @@ function contentSnaps(tuple, actions, config, motion) {
       selectorHint: target2?.selector ?? change.container,
       fingerprintHint: `motion-snap|${change.kind}|${change.container}`,
       ...evidence.id ? { timeline: evidence.id } : {},
-      explanation: `${surface} ${kindPhrases[change.kind]} with no transition under normal motion (${list5.length} action${list5.length === 1 ? "" : "s"}: ${shown})`,
+      explanation: `${surface} ${kindPhrases[change.kind]} with no transition under normal motion (${list6.length} action${list6.length === 1 ? "" : "s"}: ${shown})`,
       acceptance: [
         `${surface} ${kindPhrases[change.kind]} with a ${ms}ms ease-out transition, and is instant or a crossfade under prefers-reduced-motion: reduce.`
       ],
@@ -12693,7 +12777,7 @@ function contentSnaps(tuple, actions, config, motion) {
         kind: change.kind,
         minExtentPx,
         extent: change.extent,
-        actions: list5
+        actions: list6
       })
     });
   }
@@ -13134,8 +13218,8 @@ var init_field_group = __esm({
   "src/checks/field-group.ts"() {
     "use strict";
     init_shared();
-    clip = (text4, length = 40) => {
-      const trimmed = text4.replace(/\s+/g, " ").trim();
+    clip = (text5, length = 40) => {
+      const trimmed = text5.replace(/\s+/g, " ").trim();
       return trimmed.length > length ? `${trimmed.slice(0, length - 1)}\u2026` : trimmed;
     };
     fieldGroupCheck = {
@@ -13165,8 +13249,8 @@ var init_field_group = __esm({
           if (member.role === "label") return `the label ${member.selector}`;
           if (member.role === "control")
             return `its ${element?.tag ?? "control"} ${member.selector}`;
-          const text4 = clip(element?.text ?? "", 24);
-          return text4 === "" ? `the helper ${member.selector}` : `the "${text4}" helper (${member.selector})`;
+          const text5 = clip(element?.text ?? "", 24);
+          return text5 === "" ? `the helper ${member.selector}` : `the "${text5}" helper (${member.selector})`;
         };
         const fieldGroups = observation.fieldGroups.map((group) => ({
           ...group,
@@ -13261,32 +13345,32 @@ var init_focus_visible = __esm({
           return unavailable(this.id, "focus evidence requires the probe pass");
         const candidates = [];
         const seen = /* @__PURE__ */ new Set();
-        for (const record2 of scan.records) {
-          if (record2.changed.length > 0) continue;
-          const selector = record2.proxy ?? record2.selector;
+        for (const record3 of scan.records) {
+          if (record3.changed.length > 0) continue;
+          const selector = record3.proxy ?? record3.selector;
           if (seen.has(selector)) continue;
           seen.add(selector);
-          const name = record2.name === "" ? selector : `\u201C${record2.name}\u201D`;
+          const name = record3.name === "" ? selector : `\u201C${record3.name}\u201D`;
           candidates.push({
             observation: observed(
               {
                 source: "focus-trial",
                 kind: "focus",
-                selector: record2.selector,
-                name: record2.name
+                selector: record3.selector,
+                name: record3.name
               },
-              record2,
-              record2.elapsedMs === void 0 ? void 0 : { elapsedMs: record2.elapsedMs }
+              record3,
+              record3.elapsedMs === void 0 ? void 0 : { elapsedMs: record3.elapsedMs }
             ),
             category: this.id,
             severity: "major",
             rule: "idiom:focus-not-visible",
             selectorHint: selector,
-            explanation: `Keyboard focus on ${name} (${record2.selector}) changes nothing visible: no outline, ring, border, background or shadow.`,
+            explanation: `Keyboard focus on ${name} (${record3.selector}) changes nothing visible: no outline, ring, border, background or shadow.`,
             acceptance: [
-              `Tabbing to ${record2.selector} shows a visible focus indicator (for example a :focus-visible outline).`
+              `Tabbing to ${record3.selector} shows a visible focus indicator (for example a :focus-visible outline).`
             ],
-            verification: verify(this.id, { selector: record2.selector })
+            verification: verify(this.id, { selector: record3.selector })
           });
         }
         return scanResult(this.id, candidates, scan);
@@ -13552,7 +13636,7 @@ var init_fresh_state = __esm({
     unsavedText = /\bunsaved\b/i;
     negatedUnsaved = /\b(?:no|nothing|zero|0|without)\s+(?:\w+\s+)?unsaved\b/i;
     builtInUnsaved = {
-      test: (text4) => unsavedText.test(text4) && !negatedUnsaved.test(text4)
+      test: (text5) => unsavedText.test(text5) && !negatedUnsaved.test(text5)
     };
     freshStateCheck = {
       id: "fresh-state",
@@ -13634,10 +13718,10 @@ var init_fresh_state = __esm({
             element.signals.title,
             element.attributes["aria-label"]
           ].flatMap(
-            (text4) => text4 === void 0 || text4.trim() === "" ? [] : [text4.replace(/\s+/g, " ").trim()]
+            (text5) => text5 === void 0 || text5.trim() === "" ? [] : [text5.replace(/\s+/g, " ").trim()]
           );
           const match = texts.find(
-            (text4) => unsavedPatterns.some((pattern) => pattern.test(text4))
+            (text5) => unsavedPatterns.some((pattern) => pattern.test(text5))
           );
           if (match === void 0 && !unsavedMarks.has(element.selector)) continue;
           indicators.add(element.selector);
@@ -13685,14 +13769,14 @@ var init_glyph_icon = __esm({
           if (isVisuallyHidden(element) || !inside5(element)) continue;
           if (element.attributes["aria-hidden"] === "true" && element.tag === "svg")
             continue;
-          const text4 = element.directText.trim();
-          if (text4 === "") continue;
-          const symbols = onlyGlyphs.test(text4) ? [...text4.replace(/\s+/g, "")] : (() => {
-            const match = text4.match(leadingGlyph);
+          const text5 = element.directText.trim();
+          if (text5 === "") continue;
+          const symbols = onlyGlyphs.test(text5) ? [...text5.replace(/\s+/g, "")] : (() => {
+            const match = text5.match(leadingGlyph);
             return match?.[1] === void 0 ? [] : [match[1]];
           })();
           const control = element.interactive ? element : element.ancestorSelectors.map((selector) => bySelector.get(selector)).find((ancestor) => ancestor?.interactive);
-          const adornment = !element.interactive && control !== void 0 && /\p{L}{2}/u.test(control.text) && !control.text.trim().startsWith(text4);
+          const adornment = !element.interactive && control !== void 0 && /\p{L}{2}/u.test(control.text) && !control.text.trim().startsWith(text5);
           for (const symbol of symbols) {
             if (allowed.has(symbol)) continue;
             if (adornment && arrow.test(symbol)) continue;
@@ -13703,13 +13787,13 @@ var init_glyph_icon = __esm({
         for (const [symbol, selectors] of groups) {
           const first = selectors[0];
           if (first === void 0) continue;
-          const code2 = `U+${(symbol.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`;
+          const code3 = `U+${(symbol.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`;
           candidates.push({
             category: this.id,
             severity: "minor",
             rule: "idiom:unicode-glyph-icon",
             selectorHint: first,
-            explanation: `The text glyph "${symbol}" (${code2}) is used as an icon in ${selectors.length} control${selectors.length === 1 ? "" : "s"} (${selectors.slice(0, 4).join(", ")}${selectors.length > 4 ? ", \u2026" : ""}) instead of the product's icon set.`,
+            explanation: `The text glyph "${symbol}" (${code3}) is used as an icon in ${selectors.length} control${selectors.length === 1 ? "" : "s"} (${selectors.slice(0, 4).join(", ")}${selectors.length > 4 ? ", \u2026" : ""}) instead of the product's icon set.`,
             acceptance: [
               `Controls use an icon from the product's icon set instead of "${symbol}", or the glyph is allow-listed in checks.glyphAllow.`
             ],
@@ -13723,7 +13807,7 @@ var init_glyph_icon = __esm({
 });
 
 // src/checks/group-invariants.ts
-import { createHash as createHash4 } from "crypto";
+import { createHash as createHash5 } from "crypto";
 function identity2(d, origin) {
   const canonical2 = {
     scope: origin.scope,
@@ -13736,7 +13820,7 @@ function identity2(d, origin) {
     attribute: d.attribute ?? null,
     text: d.text ?? null
   };
-  return createHash4("sha256").update(JSON.stringify(canonical2)).digest("hex").slice(0, 20);
+  return createHash5("sha256").update(JSON.stringify(canonical2)).digest("hex").slice(0, 20);
 }
 var listed2, groupInvariantsCheck;
 var init_group_invariants = __esm({
@@ -13958,9 +14042,9 @@ var init_heading_structure = __esm({
 });
 
 // src/checks/image-distortion.ts
-function distortionPixelError(record2) {
-  const { width: w, height: h } = record2.rendered;
-  const { naturalWidth: W, naturalHeight: H } = record2;
+function distortionPixelError(record3) {
+  const { width: w, height: h } = record3.rendered;
+  const { naturalWidth: W, naturalHeight: H } = record3;
   if (!(w > 0 && h > 0 && W > 0 && H > 0)) return 0;
   return Math.abs(w * H - h * W) / (W + H);
 }
@@ -13985,22 +14069,22 @@ var init_image_distortion = __esm({
           );
         const seen = /* @__PURE__ */ new Set();
         const gate = paintedGate(tuple, ["idiom:image-distorted"]);
-        const candidates = scan.records.filter((record2) => gate.allows("idiom:image-distorted", record2.selector)).filter(
-          (record2) => !record2.broken && record2.objectFit === "fill" && record2.distortion > settings.distortionTolerance && distortionPixelError(record2) >= minVisibleDistortionPx && !seen.has(record2.selector) && seen.add(record2.selector) !== void 0
-        ).map((record2) => {
-          const size3 = `${Math.round(record2.rendered.width)}\xD7${Math.round(record2.rendered.height)}`;
-          const natural = `${record2.naturalWidth}\xD7${record2.naturalHeight}`;
+        const candidates = scan.records.filter((record3) => gate.allows("idiom:image-distorted", record3.selector)).filter(
+          (record3) => !record3.broken && record3.objectFit === "fill" && record3.distortion > settings.distortionTolerance && distortionPixelError(record3) >= minVisibleDistortionPx && !seen.has(record3.selector) && seen.add(record3.selector) !== void 0
+        ).map((record3) => {
+          const size3 = `${Math.round(record3.rendered.width)}\xD7${Math.round(record3.rendered.height)}`;
+          const natural = `${record3.naturalWidth}\xD7${record3.naturalHeight}`;
           return {
             category: this.id,
             severity: "major",
             rule: "idiom:image-distorted",
-            selectorHint: record2.selector,
-            explanation: `${record2.selector} is drawn at ${size3} from a ${natural} source, stretching it ${Math.round(record2.distortion * 1e3) / 10}% out of proportion.`,
+            selectorHint: record3.selector,
+            explanation: `${record3.selector} is drawn at ${size3} from a ${natural} source, stretching it ${Math.round(record3.distortion * 1e3) / 10}% out of proportion.`,
             acceptance: [
-              `${record2.selector} keeps its natural aspect ratio (within ${Math.round(settings.distortionTolerance * 1e3) / 10}%), for example with object-fit: cover or contain.`
+              `${record3.selector} keeps its natural aspect ratio (within ${Math.round(settings.distortionTolerance * 1e3) / 10}%), for example with object-fit: cover or contain.`
             ],
             verification: verify(this.id, {
-              selector: record2.selector,
+              selector: record3.selector,
               tolerance: settings.distortionTolerance
             })
           };
@@ -14012,7 +14096,7 @@ var init_image_distortion = __esm({
 });
 
 // src/checks/layout-invariants.ts
-import { createHash as createHash5 } from "crypto";
+import { createHash as createHash6 } from "crypto";
 function identity3(d, origin) {
   const canonical2 = {
     scope: origin.scope,
@@ -14026,7 +14110,7 @@ function identity3(d, origin) {
       height: d.height ?? null
     } : "align" in d ? { align: d.align, selectors: [...d.selectors].sort() } : { edge: d.edge, equals: d.equals, offset: d.offset }
   };
-  return createHash5("sha256").update(JSON.stringify(canonical2)).digest("hex").slice(0, 20);
+  return createHash6("sha256").update(JSON.stringify(canonical2)).digest("hex").slice(0, 20);
 }
 function edgeValue(rect3, side) {
   switch (side) {
@@ -14199,17 +14283,17 @@ var init_line_length = __esm({
             "line length evidence is unavailable (recapture with this version)"
           );
         const gate = paintedGate(tuple, ["idiom:line-too-long"]);
-        const candidates = scan.records.filter((record2) => gate.allows("idiom:line-too-long", record2.selector)).filter((record2) => record2.lines > 1 && record2.chars > settings.max).map((record2) => ({
+        const candidates = scan.records.filter((record3) => gate.allows("idiom:line-too-long", record3.selector)).filter((record3) => record3.lines > 1 && record3.chars > settings.max).map((record3) => ({
           category: this.id,
           severity: "minor",
           rule: "idiom:line-too-long",
-          selectorHint: record2.selector,
-          explanation: `${record2.selector} has a rendered line of ${record2.chars} characters (widest rendered text line: ${Math.round(record2.width)}px) at ${tuple.width}px; keep body text at or under ${settings.max}.`,
+          selectorHint: record3.selector,
+          explanation: `${record3.selector} has a rendered line of ${record3.chars} characters (widest rendered text line: ${Math.round(record3.width)}px) at ${tuple.width}px; keep body text at or under ${settings.max}.`,
           acceptance: [
-            `Lines in ${record2.selector} hold at most ${settings.max} characters at ${tuple.width}px (for example max-width: 65ch).`
+            `Lines in ${record3.selector} hold at most ${settings.max} characters at ${tuple.width}px (for example max-width: 65ch).`
           ],
           verification: verify(this.id, {
-            selector: record2.selector,
+            selector: record3.selector,
             max: settings.max,
             viewportWidth: tuple.width
           })
@@ -14350,8 +14434,8 @@ function luminanceOf(element) {
   return background.status === "measured" ? relativeLuminance(background.color) : void 0;
 }
 function ancestorPaths(path) {
-  const parts = path.split("/");
-  return parts.slice(1).map((_, index) => parts.slice(0, -1 - index).join("/"));
+  const parts2 = path.split("/");
+  return parts2.slice(1).map((_, index) => parts2.slice(0, -1 - index).join("/"));
 }
 function related(left, right) {
   return left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
@@ -14496,14 +14580,14 @@ function primaryCandidates(elements, tuple, notes) {
   for (const element of elements) {
     const { paint } = element.signals;
     if (!paint.primaryAction) continue;
-    const text4 = paint.text;
-    if (text4 === void 0 || text4.status === "none") continue;
-    if (text4.status === "unavailable") {
-      unmeasured.push(`${element.selector} (${text4.reason})`);
+    const text5 = paint.text;
+    if (text5 === void 0 || text5.status === "none") continue;
+    if (text5.status === "unavailable") {
+      unmeasured.push(`${element.selector} (${text5.reason})`);
       continue;
     }
     measured2 += 1;
-    const worst = text4.samples.map((sample) => ({
+    const worst = text5.samples.map((sample) => ({
       sample,
       ratio: contrastRatio(sample.foreground, sample.background)
     })).sort((left, right) => left.ratio - right.ratio)[0];
@@ -14835,10 +14919,10 @@ function mirrorAxis(a, b, axis, bySelector, viewport) {
 }
 function kindOf2(element) {
   const graphic = element.signals?.renderedContent?.graphic === true;
-  const text4 = element.signals?.renderedContent?.text === true;
-  if (graphic && text4) return "icon + text";
+  const text5 = element.signals?.renderedContent?.text === true;
+  if (graphic && text5) return "icon + text";
   if (graphic) return "icon";
-  return text4 ? "text glyph" : "empty";
+  return text5 ? "text glyph" : "empty";
 }
 function fontWeightNumber(value) {
   if (value === "normal") return 400;
@@ -15046,7 +15130,7 @@ var init_mirrored_control = __esm({
 });
 
 // src/verify/profile.ts
-import { createHash as createHash6 } from "crypto";
+import { createHash as createHash7 } from "crypto";
 function normalizedText(value) {
   return value.replace(TEMPORAL, "<temporal>").replace(/\s+/g, " ").trim();
 }
@@ -15098,17 +15182,17 @@ function stableV2Styles(styles, volatile) {
   return stable3;
 }
 function signature2(records) {
-  return createHash6("sha256").update(
+  return createHash7("sha256").update(
     JSON.stringify(
-      records.map(({ selector: _selector, ...record2 }) => record2)
+      records.map(({ selector: _selector, ...record3 }) => record3)
     )
   ).digest("hex");
 }
 function signatureWithoutText(profile, paths) {
   return signature2(
-    profile.records.map((record2) => {
-      if (!paths.has(record2.path)) return record2;
-      const { text: _text, ...rest } = record2;
+    profile.records.map((record3) => {
+      if (!paths.has(record3.path)) return record3;
+      const { text: _text, ...rest } = record3;
       return rest;
     })
   );
@@ -15214,13 +15298,13 @@ function buildV2(artifact) {
     const masked = affectedByMask(path, masks);
     const temporal = isTemporal(element);
     const volatileRecord = masked || temporal;
-    let text4 = normalizedText(element.directText);
+    let text5 = normalizedText(element.directText);
     if (masked) {
       reductions.textSuppressedMask += 1;
-      text4 = void 0;
+      text5 = void 0;
     } else if (temporal) {
       reductions.textSuppressedTemporal += 1;
-      text4 = void 0;
+      text5 = void 0;
     }
     const reflowAffected = volatile.some(
       (source) => !source.outOfFlow && !element.outOfFlow && source.stableIslandPath === element.stableIslandPath && element.rect.y >= source.rect.y
@@ -15232,7 +15316,7 @@ function buildV2(artifact) {
         path,
         selector: element.selector,
         tag: element.tag,
-        ...text4 === void 0 ? {} : { text: text4 },
+        ...text5 === void 0 ? {} : { text: text5 },
         ...volatileRecord ? {} : { attributes: stableAttributes(element.attributes) },
         styles: stableV2Styles(element.styles, volatileRecord),
         ...geometry === void 0 ? {} : { geometry }
@@ -15333,15 +15417,15 @@ function buildV1(artifact, maskMembership) {
   const ownText2 = (node) => {
     const known = ownTexts.get(node);
     if (known !== void 0) return known;
-    let text4 = node.element.text;
-    if (text4.length === TEXT_BOUNDARY) text4 = "";
+    let text5 = node.element.text;
+    if (text5.length === TEXT_BOUNDARY) text5 = "";
     else
       for (const child of children.get(node) ?? []) {
         if (child.element.text.length > 0)
-          text4 = text4.replace(child.element.text, "");
+          text5 = text5.replace(child.element.text, "");
       }
-    ownTexts.set(node, text4);
-    return text4;
+    ownTexts.set(node, text5);
+    return text5;
   };
   const contextual = (node) => {
     if (!bareTemporalComponent(node.element.text)) return false;
@@ -15365,17 +15449,17 @@ function buildV1(artifact, maskMembership) {
     const temporalAffected = temporalPaths.some(
       (temporal) => beneath(temporal, path)
     );
-    let text4 = normalizedText(element.text);
+    let text5 = normalizedText(element.text);
     if (boundary) {
       reductions.textSuppressedBoundary += 1;
       reductions.boundaryPaths.push(path);
-      text4 = void 0;
+      text5 = void 0;
     } else if (maskAffected) {
       reductions.textSuppressedMask += 1;
-      text4 = void 0;
+      text5 = void 0;
     } else if (temporalAffected) {
       reductions.textSuppressedTemporal += 1;
-      text4 = void 0;
+      text5 = void 0;
     }
     const reflowAffected = volatileNodes.some(
       ({ element: source, parent: sourceParent }) => sourceParent === parent && !source.outOfFlow && !element.outOfFlow && element.rect.y >= source.rect.y
@@ -15386,7 +15470,7 @@ function buildV1(artifact, maskMembership) {
       path,
       selector: element.selector,
       tag: element.tag,
-      ...text4 === void 0 ? {} : { text: text4 },
+      ...text5 === void 0 ? {} : { text: text5 },
       styles: v1CompatibleStyles(element.styles),
       ...suppressGeometry ? {} : { geometry: relativeRect(element.rect, parent?.element.rect) }
     };
@@ -15847,28 +15931,28 @@ var init_orphan_word = __esm({
         const seen = /* @__PURE__ */ new Set();
         const gate = paintedGate(tuple, ["idiom:orphan-word"]);
         let inkSkipped = 0;
-        const candidates = scan.records.filter((record2) => gate.allows("idiom:orphan-word", record2.selector)).filter((record2) => {
-          const blank = record2.ink?.status === "measured" && record2.ink.share < minInkShare;
+        const candidates = scan.records.filter((record3) => gate.allows("idiom:orphan-word", record3.selector)).filter((record3) => {
+          const blank = record3.ink?.status === "measured" && record3.ink.share < minInkShare;
           if (blank) inkSkipped += 1;
           return !blank;
-        }).filter((record2) => {
-          if ([...record2.word].length > settings.maxChars) return false;
-          if (seen.has(record2.selector)) return false;
-          seen.add(record2.selector);
+        }).filter((record3) => {
+          if ([...record3.word].length > settings.maxChars) return false;
+          if (seen.has(record3.selector)) return false;
+          seen.add(record3.selector);
           return true;
-        }).map((record2) => ({
+        }).map((record3) => ({
           category: this.id,
           severity: "minor",
           rule: "idiom:orphan-word",
-          selectorHint: record2.selector,
-          explanation: `${record2.selector} leaves \u201C${record2.word}\u201D alone on its last line (${record2.lines} lines) at ${tuple.width}px.`,
+          selectorHint: record3.selector,
+          explanation: `${record3.selector} leaves \u201C${record3.word}\u201D alone on its last line (${record3.lines} lines) at ${tuple.width}px.`,
           acceptance: [
-            `The last line of ${record2.selector} holds more than one word at ${tuple.width}px (for example text-wrap: balance or pretty, or a non-breaking space).`
+            `The last line of ${record3.selector} holds more than one word at ${tuple.width}px (for example text-wrap: balance or pretty, or a non-breaking space).`
           ],
           verification: verify(this.id, {
-            selector: record2.selector,
+            selector: record3.selector,
             viewportWidth: tuple.width,
-            ...record2.rect === void 0 ? {} : { rect: record2.rect }
+            ...record3.rect === void 0 ? {} : { rect: record3.rect }
           })
         }));
         const result2 = gate.result(scanResult(this.id, candidates, scan));
@@ -16052,28 +16136,28 @@ function pageSections(observation, viewportHeight) {
     const heading = visible2.find(
       (inner) => inner.headingLevel !== void 0 && within2(inner.structuralPath, element.structuralPath)
     );
-    const text4 = heading?.text.replace(/\s+/g, " ").trim() ?? "";
+    const text5 = heading?.text.replace(/\s+/g, " ").trim() ?? "";
     return {
       id: `s${index + 1}`,
       selector: element.selector,
       structuralPath: element.structuralPath,
       rect: element.rect,
-      ...text4 === "" ? {} : { heading: text4.slice(0, 80) },
+      ...text5 === "" ? {} : { heading: text5.slice(0, 80) },
       role: isFooter(element) ? "footer" : element === hero && content.length >= 2 ? "hero" : element === final ? "final" : "body"
     };
   });
 }
-function spellUnits(text4) {
-  return text4.replace(/(\d)\s?percent\b/gi, "$1%").replaceAll("\xD7", "x");
+function spellUnits(text5) {
+  return text5.replace(/(\d)\s?percent\b/gi, "$1%").replaceAll("\xD7", "x");
 }
 function normalizeClaim(token) {
   return spellUnits(token).toLowerCase().replace(/(\d),(?=\d{3}\b)/g, "$1").replace(/\s+/g, "").replace(/million/g, "m").replace(/billion/g, "bn").replace(/[.,]+$/, "");
 }
-function claimCore(normalized) {
-  return normalized.replace(populationNoun, "");
+function claimCore(normalized2) {
+  return normalized2.replace(populationNoun, "");
 }
-function claimTokens(text4) {
-  const source = spellUnits(text4);
+function claimTokens(text5) {
+  const source = spellUnits(text5);
   const spans = claimPatterns.flatMap(
     (pattern) => [...source.matchAll(pattern)].map((match) => ({
       start: match.index,
@@ -16099,12 +16183,12 @@ function insideControlIllustration(path) {
 }
 function supportedClaims(texts) {
   const supported = /* @__PURE__ */ new Set();
-  for (const text4 of texts) {
-    supported.add(normalizeClaim(text4));
-    for (const token of claimTokens(text4)) {
-      const normalized = normalizeClaim(token);
-      supported.add(normalized);
-      supported.add(claimCore(normalized));
+  for (const text5 of texts) {
+    supported.add(normalizeClaim(text5));
+    for (const token of claimTokens(text5)) {
+      const normalized2 = normalizeClaim(token);
+      supported.add(normalized2);
+      supported.add(claimCore(normalized2));
     }
   }
   return supported;
@@ -16228,8 +16312,8 @@ var init_page_content = __esm({
           (pattern) => new RegExp(pattern, "i")
         );
         for (const element of copy2) {
-          const text4 = element.directText.replace(/\s+/g, " ").trim();
-          const matched = placeholderTexts.has(text4.toLowerCase()) ? text4 : [...placeholderPatterns, ...configuredPlaceholders].map((pattern) => pattern.exec(text4)?.[0]).find((value) => value !== void 0 && value !== "");
+          const text5 = element.directText.replace(/\s+/g, " ").trim();
+          const matched = placeholderTexts.has(text5.toLowerCase()) ? text5 : [...placeholderPatterns, ...configuredPlaceholders].map((pattern) => pattern.exec(text5)?.[0]).find((value) => value !== void 0 && value !== "");
           if (matched === void 0) continue;
           candidates.push({
             category: this.id,
@@ -16318,17 +16402,17 @@ var init_page_content = __esm({
             if (inFooter(element) || insideControlIllustration(element.structuralPath))
               continue;
             for (const claim of claimTokens(element.directText)) {
-              const normalized = normalizeClaim(claim);
-              const core = claimCore(normalized);
-              if (isYear(core) || seen.has(normalized) || supported.has(normalized) || supported.has(core))
+              const normalized2 = normalizeClaim(claim);
+              const core = claimCore(normalized2);
+              if (isYear(core) || seen.has(normalized2) || supported.has(normalized2) || supported.has(core))
                 continue;
-              seen.add(normalized);
+              seen.add(normalized2);
               candidates.push({
                 category: this.id,
                 severity: "major",
                 rule: "idiom:unsupported-claim",
                 selectorHint: element.selector,
-                fingerprintHint: normalized,
+                fingerprintHint: normalized2,
                 explanation: `${element.selector} claims "${claim}", but the brief contains no such figure.`,
                 acceptance: [
                   `Every statistic on the page appears in the brief; "${claim}" is removed or added to the brief.`
@@ -16825,12 +16909,12 @@ var init_revealed = __esm({
 });
 
 // src/rulings/fingerprint.ts
-import { createHash as createHash7 } from "crypto";
+import { createHash as createHash8 } from "crypto";
 function normalizeChoiceKey(value) {
   return value.normalize("NFKC").trim().toLowerCase().replace(/\s+/gu, " ");
 }
 function rulingFingerprint(choiceKey2) {
-  return createHash7("sha256").update(`idiom-ruling-v1\0${normalizeChoiceKey(choiceKey2)}`).digest("hex");
+  return createHash8("sha256").update(`idiom-ruling-v1\0${normalizeChoiceKey(choiceKey2)}`).digest("hex");
 }
 var init_fingerprint = __esm({
   "src/rulings/fingerprint.ts"() {
@@ -17125,13 +17209,13 @@ function scaleClusters(occurrences, scales) {
     }
   return clusters2;
 }
-function covered(value, record2) {
-  if (value.kind === "color") return value.canonical === record2.value;
-  const step = Number.parseFloat(record2.value);
+function covered(value, record3) {
+  if (value.kind === "color") return value.canonical === record3.value;
+  const step = Number.parseFloat(record3.value);
   return Number.isFinite(step) && Math.abs(value.px - step) <= 1;
 }
 function applyScaleRulings(occurrences, scales, rulings) {
-  const steps = rulings.filter((record2) => record2.answer === "add-step");
+  const steps = rulings.filter((record3) => record3.answer === "add-step");
   const lookups = /* @__PURE__ */ new Map();
   const resolved = [];
   const open3 = [];
@@ -17152,13 +17236,13 @@ function applyScaleRulings(occurrences, scales, rulings) {
     }
     const context2 = clusterContext(occurrence, map, scales);
     if (steps.some(
-      (record2) => record2.property === occurrence.property && contextEqual(record2.context, context2) && covered(occurrence.value, record2)
+      (record3) => record3.property === occurrence.property && contextEqual(record3.context, context2) && covered(occurrence.value, record3)
     ))
       resolved.push(occurrence);
     else open3.push(occurrence);
   }
   const drift = new Map(
-    rulings.filter((record2) => record2.answer === "drift").map((record2) => [record2.fingerprint, record2])
+    rulings.filter((record3) => record3.answer === "drift").map((record3) => [record3.fingerprint, record3])
   );
   const clusters2 = [];
   const held = /* @__PURE__ */ new Set();
@@ -18442,25 +18526,25 @@ var init_selection_outline = __esm({
           );
         const candidates = [];
         const seen = /* @__PURE__ */ new Set();
-        for (const record2 of scan.records) {
-          const key5 = `${record2.painter}|${record2.popover}`;
+        for (const record3 of scan.records) {
+          const key5 = `${record3.painter}|${record3.popover}`;
           if (seen.has(key5)) continue;
           seen.add(key5);
-          const { x, y, width, height } = record2.crossing;
+          const { x, y, width, height } = record3.crossing;
           const at = `${round(width)}\xD7${round(height)}px at (${round(x)}, ${round(y)})`;
           candidates.push({
             category: this.id,
             severity: "major",
             rule: RULE3,
-            selectorHint: record2.owner,
-            fingerprintHint: `${RULE3}|${record2.owner}|${record2.popover}`,
-            explanation: `The ${record2.ownerState} outline of ${record2.ownerName} (${record2.owner}), drawn by ${record2.painter} as ${record2.kind}, runs across the open ${record2.popoverRole} ${record2.popover} for ${at} even though the ${record2.popoverRole} is above it.`,
+            selectorHint: record3.owner,
+            fingerprintHint: `${RULE3}|${record3.owner}|${record3.popover}`,
+            explanation: `The ${record3.ownerState} outline of ${record3.ownerName} (${record3.owner}), drawn by ${record3.painter} as ${record3.kind}, runs across the open ${record3.popoverRole} ${record3.popover} for ${at} even though the ${record3.popoverRole} is above it.`,
             acceptance: [
-              `With ${record2.popover} open, the selection outline of ${record2.owner} is hidden beneath it or clipped around it; no outline line crosses the ${record2.popoverRole}'s content.`
+              `With ${record3.popover} open, the selection outline of ${record3.owner} is hidden beneath it or clipped around it; no outline line crosses the ${record3.popoverRole}'s content.`
             ],
             verification: verify(this.id, {
-              selectors: [record2.owner, record2.painter, record2.popover],
-              crossing: record2.crossing,
+              selectors: [record3.owner, record3.painter, record3.popover],
+              crossing: record3.crossing,
               viewportWidth: tuple.width
             })
           });
@@ -18735,11 +18819,11 @@ function overlapsHorizontally(element, boundary) {
   return Math.min(element.rect.x + element.rect.width, boundary.x + boundary.width) > Math.max(element.rect.x, boundary.x);
 }
 function transparent(color) {
-  const normalized = color.trim().toLowerCase().replaceAll(" ", "");
-  if (["", "transparent", "none"].includes(normalized)) return true;
-  const rgba = normalized.match(/^rgba\([^,]+,[^,]+,[^,]+,([^)]+)\)$/);
+  const normalized2 = color.trim().toLowerCase().replaceAll(" ", "");
+  if (["", "transparent", "none"].includes(normalized2)) return true;
+  const rgba = normalized2.match(/^rgba\([^,]+,[^,]+,[^,]+,([^)]+)\)$/);
   if (rgba !== null) return Number.parseFloat(rgba[1] ?? "1") === 0;
-  return /\/0(?:\.0+)?\)$/.test(normalized);
+  return /\/0(?:\.0+)?\)$/.test(normalized2);
 }
 function painted2(width, color) {
   return Number.parseFloat(width) > 0 && !transparent(color);
@@ -18905,14 +18989,14 @@ function derivePlacements(tuple) {
     const bottom = element.rect.y + element.rect.height;
     const shell2 = artifact.document.scrollHeight <= artifact.document.clientHeight;
     if (shell2 && top < foldY - 0.5 && bottom > foldY + 0.5) return true;
-    return clips.some((clip2) => {
-      if (!pathContains(clip2.structuralPath, element.structuralPath))
+    return clips.some((clip3) => {
+      if (!pathContains(clip3.structuralPath, element.structuralPath))
         return false;
-      return top < clip2.rect.y - 0.5 || bottom > clip2.rect.y + clip2.rect.height + 0.5;
+      return top < clip3.rect.y - 0.5 || bottom > clip3.rect.y + clip3.rect.height + 0.5;
     });
   };
   const atClipEdge = (element, boundary) => clips.some(
-    (clip2) => pathContains(clip2.structuralPath, element.structuralPath) && (boundary.path === clip2.structuralPath || Math.abs(boundary.coordinate - clip2.rect.y) <= 0.5 || Math.abs(boundary.coordinate - (clip2.rect.y + clip2.rect.height)) <= 0.5 || Math.abs(boundary.coordinate - foldY) <= 0.5)
+    (clip3) => pathContains(clip3.structuralPath, element.structuralPath) && (boundary.path === clip3.structuralPath || Math.abs(boundary.coordinate - clip3.rect.y) <= 0.5 || Math.abs(boundary.coordinate - (clip3.rect.y + clip3.rect.height)) <= 0.5 || Math.abs(boundary.coordinate - foldY) <= 0.5)
   );
   const placements = [];
   for (const element of [...artifact.elements].sort(
@@ -19278,13 +19362,13 @@ var init_text_centering = __esm({
           const label5 = labelOf(element);
           if (label5.lineCount !== 1 || label5.inkCenterY === void 0) continue;
           if (label5.textRect === void 0) continue;
-          const { text: text4 } = label5;
-          if (text4 === "" || text4.length > 40 || text4.includes("\n")) continue;
+          const { text: text5 } = label5;
+          if (text5 === "" || text5.length > 40 || text5.includes("\n")) continue;
           const height = element.rect.height;
           if (height < 12 || height > 64 || height > label5.textRect.height * 3.2)
             continue;
           const inner = elements.some(
-            (other) => other !== element && bounded2.has(other.selector) && other.ancestorSelectors.includes(element.selector) && labelOf(other).text === text4
+            (other) => other !== element && bounded2.has(other.selector) && other.ancestorSelectors.includes(element.selector) && labelOf(other).text === text5
           );
           if (inner) continue;
           const box = measuredBox(element);
@@ -19314,7 +19398,7 @@ var init_text_centering = __esm({
               offset: offset2,
               tolerance: tolerance2,
               selectors: [element.selector],
-              text: text4,
+              text: text5,
               height: box.height,
               basis: box.basis,
               ruleSide: box.ruleSide
@@ -19657,8 +19741,8 @@ var init_types = __esm({
 });
 
 // src/checks/unexplained-control.ts
-function isGlyphLabel(text4) {
-  const trimmed = text4.replace(/\s+/g, "");
+function isGlyphLabel(text5) {
+  const trimmed = text5.replace(/\s+/g, "");
   if (trimmed === "") return true;
   const characters = [...trimmed];
   if (characters.length === 1) return true;
@@ -19667,7 +19751,7 @@ function isGlyphLabel(text4) {
 function explanationRecords(tuple, selector, controlId) {
   const records = tuple.observations?.version === 2 ? tuple.observations.explanations?.records ?? [] : [];
   return records.filter(
-    (record2) => record2.selector === selector && record2.controlId !== void 0 && record2.controlId === controlId
+    (record3) => record3.selector === selector && record3.controlId !== void 0 && record3.controlId === controlId
   );
 }
 var meaningful, hasTooltip, unexplainedControlCheck;
@@ -19677,7 +19761,7 @@ var init_unexplained_control = __esm({
     init_observation();
     init_shared();
     meaningful = (name, visible2) => name.trim() !== "" && name.trim() !== visible2.trim() && /\p{L}{3,}/u.test(name);
-    hasTooltip = (record2) => record2.tooltips.some((tip) => tip.text.trim() !== "");
+    hasTooltip = (record3) => record3.tooltips.some((tip) => tip.text.trim() !== "");
     unexplainedControlCheck = {
       id: "unexplained-control",
       run({ tuple, config }) {
@@ -19714,16 +19798,16 @@ var init_unexplained_control = __esm({
             );
             const tooltip2 = ["hover", "focus"].every(
               (trigger) => records.some(
-                (record2) => record2.trigger === trigger && record2.status === "observed" && hasTooltip(record2)
+                (record3) => record3.trigger === trigger && record3.status === "observed" && hasTooltip(record3)
               )
             );
             if (described || tooltip2) continue;
-            const enabled = element.enabled && signals.explanation?.nativeDisabled !== true;
+            const enabled2 = element.enabled && signals.explanation?.nativeDisabled !== true;
             const label6 = visible2.trim() === "" ? "an icon" : `"${visible2.trim()}"`;
             candidates.push({
               category: this.id,
-              severity: enabled ? "major" : "minor",
-              rule: enabled ? "idiom:unexplained-control" : "idiom:unavailable-control-without-reason",
+              severity: enabled2 ? "major" : "minor",
+              rule: enabled2 ? "idiom:unexplained-control" : "idiom:unavailable-control-without-reason",
               selectorHint: element.selector,
               ...records.length ? {
                 observation: observed(
@@ -19741,9 +19825,9 @@ var init_unexplained_control = __esm({
                   } : void 0
                 )
               } : {},
-              explanation: `${element.selector} shows ${label6}${enabled ? "" : " disabled"}, with no visible label, visible description, or tooltip observed on both hover and focus. An accessible name or native title alone does not supply a visible explanation.`,
+              explanation: `${element.selector} shows ${label6}${enabled2 ? "" : " disabled"}, with no visible label, visible description, or tooltip observed on both hover and focus. An accessible name or native title alone does not supply a visible explanation.`,
               acceptance: [
-                `${element.selector} has a meaningful visible label, visible aria-describedby text, or a tooltip that appears on both hover and focus${enabled ? "." : " and explains why it is unavailable."}`
+                `${element.selector} has a meaningful visible label, visible aria-describedby text, or a tooltip that appears on both hover and focus${enabled2 ? "." : " and explains why it is unavailable."}`
               ],
               verification: verify(this.id, { selector: element.selector })
             });
@@ -19778,11 +19862,11 @@ var init_unexplained_control = __esm({
               tuple,
               element.selector,
               signals.explanation?.controlId
-            ).filter((record2) => record2.status !== "unavailable");
+            ).filter((record3) => record3.status !== "unavailable");
             if (records.some(
-              (record2) => record2.status === "observed" && hasTooltip(record2)
+              (record3) => record3.status === "observed" && hasTooltip(record3)
             ) || !["hover", "focus"].every(
-              (trigger) => records.some((record2) => record2.trigger === trigger)
+              (trigger) => records.some((record3) => record3.trigger === trigger)
             ))
               continue;
             const glyph2 = painted3.trim();
@@ -19860,11 +19944,11 @@ var init_word_break = __esm({
             "word break evidence is unavailable (enable checks.wordBreak and recapture)"
           );
         const owners = /* @__PURE__ */ new Map();
-        for (const record2 of scan.records) {
-          const records = owners.get(record2.selector) ?? [];
-          if (!records.some((r) => JSON.stringify(r) === JSON.stringify(record2)))
-            records.push(record2);
-          owners.set(record2.selector, records);
+        for (const record3 of scan.records) {
+          const records = owners.get(record3.selector) ?? [];
+          if (!records.some((r) => JSON.stringify(r) === JSON.stringify(record3)))
+            records.push(record3);
+          owners.set(record3.selector, records);
         }
         const candidates = [...owners].map(
           ([selector, splits]) => ({
@@ -20438,16 +20522,16 @@ async function readBaselineFile(path) {
     );
   }
 }
-async function writeBaselineRecord(path, flow, record2) {
+async function writeBaselineRecord(path, flow, record3) {
   const existing = await readBaselineFile(path);
   if (existing !== void 0 && existing.flow !== flow)
     throw new IdiomError(
       `baseline ${path} belongs to flow ${existing.flow}, not ${flow}`
     );
-  const replaced = existing?.records.some((item) => item.commit === record2.commit) ?? false;
+  const replaced = existing?.records.some((item) => item.commit === record3.commit) ?? false;
   const sorted2 = {
-    ...record2,
-    tuples: record2.tuples.map((tuple) => ({
+    ...record3,
+    tuples: record3.tuples.map((tuple) => ({
       ...tuple,
       findings: [...tuple.findings].sort(
         (a, b) => a.fingerprint.localeCompare(b.fingerprint)
@@ -20461,7 +20545,7 @@ async function writeBaselineRecord(path, flow, record2) {
     flow,
     records: [
       sorted2,
-      ...existing?.records.filter((item) => item.commit !== record2.commit) ?? []
+      ...existing?.records.filter((item) => item.commit !== record3.commit) ?? []
     ].slice(0, MAX_RECORDS)
   });
   await mkdir3(dirname4(path), { recursive: true });
@@ -20549,10 +20633,10 @@ var init_run_record = __esm({
       }).strict(),
       /** The prefers-reduced-motion mode every tuple was captured under. */
       capture: z15.object({ reducedMotion: z15.boolean() }).strict().optional()
-    }).strict().superRefine((record2, ctx) => {
+    }).strict().superRefine((record3, ctx) => {
       const keys = (tuples) => tuples.map(captureTupleKey);
       for (const field of ["declared", "selected"])
-        if (new Set(keys(record2[field])).size !== record2[field].length)
+        if (new Set(keys(record3[field])).size !== record3[field].length)
           ctx.addIssue({
             code: "custom",
             message: `duplicate ${field} coordinates`
@@ -20565,14 +20649,14 @@ var init_run_record = __esm({
             message: `invalid ${label5} coordinates`
           });
       };
-      subset(record2.selected, record2.declared, "selected");
-      subset(record2.probe.intended, record2.selected, "intended probe");
-      subset(record2.probe.executed, record2.probe.intended, "executed probe");
-      subset(record2.timings.tuples, record2.selected, "timing");
-      if (record2.timings.tuples.length !== record2.selected.length)
+      subset(record3.selected, record3.declared, "selected");
+      subset(record3.probe.intended, record3.selected, "intended probe");
+      subset(record3.probe.executed, record3.probe.intended, "executed probe");
+      subset(record3.timings.tuples, record3.selected, "timing");
+      if (record3.timings.tuples.length !== record3.selected.length)
         ctx.addIssue({ code: "custom", message: "missing tuple timings" });
-      const viewports = new Set(record2.viewports.map((v) => v.name));
-      if (viewports.size !== record2.viewports.length || record2.declared.some((tuple) => !viewports.has(tuple.viewport)))
+      const viewports = new Set(record3.viewports.map((v) => v.name));
+      if (viewports.size !== record3.viewports.length || record3.declared.some((tuple) => !viewports.has(tuple.viewport)))
         ctx.addIssue({
           code: "custom",
           message: "invalid viewport declarations"
@@ -21307,10 +21391,10 @@ var init_artifact_schema = __esm({
           reason: z17.string().min(1).optional(),
           tooltips: z17.array(explanationTextSchema)
         }).strict().refine(
-          (record2) => record2.status === "observed" ? record2.tooltips.length > 0 : record2.tooltips.length === 0,
+          (record3) => record3.status === "observed" ? record3.tooltips.length > 0 : record3.tooltips.length === 0,
           "only observed records have nonempty tooltip evidence"
         ).refine(
-          (record2) => record2.status !== "unavailable" || record2.reason !== void 0,
+          (record3) => record3.status !== "unavailable" || record3.reason !== void 0,
           "unavailable evidence requires a reason"
         )
       )
@@ -21881,12 +21965,12 @@ var init_artifact_schema = __esm({
       (v) => v.end > v.start && v.end - v.start === v.word.length,
       "word offsets must match text"
     );
-    geometryScan = (record2) => z17.discriminatedUnion("status", [
-      z17.object({ status: z17.literal("ran"), records: z17.array(record2) }).strict(),
+    geometryScan = (record3) => z17.discriminatedUnion("status", [
+      z17.object({ status: z17.literal("ran"), records: z17.array(record3) }).strict(),
       z17.object({
         status: z17.enum(["partial", "unavailable"]),
         reason: identifier,
-        records: z17.array(record2)
+        records: z17.array(record3)
       }).strict()
     ]);
     failedRequestSchema = z17.object({ url: z17.string(), reason: z17.string() }).strict();
@@ -22165,12 +22249,12 @@ function normalise2(png, scale) {
   const across = new Float32Array(width * png.height * 3);
   const spans = (target2, limit) => Array.from({ length: target2 }, (_, index) => {
     const start = index * scale, end = Math.min(limit, (index + 1) * scale);
-    const parts = [];
+    const parts2 = [];
     for (let source = Math.floor(start); source < end; source++) {
       const weight = Math.min(end, source + 1) - Math.max(start, source);
-      if (weight > 0) parts.push([source, weight]);
+      if (weight > 0) parts2.push([source, weight]);
     }
-    return parts;
+    return parts2;
   });
   const columns = spans(width, png.width), rows = spans(height, png.height);
   const data = png.data;
@@ -22192,13 +22276,13 @@ function normalise2(png, scale) {
     }
   const rgb = new Float32Array(width * height * 3);
   for (let y = 0; y < height; y++) {
-    const parts = rows[y] ?? [];
+    const parts2 = rows[y] ?? [];
     let total = 0;
-    for (const [, weight] of parts) total += weight;
+    for (const [, weight] of parts2) total += weight;
     for (let x = 0; x < width; x++)
       for (let channel2 = 0; channel2 < 3; channel2++) {
         let sum2 = 0;
-        for (const [source, weight] of parts)
+        for (const [source, weight] of parts2)
           sum2 += across[(source * width + x) * 3 + channel2] * weight;
         rgb[(y * width + x) * 3 + channel2] = sum2 / total;
       }
@@ -22694,7 +22778,7 @@ var init_types2 = __esm({
 });
 
 // src/design/artifacts.ts
-import { createHash as createHash8 } from "crypto";
+import { createHash as createHash9 } from "crypto";
 import { mkdir as mkdir4, readFile as readFile8, realpath as realpath4, writeFile as writeFile5 } from "fs/promises";
 import { isAbsolute as isAbsolute3, join as join8, relative as relative4, resolve as resolve4, sep as sep4 } from "path";
 import { PNG } from "pngjs";
@@ -22779,7 +22863,7 @@ async function writeDesignArtifacts(options) {
     if (artifacts.console)
       await writeFile5(
         join8(options.runDirectory, artifacts.console),
-        result2.console.map((record2) => JSON.stringify(record2)).join("\n")
+        result2.console.map((record3) => JSON.stringify(record3)).join("\n")
       );
     if (artifacts.figma && design.figmaDocument !== void 0)
       await writeFile5(
@@ -22843,7 +22927,7 @@ async function loadDesignArtifacts(runDirectory, raw, tuple) {
     if (descriptor.resolved?.kind === "image") {
       if (!artifacts.image || !artifacts.regions)
         throw new Error("image design artifacts are incomplete");
-      if (createHash8("sha256").update(await read(artifacts.image)).digest("hex") !== descriptor.resolved.sha256)
+      if (createHash9("sha256").update(await read(artifacts.image)).digest("hex") !== descriptor.resolved.sha256)
         throw new Error("saved design image disagrees with its recorded hash");
       if (!tuple.screenshotPath)
         throw new Error("the app screenshot is unavailable");
@@ -22906,54 +22990,6 @@ var init_artifacts = __esm({
     init_types2();
     json = (value) => `${JSON.stringify(value, null, 2)}
 `;
-  }
-});
-
-// src/findings/settings.ts
-import { createHash as createHash9 } from "crypto";
-function stable(value) {
-  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
-  if (value && typeof value === "object")
-    return `{${Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${stable(v)}`).join(",")}}`;
-  return JSON.stringify(value) ?? "undefined";
-}
-function settingsHash(value) {
-  return createHash9("sha256").update(stable(value)).digest("hex");
-}
-function capturePredicateIdentity(project, flow) {
-  const {
-    concurrency: _lanes,
-    maxMinutes: _deadline,
-    ...capture
-  } = project.capture;
-  const { gate: _gate, ...rest } = project.checks;
-  const checks = {
-    ...rest,
-    links: { ...project.checks.links, concurrency: void 0 },
-    probe: { ...project.checks.probe, flowBudgetMs: void 0 }
-  };
-  return settingsHash({
-    checks,
-    capture,
-    invariants: flow.invariants,
-    states: flow.states.map(
-      (state) => Object.fromEntries(
-        Object.entries(state).filter(
-          ([key5]) => !["description", "url", "urlFrom"].includes(key5)
-        )
-      )
-    )
-  });
-}
-function annotateDeclaredExpectations(tuples, flow) {
-  for (const tuple of tuples) {
-    const state = [...flow.states].sort((a, b) => b.id.length - a.id.length).find((s) => tuple.state === s.id || tuple.state.startsWith(`${s.id}.`));
-    if (state) tuple.declaredExpectations = state.expect;
-  }
-}
-var init_settings = __esm({
-  "src/findings/settings.ts"() {
-    "use strict";
   }
 });
 
@@ -23194,16 +23230,16 @@ function validConsoleRequest(value) {
 function parseConsole(source, path) {
   return source.split(/\r?\n/).filter(Boolean).map((line3) => {
     try {
-      const record2 = JSON.parse(line3);
-      if (record2 !== null && typeof record2 === "object" && "healthAllowed" in record2 && typeof record2.healthAllowed !== "boolean") {
+      const record3 = JSON.parse(line3);
+      if (record3 !== null && typeof record3 === "object" && "healthAllowed" in record3 && typeof record3.healthAllowed !== "boolean") {
         throw new Error("healthAllowed must be a boolean");
       }
-      if (record2 !== null && typeof record2 === "object" && "request" in record2 && !validConsoleRequest(record2.request)) {
+      if (record3 !== null && typeof record3 === "object" && "request" in record3 && !validConsoleRequest(record3.request)) {
         throw new Error(
           "request must be { resourceType: string, mainFrame: boolean }"
         );
       }
-      return record2;
+      return record3;
     } catch (error) {
       throw new IdiomError(
         `invalid console record in ${path}: ${error instanceof Error ? error.message : String(error)}`
@@ -23274,8 +23310,8 @@ async function findLatestCapture(options) {
     );
     if (summary === null || summary[1] !== options.flow || summary[3] !== "0")
       continue;
-    const record2 = await loadRunRecord(join9(reports, run2));
-    if (record2 && record2.selected.length !== record2.declared.length) continue;
+    const record3 = await loadRunRecord(join9(reports, run2));
+    if (record3 && record3.selected.length !== record3.declared.length) continue;
     const metadata2 = await findFirstMetadata(join9(reports, run2));
     if (metadata2 === void 0) continue;
     if (options.production === true && !metadata2.production) continue;
@@ -23444,41 +23480,41 @@ async function loadCaptureRun(options) {
       };
     })
   );
-  const recordKey = (record2, state = record2.state.id) => captureTupleKey({
+  const recordKey = (record3, state = record3.state.id) => captureTupleKey({
     state,
-    viewport: record2.viewport.name,
-    colorScheme: record2.colorScheme ?? options.legacyColorScheme ?? "light"
+    viewport: record3.viewport.name,
+    colorScheme: record3.colorScheme ?? options.legacyColorScheme ?? "light"
   });
   const recordsByKey = new Map(
     records.map((entry2) => [recordKey(entry2.record), entry2])
   );
-  for (const { directory, metadataPath, record: record2 } of records) {
+  for (const { directory, metadataPath, record: record3 } of records) {
     if (runRecord) {
       const viewport = runRecord.viewports.find(
-        (v) => v.name === record2.viewport.name
+        (v) => v.name === record3.viewport.name
       );
-      if (record2.source.commit !== runRecord.source.commit || record2.source.dirty !== runRecord.source.dirty || !runRecord.selected.some(
-        (tuple2) => captureTupleKey(tuple2) === recordKey(record2)
-      ) || viewport?.width !== record2.viewport.width || viewport.height !== record2.viewport.height)
+      if (record3.source.commit !== runRecord.source.commit || record3.source.dirty !== runRecord.source.dirty || !runRecord.selected.some(
+        (tuple2) => captureTupleKey(tuple2) === recordKey(record3)
+      ) || viewport?.width !== record3.viewport.width || viewport.height !== record3.viewport.height)
         throw new IdiomError(
           `run.json disagrees with capture metadata in ${metadataPath}`
         );
     }
-    if (record2.flow.id !== options.expectedFlow) {
+    if (record3.flow.id !== options.expectedFlow) {
       throw new IdiomError(
-        `stored capture flow ${JSON.stringify(record2.flow.id)} does not match requested flow ${JSON.stringify(options.expectedFlow)}`
+        `stored capture flow ${JSON.stringify(record3.flow.id)} does not match requested flow ${JSON.stringify(options.expectedFlow)}`
       );
     }
-    if (storedCommit !== void 0 && storedCommit !== record2.source.commit) {
+    if (storedCommit !== void 0 && storedCommit !== record3.source.commit) {
       throw new IdiomError("stored capture tuples disagree on source commit");
     }
-    if (!first && (build?.kind !== record2.build?.kind || build?.id !== record2.build?.id))
+    if (!first && (build?.kind !== record3.build?.kind || build?.id !== record3.build?.id))
       throw new IdiomError(
         "stored capture tuples disagree on production build"
       );
     first = false;
-    build = record2.build;
-    storedCommit = record2.source.commit;
+    build = record3.build;
+    storedCommit = record3.source.commit;
     const artifactNames = [
       "metadata.json",
       "screenshot.png",
@@ -23492,26 +23528,26 @@ async function loadCaptureRun(options) {
       const path = join9(directory, name);
       if (await exists3(path)) present2[name] = path;
     }
-    if (record2.layoutRepresentative !== void 0) {
+    if (record3.layoutRepresentative !== void 0) {
       const entry2 = combinations?.collapsed.find(
-        (entry3) => captureTupleKey(entry3) === recordKey(record2)
+        (entry3) => captureTupleKey(entry3) === recordKey(record3)
       );
       const representative = recordsByKey.get(
-        recordKey(record2, record2.layoutRepresentative)
+        recordKey(record3, record3.layoutRepresentative)
       );
-      if (combinations?.evidence !== "per-combination" || entry2?.sameAs.state !== record2.layoutRepresentative || representative === void 0 || representative.record.layoutRepresentative !== void 0)
+      if (combinations?.evidence !== "per-combination" || entry2?.sameAs.state !== record3.layoutRepresentative || representative === void 0 || representative.record.layoutRepresentative !== void 0)
         throw new IdiomError(
           `invalid layout representative in ${metadataPath}`
         );
       const screenshot2 = join9(representative.directory, "screenshot.png");
       if (await exists3(screenshot2)) present2["screenshot.png"] = screenshot2;
     }
-    if (record2.failure === null) {
+    if (record3.failure === null) {
       const missing2 = artifactNames.filter(
         (name) => present2[name] === void 0
       );
       if (missing2.length > 0) {
-        const coordinate6 = `${record2.state.id}/${record2.viewport.name}${record2.colorSchemeAxis ? `/${record2.colorScheme}` : ""}`;
+        const coordinate6 = `${record3.state.id}/${record3.viewport.name}${record3.colorSchemeAxis ? `/${record3.colorScheme}` : ""}`;
         throw new IdiomError(
           `successful capture tuple ${coordinate6} is stale or corrupt; missing ${missing2.join(", ")}; recapture the flow`
         );
@@ -23550,28 +23586,28 @@ async function loadCaptureRun(options) {
     const axePath = present2["axe.json"];
     const observationsPath = present2["observations.json"];
     const timelinesPath = present2["timelines.json"];
-    const expectedStatus = options.expectedStatusByState?.get(record2.state.id);
-    const url = documentUrl(record2.url);
+    const expectedStatus = options.expectedStatusByState?.get(record3.state.id);
+    const url = documentUrl(record3.url);
     tuples.push({
       ...runRecord?.captureSettingsIdentity ? { captureSettingsIdentity: runRecord.captureSettingsIdentity } : {},
-      ...record2.layoutRepresentative === void 0 ? {} : { layoutRepresentative: record2.layoutRepresentative },
-      ...record2.combination === void 0 ? {} : { combination: record2.combination.label },
-      flow: record2.flow.id,
-      state: record2.state.id,
-      ...record2.state.siblingGroup !== void 0 ? { siblings: `sibling:${record2.state.siblingGroup}` } : record2.state.group !== void 0 ? { siblings: `group:${record2.flow.id}:${record2.state.group}` } : {},
-      viewport: record2.viewport.name,
-      colorScheme: record2.colorScheme ?? options.legacyColorScheme ?? "light",
-      colorSchemeAxis: record2.colorSchemeAxis ?? false,
-      width: record2.viewport.width,
-      height: record2.viewport.height,
+      ...record3.layoutRepresentative === void 0 ? {} : { layoutRepresentative: record3.layoutRepresentative },
+      ...record3.combination === void 0 ? {} : { combination: record3.combination.label },
+      flow: record3.flow.id,
+      state: record3.state.id,
+      ...record3.state.siblingGroup !== void 0 ? { siblings: `sibling:${record3.state.siblingGroup}` } : record3.state.group !== void 0 ? { siblings: `group:${record3.flow.id}:${record3.state.group}` } : {},
+      viewport: record3.viewport.name,
+      colorScheme: record3.colorScheme ?? options.legacyColorScheme ?? "light",
+      colorSchemeAxis: record3.colorSchemeAxis ?? false,
+      width: record3.viewport.width,
+      height: record3.viewport.height,
       metadataPath: reportPath(runDirectory, metadataPath),
       ...present2["screenshot.png"] === void 0 ? {} : {
         screenshotPath: reportPath(runDirectory, present2["screenshot.png"])
       },
       artifactPaths: Object.values(present2).map((path) => reportPath(runDirectory, path)).sort(),
       filmstrips,
-      commit: record2.source.commit,
-      createdAt: record2.timestamps.startedAt,
+      commit: record3.source.commit,
+      createdAt: record3.timestamps.startedAt,
       ...observationsPath === void 0 ? {} : {
         observations: parseObservations(
           await parseJson(observationsPath),
@@ -23587,38 +23623,38 @@ async function loadCaptureRun(options) {
       ...axePath === void 0 ? {} : { axe: parseAxe(await parseJson(axePath), axePath) },
       console: consolePath === void 0 ? [] : parseConsole(await readFile10(consolePath, "utf8"), consolePath),
       consoleAvailable: consolePath !== void 0,
-      ...record2.consoleProvenance === true ? { consoleProvenance: true } : {},
-      ...typeof record2.status === "number" && expectedStatus !== void 0 && url !== void 0 ? {
+      ...record3.consoleProvenance === true ? { consoleProvenance: true } : {},
+      ...typeof record3.status === "number" && expectedStatus !== void 0 && url !== void 0 ? {
         documentResponse: {
           url,
-          actualStatus: record2.status,
+          actualStatus: record3.status,
           expectedStatus,
-          ...typeof record2.documentUrl === "string" ? { finalUrl: record2.documentUrl } : {}
+          ...typeof record3.documentUrl === "string" ? { finalUrl: record3.documentUrl } : {}
         }
       } : {},
-      mismatches: record2.expectations.mismatches,
-      ...record2.failure === null ? {} : { failure: record2.failure },
-      ...record2.platform === void 0 || record2.browserVersion === void 0 ? {} : {
+      mismatches: record3.expectations.mismatches,
+      ...record3.failure === null ? {} : { failure: record3.failure },
+      ...record3.platform === void 0 || record3.browserVersion === void 0 ? {} : {
         platform: {
-          ...record2.platform,
-          browserVersion: record2.browserVersion
+          ...record3.platform,
+          browserVersion: record3.browserVersion
         }
       }
     });
     const tuple = tuples.at(-1);
-    if (tuple && Array.isArray(record2.designs) && record2.designs.length) {
+    if (tuple && Array.isArray(record3.designs) && record3.designs.length) {
       tuple.designs = [];
-      for (const raw of record2.designs)
+      for (const raw of record3.designs)
         tuple.designs.push(await loadDesignArtifacts(runDirectory, raw, tuple));
       tuple.design = tuple.designs[0];
-    } else if (record2.design !== void 0 && tuple)
+    } else if (record3.design !== void 0 && tuple)
       tuple.design = await loadDesignArtifacts(
         runDirectory,
-        record2.design,
+        record3.design,
         tuple
       );
-    if (tuple && typeof record2.designNotApplicable === "string")
-      tuple.designNotApplicable = record2.designNotApplicable;
+    if (tuple && typeof record3.designNotApplicable === "string")
+      tuple.designNotApplicable = record3.designNotApplicable;
   }
   const capturedKeys = new Set(
     tuples.map(
@@ -23728,14 +23764,14 @@ async function loadRunTuples(validated, flow, runDirectory) {
     colorSchemeOrder: selectColorSchemes(validated.project, flow),
     legacyColorScheme: validated.project.capture.colorScheme
   });
-  const record2 = loaded.record;
+  const record3 = loaded.record;
   annotateDeclaredExpectations(loaded.tuples, flow);
   if (isPublishedFlow(flow))
     await attachPublished(validated, flow, runDirectory, loaded.tuples);
   return {
     ...loaded,
-    record: record2,
-    expectedTupleKeys: record2 ? record2.selected.map(captureTupleKey).filter((key5) => !loaded.collapsedTupleKeys.includes(key5)) : expectedCaptureTupleKeys({
+    record: record3,
+    expectedTupleKeys: record3 ? record3.selected.map(captureTupleKey).filter((key5) => !loaded.collapsedTupleKeys.includes(key5)) : expectedCaptureTupleKeys({
       project: validated.project,
       flow,
       collapsed: loaded.collapsedTupleKeys
@@ -23865,8 +23901,8 @@ function generatedClass(value) {
   return /__[A-Za-z0-9_-]{5,}$/.test(value) || /^(?:css|jsx|sc|emotion|styled)[-_][A-Za-z0-9_-]{5,}$/i.test(value) || /^[a-f0-9]{8,}$/i.test(value);
 }
 function normalizeSelectorHint(value) {
-  const normalized = value.normalize("NFKC").trim().replace(/\s+/gu, " ").replace(/\s*([>+~])\s*/g, " $1 ").replace(/\s*\|\s*/g, " | ");
-  return normalized.split(" | ").map((part) => {
+  const normalized2 = value.normalize("NFKC").trim().replace(/\s+/gu, " ").replace(/\s*([>+~])\s*/g, " $1 ").replace(/\s*\|\s*/g, " | ");
+  return normalized2.split(" | ").map((part) => {
     if (part.includes("://") || part.includes("/")) return part;
     return part.replace(
       /(?:\.[A-Za-z_][A-Za-z0-9_-]*)+/g,
@@ -24208,7 +24244,7 @@ function targetEvidence(contract, tuple, config) {
   if (contract.check === "layout-invariants" || contract.check === "group-invariants") {
     const parameters = contract.condition.parameters;
     const matches3 = obs?.invariants?.filter(
-      (record2) => stable(record2.declaration) === stable(parameters.invariant) && JSON.stringify(record2.origin) === JSON.stringify(parameters.origin)
+      (record3) => stable(record3.declaration) === stable(parameters.invariant) && JSON.stringify(record3.origin) === JSON.stringify(parameters.origin)
     ) ?? [];
     return matches3.length === 1 ? void 0 : "The original invariant declaration was not measured or changed; another invariant cannot substitute for it.";
   }
@@ -24388,6 +24424,21 @@ function evaluateRuleAcceptance(options) {
       contract,
       "Effective check settings changed; disabled checks or relaxed thresholds cannot prove acceptance."
     );
+  const { brief, assertionIdentity } = contract.condition.parameters;
+  if (contract.check === "brief-mismatch" && typeof brief === "string" && typeof assertionIdentity === "string") {
+    const current = options.config?.briefs?.find(
+      (check) => check.slug === brief && check.eligible === true
+    );
+    if (current !== void 0 && !current.criteria.some(
+      (criterion) => criterion.assertions.some(
+        (assertion) => briefAssertionIdentity(assertion) === assertionIdentity
+      )
+    ))
+      return unavailableAcceptance(
+        contract,
+        "The brief assertion this finding judged was re-decided; its findings are reported under the new assertion."
+      );
+  }
   const statuses = [options.currentA, options.currentB].map((tuples, index) => {
     const checked = options.checkedCaptures?.[index] ?? runDeterministicChecks(tuples, options.expectedTupleKeys, options.config);
     const matching = checked.candidates.some(
@@ -24446,6 +24497,7 @@ function evaluateRuleAcceptance(options) {
 var init_acceptance2 = __esm({
   "src/verify/acceptance.ts"() {
     "use strict";
+    init_assertions();
     init_failure_state();
     init_loading_state();
     init_registry();
@@ -24510,9 +24562,9 @@ function deriveVerificationLocus(tuple, selectorHint) {
   const target2 = targets[0];
   const bySelector = /* @__PURE__ */ new Map();
   for (const element of visible2) {
-    const list5 = bySelector.get(element.selector) ?? [];
-    list5.push(element);
-    bySelector.set(element.selector, list5);
+    const list6 = bySelector.get(element.selector) ?? [];
+    list6.push(element);
+    bySelector.set(element.selector, list6);
   }
   const visibleTagCounts = /* @__PURE__ */ new Map();
   for (const element of visible2)
@@ -24553,7 +24605,7 @@ function deriveVerificationLocus(tuple, selectorHint) {
 }
 function uniqueRecord(profile, selector) {
   const matches2 = profile.records.filter(
-    (record2) => record2.selector === selector
+    (record3) => record3.selector === selector
   );
   if (matches2.length > 1)
     throw new IdiomError(
@@ -24561,13 +24613,13 @@ function uniqueRecord(profile, selector) {
     );
   return matches2[0];
 }
-function identityForRecord(record2) {
-  return anchorIdentity(record2.tag, record2.selector);
+function identityForRecord(record3) {
+  return anchorIdentity(record3.tag, record3.selector);
 }
 function regionRecord(profile, selector) {
   const exact = uniqueRecord(profile, selector);
   if (exact !== void 0 || !landmarkSelector(selector)) return exact;
-  const matches2 = profile.records.filter((record2) => record2.tag === selector);
+  const matches2 = profile.records.filter((record3) => record3.tag === selector);
   if (matches2.length > 1)
     throw new IdiomError(
       `verification locus selector is ambiguous: ${selector}`
@@ -24576,7 +24628,7 @@ function regionRecord(profile, selector) {
 }
 function regionRecords(profile, region) {
   return profile.records.filter(
-    (record2) => record2.path === region.path || record2.path.startsWith(`${region.path}/`)
+    (record3) => record3.path === region.path || record3.path.startsWith(`${region.path}/`)
   );
 }
 function relativePath(root2, path) {
@@ -24593,11 +24645,11 @@ function pairSuppression(sides2) {
 function recordsSignature(profile, root2, includeGeometry, suppressed) {
   let stripped = 0;
   const records = regionRecords(profile, root2).map(
-    ({ selector: _selector, path, geometry, ...record2 }) => {
+    ({ selector: _selector, path, geometry, ...record3 }) => {
       const relative42 = relativePath(root2, path);
-      let kept = record2;
-      if (suppressed.has(relative42) && record2.text !== void 0) {
-        const { text: _text, ...rest } = record2;
+      let kept = record3;
+      if (suppressed.has(relative42) && record3.text !== void 0) {
+        const { text: _text, ...rest } = record3;
         kept = rest;
         stripped += 1;
       }
@@ -24664,7 +24716,7 @@ function compareFindingLocus(options) {
       )
     );
     const stripped = (profile) => profile.records.filter(
-      (record2) => suppressed.has(record2.path) && record2.text !== void 0
+      (record3) => suppressed.has(record3.path) && record3.text !== void 0
     ).length;
     const before = signatureWithoutText(options.baseline, suppressed);
     const after = signatureWithoutText(options.currentB, suppressed);
@@ -24684,7 +24736,7 @@ function compareFindingLocus(options) {
   const baselineRegion = regionRecord(options.baseline, locus.region.selector);
   const regionA = regionRecord(options.currentA, locus.region.selector);
   const regionB = regionRecord(options.currentB, locus.region.selector);
-  const regionIdentity = (record2) => anchorIdentity(record2.tag, locus.region.selector);
+  const regionIdentity = (record3) => anchorIdentity(record3.tag, locus.region.selector);
   if (baselineRegion === void 0 || regionIdentity(baselineRegion) !== locus.region.signature)
     throw new IdiomError(
       `historical verification region is missing or drifting: ${locus.region.selector}`
@@ -25150,6 +25202,7 @@ var init_evaluate = __esm({
 
 // src/version.ts
 import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
 function readPackageVersion() {
   const packageFile = new URL("../package.json", import.meta.url);
   const metadata2 = JSON.parse(
@@ -25160,14 +25213,16 @@ function readPackageVersion() {
   }
   return metadata2.version;
 }
-var SEMVER, IDIOM_VERSION, IDIOM_BUILD_COMMIT, IDIOM_VERSION_DISPLAY;
-var init_version = __esm({
+var SEMVER, IDIOM_VERSION, IDIOM_BUILD_COMMIT, IDIOM_VERSION_DISPLAY, IDIOM_PACKAGE_ROOT;
+var init_version2 = __esm({
   "src/version.ts"() {
     "use strict";
+    init_version();
     SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
     IDIOM_VERSION = readPackageVersion();
-    IDIOM_BUILD_COMMIT = true ? "51ffea67322f7b151484a163db70fb73393ce44e" : "unknown";
-    IDIOM_VERSION_DISPLAY = `${IDIOM_VERSION} (${IDIOM_BUILD_COMMIT.slice(0, 7)})`;
+    IDIOM_BUILD_COMMIT = true ? "f09cee43d3611f913547194e9551c55a9835d8e5" : "unknown";
+    IDIOM_VERSION_DISPLAY = `${IDIOM_VERSION} (${IDIOM_BUILD_COMMIT.slice(0, 7)}) \xB7 interface ${INTERFACE_VERSION}`;
+    IDIOM_PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
   }
 });
 
@@ -25207,22 +25262,22 @@ async function selectBaselineRecord(options) {
   const git2 = options.git ?? gitAncestry;
   const head = await git2.head(options.projectDirectory);
   const reachable = [];
-  for (const record2 of options.file.records) {
+  for (const record3 of options.file.records) {
     const ancestor = await git2.isAncestor(
       options.projectDirectory,
-      record2.commit,
+      record3.commit,
       head
     );
     if (ancestor === void 0)
       throw new IdiomError(
-        `cannot establish baseline ancestry for ${record2.commit}; fetch the missing commit and full Git history (git fetch --unshallow for shallow clones) and retry`
+        `cannot establish baseline ancestry for ${record3.commit}; fetch the missing commit and full Git history (git fetch --unshallow for shallow clones) and retry`
       );
     if (!ancestor) continue;
     reachable.push({
-      record: record2,
+      record: record3,
       distance: await git2.distance(
         options.projectDirectory,
-        record2.commit,
+        record3.commit,
         head
       )
     });
@@ -25403,7 +25458,7 @@ var init_record = __esm({
     init_artifacts2();
     init_flow();
     init_evaluate();
-    init_version();
+    init_version2();
     init_config_hash();
     init_coordinate();
     init_resolve2();
@@ -25415,11 +25470,11 @@ var init_record = __esm({
 function escapeRegExp2(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-function mentionsToken(text4, value) {
+function mentionsToken(text5, value) {
   if (value.length === 0) return false;
   return new RegExp(
     `(?<![A-Za-z0-9_-])${escapeRegExp2(value)}(?![A-Za-z0-9_-])`
-  ).test(text4);
+  ).test(text5);
 }
 var init_mentions = __esm({
   "src/tickets/mentions.ts"() {
@@ -26442,8 +26497,8 @@ async function findOptionalProjectDirectory(start) {
       await access4(join13(current, PROJECT_FILE));
       return current;
     } catch (error) {
-      const code2 = error.code;
-      if (code2 !== "ENOENT" && code2 !== "ENOTDIR") throw error;
+      const code3 = error.code;
+      if (code3 !== "ENOENT" && code3 !== "ENOTDIR") throw error;
       const parent = dirname6(current);
       if (parent === current) return void 0;
       current = parent;
@@ -26697,14 +26752,14 @@ function nameUnruledDecisions(state, decisions) {
   });
 }
 function reserveRulingFingerprint(state, fingerprint3) {
-  const normalized = fingerprint3.trim();
-  if (normalized === "")
+  const normalized2 = fingerprint3.trim();
+  if (normalized2 === "")
     throw new IdiomError("ruling fingerprint must not be blank");
   let entry2 = state.registry.entries.find(
-    (candidate2) => candidate2.fingerprint === normalized
+    (candidate2) => candidate2.fingerprint === normalized2
   );
   if (entry2 === void 0) {
-    entry2 = { name: `ruling-${state.registry.next}`, fingerprint: normalized };
+    entry2 = { name: `ruling-${state.registry.next}`, fingerprint: normalized2 };
     state.registry.next += 1;
     state.registry.entries.push(entry2);
     state.changed = true;
@@ -27005,9 +27060,9 @@ async function parseJsonFile(file, projectDirectory, schema, optional = false) {
   try {
     source = await readFile17(file, "utf8");
   } catch (error) {
-    const code2 = error.code;
-    if (code2 === "ENOENT" && optional) return void 0;
-    if (code2 === "ENOENT")
+    const code3 = error.code;
+    if (code3 === "ENOENT" && optional) return void 0;
+    if (code3 === "ENOENT")
       throw new IdiomError(`${displayFile}: file not found`);
     throw new IdiomError(`${displayFile}: could not be read: ${String(error)}`);
   }
@@ -27127,26 +27182,26 @@ async function loadDeclaredSurfaceFlows(context2) {
   if (context2.project.surfaces.length === 0) return [];
   const records = await loadFlows(context2, void 0);
   const ids = /* @__PURE__ */ new Map();
-  for (const record2 of records) {
-    const display = relative8(context2.projectDirectory, record2.file);
-    const prior = ids.get(record2.flow.id);
+  for (const record3 of records) {
+    const display = relative8(context2.projectDirectory, record3.file);
+    const prior = ids.get(record3.flow.id);
     if (prior !== void 0) {
       throw new IdiomError(
-        `${display}: id: duplicates flow id ${JSON.stringify(record2.flow.id)} from ${prior}`
+        `${display}: id: duplicates flow id ${JSON.stringify(record3.flow.id)} from ${prior}`
       );
     }
-    ids.set(record2.flow.id, display);
+    ids.set(record3.flow.id, display);
   }
   return records;
 }
 async function validateNamedFlow(context2, flow) {
-  const record2 = (await loadFlows(context2, flow))[0];
-  if (record2 === void 0 || record2.flow.id !== flow) {
+  const record3 = (await loadFlows(context2, flow))[0];
+  if (record3 === void 0 || record3.flow.id !== flow) {
     throw new IdiomError(
-      `requested flow ${JSON.stringify(flow)} does not match the manifest id ${JSON.stringify(record2?.flow.id)}`
+      `requested flow ${JSON.stringify(flow)} does not match the manifest id ${JSON.stringify(record3?.flow.id)}`
     );
   }
-  return record2;
+  return record3;
 }
 async function validateProject(options) {
   const context2 = await loadProjectContext(options);
@@ -27293,13 +27348,13 @@ function antecedent(before) {
 }
 function nameBefore(before) {
   const clause = before.split(/[.;!?|()[\]{}]/).at(-1) ?? "";
-  const list5 = tokens(clause);
+  const list6 = tokens(clause);
   const open3 = before.length - clause.length - 1;
-  if (before[open3] === "(" && list5.every((token) => fillers.has(token.toLowerCase())))
+  if (before[open3] === "(" && list6.every((token) => fillers.has(token.toLowerCase())))
     return antecedent(before.slice(0, open3));
   const words2 = [];
-  for (let index = list5.length - 1; index >= 0; index -= 1) {
-    const token = list5[index] ?? "";
+  for (let index = list6.length - 1; index >= 0; index -= 1) {
+    const token = list6[index] ?? "";
     const word = token.toLowerCase();
     if (words2.length === 0 && fillers.has(word)) continue;
     if (words2.length === 0 && pronouns.has(word))
@@ -27453,7 +27508,7 @@ var init_design_components = __esm({
       "icon"
     ]);
     sizePattern = /(?<![\w.-])(\d+(?:\.\d+)?)(?:\s*px)?(?:\s*[×x]\s*(\d+(?:\.\d+)?))?\s*px\b(?:\s+(high|tall|wide))?/gi;
-    tokens = (text4) => text4.replace(/\.\.\./g, " \u2026 ").replace(/[*_`"'“”‘’]/g, " ").replace(/([,:~…—–])/g, " $1 ").split(/\s+/).filter((token) => token !== "");
+    tokens = (text5) => text5.replace(/\.\.\./g, " \u2026 ").replace(/[*_`"'“”‘’]/g, " ").replace(/([,:~…—–])/g, " $1 ").split(/\s+/).filter((token) => token !== "");
     letterWord = /^[a-z]+(?:-[a-z]+)*$/i;
   }
 });
@@ -27474,12 +27529,12 @@ async function discoverSources(root2) {
         if (/^tailwind\.config\.(?:[cm]?[jt]s)$/.test(entry2.name))
           sources.push({ path, kind: "tailwind" });
         else if (entry2.name.endsWith(".css")) {
-          const text4 = await readFile19(join18(root2, path), "utf8");
-          if (/(?:@theme\b|:root\b|\[data-theme[^\]]*\])/.test(text4) && /--[\w*-]+\s*:/.test(text4))
+          const text5 = await readFile19(join18(root2, path), "utf8");
+          if (/(?:@theme\b|:root\b|\[data-theme[^\]]*\])/.test(text5) && /--[\w*-]+\s*:/.test(text5))
             sources.push({ path, kind: "css" });
         } else if (entry2.name.endsWith(".json")) {
-          const text4 = await readFile19(join18(root2, path), "utf8");
-          if (/"\$value"\s*:/.test(text4) || /(?:^|\.)tokens\.json$/.test(entry2.name))
+          const text5 = await readFile19(join18(root2, path), "utf8");
+          if (/"\$value"\s*:/.test(text5) || /(?:^|\.)tokens\.json$/.test(entry2.name))
             sources.push({ path, kind: "dtcg" });
         }
       }
@@ -27648,8 +27703,8 @@ async function extractCss(root2, paths, options = {}) {
   };
   const imported = /* @__PURE__ */ new Set();
   for (const path of paths) {
-    const text4 = await readFile20(resolve11(root2, path), "utf8");
-    for (const match of text4.matchAll(/@import\s+["']([^"']+)["']/g))
+    const text5 = await readFile20(resolve11(root2, path), "utf8");
+    for (const match of text5.matchAll(/@import\s+["']([^"']+)["']/g))
       imported.add(
         relative9(root2, resolve11(root2, dirname7(path), match[1]))
       );
@@ -27745,18 +27800,18 @@ function installAuthoredRuleIndex() {
   if (typeof scope.__idiomAuthoredRuleIndex === "function") return;
   const isHex = (character) => /^[0-9a-fA-F]$/.test(character);
   const isSpace = (character) => character === " " || character === "	" || character === "\n" || character === "\r" || character === "\f";
-  const skipEscape = (text4, index) => {
+  const skipEscape = (text5, index) => {
     let cursor = index + 1;
-    if (cursor >= text4.length) return cursor;
-    if (!isHex(text4[cursor] ?? "")) return cursor + 1;
-    const end = Math.min(text4.length, cursor + 6);
-    while (cursor < end && isHex(text4[cursor] ?? "")) cursor += 1;
-    if (text4[cursor] === "\r" && text4[cursor + 1] === "\n") return cursor + 2;
-    if (isSpace(text4[cursor] ?? "")) return cursor + 1;
+    if (cursor >= text5.length) return cursor;
+    if (!isHex(text5[cursor] ?? "")) return cursor + 1;
+    const end = Math.min(text5.length, cursor + 6);
+    while (cursor < end && isHex(text5[cursor] ?? "")) cursor += 1;
+    if (text5[cursor] === "\r" && text5[cursor + 1] === "\n") return cursor + 2;
+    if (isSpace(text5[cursor] ?? "")) return cursor + 1;
     return cursor;
   };
   const splitSelectorList = (selector) => {
-    const parts = [];
+    const parts2 = [];
     let start = 0;
     let depth = 0;
     let quote = "";
@@ -27776,12 +27831,12 @@ function installAuthoredRuleIndex() {
       else if (character === ")" || character === "]" || character === "}")
         depth -= 1;
       else if (character === "," && depth === 0) {
-        parts.push(selector.slice(start, index).trim());
+        parts2.push(selector.slice(start, index).trim());
         start = index + 1;
       }
     }
-    parts.push(selector.slice(start).trim());
-    return parts.filter(Boolean);
+    parts2.push(selector.slice(start).trim());
+    return parts2.filter(Boolean);
   };
   const rightmostCompound = (alternative) => {
     let start = 0;
@@ -27806,20 +27861,20 @@ function installAuthoredRuleIndex() {
     return alternative.slice(start).trim();
   };
   const isIdentCharacter = (character) => /^[a-zA-Z0-9_-]$/.test(character) || character.charCodeAt(0) >= 128;
-  const readIdent = (text4, index) => {
+  const readIdent = (text5, index) => {
     let value = "";
     let cursor = index;
-    while (cursor < text4.length) {
-      const character = text4[cursor] ?? "";
+    while (cursor < text5.length) {
+      const character = text5[cursor] ?? "";
       if (character === "\\") {
-        const next = text4[cursor + 1];
+        const next = text5[cursor + 1];
         if (next === void 0 || next === "\n" || next === "\r" || next === "\f")
           throw new Error("invalid escape");
-        const end = skipEscape(text4, cursor);
+        const end = skipEscape(text5, cursor);
         if (isHex(next)) {
-          const hex4 = text4.slice(cursor + 1, end).trim();
-          const code2 = Number.parseInt(hex4, 16);
-          value += code2 === 0 || code2 > 1114111 || code2 >= 55296 && code2 <= 57343 ? "\uFFFD" : String.fromCodePoint(code2);
+          const hex4 = text5.slice(cursor + 1, end).trim();
+          const code3 = Number.parseInt(hex4, 16);
+          value += code3 === 0 || code3 > 1114111 || code3 >= 55296 && code3 <= 57343 ? "\uFFFD" : String.fromCodePoint(code3);
         } else value += next;
         cursor = end;
       } else if (isIdentCharacter(character)) {
@@ -27829,15 +27884,15 @@ function installAuthoredRuleIndex() {
     }
     return { value, end: cursor };
   };
-  const skipGroup = (text4, index) => {
-    const open3 = text4[index];
+  const skipGroup = (text5, index) => {
+    const open3 = text5[index];
     const close2 = open3 === "(" ? ")" : "]";
     let depth = 0;
     let quote = "";
-    for (let cursor = index; cursor < text4.length; cursor += 1) {
-      const character = text4[cursor] ?? "";
+    for (let cursor = index; cursor < text5.length; cursor += 1) {
+      const character = text5[cursor] ?? "";
       if (character === "\\") {
-        cursor = skipEscape(text4, cursor) - 1;
+        cursor = skipEscape(text5, cursor) - 1;
         continue;
       }
       if (quote !== "") {
@@ -27902,8 +27957,8 @@ function installAuthoredRuleIndex() {
       tag: /* @__PURE__ */ new Map()
     };
     const universal = [];
-    const file = (list5, rule) => {
-      if (list5[list5.length - 1] !== rule) list5.push(rule);
+    const file = (list6, rule) => {
+      if (list6[list6.length - 1] !== rule) list6.push(rule);
     };
     for (const rule of rules) {
       const alternatives = splitSelectorList(rule.selector);
@@ -27915,12 +27970,12 @@ function installAuthoredRuleIndex() {
           continue;
         }
         const map = buckets[key5.kind];
-        let list5 = map.get(key5.value);
-        if (list5 === void 0) {
-          list5 = [];
-          map.set(key5.value, list5);
+        let list6 = map.get(key5.value);
+        if (list6 === void 0) {
+          list6 = [];
+          map.set(key5.value, list6);
         }
-        file(list5, rule);
+        file(list6, rule);
       }
     }
     const stats = {
@@ -27930,8 +27985,8 @@ function installAuthoredRuleIndex() {
     };
     const candidates = (element) => {
       const lists = [];
-      const add = (list5) => {
-        if (list5 !== void 0 && list5.length > 0) lists.push(list5);
+      const add = (list6) => {
+        if (list6 !== void 0 && list6.length > 0) lists.push(list6);
       };
       if (element.id !== "") add(buckets.id.get(lower(element.id)));
       for (const className of element.classes)
@@ -27944,8 +27999,8 @@ function installAuthoredRuleIndex() {
       else {
         const seen = /* @__PURE__ */ new Set();
         result2 = [];
-        for (const list5 of lists)
-          for (const rule of list5)
+        for (const list6 of lists)
+          for (const rule of list6)
             if (!seen.has(rule)) {
               seen.add(rule);
               result2.push(rule);
@@ -27986,7 +28041,7 @@ function installExplanationDom(documentId) {
     if (getComputedStyle(owner2).visibility !== "visible") return void 0;
     const root2 = document.documentElement;
     const body = document.body;
-    let clip2 = {
+    let clip3 = {
       left: -scrollX,
       top: -scrollY,
       right: Math.max(root2.scrollWidth, innerWidth) - scrollX,
@@ -28010,7 +28065,7 @@ function installExplanationDom(documentId) {
             (value) => value === void 0 || !Number.isFinite(value)
           ))
             return void 0;
-          clip2 = intersect2(clip2, {
+          clip3 = intersect2(clip3, {
             left: rect3.left + (left ?? 0),
             top: rect3.top + (top ?? 0),
             right: rect3.left + (right ?? 0),
@@ -28032,7 +28087,7 @@ function installExplanationDom(documentId) {
             );
             if (![top, right, bottom, left].every(Number.isFinite))
               return void 0;
-            clip2 = intersect2(clip2, {
+            clip3 = intersect2(clip3, {
               left: rect3.left + left,
               top: rect3.top + top,
               right: rect3.right - right,
@@ -28047,25 +28102,25 @@ function installExplanationDom(documentId) {
           const left = rect3.left + current.clientLeft * scaleX;
           const top = rect3.top + current.clientTop * scaleY;
           if (["hidden", "clip", "scroll", "auto"].includes(style.overflowX)) {
-            clip2.left = Math.max(clip2.left, left);
-            clip2.right = Math.min(
-              clip2.right,
+            clip3.left = Math.max(clip3.left, left);
+            clip3.right = Math.min(
+              clip3.right,
               left + current.clientWidth * scaleX
             );
           }
           if (["hidden", "clip", "scroll", "auto"].includes(style.overflowY)) {
-            clip2.top = Math.max(clip2.top, top);
-            clip2.bottom = Math.min(
-              clip2.bottom,
+            clip3.top = Math.max(clip3.top, top);
+            clip3.bottom = Math.min(
+              clip3.bottom,
               top + current.clientHeight * scaleY
             );
           }
         }
       }
-      if (!positive(clip2)) return void 0;
+      if (!positive(clip3)) return void 0;
       current = current.parentElement;
     }
-    return clip2;
+    return clip3;
   };
   const alpha = (color) => {
     if (color === "transparent") return 0;
@@ -28074,47 +28129,47 @@ function installExplanationDom(documentId) {
     const rgba = /^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\s*\)$/.exec(color);
     return rgba ? Number(rgba[1]) : 1;
   };
-  const text4 = (element, excludeTooltips = false) => {
-    const parts = [];
+  const text5 = (element, excludeTooltips = false) => {
+    const parts2 = [];
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
     while (node) {
       const owner2 = node.parentElement;
       if (owner2 && node.textContent?.trim() && !(excludeTooltips && owner2.closest("[role=tooltip]"))) {
-        const clip2 = clipFor(owner2);
+        const clip3 = clipFor(owner2);
         const style = getComputedStyle(owner2);
         const fill = style.getPropertyValue("-webkit-text-fill-color") || style.color;
-        if (clip2 && alpha(fill) > 0) {
+        if (clip3 && alpha(fill) > 0) {
           const range = document.createRange();
           range.selectNodeContents(node);
           const rects = [...range.getClientRects()];
-          if (rects.some((rect3) => positive(intersect2(rect3, clip2)))) {
+          if (rects.some((rect3) => positive(intersect2(rect3, clip3)))) {
             if (rects.every(
-              (rect3) => rect3.left >= clip2.left && rect3.top >= clip2.top && rect3.right <= clip2.right && rect3.bottom <= clip2.bottom
+              (rect3) => rect3.left >= clip3.left && rect3.top >= clip3.top && rect3.right <= clip3.right && rect3.bottom <= clip3.bottom
             ))
-              parts.push(node.textContent);
+              parts2.push(node.textContent);
             else {
               let painted3 = "";
               for (let index = 0; index < node.textContent.length; index++) {
                 range.setStart(node, index);
                 range.setEnd(node, index + 1);
                 if ([...range.getClientRects()].some(
-                  (rect3) => positive(intersect2(rect3, clip2))
+                  (rect3) => positive(intersect2(rect3, clip3))
                 ))
                   painted3 += node.textContent[index];
               }
-              parts.push(painted3);
+              parts2.push(painted3);
             }
           }
         }
       }
       node = walker.nextNode();
     }
-    return parts.join(" ").replace(/\s+/g, " ").trim();
+    return parts2.join(" ").replace(/\s+/g, " ").trim();
   };
   scope.__idiomExplanationDom = {
     document,
-    text: text4,
+    text: text5,
     identity(element) {
       let id2 = identities3.get(element);
       if (!id2) {
@@ -28124,9 +28179,9 @@ function installExplanationDom(documentId) {
       return id2;
     },
     visible(element) {
-      const clip2 = clipFor(element, false);
-      return clip2 !== void 0 && [...element.getClientRects()].some(
-        (rect3) => positive(intersect2(rect3, clip2))
+      const clip3 = clipFor(element, false);
+      return clip3 !== void 0 && [...element.getClientRects()].some(
+        (rect3) => positive(intersect2(rect3, clip3))
       );
     },
     fingerprint(element) {
@@ -28136,7 +28191,7 @@ function installExplanationDom(documentId) {
           (name) => element.getAttribute(name)
         ),
         (element.getAttribute("aria-labelledby") ?? "").split(/\s+/).map((id2) => document.getElementById(id2)?.textContent ?? ""),
-        text4(element, true),
+        text5(element, true),
         element.matches(":disabled")
       ]);
     }
@@ -28162,16 +28217,16 @@ async function sampleLiveness(page, declaration) {
       const diagnostics = [];
       const entries = [];
       const path = (el) => {
-        const parts = [];
+        const parts2 = [];
         for (let node = el; node; node = node.parentElement) {
           const tag = node.tagName.toLowerCase();
           const tagName = node.tagName;
           const siblings = node.parentElement ? [...node.parentElement.children].filter(
             (n) => n.tagName === tagName
           ) : [node];
-          parts.unshift(`${tag}:nth-of-type(${siblings.indexOf(node) + 1})`);
+          parts2.unshift(`${tag}:nth-of-type(${siblings.indexOf(node) + 1})`);
         }
-        return parts.join(" > ");
+        return parts2.join(" > ");
       };
       const painted3 = (el) => {
         if (el.closest(
@@ -28186,7 +28241,7 @@ async function sampleLiveness(page, declaration) {
             return false;
         return true;
       };
-      const text4 = (el) => el.innerText?.replace(/\s+/g, " ").trim() ?? "";
+      const text5 = (el) => el.innerText?.replace(/\s+/g, " ").trim() ?? "";
       const query = (selector, kind) => {
         try {
           return [...document.querySelectorAll(selector)];
@@ -28215,7 +28270,7 @@ async function sampleLiveness(page, declaration) {
             targets.set(el, { source: "declared", declaration: selector });
       }
       if (declaration2.auto) {
-        const numeric = (el) => /^\d+(?:\s*:\s*\d+){2,}$/.test(text4(el));
+        const numeric = (el) => /^\d+(?:\s*:\s*\d+){2,}$/.test(text5(el));
         const semantic = [
           ...document.querySelectorAll('[role="timer"]')
         ].filter((el) => painted3(el) && !ignore(el));
@@ -28243,20 +28298,20 @@ async function sampleLiveness(page, declaration) {
         ...meta,
         selector: el.id ? `#${CSS.escape(el.id)}` : path(el),
         identity: path(el),
-        before: painted3(el) ? text4(el) : ""
+        before: painted3(el) ? text5(el) : ""
       }));
       if (pending.length)
         await new Promise((resolve70) => setTimeout(resolve70, 1500));
       const elapsedMs = performance.now() - started;
       for (const { el, before, ...meta } of pending) {
-        const reason = !el.isConnected ? "target detached or replaced" : !painted3(el) ? "target hidden or unmeasurable" : !before ? "first sample empty or hidden" : !text4(el) ? "second sample empty" : void 0;
+        const reason = !el.isConnected ? "target detached or replaced" : !painted3(el) ? "target hidden or unmeasurable" : !before ? "first sample empty or hidden" : !text5(el) ? "second sample empty" : void 0;
         if (reason) entries.push({ ...meta, status: "unavailable", reason });
         else
           entries.push({
             ...meta,
             status: "measured",
             before,
-            after: text4(el),
+            after: text5(el),
             elapsedMs
           });
       }
@@ -28463,9 +28518,9 @@ function installVisibilityDom(query) {
       if (s.display === "none" || Number(s.opacity) === 0 || s.contentVisibility === "hidden")
         return invisible("target is CSS-hidden", name(current));
     }
-    const clip2 = clipped(element);
-    let visible2 = clip2.rect;
-    let boundary = clip2.boundary;
+    const clip3 = clipped(element);
+    let visible2 = clip3.rect;
+    let boundary = clip3.boundary;
     if (within6) {
       visible2 = intersect2(visible2, client(within6));
       if (visible2.width <= 0 || visible2.height <= 0) boundary ??= name(within6);
@@ -28705,10 +28760,10 @@ function extractAxeHeadingTargets(value) {
   const targets = /* @__PURE__ */ new Set();
   for (const violation of violations) {
     if (violation === null || typeof violation !== "object") continue;
-    const record2 = violation;
-    if (!["heading-order", "page-has-heading-one"].includes(String(record2.id)) || !Array.isArray(record2.nodes))
+    const record3 = violation;
+    if (!["heading-order", "page-has-heading-one"].includes(String(record3.id)) || !Array.isArray(record3.nodes))
       continue;
-    for (const node of record2.nodes) {
+    for (const node of record3.nodes) {
       if (node === null || typeof node !== "object") continue;
       const target2 = node.target;
       if (Array.isArray(target2) && target2.length === 1 && typeof target2[0] === "string")
@@ -28845,7 +28900,7 @@ async function normalizeInlineTokens(isolated, tokens2, context2) {
     for (const t of allTokens)
       if (t.theme === theme && !t.reason && t.name.startsWith("--"))
         contextEnvironment[t.name] = t.resolved ?? t.value;
-  const normalized = await isolated.evaluate(
+  const normalized2 = await isolated.evaluate(
     normalizeCssValues,
     applicable.map((t) => ({
       value: t.resolved ?? t.value,
@@ -28856,10 +28911,10 @@ async function normalizeInlineTokens(isolated, tokens2, context2) {
     }))
   );
   return applicable.flatMap(
-    (token, index) => normalized[index]?.value ? [
+    (token, index) => normalized2[index]?.value ? [
       {
         kind: token.kind,
-        value: normalized[index]?.value,
+        value: normalized2[index]?.value,
         name: token.name,
         ...token.theme === void 0 ? {} : { theme: token.theme }
       }
@@ -29045,22 +29100,22 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           if (document.querySelectorAll(candidate2).length === 1)
             return candidate2;
         }
-        const parts = [];
+        const parts2 = [];
         let current = element;
         while (current !== null && current !== document.body) {
           const tag = current.tagName.toLowerCase();
           const siblings = current.parentElement ? [...current.parentElement.children].filter(
             (candidate2) => candidate2.tagName === current?.tagName
           ) : [];
-          parts.unshift(
+          parts2.unshift(
             siblings.length > 1 ? `${tag}:nth-of-type(${siblings.indexOf(current) + 1})` : tag
           );
           current = current.parentElement;
         }
-        return `body > ${parts.join(" > ")}`;
+        return `body > ${parts2.join(" > ")}`;
       };
       const splitSelectorList = (selector) => {
-        const parts = [];
+        const parts2 = [];
         let start = 0;
         let depth = 0;
         let quote = "";
@@ -29086,12 +29141,12 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           if (["(", "[", "{"].includes(character)) depth += 1;
           else if ([")", "]", "}"].includes(character)) depth -= 1;
           else if (character === "," && depth === 0) {
-            parts.push(selector.slice(start, index).trim());
+            parts2.push(selector.slice(start, index).trim());
             start = index + 1;
           }
         }
-        parts.push(selector.slice(start).trim());
-        return parts.filter(Boolean);
+        parts2.push(selector.slice(start).trim());
+        return parts2.filter(Boolean);
       };
       const resolveNestedSelector = (parent, child) => splitSelectorList(parent).flatMap(
         (parentPart) => splitSelectorList(child).map(
@@ -29221,8 +29276,8 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         let ids = 0;
         let classes = 0;
         let types = 0;
-        const addMost = (list5) => {
-          const most = splitSelectorList(list5).map(specificityOf).sort((left, right) => compareSpecificity(right, left))[0];
+        const addMost = (list6) => {
+          const most = splitSelectorList(list6).map(specificityOf).sort((left, right) => compareSpecificity(right, left))[0];
           if (most === void 0) return;
           ids += most[0];
           classes += most[1];
@@ -29382,23 +29437,23 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         if (label5) return label5;
         const labelledBy = element.getAttribute("aria-labelledby");
         if (labelledBy) {
-          const text5 = labelledBy.split(/\s+/).map(textOf2).join(" ").trim();
-          if (text5) return text5;
+          const text6 = labelledBy.split(/\s+/).map(textOf2).join(" ").trim();
+          if (text6) return text6;
         }
         const tag = element.tagName.toLowerCase();
         if (["input", "select", "textarea"].includes(tag)) {
           const id2 = element.getAttribute("id");
           const labelled = (id2 ? document.querySelector(`label[for="${CSS.escape(id2)}"]`) : null) ?? element.closest("label");
-          const text5 = (labelled?.textContent ?? "").replace(/\s+/g, " ").trim();
-          if (text5) return text5;
+          const text6 = (labelled?.textContent ?? "").replace(/\s+/g, " ").trim();
+          if (text6) return text6;
           const input = element;
           if (["button", "submit", "reset"].includes(input.type ?? ""))
             return input.value ?? "";
           return element.getAttribute("placeholder")?.trim() ?? "";
         }
         if (tag === "img") return element.getAttribute("alt")?.trim() ?? "";
-        const text4 = (element.innerText ?? element.textContent ?? "").replace(/\s+/g, " ").trim();
-        if (text4) return text4.slice(0, 200);
+        const text5 = (element.innerText ?? element.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (text5) return text5.slice(0, 200);
         for (const graphic of element.querySelectorAll(
           "img[alt], svg [aria-label], svg title, [aria-label]"
         )) {
@@ -29524,13 +29579,13 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
       const graphemes2 = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(void 0, { granularity: "grapheme" }) : void 0;
       const labelInk = (element) => {
         const lines2 = measureLines(element, visibleTextParent);
-        const text4 = lines2.texts.join("").replace(/\s+/g, " ").trim();
-        if (lines2.textRect === void 0 || text4 === "")
-          return { text: text4.slice(0, 120), lineCount: 0 };
-        const glyph2 = graphemes2 !== void 0 && [...graphemes2.segment(text4)].length === 1 && !/[\p{L}\p{N}]/u.test(text4);
-        const inkCenterY = lines2.lineCount === 1 && lines2.firstText !== void 0 ? measureInk2(lines2.firstText, lines2.firstRect, text4, glyph2) : void 0;
+        const text5 = lines2.texts.join("").replace(/\s+/g, " ").trim();
+        if (lines2.textRect === void 0 || text5 === "")
+          return { text: text5.slice(0, 120), lineCount: 0 };
+        const glyph2 = graphemes2 !== void 0 && [...graphemes2.segment(text5)].length === 1 && !/[\p{L}\p{N}]/u.test(text5);
+        const inkCenterY = lines2.lineCount === 1 && lines2.firstText !== void 0 ? measureInk2(lines2.firstText, lines2.firstRect, text5, glyph2) : void 0;
         return {
-          text: text4.slice(0, 120),
+          text: text5.slice(0, 120),
           lineCount: lines2.lineCount,
           textRect: lines2.textRect,
           ...inkCenterY === void 0 ? {} : { inkCenterY },
@@ -29564,8 +29619,8 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         descriptions: (element.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean).flatMap((id2) => {
           const target2 = document.getElementById(id2);
           if (target2 === null) return [];
-          const text4 = explanationDom.text(target2);
-          return text4 === "" ? [] : [{ selector: selectorFor(target2), text: text4 }];
+          const text5 = explanationDom.text(target2);
+          return text5 === "" ? [] : [{ selector: selectorFor(target2), text: text5 }];
         })
       });
       const renderedContent = (element) => {
@@ -29587,13 +29642,13 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
             unavailable2 = `unsupported generated content in ${pseudo}`;
             return;
           }
-          const text4 = (literal[1] ?? "").slice(1, -1).replace(
+          const text5 = (literal[1] ?? "").slice(1, -1).replace(
             /\\(?:([0-9a-f]{1,6})\s?|([\s\S]))/gi,
             (_match, hex4, escaped) => hex4 === void 0 ? escaped ?? "" : String.fromCodePoint(
               Math.min(Number.parseInt(hex4, 16), 1114111)
             )
           );
-          if (text4.trim()) rememberFont(style);
+          if (text5.trim()) rememberFont(style);
         };
         const visit = (owner2) => {
           if (!isVisibleContent(owner2, false)) return;
@@ -30801,10 +30856,10 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
               };
             if (!listed3) return void 0;
             for (const shorthand of shorthands2) {
-              const text4 = style.getPropertyValue(shorthand).trim();
-              if (text4 !== "")
+              const text5 = style.getPropertyValue(shorthand).trim();
+              if (text5 !== "")
                 return {
-                  text: text4,
+                  text: text5,
                   important: style.getPropertyPriority(shorthand) === "important" || style.getPropertyPriority(kebab) === "important"
                 };
             }
@@ -31279,13 +31334,13 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         if (!value.visible || element === document.body) continue;
         const kind = value.interactive ? "interactive" : value.directText !== "" && !["option", "input", "textarea", "select"].includes(value.tag) && value.styles.display !== "contents" && !insideInteractive(element) ? "text" : void 0;
         if (kind === void 0 || !isVisibleContent(element)) continue;
-        const clip2 = clipFor(element, kind === "text");
+        const clip3 = clipFor(element, kind === "text");
         const raw = kind === "interactive" ? [...element.getClientRects()].map(edgesOf) : textFragments(element).map(inkBand);
-        const boxes = raw.map((box) => intersectEdges(box, clip2.paint)).filter(
+        const boxes = raw.map((box) => intersectEdges(box, clip3.paint)).filter(
           (box) => box.right - box.left > 0 && box.bottom - box.top > 0
         );
         if (boxes.length === 0) continue;
-        const clipped = intersectEdges(edgesOf(value.rect), clip2.paint);
+        const clipped = intersectEdges(edgesOf(value.rect), clip3.paint);
         const onScreen = intersectEdges(clipped, viewportEdges);
         const own = areaOf(onScreen) > 0 ? onScreen : clipped;
         const outer = edgesOf(value.rect);
@@ -31581,10 +31636,10 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
             return unknown2;
           }
           const chain = (element) => {
-            const list5 = [];
+            const list6 = [];
             for (let current = element; current !== null; current = current.parentElement)
-              list5.push(current);
-            return list5;
+              list6.push(current);
+            return list6;
           };
           const chainA = chain(a);
           const chainB = chain(b);
@@ -31759,20 +31814,20 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         return scanned();
       })();
       const probePathFor = (element) => {
-        const parts = [];
+        const parts2 = [];
         let current = element;
         while (current !== null && current !== document.documentElement) {
           const parent = current.parentElement;
           const tag = current.tagName.toLowerCase();
           if (parent === null) {
-            parts.unshift(tag);
+            parts2.unshift(tag);
             break;
           }
           const index = [...parent.children].filter((child) => child.tagName === current?.tagName).indexOf(current) + 1;
-          parts.unshift(`${tag}:nth-of-type(${index})`);
+          parts2.unshift(`${tag}:nth-of-type(${index})`);
           current = parent;
         }
-        return `html > ${parts.join(" > ")}`;
+        return `html > ${parts2.join(" > ")}`;
       };
       const disclosures = [];
       for (const element of document.querySelectorAll(
@@ -31879,8 +31934,8 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         const style = getComputedStyle(element);
         const count5 = Number.parseInt(style.webkitLineClamp, 10);
         if (lines2.length <= count5) return false;
-        const lastLine = lines2[count5 - 1];
-        if (lastLine === void 0) return false;
+        const lastLine2 = lines2[count5 - 1];
+        if (lastLine2 === void 0) return false;
         const inside5 = (edges2) => edges2.left >= box.left - 1 && edges2.right <= box.right + 1 && edges2.top >= box.top - 1 && edges2.bottom <= box.bottom + 1;
         let markerAdvance = pxOf(style.fontSize);
         let inkLeft = 0;
@@ -31893,9 +31948,9 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           inkRight = metrics.actualBoundingBoxRight;
         }
         const rtl = style.direction === "rtl";
-        const painted3 = lastLine.retained ?? lastLine.edges;
+        const painted3 = lastLine2.retained ?? lastLine2.edges;
         if (lines2.slice(0, count5 - 1).some((line3) => !inside5(line3.edges)) || !inside5({
-          ...lastLine.edges,
+          ...lastLine2.edges,
           left: painted3.left,
           right: painted3.right
         }))
@@ -31904,14 +31959,14 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         const marker = {
           left: origin + inkLeft,
           right: origin + inkRight,
-          top: lastLine.edges.top,
-          bottom: lastLine.edges.bottom
+          top: lastLine2.edges.top,
+          bottom: lastLine2.edges.bottom
         };
         return inside5(marker);
       };
       const tickerTracks = /* @__PURE__ */ new WeakMap();
       const repeatedTrack = (track) => {
-        const normalize2 = (text4) => text4.replace(/\s+/g, " ").trim();
+        const normalize2 = (text5) => text5.replace(/\s+/g, " ").trim();
         const runs = [...track.childNodes].map((node) => normalize2(node.textContent ?? "")).filter(Boolean);
         for (let period = 1; period <= runs.length / 2; period += 1) {
           if (runs.length % period !== 0) continue;
@@ -31953,10 +32008,10 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
                 const resolve71 = (value) => value.replace(
                   /translate(X|Y|3d)?\(([^)]+)\)/gi,
                   (_all, axis, args) => {
-                    const parts = args.split(/[,\s]+/).filter(Boolean).map(
+                    const parts2 = args.split(/[,\s]+/).filter(Boolean).map(
                       (part, index) => part.endsWith("%") ? `${Number.parseFloat(part) * (axis?.toLowerCase() === "y" || index === 1 ? height : width) / 100}px` : part
                     );
-                    return `translate${axis ?? ""}(${parts.join(",")})`;
+                    return `translate${axis ?? ""}(${parts2.join(",")})`;
                   }
                 );
                 const transform = String(frame2.transform ?? "none");
@@ -31964,9 +32019,9 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
                   transform === "none" ? void 0 : resolve71(transform)
                 );
                 if (frame2.translate !== void 0 && frame2.translate !== "none") {
-                  const parts = String(frame2.translate).trim().split(/\s+/);
-                  if (parts.length > 3) throw new Error("translate");
-                  const values = parts.map((part, index) => {
+                  const parts2 = String(frame2.translate).trim().split(/\s+/);
+                  if (parts2.length > 3) throw new Error("translate");
+                  const values = parts2.map((part, index) => {
                     if (!/^-?(?:\d*\.)?\d+(?:px|%)?$/.test(part))
                       throw new Error("unresolved translate");
                     return Number.parseFloat(part) * (part.endsWith("%") ? (index === 1 ? height : width) / 100 : 1);
@@ -32049,8 +32104,8 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         }
         measureCanvas.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
         return lines2.every((line3) => {
-          const text4 = style.textTransform === "uppercase" ? line3.text.toLocaleUpperCase() : style.textTransform === "lowercase" ? line3.text.toLocaleLowerCase() : line3.text;
-          const metrics = measureCanvas.measureText(text4);
+          const text5 = style.textTransform === "uppercase" ? line3.text.toLocaleUpperCase() : style.textTransform === "lowercase" ? line3.text.toLocaleLowerCase() : line3.text;
+          const metrics = measureCanvas.measureText(text5);
           const ascent = metrics.fontBoundingBoxAscent;
           const descent = metrics.fontBoundingBoxDescent;
           const inkAscent = metrics.actualBoundingBoxAscent;
@@ -32065,23 +32120,23 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
       for (const { element, value } of observed3) {
         if (!value.visible || value.directText === "" || element === document.body || ["input", "textarea", "select", "option"].includes(value.tag))
           continue;
-        const clip2 = clipFor(element, true);
-        if (clip2.ownerX === void 0 && clip2.ownerY === void 0) continue;
+        const clip3 = clipFor(element, true);
+        if (clip3.ownerX === void 0 && clip3.ownerY === void 0) continue;
         if (!isVisibleContent(element)) continue;
-        const owners = Object.values(clip2.hiddenOwners);
+        const owners = Object.values(clip3.hiddenOwners);
         const outermost = owners.find(
           (owner2) => owners.every((other) => owner2.contains(other))
         );
         let clamped = false;
         for (let current = element; current !== null && !clamped; current = current === outermost ? null : current.parentElement) {
-          clamped = hasVisibleClampMarker(current, clip2.hidden);
+          clamped = hasVisibleClampMarker(current, clip3.hidden);
         }
         if (clamped) continue;
         const fragments = textFragments(element);
         if (fragments.length === 0) continue;
-        const box = clip2.hidden;
+        const box = clip3.hidden;
         const ellipsisAt = (edge2) => {
-          const owner2 = clip2.hiddenOwners[edge2];
+          const owner2 = clip3.hiddenOwners[edge2];
           if (owner2 === void 0) return false;
           const style = getComputedStyle(owner2);
           if (style.textOverflow === "clip" || ![
@@ -32110,7 +32165,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           { edge: "left", pixels: box.left - minLeft },
           { edge: "right", pixels: maxRight - box.right }
         ].filter(
-          (cut2) => cut2.pixels > 1 && !ellipsisAt(cut2.edge) && !tickerAt(element, clip2.hiddenOwners[cut2.edge])
+          (cut2) => cut2.pixels > 1 && !ellipsisAt(cut2.edge) && !tickerAt(element, clip3.hiddenOwners[cut2.edge])
         ).sort((a, b) => b.pixels - a.pixels);
         const xClip = xClips[0];
         const yClip = [
@@ -32215,7 +32270,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         const xCut = overflowX > 1;
         if (!xCut && !yCut) continue;
         if (shown.length === 0) continue;
-        const ownerFor = xCut && xClip !== void 0 ? clip2.hiddenOwners[xClip.edge] : yClip === void 0 ? void 0 : clip2.hiddenOwners[yClip.edge];
+        const ownerFor = xCut && xClip !== void 0 ? clip3.hiddenOwners[xClip.edge] : yClip === void 0 ? void 0 : clip3.hiddenOwners[yClip.edge];
         let peeking = false;
         for (let current = element === ownerFor ? null : element.parentElement; current !== null && current !== ownerFor && !peeking; current = current.parentElement) {
           const others = [...current.children].filter(
@@ -32373,8 +32428,8 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
       const alphaOf = (color) => {
         const match = color.match(/^rgba?\(([^)]*)\)$/);
         if (match === null) return color === "transparent" ? 0 : 1;
-        const parts = (match[1] ?? "").split(/[\s,/]+/).filter(Boolean);
-        const alpha = parts[3];
+        const parts2 = (match[1] ?? "").split(/[\s,/]+/).filter(Boolean);
+        const alpha = parts2[3];
         if (alpha === void 0) return 1;
         return alpha.endsWith("%") ? Number.parseFloat(alpha) / 100 : Number.parseFloat(alpha);
       };
@@ -32390,7 +32445,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           "pattern",
           "marker"
         ].includes(element.localName) && (style.fill !== "none" && alphaOf(style.fill) > 0.05 && Number(style.fillOpacity) > 0 || style.stroke !== "none" && Number.parseFloat(style.strokeWidth) > 0 && alphaOf(style.stroke) > 0.05 && Number(style.strokeOpacity) > 0);
-        const record2 = (part, style, hasText, svg = false) => {
+        const record3 = (part, style, hasText, svg = false) => {
           for (const side of ["Top", "Right", "Bottom", "Left"]) {
             const width = Number.parseFloat(
               style.getPropertyValue(`border-${side.toLowerCase()}-width`)
@@ -32422,7 +32477,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
               decoration[`${part}.stroke.opacity`] = style.strokeOpacity;
           }
         };
-        record2(
+        record3(
           "self",
           getComputedStyle(representative),
           (representative.innerText ?? "").trim() !== "",
@@ -32467,7 +32522,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
             const paintedBox = area2 && boxPaints(style);
             if (!paintedText && !paintedBox) continue;
             paints2 = true;
-            if (emit) record2(`${prefix}${pseudo}`, style, hasText);
+            if (emit) record3(`${prefix}${pseudo}`, style, hasText);
           }
           return paints2;
         };
@@ -32490,7 +32545,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           const pseudoPaints = recordPseudos(element, `${prefix}.`, emit);
           if (!paints2 && !pseudoPaints) continue;
           if (paints2 && emit)
-            record2(prefix, style, hasText, svgPaints(element, style));
+            record3(prefix, style, hasText, svgPaints(element, style));
           paintedDescendants += 1;
         }
         decoration.descendants = String(paintedDescendants);
@@ -32509,7 +32564,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           const emit = indicators < 6;
           const pseudos = recordPseudos(element, `${prefix}.`, emit);
           if (!paints2 && !pseudos) continue;
-          if (paints2 && emit) record2(`${prefix}.self`, style, false, graphic);
+          if (paints2 && emit) record3(`${prefix}.self`, style, false, graphic);
           indicators += 1;
         }
         return decoration;
@@ -32867,8 +32922,8 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
                 (rect3) => rect3.width > 0 && rect3.height > 0
               ))
                 continue;
-              const text4 = (node.textContent ?? "").replace(/\s+/g, " ").trim();
-              if (text4) words2.push(text4);
+              const text5 = (node.textContent ?? "").replace(/\s+/g, " ").trim();
+              if (text5) words2.push(text5);
             }
           }
           return { cta, text: words2.join(" ").slice(0, 160) };
@@ -33002,7 +33057,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         }
         const repeatedContainers2 = [];
         const recorded = /* @__PURE__ */ new Set();
-        const clean = (text4) => (text4 ?? "").replace(/\s+/g, " ").trim();
+        const clean = (text5) => (text5 ?? "").replace(/\s+/g, " ").trim();
         const headingLike = "h1, h2, h3, h4, h5, h6, legend, [role=heading]";
         const containerName = (region) => {
           const labelledBy = region.getAttribute("aria-labelledby");
@@ -33014,8 +33069,8 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           for (let depth = 0; current && depth < 4; depth += 1) {
             for (let sibling = current.previousElementSibling; sibling !== null; sibling = sibling.previousElementSibling) {
               const heading = sibling.matches(headingLike) ? sibling : [...sibling.querySelectorAll(headingLike)].at(-1);
-              const text4 = clean(heading?.textContent);
-              if (text4) return text4.slice(0, 80);
+              const text5 = clean(heading?.textContent);
+              if (text5) return text5.slice(0, 80);
             }
             current = current.parentElement;
             const legend = current?.querySelector(":scope > legend");
@@ -33023,7 +33078,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           }
           return "";
         };
-        const record2 = (region, kind, items, selector = selectorFor(region)) => {
+        const record3 = (region, kind, items, selector = selectorFor(region)) => {
           if (repeatedContainers2.length >= 100) return;
           recorded.add(region);
           repeatedContainers2.push({
@@ -33040,7 +33095,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           )) {
             const found = queryAll(region, items);
             if (found !== void 0)
-              record2(region, "configured", found.filter(renderedItem).length);
+              record3(region, "configured", found.filter(renderedItem).length);
           }
         for (const { selector } of collectionInput) {
           const matches2 = queryAll(document, selector);
@@ -33083,7 +33138,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         const autoCandidate = (region) => !recorded.has(region) && present2(region) && region.closest(excluded) === null && !region.parentElement?.closest("li, [role=listitem], tr, [role=row]");
         for (const { kind, selector, items } of repeatedKinds)
           for (const region of document.querySelectorAll(selector))
-            if (autoCandidate(region)) record2(region, kind, items(region));
+            if (autoCandidate(region)) record3(region, kind, items(region));
         const addName = /^\s*(\+\s*)?(add|new|create|insert)\b/i;
         const editorSelector = "fieldset, [role=group], [role=region], section, form, dialog, [role=dialog]";
         const contentSelector = "a[href], button, input, select, textarea, [role=button], [role=link], [role=checkbox], [role=radio], [tabindex], img, svg, canvas, video, li, [role=listitem], tr, [role=row], article";
@@ -33108,7 +33163,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
               (side) => Number.parseFloat(style[`border${side}Width`]) > 0 && style[`border${side}Style`] !== "none" && !transparent3(style[`border${side}Color`])
             );
           }).length;
-          record2(editor, "editor", items);
+          record3(editor, "editor", items);
         }
         return {
           emptyRegions: { configured, auto: emptyInput.auto, regions },
@@ -33264,12 +33319,12 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         const collapsed = (element) => (element.textContent ?? "").replace(/\s+/g, " ").trim();
         const read = (element) => declaration.attribute === void 0 ? collapsed(element).slice(0, 1e3) : element.getAttribute(declaration.attribute);
         const owners = declaration.owner === void 0 ? void 0 : query(document, declaration.owner);
-        return query(document, declaration.group).map((list5) => {
-          const owner2 = owners === void 0 ? list5 : owners.length === 1 ? owners[0] : void 0;
+        return query(document, declaration.group).map((list6) => {
+          const owner2 = owners === void 0 ? list6 : owners.length === 1 ? owners[0] : void 0;
           return {
-            list: selectorFor(list5),
+            list: selectorFor(list6),
             owner: owner2 === void 0 ? null : { selector: selectorFor(owner2), value: read(owner2) },
-            items: query(list5, declaration.items).map((item) => {
+            items: query(list6, declaration.items).map((item) => {
               const label6 = collapsed(item) || item.getAttribute("aria-label")?.trim() || item.getAttribute("title")?.trim() || selectorFor(item);
               return {
                 selector: selectorFor(item),
@@ -33602,8 +33657,8 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
                     reason: `surround: ${outsidePaint.reason}`
                   };
                 const sideBorder = border[side];
-                const clipped = clips.some((clip2) => {
-                  const rect4 = clip2.getBoundingClientRect();
+                const clipped = clips.some((clip3) => {
+                  const rect4 = clip3.getBoundingClientRect();
                   return !(outside2.x >= rect4.left && outside2.x <= rect4.right && outside2.y >= rect4.top && outside2.y <= rect4.bottom);
                 });
                 const direction2 = {
@@ -33972,10 +34027,10 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         const bands = expand(document.body, true);
         const records = bands.map((band) => {
           const allMedia = [];
-          let text4 = false;
+          let text5 = false;
           const inspect3 = (element) => {
             if (excluded(element)) return;
-            if (directText(element)) text4 = true;
+            if (directText(element)) text5 = true;
             if (media2(element)) {
               allMedia.push(element);
               return;
@@ -33987,11 +34042,11 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
             const r = element.getBoundingClientRect();
             return Math.abs(r.left) <= 1 && Math.abs(r.right - document.documentElement.clientWidth) <= 1;
           };
-          const fullBleedMedia = !text4 && allMedia.some(fullWidth);
+          const fullBleedMedia = !text5 && allMedia.some(fullWidth);
           const frontier = [];
           const descend = (element, parent) => {
             if (excluded(element) || !foreground2(element)) return;
-            if (text4 && media2(element) && fullWidth(element)) return;
+            if (text5 && media2(element) && fullWidth(element)) return;
             const r = element.getBoundingClientRect();
             const style = getComputedStyle(element);
             if (style.display === "contents") {
@@ -34016,7 +34071,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
               style.display
             );
             const padded = pxOf(style.paddingLeft) > 0 || pxOf(style.paddingRight) > 0;
-            const mixedMedia = text4 && allMedia.some(
+            const mixedMedia = text5 && allMedia.some(
               (image2) => element.contains(image2) && fullWidth(image2)
             );
             if (!mixedMedia && (inset || padded || directText(element) || media2(element))) {
@@ -34087,14 +34142,14 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
             continue;
           }
           const pieces = [];
-          let text4 = "";
+          let text5 = "";
           let nodeIndex = 0;
           let truncated = false;
           const boundary = () => {
-            text4 += "\n";
+            text5 += "\n";
           };
           const walk3 = (node) => {
-            if (text4.length > 2e4 || nodeIndex > 2e3) {
+            if (text5.length > 2e4 || nodeIndex > 2e3) {
               truncated = true;
               return;
             }
@@ -34108,16 +34163,16 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
               const original = node.textContent ?? "";
               const value = original.slice(
                 0,
-                Math.max(0, 2e4 - text4.length)
+                Math.max(0, 2e4 - text5.length)
               );
               if (value.length < original.length) truncated = true;
               pieces.push({
                 node,
                 index,
-                start: text4.length,
-                end: text4.length + value.length
+                start: text5.length,
+                end: text5.length + value.length
               });
-              text4 += value;
+              text5 += value;
               return;
             }
             if (!(node instanceof Element)) return;
@@ -34158,9 +34213,9 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
             range.setStart(piece.node, start - piece.start);
             range.setEnd(piece.node, end - piece.start);
             work++;
-            const clip2 = clipFor(parent, true).paint;
+            const clip3 = clipFor(parent, true).paint;
             const boxes = [...range.getClientRects()].filter(
-              (r) => r.width > 0 && r.height > 0 && r.left >= clip2.left - 0.5 && r.right <= clip2.right + 0.5 && r.top >= clip2.top - 0.5 && r.bottom <= clip2.bottom + 0.5
+              (r) => r.width > 0 && r.height > 0 && r.left >= clip3.left - 0.5 && r.right <= clip3.right + 0.5 && r.top >= clip3.top - 0.5 && r.bottom <= clip3.bottom + 0.5
             );
             const box = boxes.length === 1 ? boxes[0] : void 0;
             const result2 = box ? {
@@ -34168,7 +34223,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
               node: piece.index,
               start: start - piece.start,
               end: end - piece.start,
-              text: text4.slice(start, end),
+              text: text5.slice(start, end),
               rect: {
                 x: box.x,
                 y: box.y,
@@ -34180,7 +34235,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
             return result2;
           };
           const sameLine = (a, b) => Math.min(a.y + a.height, b.y + b.height) > Math.max(a.y, b.y) + 0.5;
-          for (const segment of wordSegmenter.segment(text4)) {
+          for (const segment of wordSegmenter.segment(text5)) {
             if (work > 3e4) {
               reasons.add("Text range work limit reached");
               break;
@@ -34264,7 +34319,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
               records.push({
                 selector: geometrySelector(owner2),
                 word: segment.segment,
-                text: text4.slice(Math.max(0, start - 30), start + 130),
+                text: text5.slice(Math.max(0, start - 30), start + 130),
                 start,
                 end,
                 before,
@@ -34297,8 +34352,8 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           };
         const collected = [];
         await new Promise((resolve71) => {
-          const observer = new PerformanceObserver((list5) => {
-            collected.push(...list5.getEntries());
+          const observer = new PerformanceObserver((list6) => {
+            collected.push(...list6.getEntries());
             finish();
           });
           const timer = setTimeout(() => finish(), 100);
@@ -34531,7 +34586,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           );
           let nodes = 0;
           let length = 0;
-          let text4 = "";
+          let text5 = "";
           let incomplete = false;
           for (let node = walker.nextNode(); node; node = walker.nextNode()) {
             if (nodes >= 2e3 || length + (node.nodeValue?.length ?? 0) > 2e4) {
@@ -34553,7 +34608,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
               incomplete = true;
               break;
             }
-            text4 += value;
+            text5 += value;
             for (const { segment, index } of graphemes3.segment(value)) {
               if (work >= 1e5) {
                 reasons.add(
@@ -34592,8 +34647,8 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
             if (incomplete) break;
           }
           if (incomplete) continue;
-          text4 = text4.replace(/\s+/g, " ").trim();
-          if (text4.length < 20 || !glyphs.length) continue;
+          text5 = text5.replace(/\s+/g, " ").trim();
+          if (text5.length < 20 || !glyphs.length) continue;
           const bands = [];
           glyphs.sort(
             (a, b) => a.bottom - a.top - (b.bottom - b.top) || a.top - b.top
@@ -34646,7 +34701,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
             width: Math.round(width * 100) / 100,
             charWidth: Math.max(1e-3, Math.round(charWidth * 1e3) / 1e3),
             lines: lines2.length,
-            text: text4.slice(0, 160)
+            text: text5.slice(0, 160)
           });
         }
         return reasons.size ? { status: "partial", reason: [...reasons].join("; "), records } : { status: "ran", records };
@@ -34708,7 +34763,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           for (let element = owner2; element && element !== document.body; element = element.parentElement)
             if (hasActiveLineClamp(element)) clamped = true;
           if (clamped) continue;
-          const clip2 = window.__idiomVisibility?.extent(
+          const clip3 = window.__idiomVisibility?.extent(
             owner2,
             document.documentElement
           );
@@ -34734,7 +34789,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
               range.setStart(node, segment.index);
               range.setEnd(node, segment.index + segment.segment.length);
               const rect3 = [...range.getClientRects()].find(
-                (r) => r.width > 0 && r.height > 0 && (clip2 === void 0 || r.right > clip2.x && r.left < clip2.x + clip2.width && r.bottom > clip2.y && r.top < clip2.y + clip2.height)
+                (r) => r.width > 0 && r.height > 0 && (clip3 === void 0 || r.right > clip3.x && r.left < clip3.x + clip3.width && r.bottom > clip3.y && r.top < clip3.y + clip3.height)
               );
               if (rect3)
                 words2.push({
@@ -34840,7 +34895,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
           })
         );
         const records = measured2.filter(
-          (record2) => record2.broken || record2.distortion > 5e-3
+          (record3) => record3.broken || record3.distortion > 5e-3
         );
         return records.length > 200 ? {
           status: "partial",
@@ -35008,13 +35063,13 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
         if (!verdict && getComputedStyle(el).transform !== "none") {
           const seen = /* @__PURE__ */ new Set();
           for (const child of el.children) {
-            const text4 = (child instanceof HTMLElement ? child.innerText : "").replace(/\s+/g, " ").trim();
-            if (text4 === "") continue;
-            if (seen.has(text4)) {
+            const text5 = (child instanceof HTMLElement ? child.innerText : "").replace(/\s+/g, " ").trim();
+            if (text5 === "") continue;
+            if (seen.has(text5)) {
               verdict = true;
               break;
             }
-            seen.add(text4);
+            seen.add(text5);
           }
         }
         marqueeVerdicts.set(el, verdict);
@@ -35060,7 +35115,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
               element,
               ...element.querySelectorAll("*")
             ]) {
-              const text4 = [...contributor.childNodes].some(
+              const text5 = [...contributor.childNodes].some(
                 (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim() !== ""
               );
               const media2 = [
@@ -35078,13 +35133,13 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
                   contributorStyle.getPropertyValue(`border-${side}-color`)
                 ) > 0
               );
-              if (!text4 && !media2 && !decorated) continue;
+              if (!text5 && !media2 && !decorated) continue;
               selectors.push(selectorFor(contributor));
               if (!paintedOf(contributor).value) continue;
               const rects = [];
               if (media2 || decorated)
                 rects.push(contributor.getBoundingClientRect());
-              if (text4)
+              if (text5)
                 for (const node of contributor.childNodes) {
                   if (node.nodeType !== Node.TEXT_NODE) continue;
                   const range = document.createRange();
@@ -35098,15 +35153,15 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
             }
             const clipsX = ["hidden", "clip"].includes(style.overflowX);
             const clipsY = ["hidden", "clip"].includes(style.overflowY);
-            const clip2 = window.__idiomVisibility.client(element);
+            const clip3 = window.__idiomVisibility.client(element);
             const clipped = {
               text: [],
               interactive: [],
               marquee: []
             };
-            const note = (list5, selector) => {
-              if (list5.length < 10 && !list5.includes(selector))
-                list5.push(selector);
+            const note = (list6, selector) => {
+              if (list6.length < 10 && !list6.includes(selector))
+                list6.push(selector);
             };
             for (const contributor of [
               element,
@@ -35130,7 +35185,7 @@ async function observeWithTokens(page, normalizedTokens, tokenSession, axe, mask
               const visible2 = visibleRects(contributor, rects, element);
               if (visible2 === void 0) continue;
               const cut = visible2.some(
-                (r) => clipsX && (r.x < clip2.x - 1 || r.x + r.width > clip2.x + clip2.width + 1) || clipsY && (r.y < clip2.y - 1 || r.y + r.height > clip2.y + clip2.height + 1)
+                (r) => clipsX && (r.x < clip3.x - 1 || r.x + r.width > clip3.x + clip3.width + 1) || clipsY && (r.y < clip3.y - 1 || r.y + r.height > clip3.y + clip3.height + 1)
               );
               if (!cut) continue;
               const track = marqueeTrack(contributor, element);
@@ -35422,7 +35477,7 @@ var init_client = __esm({
       }
       status;
     };
-    scrub = (text4, token) => token ? text4.split(token).join("<FIGMA_TOKEN>") : text4;
+    scrub = (text5, token) => token ? text5.split(token).join("<FIGMA_TOKEN>") : text5;
   }
 });
 
@@ -35850,8 +35905,8 @@ function boxStyles(node, styles) {
   styles.paddingLeft = px3(node.paddingLeft ?? 0);
   if (node.opacity !== void 0) styles.opacity = String(round4(node.opacity));
 }
-function textStyles(text4, styles) {
-  const style = text4.style ?? {};
+function textStyles(text5, styles) {
+  const style = text5.style ?? {};
   if (style.fontFamily !== void 0) styles.fontFamily = style.fontFamily;
   if (style.fontSize !== void 0) styles.fontSize = px3(style.fontSize);
   if (style.fontWeight !== void 0)
@@ -35865,9 +35920,9 @@ function textStyles(text4, styles) {
     RIGHT: "right",
     JUSTIFIED: "justify"
   }[style.textAlignHorizontal ?? ""] ?? "start";
-  styles.color = paintColor(solid(text4.fills)) ?? "rgb(0, 0, 0)";
+  styles.color = paintColor(solid(text5.fills)) ?? "rgb(0, 0, 0)";
 }
-function boundNames(node, text4, vector, variables) {
+function boundNames(node, text5, vector, variables) {
   if (!variables) return {};
   const names = {};
   const name = (alias) => isVariableAlias(alias) ? variables.meta.variables[alias.id]?.name : void 0;
@@ -35879,7 +35934,7 @@ function boundNames(node, text4, vector, variables) {
   };
   set(vector ? "fill" : "backgroundColor", paintAlias(node, "fills"));
   set("borderColor", paintAlias(node, "strokes"));
-  if (text4) set("color", paintAlias(text4, "fills"));
+  if (text5) set("color", paintAlias(text5, "fills"));
   const bound = node.boundVariables ?? {};
   set("gap", bound.itemSpacing);
   set("borderWidth", bound.strokeWeight);
@@ -35894,7 +35949,7 @@ function boundNames(node, text4, vector, variables) {
     ["paddingLeft", "paddingLeft"]
   ])
     set(property, bound[key5]);
-  const textBound = text4?.boundVariables ?? {};
+  const textBound = text5?.boundVariables ?? {};
   for (const key5 of ["fontSize", "fontWeight", "lineHeight", "fontFamily"])
     set(key5, first(textBound[key5]));
   return names;
@@ -36028,7 +36083,7 @@ function figmaObservation(frame2, options) {
         (kid) => visible(kid) && kid.opacity !== 0
       );
       const folded = WRAPPER_TYPES.has(child.type) && visibleKids.length === 1 && visibleKids[0]?.type === "TEXT" ? visibleKids[0] : void 0;
-      const text4 = child.type === "TEXT" ? child : folded;
+      const text5 = child.type === "TEXT" ? child : folded;
       const vector = VECTOR_TYPES.has(child.type);
       const styles = baseStyles();
       boxStyles(child, styles);
@@ -36046,8 +36101,8 @@ function figmaObservation(frame2, options) {
           styles[`border${side}Width`] = "0px";
           styles[`border${side}Style`] = "none";
         }
-      if (text4) textStyles(text4, styles);
-      const characters = text4?.characters?.replace(/\s+/g, " ").trim() ?? "";
+      if (text5) textStyles(text5, styles);
+      const characters = text5?.characters?.replace(/\s+/g, " ").trim() ?? "";
       const hint = layer && !isAutoName(layer) ? layer : "";
       const role = inferredRole(
         `${layer} ${child.type === "INSTANCE" ? child.componentId ?? "" : ""}`
@@ -36064,7 +36119,7 @@ function figmaObservation(frame2, options) {
           attributes: figmaAttributes(
             child,
             layerNames,
-            boundNames(child, text4, vector, options.variables)
+            boundNames(child, text5, vector, options.variables)
           ),
           text: characters,
           interactive: role !== "",
@@ -36651,7 +36706,7 @@ async function navigateDesign(page, source) {
     source.provenance.final = page.url();
   const access14 = await page.evaluate(() => {
     const title = document.title.trim();
-    const text4 = document.body?.innerText.trim() ?? "";
+    const text5 = document.body?.innerText.trim() ?? "";
     const painted3 = [...document.querySelectorAll("body, body *")].some(
       (element) => {
         const rect3 = element.getBoundingClientRect(), style = getComputedStyle(element);
@@ -36665,10 +36720,10 @@ async function navigateDesign(page, source) {
         );
       }
     );
-    return !text4 && !document.querySelector("img,svg,canvas,video") && !painted3 || /^(?:sign in|log in|access denied|unauthorized|forbidden|not found|link expired)(?:\b|$)/i.test(
+    return !text5 && !document.querySelector("img,svg,canvas,video") && !painted3 || /^(?:sign in|log in|access denied|unauthorized|forbidden|not found|link expired)(?:\b|$)/i.test(
       title
-    ) || text4.length < 1500 && /^(?:sign in to|log in to|access denied|this (?:link|design|artifact) (?:has expired|is (?:private|unavailable)))/i.test(
-      text4
+    ) || text5.length < 1500 && /^(?:sign in to|log in to|access denied|this (?:link|design|artifact) (?:has expired|is (?:private|unavailable)))/i.test(
+      text5
     );
   });
   if (access14)
@@ -36871,7 +36926,8 @@ function computeBriefCoverage(tuples, briefs, flow) {
             selector: assertion.selector,
             passed: 0,
             mismatched: 0,
-            unmeasured: []
+            unmeasured: [],
+            notes: []
           });
     const measured2 = /* @__PURE__ */ new Set();
     for (const tuple of flowTuples)
@@ -36882,7 +36938,10 @@ function computeBriefCoverage(tuples, briefs, flow) {
         measured2.add(key5);
         if (result2.outcome === "pass") entry2.passed += 1;
         else if (result2.outcome === "mismatch") entry2.mismatched += 1;
-        else if (result2.outcome === "unmeasured" && result2.reason !== void 0 && !entry2.unmeasured.includes(result2.reason))
+        if (result2.outcome === "pass" || result2.outcome === "mismatch") {
+          if (result2.reason !== void 0 && !entry2.notes.includes(result2.reason))
+            entry2.notes.push(result2.reason);
+        } else if (result2.outcome === "unmeasured" && result2.reason !== void 0 && !entry2.unmeasured.includes(result2.reason))
           entry2.unmeasured.push(result2.reason);
       }
     if (measured2.size === 0) {
@@ -36932,6 +36991,11 @@ function entryLines(entry2) {
     `${name}: checked; ${passed2} passed, ${mismatched} mismatched, ${unmeasured.length} unmeasured`,
     ...unmeasured.map(
       (assertion) => `  - ${assertionLabel(assertion)}: ${assertion.unmeasured.join("; ")}`
+    ),
+    ...entry2.assertions.filter(
+      (assertion) => assertion.passed + assertion.mismatched > 0 && assertion.notes.length > 0
+    ).map(
+      (assertion) => `  - ${assertionLabel(assertion)}: ${assertion.notes.join("; ")}`
     )
   ];
 }
@@ -37219,7 +37283,7 @@ function succeeded(tuple) {
   return tuple.failure === void 0 && tuple.mismatches.length === 0;
 }
 function computeFlowStateCoverage(options) {
-  const { project, flow, record: record2 } = options;
+  const { project, flow, record: record3 } = options;
   const recapture = `recapture the whole flow: idiom capture ${flow.id}`;
   const recaptureVersion = `recapture with this Idiom version: idiom capture ${flow.id}`;
   const flowViewports = selectViewports(project, flow);
@@ -37233,7 +37297,7 @@ function computeFlowStateCoverage(options) {
     options.tuples.map((tuple) => [keyOf(tuple), tuple])
   );
   const collapsed = new Set(options.collapsedTupleKeys);
-  const selected2 = record2 ? new Set(record2.selected.map(captureTupleKey)) : void 0;
+  const selected2 = record3 ? new Set(record3.selected.map(captureTupleKey)) : void 0;
   const coordinatesOf = (state) => stateViewports(flowViewports, state).flatMap(
     (viewport) => flowSchemes.map((colorScheme) => ({
       state: state.id,
@@ -37260,10 +37324,10 @@ function computeFlowStateCoverage(options) {
       `fix the ${problem} at ${coordinateLabel(first)} and recapture`
     );
   };
-  const mode = record2?.capture?.reducedMotion ?? options.tuples.map(
+  const mode = record3?.capture?.reducedMotion ?? options.tuples.map(
     (tuple) => tuple.observations?.version === 2 ? tuple.observations.motion?.reducedMotion ?? tuple.observations.probe?.motion?.reducedMotion : void 0
   ).find((value) => value !== void 0);
-  const policy = record2?.probe.policy ?? (isElectronFlow(flow) ? "unsupported" : "once-per-state");
+  const policy = record3?.probe.policy ?? (isElectronFlow(flow) ? "unsupported" : "once-per-state");
   const projectViewports = [
     ...project.viewports.map(({ name }) => name),
     ...flowViewports.map(({ name }) => name).filter((name) => !project.viewports.some((v) => v.name === name))
@@ -37497,7 +37561,7 @@ function computeFlowStateCoverage(options) {
 }
 function gaps(states, data) {
   const byKey = /* @__PURE__ */ new Map();
-  const record2 = (dimension3, state) => {
+  const record3 = (dimension3, state) => {
     if (dimension3.status !== "missing" || dimension3.remedy === void 0)
       return;
     const key5 = `${dimension3.label}\0${dimension3.remedy}`;
@@ -37514,9 +37578,9 @@ function gaps(states, data) {
   for (let index = 0; index < width; index += 1)
     for (const entry2 of states) {
       const dimension3 = entry2.dimensions[index];
-      if (dimension3 !== void 0) record2(dimension3, entry2.state);
+      if (dimension3 !== void 0) record3(dimension3, entry2.state);
     }
-  for (const dimension3 of data) record2(dimension3);
+  for (const dimension3 of data) record3(dimension3);
   return [...byKey.values()];
 }
 function uncapturedFlowCoverage(flow, reason) {
@@ -37763,7 +37827,7 @@ function pageSentence(page, summary, label5) {
   const where = `${page.viewport}/${page.colorScheme}`;
   if (page.probeStatus === "unavailable")
     return `Idiom could not interact with ${label5} at ${where}: ${page.reason ?? "no probe evidence was recorded"}.`;
-  const parts = [
+  const parts2 = [
     `Idiom interacted with ${label5}: it clicked ${plural4(page.probed, "control")} at ${where} within a ${seconds(summary.budgetMs)} budget (at most ${summary.maxControls} controls).`
   ];
   const skipped3 = [];
@@ -37776,7 +37840,7 @@ function pageSentence(page, summary, label5) {
       `${plural4(page.skipped.intent, "already-selected or drag control")}`
     );
   if (page.skipped.other > 0) skipped3.push(`${page.skipped.other} other`);
-  if (skipped3.length > 0) parts.push(`Skipped: ${skipped3.join(", ")}.`);
+  if (skipped3.length > 0) parts2.push(`Skipped: ${skipped3.join(", ")}.`);
   const notReached = sum(page.notReached);
   if (notReached > 0) {
     const why = [];
@@ -37788,18 +37852,18 @@ function pageSentence(page, summary, label5) {
       );
     if (page.notReached.other > 0)
       why.push(`${page.notReached.other} for other limits`);
-    parts.push(
+    parts2.push(
       `${plural4(notReached, "control was", "controls were")} not probed: ${why.join(", ")}.`
     );
   }
   const blockedRequests = Object.entries(page.requests.blocked).filter(([method]) => !SAFE_METHODS.has(method.toUpperCase())).reduce((total, [, count5]) => total + count5, 0);
   const sent = nonSafeSent(page.requests);
-  parts.push(
+  parts2.push(
     `Blocked: ${plural4(page.blocked.crossOriginNavigation, "cross-origin navigation")}, ${plural4(page.blocked.formSubmission, "form submission")}, ${plural4(page.blocked.download, "download")}, ${plural4(page.blocked.popup + page.blocked.windowOpen, "new window")}, ${plural4(page.blocked.permission, "permission prompt")}; ${plural4(blockedRequests, "non-GET request was", "non-GET requests were")} blocked and ${sent === 0 ? "none" : sent} left the browser.`
   );
   if (page.probeStatus !== "ran" && page.reason !== void 0)
-    parts.push(`Probe ${page.probeStatus}: ${page.reason}.`);
-  return parts.join(" ");
+    parts2.push(`Probe ${page.probeStatus}: ${page.reason}.`);
+  return parts2.join(" ");
 }
 function renderInteractionSentences(summary) {
   if (summary.status === "off")
@@ -38118,14 +38182,14 @@ function chainedStateLabels(flow, states) {
   return Object.keys(labels).length === 0 ? {} : { stateLabels: labels };
 }
 function buildReviewCoverage(options) {
-  const record2 = options.record;
-  const states = record2 ? [...new Set(record2.selected.map((tuple) => tuple.state))] : options.flow.states.map((state) => state.id);
-  const viewports = record2 ? record2.viewports.filter(
-    (v) => record2.selected.some((tuple) => tuple.viewport === v.name)
+  const record3 = options.record;
+  const states = record3 ? [...new Set(record3.selected.map((tuple) => tuple.state))] : options.flow.states.map((state) => state.id);
+  const viewports = record3 ? record3.viewports.filter(
+    (v) => record3.selected.some((tuple) => tuple.viewport === v.name)
   ) : selectViewports(options.project, options.flow);
-  const colorSchemes = record2 ? [...new Set(record2.selected.map((tuple) => tuple.colorScheme))] : selectColorSchemes(options.project, options.flow);
+  const colorSchemes = record3 ? [...new Set(record3.selected.map((tuple) => tuple.colorScheme))] : selectColorSchemes(options.project, options.flow);
   const expectedKeys = new Set(
-    record2 ? record2.selected.map(captureTupleKey).filter((key5) => !(options.collapsedTupleKeys ?? []).includes(key5)) : expectedCaptureTupleKeys({
+    record3 ? record3.selected.map(captureTupleKey).filter((key5) => !(options.collapsedTupleKeys ?? []).includes(key5)) : expectedCaptureTupleKeys({
       project: options.project,
       flow: options.flow,
       collapsed: options.collapsedTupleKeys
@@ -38141,20 +38205,20 @@ function buildReviewCoverage(options) {
       return expectedKeys.has(key5) && tupleSucceeded(tuple) ? [key5] : [];
     })
   );
-  const narrowedViewports = record2 ? [] : options.project.viewports.filter(
+  const narrowedViewports = record3 ? [] : options.project.viewports.filter(
     (viewport) => !viewports.some(({ name }) => name === viewport.name)
   ).map(({ name }) => name);
-  const narrowedSchemes = record2 ? [] : options.project.colorSchemes.filter(
+  const narrowedSchemes = record3 ? [] : options.project.colorSchemes.filter(
     (scheme) => !colorSchemes.includes(scheme)
   );
-  const skippedTuples = record2 ? record2.declared.length - record2.selected.length : 0;
-  const omittedStates = record2 ? [...new Set(record2.declared.map((tuple) => tuple.state))].filter(
+  const skippedTuples = record3 ? record3.declared.length - record3.selected.length : 0;
+  const omittedStates = record3 ? [...new Set(record3.declared.map((tuple) => tuple.state))].filter(
     (state) => !states.includes(state)
   ) : [];
-  const omittedViewports = record2 ? [...new Set(record2.declared.map((tuple) => tuple.viewport))].filter(
+  const omittedViewports = record3 ? [...new Set(record3.declared.map((tuple) => tuple.viewport))].filter(
     (name) => !viewports.some((v) => v.name === name)
   ) : [];
-  const omittedSchemes = record2 ? [...new Set(record2.declared.map((tuple) => tuple.colorScheme))].filter(
+  const omittedSchemes = record3 ? [...new Set(record3.declared.map((tuple) => tuple.colorScheme))].filter(
     (scheme) => !colorSchemes.includes(scheme)
   ) : [];
   const successfulCount = successfulKeys.size;
@@ -38167,19 +38231,19 @@ function buildReviewCoverage(options) {
       tuple
     ])
   );
-  const unresolvedTuples = (record2?.selected ?? []).filter((coordinate6) => {
+  const unresolvedTuples = (record3?.selected ?? []).filter((coordinate6) => {
     const tuple = byKey.get(captureTupleKey(coordinate6));
     return !tuple || tuple.failure?.stage === "url-resolution";
   });
-  const failedTuples = (record2?.selected ?? []).filter((coordinate6) => {
+  const failedTuples = (record3?.selected ?? []).filter((coordinate6) => {
     const tuple = byKey.get(captureTupleKey(coordinate6));
     return tuple && !tupleSucceeded(tuple) && tuple.failure?.stage !== "url-resolution";
   });
   const limitations = [
-    ...record2 ? [
+    ...record3 ? [
       `${failedTuples.length} selected captures failed; ${unresolvedTuples.length} selected coordinates are unresolved.`,
       `${skippedTuples} declared tuples intentionally skipped. Omitted states: ${omittedStates.join(", ") || "none"}; viewports: ${omittedViewports.join(", ") || "none"}; colour schemes: ${omittedSchemes.join(", ") || "none"}.`,
-      `Interaction probe policy: ${record2.probe.policy}; ${record2.probe.executed.length} of ${record2.probe.intended.length} designated coordinates executed.${record2.probe.policy === "once-per-state" ? " Sibling coordinates have no probe evidence under this policy." : " Probe evidence belongs only to its executed coordinate."}${record2.probe.fallback ? " Light was excluded; the first selected scheme was used." : ""}${record2.probe.policy === "unsupported" ? " Interaction probing is unavailable for Electron." : ""}`
+      `Interaction probe policy: ${record3.probe.policy}; ${record3.probe.executed.length} of ${record3.probe.intended.length} designated coordinates executed.${record3.probe.policy === "once-per-state" ? " Sibling coordinates have no probe evidence under this policy." : " Probe evidence belongs only to its executed coordinate."}${record3.probe.fallback ? " Light was excluded; the first selected scheme was used." : ""}${record3.probe.policy === "unsupported" ? " Interaction probing is unavailable for Electron." : ""}`
     ] : [],
     ...collapsedLimitations(
       options.collapsedTupleKeys,
@@ -38204,7 +38268,7 @@ function buildReviewCoverage(options) {
   });
   const probeCoverage = options.interaction === void 0 ? computeProbeCoverage({
     tuples: options.tuples,
-    flowBudgetMs: record2?.probe.flowBudgetMs
+    flowBudgetMs: record3?.probe.flowBudgetMs
   }) : void 0;
   const stateLabels = Object.fromEntries(
     options.flow.states.map((state) => [state.id, stateChainLabel(state)])
@@ -38227,7 +38291,7 @@ function buildReviewCoverage(options) {
   return {
     flow: options.flow.id,
     purpose: "Declared review coverage",
-    declaredStateCount: record2 ? new Set(record2.declared.map((tuple) => tuple.state)).size : options.flow.states.length,
+    declaredStateCount: record3 ? new Set(record3.declared.map((tuple) => tuple.state)).size : options.flow.states.length,
     states,
     skippedTuples,
     failedTuples,
@@ -38577,7 +38641,7 @@ async function createArtifactWorkspace(options) {
 }
 function consoleJsonl(result2) {
   if (result2.console.length === 0) return "";
-  return `${result2.console.map((record2) => JSON.stringify(record2)).join("\n")}
+  return `${result2.console.map((record3) => JSON.stringify(record3)).join("\n")}
 `;
 }
 function failure(tuple) {
@@ -38969,7 +39033,7 @@ var init_artifacts3 = __esm({
     init_temporal_evidence();
     init_artifacts();
     init_errors();
-    init_version();
+    init_version2();
     init_staging();
   }
 });
@@ -39020,19 +39084,19 @@ var init_console_provenance = __esm({
       }
       /** Must run after settling, never inside the console handler: the streams race. */
       annotate(records, timestamps) {
-        return records.map((record2) => {
-          const timestamp = timestamps.get(record2);
-          if (record2.location === void 0 || timestamp === void 0)
-            return record2;
-          const url = record2.location.url;
+        return records.map((record3) => {
+          const timestamp = timestamps.get(record3);
+          if (record3.location === void 0 || timestamp === void 0)
+            return record3;
+          const url = record3.location.url;
           const entry2 = this.entries.find(
-            (candidate2) => !candidate2.consumed && candidate2.timestamp === timestamp && candidate2.text === record2.text && candidate2.url === url && this.requests.has(candidate2.requestId)
+            (candidate2) => !candidate2.consumed && candidate2.timestamp === timestamp && candidate2.text === record3.text && candidate2.url === url && this.requests.has(candidate2.requestId)
           );
           const request2 = entry2 === void 0 ? void 0 : this.requests.get(entry2.requestId);
-          if (entry2 === void 0 || request2 === void 0) return record2;
+          if (entry2 === void 0 || request2 === void 0) return record3;
           entry2.consumed = true;
           return {
-            ...record2,
+            ...record3,
             request: {
               resourceType: request2.type.toLowerCase(),
               mainFrame: request2.frameId === this.mainFrameId
@@ -39271,8 +39335,8 @@ function mergeExplanations(...artifacts) {
   if (available.length === 0) return void 0;
   const records = /* @__PURE__ */ new Map();
   for (const artifact of available)
-    for (const record2 of artifact.records)
-      records.set(JSON.stringify(record2), record2);
+    for (const record3 of artifact.records)
+      records.set(JSON.stringify(record3), record3);
   const reasons = [
     ...new Set(
       available.flatMap((value) => value.reason ? [value.reason] : [])
@@ -39445,27 +39509,27 @@ var init_explanations = __esm({
                   if (document.querySelectorAll(candidate2).length === 1)
                     return candidate2;
                 }
-                const parts = [];
+                const parts2 = [];
                 let current = element;
                 while (current !== null && current !== document.body) {
                   const tag = current.tagName.toLowerCase();
                   const siblings = current.parentElement ? [...current.parentElement.children].filter(
                     (candidate2) => candidate2.tagName === current?.tagName
                   ) : [];
-                  parts.unshift(
+                  parts2.unshift(
                     siblings.length > 1 ? `${tag}:nth-of-type(${siblings.indexOf(current) + 1})` : tag
                   );
                   current = current.parentElement;
                 }
-                return `body > ${parts.join(" > ")}`;
+                return `body > ${parts2.join(" > ")}`;
               };
               const dom2 = window.__idiomExplanationDom;
               if (!dom2) throw new Error("explanation DOM helpers unavailable");
               const replayed = identity8 ? document.querySelector(identity8.selector) : null;
               const snapshot3 = () => [...document.querySelectorAll('[role="tooltip"]')].flatMap(
                 (element) => {
-                  const text4 = dom2.text(element);
-                  return text4 ? [{ selector: selectorFor(element), text: text4, element }] : [];
+                  const text5 = dom2.text(element);
+                  return text5 ? [{ selector: selectorFor(element), text: text5, element }] : [];
                 }
               );
               const baseline = new Map(
@@ -39500,11 +39564,11 @@ var init_explanations = __esm({
               const tick = () => {
                 const tips = snapshot3();
                 for (const sample of samples.values()) {
-                  const { control, record: record2 } = sample;
+                  const { control, record: record3 } = sample;
                   if (!control.isConnected) continue;
                   const focused = control === document.activeElement;
                   const hovered = control.matches(":hover");
-                  const independent = record2.trigger === "hover" ? hovered && !focused : focused && !hovered;
+                  const independent = record3.trigger === "hover" ? hovered && !focused : focused && !hovered;
                   if (!independent) continue;
                   sample.independent = true;
                   const ids = [
@@ -39522,10 +39586,10 @@ var init_explanations = __esm({
                   );
                   const associated = linked.length ? linked : changed.length === 1 ? changed : [];
                   if (associated.length) {
-                    record2.status = "observed";
-                    record2.tooltips = associated.map(({ selector, text: text4 }) => ({
+                    record3.status = "observed";
+                    record3.tooltips = associated.map(({ selector, text: text5 }) => ({
                       selector,
-                      text: text4
+                      text: text5
                     }));
                   }
                 }
@@ -39545,12 +39609,12 @@ var init_explanations = __esm({
                   tick();
                   dispose();
                   return [...samples.values()].map(
-                    ({ record: record2, independent }) => reason || !independent ? {
-                      ...record2,
+                    ({ record: record3, independent }) => reason || !independent ? {
+                      ...record3,
                       status: "unavailable",
                       reason: reason ?? "hover and focus were not observed independently",
                       tooltips: []
-                    } : record2
+                    } : record3
                   );
                 }
               };
@@ -39578,8 +39642,8 @@ var init_explanations = __esm({
               );
               if (records)
                 this.records.push(
-                  ...records.map((record2) => ({
-                    ...record2,
+                  ...records.map((record3) => ({
+                    ...record3,
                     elapsedMs: Date.now() - actionStarted
                   }))
                 );
@@ -39607,23 +39671,23 @@ var init_explanations = __esm({
 });
 
 // src/capture/failure-identity.ts
-function rememberRequest(record2, identity7) {
-  identities.set(record2, identity7);
+function rememberRequest(record3, identity7) {
+  identities.set(record3, identity7);
 }
-function requestIdentity(record2) {
-  return identities.get(record2);
+function requestIdentity(record3) {
+  return identities.get(record3);
 }
 function replayRequests(action) {
-  return action.requests.flatMap((record2) => identities.get(record2) ?? []);
+  return action.requests.flatMap((record3) => identities.get(record3) ?? []);
 }
-function rememberResponse(record2, epoch) {
-  if (Number.isFinite(epoch)) responseTimes.set(record2, epoch);
+function rememberResponse(record3, epoch) {
+  if (Number.isFinite(epoch)) responseTimes.set(record3, epoch);
 }
-function responseAt(record2, action) {
-  const epoch = responseTimes.get(record2);
+function responseAt(record3, action) {
+  const epoch = responseTimes.get(record3);
   if (epoch !== void 0 && action.clockOrigin !== void 0)
     return epoch - action.clockOrigin;
-  return record2.endTime === null ? null : record2.endTime + (action.clockOrigin === void 0 ? 0 : action.startedAt - action.clockOrigin);
+  return record3.endTime === null ? null : record3.endTime + (action.clockOrigin === void 0 ? 0 : action.startedAt - action.clockOrigin);
 }
 var identities, responseTimes;
 var init_failure_identity = __esm({
@@ -39852,23 +39916,23 @@ var init_filmstrips = __esm({
           stream.last = paint;
           firstPaint?.();
           firstPaint = void 0;
-          const record2 = stream.active;
-          if (!record2 || record2.truncated) {
+          const record3 = stream.active;
+          if (!record3 || record3.truncated) {
             if (this.budget.bytes > FILMSTRIP_LIMITS.laneBytes)
               stream.last = previousPaint;
             return;
           }
-          if (record2.anchor === void 0) {
-            record2.baseline = paint;
-          } else this.accept(record2, paint);
-          if (this.bytes(record2) > FILMSTRIP_LIMITS.actionBytes || this.budget.bytes > FILMSTRIP_LIMITS.laneBytes) {
-            record2.truncated = true;
-            record2.reason = "compressed frame memory limit reached";
+          if (record3.anchor === void 0) {
+            record3.baseline = paint;
+          } else this.accept(record3, paint);
+          if (this.bytes(record3) > FILMSTRIP_LIMITS.actionBytes || this.budget.bytes > FILMSTRIP_LIMITS.laneBytes) {
+            record3.truncated = true;
+            record3.reason = "compressed frame memory limit reached";
             stream.last = previousPaint;
-            if (record2.baseline === paint) record2.baseline = void 0;
-            if (record2.settle === paint) delete record2.settle;
-            for (let i = 0; i < record2.candidates.length; i++)
-              if (record2.candidates[i] === paint) record2.candidates[i] = void 0;
+            if (record3.baseline === paint) record3.baseline = void 0;
+            if (record3.settle === paint) delete record3.settle;
+            for (let i = 0; i < record3.candidates.length; i++)
+              if (record3.candidates[i] === paint) record3.candidates[i] = void 0;
           }
         };
         this.streams.set(page, stream);
@@ -39881,13 +39945,13 @@ var init_filmstrips = __esm({
         await page.exposeBinding(
           binding,
           (_source, token, time) => {
-            const record2 = this.records.get(token);
-            if (!record2 || record2.anchor !== void 0 || !Number.isFinite(time))
+            const record3 = this.records.get(token);
+            if (!record3 || record3.anchor !== void 0 || !Number.isFinite(time))
               return;
-            record2.anchor = time;
-            record2.document = stream.document;
-            if (record2.baseline) this.accept(record2, record2.baseline);
-            if (stream.last) this.accept(record2, stream.last);
+            record3.anchor = time;
+            record3.document = stream.document;
+            if (record3.baseline) this.accept(record3, record3.baseline);
+            if (stream.last) this.accept(record3, stream.last);
           }
         );
         const size3 = page.viewportSize() ?? { width: 1280, height: 720 };
@@ -39910,26 +39974,26 @@ var init_filmstrips = __esm({
         }
         return stream;
       }
-      accept(record2, paint) {
-        if (record2.anchor === void 0) return;
+      accept(record3, paint) {
+        if (record3.anchor === void 0) return;
         for (let i = 0; i < this.config.offsetsMs.length; i++) {
-          if (paint.document !== record2.document && !(record2.source === "load" && i === 0 && paint.timestamp <= record2.anchor))
+          if (paint.document !== record3.document && !(record3.source === "load" && i === 0 && paint.timestamp <= record3.anchor))
             continue;
-          const target2 = record2.anchor + (this.config.offsetsMs[i] ?? 0);
-          if (paint.timestamp <= target2 && (!record2.candidates[i] || paint.timestamp > (record2.candidates[i]?.timestamp ?? 0)))
-            record2.candidates[i] = paint;
+          const target2 = record3.anchor + (this.config.offsetsMs[i] ?? 0);
+          if (paint.timestamp <= target2 && (!record3.candidates[i] || paint.timestamp > (record3.candidates[i]?.timestamp ?? 0)))
+            record3.candidates[i] = paint;
         }
-        if (record2.nativeAt !== void 0 && paint.timestamp <= record2.nativeAt && (!record2.settle || paint.timestamp > record2.settle.timestamp))
-          record2.settle = paint;
+        if (record3.nativeAt !== void 0 && paint.timestamp <= record3.nativeAt && (!record3.settle || paint.timestamp > record3.settle.timestamp))
+          record3.settle = paint;
       }
-      bytes(record2) {
+      bytes(record3) {
         const paints2 = /* @__PURE__ */ new Set();
-        for (const r of record2 ? [record2] : this.records.values())
+        for (const r of record3 ? [record3] : this.records.values())
           for (const p of [...r.candidates, r.baseline, r.settle])
             if (p) paints2.add(p);
-        if (record2) {
-          const stream = this.streams.get(record2.streamPage);
-          if (stream?.active === record2 && stream.last) paints2.add(stream.last);
+        if (record3) {
+          const stream = this.streams.get(record3.streamPage);
+          if (stream?.active === record3 && stream.last) paints2.add(stream.last);
         } else
           for (const stream of this.streams.values())
             if (stream.last) paints2.add(stream.last);
@@ -39940,7 +40004,7 @@ var init_filmstrips = __esm({
       }
       async start(page, identity7, token, streamPage = page) {
         if (!this.config.enabled || this.disposed) return;
-        const record2 = {
+        const record3 = {
           key: token,
           page,
           streamPage,
@@ -39950,14 +40014,14 @@ var init_filmstrips = __esm({
           selected: false,
           truncated: false
         };
-        this.records.set(token, record2);
+        this.records.set(token, record3);
         try {
           const stream = await this.stream(streamPage);
-          stream.active = record2;
-          record2.document = stream.document;
-          record2.baseline = stream.last;
+          stream.active = record3;
+          record3.document = stream.document;
+          record3.baseline = stream.last;
           if (identity7.selector && this.config.actions.length)
-            record2.requested = await page.evaluate(
+            record3.requested = await page.evaluate(
               ({ selector, requests }) => {
                 let target2;
                 try {
@@ -39987,37 +40051,37 @@ var init_filmstrips = __esm({
           }
           await page.evaluate(arm, config);
         } catch (error) {
-          record2.reason = `screencast unavailable: ${String(error).split("\n")[0]}`;
+          record3.reason = `screencast unavailable: ${String(error).split("\n")[0]}`;
         }
       }
       freeze(action) {
         const token = recordingKey(action);
-        const record2 = token ? this.records.get(token) : void 0;
-        if (!record2) return;
-        record2.nativeAt = action.startedAt + action.durationMs;
-        const last = this.streams.get(record2.streamPage)?.last;
-        if (last) this.accept(record2, last);
+        const record3 = token ? this.records.get(token) : void 0;
+        if (!record3) return;
+        record3.nativeAt = action.startedAt + action.durationMs;
+        const last = this.streams.get(record3.streamPage)?.last;
+        if (last) this.accept(record3, last);
       }
       /** Called only after the ordinary timeline and motion windows have been frozen. */
       async finish(action, motion = this.motion?.()) {
         const token = recordingKey(action);
-        const record2 = token ? this.records.get(token) : void 0;
-        if (!record2 || record2.action) return;
-        record2.action = action;
-        record2.nativeAt ??= action.startedAt + action.durationMs;
-        const stream = this.streams.get(record2.streamPage);
-        if (stream?.last) this.accept(record2, stream.last);
+        const record3 = token ? this.records.get(token) : void 0;
+        if (!record3 || record3.action) return;
+        record3.action = action;
+        record3.nativeAt ??= action.startedAt + action.durationMs;
+        const stream = this.streams.get(record3.streamPage);
+        if (stream?.last) this.accept(record3, stream.last);
         const selected2 = this.explicit(action) || action.source === "load" || this.selected(this.tuple(action, motion), action);
         if (!selected2) {
-          this.records.delete(record2.key);
-          if (stream?.active === record2) stream.active = void 0;
+          this.records.delete(record3.key);
+          if (stream?.active === record3) stream.active = void 0;
           return;
         }
-        record2.selected = true;
+        record3.selected = true;
         try {
-          const remaining = record2.anchor === void 0 ? 0 : record2.anchor + (this.config.offsetsMs.at(-1) ?? 0) - Date.now();
-          if (remaining > 0 && !record2.reason)
-            record2.visualFrames = await record2.page.evaluate(
+          const remaining = record3.anchor === void 0 ? 0 : record3.anchor + (this.config.offsetsMs.at(-1) ?? 0) - Date.now();
+          if (remaining > 0 && !record3.reason)
+            record3.visualFrames = await record3.page.evaluate(
               async ({ selectors, until, origin }) => {
                 const frames = [];
                 const previous = /* @__PURE__ */ new Map();
@@ -40080,20 +40144,20 @@ var init_filmstrips = __esm({
                     action.frames.flatMap((f) => f.elements.map((e) => e.selector))
                   )
                 ].slice(0, 250),
-                until: (record2.anchor ?? 0) + (this.config.offsetsMs.at(-1) ?? 0) + FILMSTRIP_LIMITS.toleranceMs,
-                origin: record2.anchor ?? action.startedAt
+                until: (record3.anchor ?? 0) + (this.config.offsetsMs.at(-1) ?? 0) + FILMSTRIP_LIMITS.toleranceMs,
+                origin: record3.anchor ?? action.startedAt
               }
             );
-          const confirmed = await record2.page.evaluate(() => ({
+          const confirmed = await record3.page.evaluate(() => ({
             time: performance.timeOrigin + performance.now()
           }));
-          record2.confirmedAt = confirmed.time;
-          if (stream?.last) this.accept(record2, stream.last);
+          record3.confirmedAt = confirmed.time;
+          if (stream?.last) this.accept(record3, stream.last);
         } catch (error) {
-          record2.reason ??= `visual window interrupted: ${String(error).split("\n")[0]}`;
+          record3.reason ??= `visual window interrupted: ${String(error).split("\n")[0]}`;
         }
-        if (stream?.active === record2) stream.active = void 0;
-        record2.baseline = void 0;
+        if (stream?.active === record3) stream.active = void 0;
+        record3.baseline = void 0;
       }
       tuple(action, motion) {
         return {
@@ -40162,13 +40226,13 @@ var init_filmstrips = __esm({
           other.records.clear();
           other.budget.captures.delete(other);
           if (this.budget.bytes > FILMSTRIP_LIMITS.laneBytes)
-            for (const record2 of this.records.values()) {
+            for (const record3 of this.records.values()) {
               if (this.budget.bytes <= FILMSTRIP_LIMITS.laneBytes) break;
-              record2.candidates = [];
-              record2.baseline = void 0;
-              delete record2.settle;
-              record2.truncated = true;
-              record2.reason = "compressed lane memory limit reached during merge";
+              record3.candidates = [];
+              record3.baseline = void 0;
+              delete record3.settle;
+              record3.truncated = true;
+              record3.reason = "compressed lane memory limit reached during merge";
             }
         }
         return this;
@@ -40202,8 +40266,8 @@ var init_filmstrips = __esm({
         for (const action of tuple.timelines?.actions ?? []) {
           const token = recordingKey(action);
           if (!token || !selected2.has(token) && !this.explicit(action)) continue;
-          const record2 = this.records.get(token);
-          const size3 = record2?.candidates.find((p) => p)?.geometry ?? {
+          const record3 = this.records.get(token);
+          const size3 = record3?.candidates.find((p) => p)?.geometry ?? {
             width: tuple.width,
             height: tuple.height
           };
@@ -40211,7 +40275,7 @@ var init_filmstrips = __esm({
             action,
             size3.width,
             size3.height,
-            record2?.visualFrames
+            record3?.visualFrames
           );
           const entry2 = {
             id: action.id ?? token,
@@ -40220,12 +40284,12 @@ var init_filmstrips = __esm({
             timelineOrigin: action.clockOrigin ?? action.startedAt,
             settleMs: Math.max(
               0,
-              (record2?.nativeAt ?? action.startedAt) - (record2?.anchor ?? action.startedAt)
+              (record3?.nativeAt ?? action.startedAt) - (record3?.anchor ?? action.startedAt)
             ),
             settled: action.settled,
             region,
-            ...record2?.visualFrames === void 0 ? {} : { visualFrames: record2.visualFrames },
-            ...record2?.anchor === void 0 ? {} : { anchor: record2.anchor },
+            ...record3?.visualFrames === void 0 ? {} : { visualFrames: record3.visualFrames },
+            ...record3?.anchor === void 0 ? {} : { anchor: record3.anchor },
             frames: [],
             ...region.width === size3.width && region.height === size3.height ? {
               regionReason: "effect geometry unknown or spans viewport; full viewport"
@@ -40238,11 +40302,11 @@ var init_filmstrips = __esm({
           for (const [i, slot] of slots.entries()) {
             const requestedMs = slot === "settle" ? entry2.settleMs : slot;
             const frame2 = { slot, requestedMs };
-            const paint = slot === "settle" ? record2?.settle : record2?.candidates[i];
-            const target2 = (record2?.anchor ?? 0) + requestedMs;
-            if (!record2 || record2.anchor === void 0 || !paint || paint.document !== record2.document && !(action.source === "load" && slot === 0 && paint.timestamp <= record2.anchor) || (record2.confirmedAt ?? 0) < target2 || record2.invalidAt !== void 0 && target2 >= record2.invalidAt)
-              frame2.reason = record2?.reason ?? "action dispatch or compositor coverage unavailable";
-            else if (target2 - paint.timestamp > FILMSTRIP_LIMITS.toleranceMs && visualChangeTimes(action, record2.visualFrames, record2.anchor).some(
+            const paint = slot === "settle" ? record3?.settle : record3?.candidates[i];
+            const target2 = (record3?.anchor ?? 0) + requestedMs;
+            if (!record3 || record3.anchor === void 0 || !paint || paint.document !== record3.document && !(action.source === "load" && slot === 0 && paint.timestamp <= record3.anchor) || (record3.confirmedAt ?? 0) < target2 || record3.invalidAt !== void 0 && target2 >= record3.invalidAt)
+              frame2.reason = record3?.reason ?? "action dispatch or compositor coverage unavailable";
+            else if (target2 - paint.timestamp > FILMSTRIP_LIMITS.toleranceMs && visualChangeTimes(action, record3.visualFrames, record3.anchor).some(
               (t) => t > paint.timestamp + FILMSTRIP_LIMITS.toleranceMs && t <= target2
             ))
               frame2.reason = "compositor sample misses a known visual change by more than 35ms";
@@ -40270,7 +40334,7 @@ var init_filmstrips = __esm({
                 Object.assign(frame2, {
                   path,
                   timestamp: paint.timestamp,
-                  actualMs: paint.timestamp - record2.anchor,
+                  actualMs: paint.timestamp - record3.anchor,
                   geometry: { ...paint.geometry, scale: sx }
                 });
               } catch (error) {
@@ -40280,9 +40344,9 @@ var init_filmstrips = __esm({
             entry2.frames.push(frame2);
           }
           const available = entry2.frames.filter((f) => f.path).length;
-          entry2.status = available === 0 ? "unavailable" : available === slots.length && !record2?.reason ? "complete" : "partial";
+          entry2.status = available === 0 ? "unavailable" : available === slots.length && !record3?.reason ? "complete" : "partial";
           if (entry2.status !== "complete")
-            entry2.reason = record2?.reason ?? "one or more sampled slots unavailable";
+            entry2.reason = record3?.reason ?? "one or more sampled slots unavailable";
           manifest.actions.push(entry2);
           this.records.delete(token);
         }
@@ -40490,15 +40554,15 @@ async function scanCandidates(page, declaration) {
       const diagnostics = [];
       if (!touch) return { touch, eligible: 0, diagnostics, candidates: [] };
       const path = (el) => {
-        const parts = [];
+        const parts2 = [];
         for (let n = el; n; n = n.parentElement) {
           const tag = n.tagName.toLowerCase();
           const same = n.parentElement ? [...n.parentElement.children].filter(
             (s) => s.tagName === n?.tagName
           ) : [n];
-          parts.unshift(`${tag}:nth-of-type(${same.indexOf(n) + 1})`);
+          parts2.unshift(`${tag}:nth-of-type(${same.indexOf(n) + 1})`);
         }
-        return parts.join(" > ");
+        return parts2.join(" > ");
       };
       const ignored = ignore.flatMap((selector) => {
         try {
@@ -40640,20 +40704,20 @@ async function sweepFocusVisible(page, options) {
       return values;
     };
     const pathFor = (element) => {
-      const parts = [];
+      const parts2 = [];
       let current = element;
       while (current !== null && current !== document.documentElement) {
         const parent = current.parentElement;
         const tag = current.tagName.toLowerCase();
         if (parent === null) {
-          parts.unshift(tag);
+          parts2.unshift(tag);
           break;
         }
         const index = [...parent.children].filter((child) => child.tagName === current?.tagName).indexOf(current) + 1;
-        parts.unshift(`${tag}:nth-of-type(${index})`);
+        parts2.unshift(`${tag}:nth-of-type(${index})`);
         current = parent;
       }
-      return `html > ${parts.join(" > ")}`;
+      return `html > ${parts2.join(" > ")}`;
     };
     const selectorFor = (element) => element.id ? `#${CSS.escape(element.id)}` : pathFor(element);
     document.activeElement?.blur?.();
@@ -40854,19 +40918,19 @@ function createLinkChecker(options) {
         maxRedirects: 5,
         failOnStatusCode: false
       };
-      let code2;
+      let code3;
       let failure3;
       try {
         const response = await client.head(url, settings);
-        code2 = response.status();
+        code3 = response.status();
         await response.dispose();
       } catch (error) {
         failure3 = error;
       }
-      if (code2 !== void 0 && code2 >= 400 || failure3 !== void 0 && !dnsFailure.test(firstLine2(failure3))) {
+      if (code3 !== void 0 && code3 >= 400 || failure3 !== void 0 && !dnsFailure.test(firstLine2(failure3))) {
         try {
           const response = await client.get(url, settings);
-          code2 = response.status();
+          code3 = response.status();
           failure3 = void 0;
           await response.dispose();
         } catch (error) {
@@ -40877,7 +40941,7 @@ function createLinkChecker(options) {
         const message = firstLine2(failure3);
         return dnsFailure.test(message) ? { status: "broken", code: null, reason: "DNS lookup failed" } : { status: "unchecked", reason: message };
       }
-      const status = code2;
+      const status = code3;
       if (status < 400) return { status: "ok", code: status };
       if (unjudgeable2.has(status))
         return {
@@ -41170,18 +41234,18 @@ function installFeedback() {
       const candidate2 = `${element.tagName.toLowerCase()}${classes.map((value) => `.${CSS.escape(value)}`).join("")}`;
       if (document.querySelectorAll(candidate2).length === 1) return candidate2;
     }
-    const parts = [];
+    const parts2 = [];
     let current = element;
     while (current !== null && current !== document.body) {
       const siblings = current.parentElement ? [...current.parentElement.children].filter(
         (child) => child.tagName === current?.tagName
       ) : [];
-      parts.unshift(
+      parts2.unshift(
         siblings.length > 1 ? `${current.tagName.toLowerCase()}:nth-of-type(${siblings.indexOf(current) + 1})` : current.tagName.toLowerCase()
       );
       current = current.parentElement;
     }
-    return `body > ${parts.join(" > ")}`;
+    return `body > ${parts2.join(" > ")}`;
   };
   const normalize2 = (value) => (value ?? "").replace(/\s+/g, " ").trim();
   const textOf2 = (element) => normalize2(
@@ -41190,7 +41254,7 @@ function installFeedback() {
   const progressSelector = "[role=progressbar], progress, [aria-busy=true]";
   const statusSelector = "[role=status], [role=log], [aria-live]:not([aria-live=off]), output";
   const progressWords = /\b(loading|saving|generating|working|processing|thinking|uploading|sending|submitting|please wait)\b/i;
-  const progressText = (text4) => text4 !== "" && (progressWords.test(text4) || /(?:…|\.\.\.)$/.test(text4));
+  const progressText = (text5) => text5 !== "" && (progressWords.test(text5) || /(?:…|\.\.\.)$/.test(text5));
   const skeletal = (element) => /skeleton|shimmer|placeholder|loading/i.test(
     typeof element.className === "string" ? element.className : ""
   ) || [...element.attributes].some(
@@ -41263,17 +41327,17 @@ function installFeedback() {
     }
     for (const region of document.querySelectorAll(statusSelector)) {
       if (!rendered(region) || isNoisy?.(region)) continue;
-      const text4 = textOf2(region);
-      if (text4 !== "" && text4 !== (baseline.status.get(region) ?? "")) {
-        if (visit("status-text", region, text4)) return true;
+      const text5 = textOf2(region);
+      if (text5 !== "" && text5 !== (baseline.status.get(region) ?? "")) {
+        if (visit("status-text", region, text5)) return true;
       }
     }
     if (trigger?.isConnected) {
       options.onTrigger?.(trigger);
       if (rendered(trigger)) {
-        const text4 = textOf2(trigger);
-        if (text4 !== "" && text4 !== options.triggerText) {
-          if (visit("control-text", trigger, text4)) return true;
+        const text5 = textOf2(trigger);
+        if (text5 !== "" && text5 !== options.triggerText) {
+          if (visit("control-text", trigger, text5)) return true;
         }
       }
     }
@@ -41285,11 +41349,11 @@ function installFeedback() {
       for (const node of nodes) {
         const element = node instanceof Element ? node : node.parentElement;
         if (element === null || !rendered(element)) continue;
-        const text4 = normalize2(
+        const text5 = normalize2(
           node instanceof HTMLElement ? node.innerText : node.textContent
         );
-        if (progressText(text4)) {
-          if (visit("progress-text", element, text4)) return true;
+        if (progressText(text5)) {
+          if (visit("progress-text", element, text5)) return true;
         }
         onNode?.(node, element);
       }
@@ -41309,8 +41373,8 @@ function installFeedback() {
       },
       has,
       markRecords: (records, except) => {
-        for (const record2 of records) {
-          const element = record2.target instanceof Element ? record2.target : record2.target.parentElement;
+        for (const record3 of records) {
+          const element = record3.target instanceof Element ? record3.target : record3.target.parentElement;
           if (element && !except.includes(element)) noisy.add(element);
         }
       }
@@ -41420,8 +41484,8 @@ function installNoiseRecorder() {
     if (document.readyState === "loading") return;
     const now2 = performance.now();
     flush(now2);
-    const connected = records.flatMap((record2) => {
-      const element = record2.target instanceof Element ? record2.target : record2.target.parentElement;
+    const connected = records.flatMap((record3) => {
+      const element = record3.target instanceof Element ? record3.target : record3.target.parentElement;
       return element?.isConnected ? [element] : [];
     });
     const root2 = commonAncestor(connected);
@@ -41596,14 +41660,14 @@ function pendingWatcher(config) {
   window.addEventListener("hashchange", onRoute);
   const filterable = /* @__PURE__ */ new Set(["spinner", "status-text", "progress-text"]);
   const candidates = [];
-  const record2 = (kind, element, text4) => {
+  const record3 = (kind, element, text5) => {
     if (startedAt === null) return false;
     const same = candidates.filter(
       (candidate2) => candidate2.indicator.kind === kind
     );
     if (same.length >= (filterable.has(kind) ? 5 : 1) || same.some((candidate2) => candidate2.element === element))
       return false;
-    const label5 = (text4 ?? textOf2(element)).slice(0, 80);
+    const label5 = (text5 ?? textOf2(element)).slice(0, 80);
     candidates.push({
       element,
       indicator: {
@@ -41621,9 +41685,9 @@ function pendingWatcher(config) {
   const late = [];
   let retained;
   const MAX_CHANGES = 50;
-  const keep = (list5, entry2) => {
-    if (list5.length < MAX_CHANGES || entry2.main && list5.filter((seen) => seen.main).length < MAX_CHANGES)
-      list5.push(entry2);
+  const keep = (list6, entry2) => {
+    if (list6.length < MAX_CHANGES || entry2.main && list6.filter((seen) => seen.main).length < MAX_CHANGES)
+      list6.push(entry2);
   };
   const periodicNoise = () => {
     const anchors = startedAt !== null && releasedAt !== null ? [startedAt + releasedAt] : [];
@@ -41667,32 +41731,32 @@ function pendingWatcher(config) {
       onTrigger: (trigger2) => {
         const flags = triggerFlags();
         if (flags.disabled && !triggerAtArm.disabled)
-          record2("trigger-disabled", trigger2);
-        if (flags.busy && !triggerAtArm.busy) record2("trigger-busy", trigger2);
+          record3("trigger-disabled", trigger2);
+        if (flags.busy && !triggerAtArm.busy) record3("trigger-busy", trigger2);
         if (flags.pressed && !triggerAtArm.pressed)
-          record2("trigger-pressed", trigger2);
+          record3("trigger-pressed", trigger2);
       },
-      visit: record2
+      visit: record3
     });
   };
-  const changed = (record3) => {
-    const element = elementOf(record3.target);
+  const changed = (record4) => {
+    const element = elementOf(record4.target);
     if (element === null || tooltipish(element)) return null;
-    if (record3.type === "attributes") {
-      const name = record3.attributeName ?? "";
+    if (record4.type === "attributes") {
+      const name = record4.attributeName ?? "";
       if (transient.test(name)) return null;
-      if (record3.oldValue === element.getAttribute(name)) return null;
+      if (record4.oldValue === element.getAttribute(name)) return null;
       return rendered(element) || priorRendered.get(element) === true ? element : null;
     }
-    if (record3.type === "characterData")
-      return rendered(element) && normalize2(record3.target.textContent) !== normalize2(record3.oldValue) ? element : null;
+    if (record4.type === "characterData")
+      return rendered(element) && normalize2(record4.target.textContent) !== normalize2(record4.oldValue) ? element : null;
     if (!rendered(element)) return null;
-    for (const node of record3.addedNodes) {
+    for (const node of record4.addedNodes) {
       if (node instanceof Element) {
         if (rendered(node)) return node;
       } else if (normalize2(node.textContent) !== "") return element;
     }
-    for (const node of record3.removedNodes)
+    for (const node of record4.removedNodes)
       if (node instanceof Element ? priorRendered.get(node) === true : normalize2(node.textContent) !== "")
         return element;
     return null;
@@ -41701,8 +41765,8 @@ function pendingWatcher(config) {
     if (startedAt === null) {
       if (frozen) return;
       noisy.markRecords(records, [document.body]);
-      for (const record3 of records)
-        for (const node of record3.addedNodes)
+      for (const record4 of records)
+        for (const node of record4.addedNodes)
           if (node instanceof Element)
             for (const element of structuralNoise(node)) noisy.add(element);
       return;
@@ -41718,7 +41782,7 @@ function pendingWatcher(config) {
     for (const mutation of records) {
       addedProgressText(
         [mutation],
-        (kind, element2, text4) => !isNoisy(element2) && record2(kind, element2, text4),
+        (kind, element2, text5) => !isNoisy(element2) && record3(kind, element2, text5),
         (node) => {
           if (node instanceof Element) {
             for (const candidate2 of [
@@ -41726,7 +41790,7 @@ function pendingWatcher(config) {
               ...[...node.querySelectorAll("*")].slice(0, 50)
             ])
               if (skeletal(candidate2) && rendered(candidate2)) {
-                record2("skeleton", candidate2);
+                record3("skeleton", candidate2);
                 break;
               }
           }
@@ -41955,7 +42019,7 @@ async function createHoldRoute(page, options) {
       return pass();
     }
     if (requests.length >= MAX_HELD_REQUESTS) return pass();
-    const record2 = {
+    const record3 = {
       method,
       path,
       resourceType: type,
@@ -41965,16 +42029,16 @@ async function createHoldRoute(page, options) {
       navigation
     };
     if (type === "fetch" || type === "xhr")
-      rememberRequest(record2, {
+      rememberRequest(record3, {
         method,
         url: request2.url(),
         resourceType: type
       });
-    requests.push(record2);
+    requests.push(record3);
     const wait = Math.max(0, Math.min(delayMs, capEnd - clock()));
     await new Promise((resolve70) => {
       const timer = setTimeout(resolve70, wait);
-      holding.set(record2, {
+      holding.set(record3, {
         nonSafe,
         release: () => {
           clearTimeout(timer);
@@ -41982,9 +42046,9 @@ async function createHoldRoute(page, options) {
         }
       });
     });
-    holding.delete(record2);
+    holding.delete(record3);
     if (!navigation)
-      record2.releasedAt = await Promise.race([
+      record3.releasedAt = await Promise.race([
         options.release().catch(() => null),
         new Promise((resolve70) => setTimeout(() => resolve70(null), 1e3))
       ]);
@@ -42083,10 +42147,10 @@ async function replayHeld(options) {
   };
   const snapshot3 = () => {
     const copy2 = JSON.parse(JSON.stringify(held));
-    for (const [index, record2] of copy2.requests.entries()) {
+    for (const [index, record3] of copy2.requests.entries()) {
       const source = held.requests[index];
       const identity7 = source && requestIdentity(source);
-      if (identity7) rememberRequest(record2, identity7);
+      if (identity7) rememberRequest(record3, identity7);
     }
     return { held: copy2 };
   };
@@ -42345,18 +42409,18 @@ var init_motion2 = __esm({
                   if (document.querySelectorAll(selector).length === 1)
                     return selector;
                 }
-                const parts = [];
+                const parts2 = [];
                 let current = element;
                 while (current !== null && current !== document.body) {
                   const siblings = current.parentElement ? [...current.parentElement.children].filter(
                     (child) => child.tagName === current?.tagName
                   ) : [];
-                  parts.unshift(
+                  parts2.unshift(
                     siblings.length > 1 ? `${current.tagName.toLowerCase()}:nth-of-type(${siblings.indexOf(current) + 1})` : current.tagName.toLowerCase()
                   );
                   current = current.parentElement;
                 }
-                return `body > ${parts.join(" > ")}`;
+                return `body > ${parts2.join(" > ")}`;
               };
               const label5 = (element) => (element.getAttribute("aria-label") || (element.getAttribute("aria-labelledby") ?? "").split(/\s+/).map((id2) => document.getElementById(id2)?.textContent ?? "").join(" ").trim() || element.querySelector("h1,h2,h3,h4,[role=heading]")?.textContent || (element.matches("[role=tooltip]") ? "tooltip" : element.tagName.toLowerCase())).replace(/\s+/g, " ").trim().slice(0, 120);
               const sample = (element) => {
@@ -42500,15 +42564,15 @@ var init_motion2 = __esm({
                     if (box.width * box.height < ownerBox.width * ownerBox.height * 0.5)
                       continue;
                   }
-                  let record2 = effects.get(animation);
-                  if (!record2) {
+                  let record3 = effects.get(animation);
+                  if (!record3) {
                     const timing = effect.getTiming();
                     const duration = timing.duration;
                     const infinite = timing.iterations === Number.POSITIVE_INFINITY && duration !== 0 || duration === Number.POSITIVE_INFINITY;
                     const finite2 = typeof duration === "number" && Number.isFinite(duration);
                     const transition = "transitionProperty" in animation;
                     const cssAnimation = "animationName" in animation;
-                    record2 = {
+                    record3 = {
                       kind: transition ? "transition" : cssAnimation ? "animation" : "web-animation",
                       property: transition ? String(animation.transitionProperty) : properties.sort().join(","),
                       name: cssAnimation ? String(animation.animationName) : "",
@@ -42518,8 +42582,8 @@ var init_motion2 = __esm({
                       started: false,
                       canceled: false
                     };
-                    effects.set(animation, record2);
-                    const captured = record2;
+                    effects.set(animation, record3);
+                    const captured = record3;
                     const canceled = () => {
                       captured.canceled = true;
                     };
@@ -42527,12 +42591,12 @@ var init_motion2 = __esm({
                     animationCleanup.push(
                       () => animation.removeEventListener("cancel", canceled)
                     );
-                    entry2.effects.push(record2);
+                    entry2.effects.push(record3);
                   }
                   const computed = effect.getComputedTiming();
                   const progress = computed.progress;
-                  if (progress !== null && typeof computed.localTime === "number" && computed.localTime >= Math.max(0, record2.delayMs) && !animation.pending && (animation.playState === "running" || animation.playState === "finished"))
-                    record2.started = true;
+                  if (progress !== null && typeof computed.localTime === "number" && computed.localTime >= Math.max(0, record3.delayMs) && !animation.pending && (animation.playState === "running" || animation.playState === "finished"))
+                    record3.started = true;
                 }
               };
               const take = () => {
@@ -42564,14 +42628,14 @@ var init_motion2 = __esm({
                 if (!entry2) return;
                 const property = "propertyName" in event ? String(event.propertyName) : void 0;
                 const name = "animationName" in event ? String(event.animationName) : void 0;
-                for (const record2 of entry2.effects) {
-                  if (property && record2.property !== property || name && record2.name !== name)
+                for (const record3 of entry2.effects) {
+                  if (property && record3.property !== property || name && record3.name !== name)
                     continue;
                   if (/start$|end$/.test(event.type) && [...effects].some(
-                    ([animation, known]) => known === record2 && animation.playState !== "paused" && animation.playState !== "idle"
+                    ([animation, known]) => known === record3 && animation.playState !== "paused" && animation.playState !== "idle"
                   ))
-                    record2.started = true;
-                  if (/cancel$/.test(event.type)) record2.canceled = true;
+                    record3.started = true;
+                  if (/cancel$/.test(event.type)) record3.canceled = true;
                 }
               };
               for (const name of eventNames)
@@ -43007,14 +43071,14 @@ function measureInk(image2, rect3, scale, tolerance2) {
   };
 }
 function sampleOrphanInk(records, decode2, viewport, documentWidth, tolerance2) {
-  if (!records.some((record2) => record2.lastLine !== void 0)) return records;
+  if (!records.some((record3) => record3.lastLine !== void 0)) return records;
   let image2;
   try {
     image2 = decode2();
   } catch {
     return records.map(
-      (record2) => record2.lastLine === void 0 ? record2 : {
-        ...record2,
+      (record3) => record3.lastLine === void 0 ? record3 : {
+        ...record3,
         ink: {
           status: "unavailable",
           reason: "screenshot could not be decoded"
@@ -43024,9 +43088,9 @@ function sampleOrphanInk(records, decode2, viewport, documentWidth, tolerance2) 
   }
   const scale = screenshotScale(image2, viewport, documentWidth);
   return records.map(
-    (record2) => record2.lastLine === void 0 ? record2 : {
-      ...record2,
-      ink: measureInk(image2, record2.lastLine, scale, tolerance2)
+    (record3) => record3.lastLine === void 0 ? record3 : {
+      ...record3,
+      ink: measureInk(image2, record3.lastLine, scale, tolerance2)
     }
   );
 }
@@ -43220,19 +43284,19 @@ function timelineRecorder(config) {
       const candidate3 = `${element.tagName.toLowerCase()}${classes.map((value) => `.${CSS.escape(value)}`).join("")}`;
       if (document.querySelectorAll(candidate3).length === 1) return candidate3;
     }
-    const parts = [];
+    const parts2 = [];
     let current = element;
     while (current !== null && current !== document.body) {
       const tag = current.tagName.toLowerCase();
       const siblings = current.parentElement ? [...current.parentElement.children].filter(
         (candidate3) => candidate3.tagName === current?.tagName
       ) : [];
-      parts.unshift(
+      parts2.unshift(
         siblings.length > 1 ? `${tag}:nth-of-type(${siblings.indexOf(current) + 1})` : tag
       );
       current = current.parentElement;
     }
-    return `body > ${parts.join(" > ")}`;
+    return `body > ${parts2.join(" > ")}`;
   };
   const box = (r) => ({
     x: r.x,
@@ -43461,7 +43525,7 @@ function timelineRecorder(config) {
       const timing = effect.getTiming();
       const duration = timing.duration;
       const pseudoElement = effect.pseudoElement ?? void 0;
-      const record2 = {
+      const record3 = {
         target: selectorFor(effect.target),
         ...pseudoElement ? { pseudoElement } : {},
         kind: "transitionProperty" in animation ? "transition" : "animationName" in animation ? "animation" : "web-animation",
@@ -43476,11 +43540,11 @@ function timelineRecorder(config) {
         viewTransition.used = true;
         viewTransition.kind ??= "same-document";
       }
-      animationRecords.set(animation, record2);
-      animations.push(record2);
+      animationRecords.set(animation, record3);
+      animations.push(record3);
       animationTargets.push(effect.target);
       const ended = () => {
-        record2.endTime ??= now2();
+        record3.endTime ??= now2();
       };
       animation.addEventListener("finish", ended);
       animation.addEventListener("cancel", ended);
@@ -43491,8 +43555,8 @@ function timelineRecorder(config) {
     }
     return running;
   };
-  const onShifts = (list5) => {
-    for (const raw of list5) {
+  const onShifts = (list6) => {
+    for (const raw of list6) {
       const entry2 = raw;
       dirty = true;
       if (shifts.length >= limits.shifts) {
@@ -43520,7 +43584,7 @@ function timelineRecorder(config) {
   let shiftObserver;
   try {
     shiftObserver = new PerformanceObserver(
-      (list5) => onShifts(list5.getEntries())
+      (list6) => onShifts(list6.getEntries())
     );
     shiftObserver.observe({ type: "layout-shift", buffered: config.load });
   } catch {
@@ -43532,15 +43596,15 @@ function timelineRecorder(config) {
     if (!started) return;
     dirty = true;
     const time = now2();
-    for (const record2 of records) {
-      if (record2.type !== "childList") continue;
-      const target2 = record2.target;
-      if (target2 instanceof Element && [...record2.addedNodes, ...record2.removedNodes].some(
+    for (const record3 of records) {
+      if (record3.type !== "childList") continue;
+      const target2 = record3.target;
+      if (target2 instanceof Element && [...record3.addedNodes, ...record3.removedNodes].some(
         (node) => node.nodeType === Node.TEXT_NODE
       ))
         textTargets.add(target2);
       if (target2 instanceof Element) {
-        for (const node of record2.removedNodes)
+        for (const node of record3.removedNodes)
           if (node instanceof Element && !removedParent.has(node))
             removedParent.set(node, target2);
       }
@@ -43549,7 +43613,7 @@ function timelineRecorder(config) {
           if (inserted.has(p)) return true;
         return false;
       };
-      for (const node of record2.addedNodes) {
+      for (const node of record3.addedNodes) {
         if (!(node instanceof Element) || within5(node)) continue;
         inserted.add(node);
         if (target2 instanceof Element && target2.isConnected)
@@ -43567,7 +43631,7 @@ function timelineRecorder(config) {
           rect: node.isConnected ? box(node.getBoundingClientRect()) : null
         });
       }
-      for (const node of record2.removedNodes) {
+      for (const node of record3.removedNodes) {
         if (!(node instanceof Element)) continue;
         if (!(target2 instanceof Element) || !target2.isConnected) continue;
         anchors.add(target2);
@@ -44149,11 +44213,11 @@ function timelineRecorder(config) {
   const observedDirty = new MutationObserver((records) => {
     markDirty();
     if (!started || config.load) return;
-    for (const record2 of records) {
-      if (record2.type === "attributes" && record2.attributeName === "style" && record2.target instanceof Element)
-        styleDirty.add(record2.target);
-      else if (record2.type === "characterData" && record2.target.parentElement)
-        textTargets.add(record2.target.parentElement);
+    for (const record3 of records) {
+      if (record3.type === "attributes" && record3.attributeName === "style" && record3.target instanceof Element)
+        styleDirty.add(record3.target);
+      else if (record3.type === "characterData" && record3.target.parentElement)
+        textTargets.add(record3.target.parentElement);
     }
   });
   observedDirty.observe(document, {
@@ -44578,7 +44642,7 @@ var init_timeline2 = __esm({
           } catch {
             path = request2.url().split(/[?#]/)[0] ?? "";
           }
-          const record2 = {
+          const record3 = {
             method: request2.method(),
             resourceType: request2.resourceType(),
             path,
@@ -44587,32 +44651,32 @@ var init_timeline2 = __esm({
             status: null,
             outcome: "pending"
           };
-          records.set(request2, record2);
+          records.set(request2, record3);
           const type = request2.resourceType();
           if (type === "fetch" || type === "xhr")
-            rememberRequest(record2, {
+            rememberRequest(record3, {
               method: request2.method(),
               url: request2.url(),
               resourceType: type
             });
         };
         const onFinished = (request2) => {
-          const record2 = records.get(request2);
-          if (!record2) return;
-          record2.endTime = at();
+          const record3 = records.get(request2);
+          if (!record3) return;
+          record3.endTime = at();
           const timing = request2.timing();
           if (timing.responseEnd >= 0)
-            rememberResponse(record2, timing.startTime + timing.responseEnd);
-          record2.outcome = "ok";
+            rememberResponse(record3, timing.startTime + timing.responseEnd);
+          record3.outcome = "ok";
           void request2.response().then((response) => {
-            if (response) record2.status = response.status();
+            if (response) record3.status = response.status();
           }).catch(() => void 0);
         };
         const onFailed = (request2) => {
-          const record2 = records.get(request2);
-          if (!record2) return;
-          record2.endTime = at();
-          record2.outcome = /ERR_BLOCKED_BY_CLIENT/.test(
+          const record3 = records.get(request2);
+          if (!record3) return;
+          record3.endTime = at();
+          record3.outcome = /ERR_BLOCKED_BY_CLIENT/.test(
             request2.failure()?.errorText ?? ""
           ) ? "blocked" : "failed";
         };
@@ -44639,10 +44703,10 @@ var init_timeline2 = __esm({
             } catch {
             }
             await Promise.all(
-              [...records].map(async ([request2, record2]) => {
-                if (record2.outcome !== "ok" || record2.status !== null) return;
+              [...records].map(async ([request2, record3]) => {
+                if (record3.outcome !== "ok" || record3.status !== null) return;
                 const response = await request2.response().catch(() => null);
-                if (response) record2.status = response.status();
+                if (response) record3.status = response.status();
               })
             );
             return {
@@ -44824,11 +44888,11 @@ function resolveWebHealth(projectDirectory, flow, state) {
     serverErrorPatterns: flow.serverErrorPatterns
   };
 }
-function consoleIsAllowed(record2, health) {
+function consoleIsAllowed(record3, health) {
   return health.allow.console.some(
-    (source) => new RegExp(source).test(record2.text)
-  ) || record2.location !== void 0 && health.allow.urls.some(
-    (source) => new RegExp(source).test(record2.location?.url ?? "")
+    (source) => new RegExp(source).test(record3.text)
+  ) || record3.location !== void 0 && health.allow.urls.some(
+    (source) => new RegExp(source).test(record3.location?.url ?? "")
   );
 }
 async function runAction(page, step) {
@@ -44879,17 +44943,17 @@ async function runAction(page, step) {
     }
     case "expectText": {
       const match = await page.waitForFunction(
-        (text4) => {
+        (text5) => {
           const roots = [document];
           for (const root2 of roots) {
             for (const element of root2.querySelectorAll("*")) {
               if (element.shadowRoot !== null) roots.push(element.shadowRoot);
-              if (element instanceof HTMLElement && element.getClientRects().length > 0 && getComputedStyle(element).visibility === "visible" && element.innerText.includes(text4))
+              if (element instanceof HTMLElement && element.getClientRects().length > 0 && getComputedStyle(element).visibility === "visible" && element.innerText.includes(text5))
                 return true;
             }
             if (root2 instanceof ShadowRoot && getComputedStyle(root2.host).visibility === "visible") {
               for (const node of root2.childNodes) {
-                if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.includes(text4))
+                if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.includes(text5))
                   continue;
                 const range = document.createRange();
                 range.selectNodeContents(node);
@@ -44942,22 +45006,22 @@ var init_web_steps = __esm({
         let handle;
         try {
           handle = await open2(this.path, "r");
-          const stat15 = await handle.stat();
-          if (!stat15.isFile()) throw new Error("not a regular file");
-          const identity7 = `${stat15.dev}:${stat15.ino}`;
+          const stat16 = await handle.stat();
+          if (!stat16.isFile()) throw new Error("not a regular file");
+          const identity7 = `${stat16.dev}:${stat16.ino}`;
           this.exists = true;
           if (snapshot3) {
             this.identity = identity7;
-            this.offset = stat15.size;
+            this.offset = stat16.size;
             return { activity: false };
           }
-          if (identity7 !== this.identity || stat15.size < this.offset) {
+          if (identity7 !== this.identity || stat16.size < this.offset) {
             this.identity = identity7;
             this.offset = 0;
             this.decoder = new StringDecoder("utf8");
             this.fragment = "";
           }
-          const size3 = stat15.size - this.offset;
+          const size3 = stat16.size - this.offset;
           if (size3 === 0) return { activity: false };
           const buffer = Buffer.alloc(size3);
           const { bytesRead } = await handle.read(buffer, 0, size3, this.offset);
@@ -45085,13 +45149,13 @@ var init_web_steps = __esm({
       onConsole = (message) => {
         if (this.owner === void 0) return;
         this.activity();
-        const record2 = {
+        const record3 = {
           type: message.type(),
           text: message.text(),
           location: message.location()
         };
-        if (record2.type === "error" && !consoleIsAllowed(record2, this.health)) {
-          this.fail(`console.error: ${record2.text} (${record2.location.url})`);
+        if (record3.type === "error" && !consoleIsAllowed(record3, this.health)) {
+          this.fail(`console.error: ${record3.text} (${record3.location.url})`);
         }
       };
       onPageError = (error) => {
@@ -45383,9 +45447,9 @@ async function collectPageEvidence(options) {
         actual: status ?? "no response"
       });
     }
-    for (const text4 of options.state.expect.textPresent) {
-      if (!bodyText.includes(text4)) {
-        mismatches.push({ kind: "text-present", expected: text4 });
+    for (const text5 of options.state.expect.textPresent) {
+      if (!bodyText.includes(text5)) {
+        mismatches.push({ kind: "text-present", expected: text5 });
       }
     }
     for (const selector of options.state.expect.selectorPresent) {
@@ -45760,11 +45824,11 @@ function failureEligibility(original, slow) {
       selector: first.selector
     };
 }
-function eligibleFailureRequests(original, slow, eligibility, privateRequests) {
-  const signatures2 = eligibility.basis === "release" ? (slow?.held?.requests ?? []).filter(
-    (r) => !r.navigation && r.releasedAt !== null && eligibility.changeAt >= r.releasedAt && eligibility.changeAt - r.releasedAt <= RELEASE_ADJACENCY_MS
+function eligibleFailureRequests(original, slow, eligibility2, privateRequests) {
+  const signatures2 = eligibility2.basis === "release" ? (slow?.held?.requests ?? []).filter(
+    (r) => !r.navigation && r.releasedAt !== null && eligibility2.changeAt >= r.releasedAt && eligibility2.changeAt - r.releasedAt <= RELEASE_ADJACENCY_MS
   ) : original.requests.filter(
-    (r) => responseAt(r, original) !== null && r.outcome === "ok" && eligibility.changeAt >= (responseAt(r, original) ?? Infinity) && eligibility.changeAt - (responseAt(r, original) ?? 0) <= RELEASE_ADJACENCY_MS
+    (r) => responseAt(r, original) !== null && r.outcome === "ok" && eligibility2.changeAt >= (responseAt(r, original) ?? Infinity) && eligibility2.changeAt - (responseAt(r, original) ?? 0) <= RELEASE_ADJACENCY_MS
   );
   return privateRequests.filter(
     (r) => signatures2.some((s) => {
@@ -45850,16 +45914,16 @@ function recoveryWatcher(config) {
         "[role=alert], [role=status], [aria-live]:not([aria-live=off])"
       );
       const invalid = e.matches("[aria-invalid=true]");
-      const text4 = invalid ? "aria-invalid=true" : normalize2(e.textContent);
-      if (!text4 || text4 === baseline.get(e) || progressText(text4) && !errorWords.test(text4))
+      const text5 = invalid ? "aria-invalid=true" : normalize2(e.textContent);
+      if (!text5 || text5 === baseline.get(e) || progressText(text5) && !errorWords.test(text5))
         continue;
-      if (live ? !announced(e) || !local(e) && !errorWords.test(text4) : !rendered(e) || !local(e))
+      if (live ? !announced(e) || !local(e) && !errorWords.test(text5) : !rendered(e) || !local(e))
         continue;
-      if (!live && !invalid && (!errorWords.test(text4) || !message(e)))
+      if (!live && !invalid && (!errorWords.test(text5) || !message(e)))
         continue;
       if (invalid && !region.contains(e)) continue;
       const selector = selectorFor(e);
-      const key5 = `${selector}|${text4}`;
+      const key5 = `${selector}|${text5}`;
       if (seen.has(key5)) continue;
       seen.add(key5);
       if (feedback.length >= 40) {
@@ -45869,7 +45933,7 @@ function recoveryWatcher(config) {
       feedback.push({
         time: elapsed2() ?? 0,
         selector,
-        text: text4.slice(0, 160),
+        text: text5.slice(0, 160),
         kind: invalid ? "invalid" : e.matches("[role=alert]") ? "alert" : e.matches("[role=status]") ? "status" : live ? "live" : "error"
       });
     }
@@ -45886,8 +45950,8 @@ function recoveryWatcher(config) {
       const e = r.target instanceof Element ? r.target : r.target.parentElement;
       if (!e || !local(e) || noise(e) || e === trigger || trigger?.contains(e) || !rendered(e) || e.closest("[role=tooltip]"))
         continue;
-      const text4 = textOf2(e);
-      if (!text4 || text4 === baseline.get(e) || progressText(text4) || errorWords.test(text4) || e.matches(signals))
+      const text5 = textOf2(e);
+      if (!text5 || text5 === baseline.get(e) || progressText(text5) || errorWords.test(text5) || e.matches(signals))
         continue;
       const inserted = [...r.addedNodes].some(
         (n) => n instanceof Element ? rendered(n) && !skeletal(n) && n !== trigger : normalize2(n.textContent) !== ""
@@ -46013,7 +46077,7 @@ async function createFailureRoute(page, options) {
       return route.fallback();
     if (!active) return route.abort("failed").catch(() => void 0);
     pending++;
-    const record2 = {
+    const record3 = {
       method: request2.method(),
       path: new URL(request2.url()).pathname,
       resourceType: request2.resourceType(),
@@ -46021,12 +46085,12 @@ async function createFailureRoute(page, options) {
       injectedAt: null,
       delivered: false
     };
-    if (requests.length < 60) requests.push(record2);
+    if (requests.length < 60) requests.push(record3);
     else truncated = true;
     try {
       let markTimer;
       try {
-        record2.injectedAt = await Promise.race([
+        record3.injectedAt = await Promise.race([
           options.boundary(),
           new Promise((resolve70) => {
             markTimer = setTimeout(() => resolve70(null), 500);
@@ -46042,7 +46106,7 @@ async function createFailureRoute(page, options) {
           contentType: "application/json",
           body: '{"error":"Idiom local failure replay"}'
         });
-      record2.delivered = true;
+      record3.delivered = true;
     } catch {
       failed = true;
       await route.abort("failed").catch(() => void 0);
@@ -46205,18 +46269,18 @@ var init_failure = __esm({
 async function triggerBox(page, path) {
   return page.evaluate((selector) => {
     const pathOf2 = (element2) => {
-      const parts = [];
+      const parts2 = [];
       for (let current = element2; current !== null && current !== document.documentElement; current = current.parentElement) {
         const parent = current.parentElement;
         const tag = current.tagName.toLowerCase();
         if (parent === null) {
-          parts.unshift(tag);
+          parts2.unshift(tag);
           break;
         }
         const index = [...parent.children].filter((child) => child.tagName === current?.tagName).indexOf(current) + 1;
-        parts.unshift(`${tag}:nth-of-type(${index})`);
+        parts2.unshift(`${tag}:nth-of-type(${index})`);
       }
-      return `html > ${parts.join(" > ")}`;
+      return `html > ${parts2.join(" > ")}`;
     };
     const element = document.querySelector(selector);
     if (element === null) return void 0;
@@ -46242,18 +46306,18 @@ async function menuInventory(page, root2, deadline) {
       const pathOf2 = (element) => {
         if (element.id !== "" && /^[A-Za-z][\w-]*$/.test(element.id))
           return `#${element.id}`;
-        const parts = [];
+        const parts2 = [];
         for (let current = element; current !== null && current !== document.documentElement; current = current.parentElement) {
           const parent = current.parentElement;
           const tag = current.tagName.toLowerCase();
           if (parent === null) {
-            parts.unshift(tag);
+            parts2.unshift(tag);
             break;
           }
           const index = [...parent.children].filter((child) => child.tagName === current?.tagName).indexOf(current) + 1;
-          parts.unshift(`${tag}:nth-of-type(${index})`);
+          parts2.unshift(`${tag}:nth-of-type(${index})`);
         }
-        return `html > ${parts.join(" > ")}`;
+        return `html > ${parts2.join(" > ")}`;
       };
       const roots = [...document.querySelectorAll(root3)];
       const rows = [];
@@ -46346,8 +46410,8 @@ var init_menu_inventory = __esm({
 });
 
 // src/capture/probe-ledger.ts
-function controlIdentity(parts) {
-  return [parts.role, parts.name, parts.region ?? "", parts.signature].join(
+function controlIdentity(parts2) {
+  return [parts2.role, parts2.name, parts2.region ?? "", parts2.signature].join(
     "|"
   );
 }
@@ -46869,33 +46933,33 @@ async function installInstrumentation(page, respectControlIntent) {
       ) !== null || element.querySelector?.("[role=tooltip]") !== null;
     };
     const observer = new MutationObserver((records) => {
-      for (const record2 of records) {
-        if (tooltipish(record2.target)) continue;
-        if (record2.type === "childList" && [...record2.addedNodes, ...record2.removedNodes].length > 0 && [...record2.addedNodes, ...record2.removedNodes].every(
+      for (const record3 of records) {
+        if (tooltipish(record3.target)) continue;
+        if (record3.type === "childList" && [...record3.addedNodes, ...record3.removedNodes].length > 0 && [...record3.addedNodes, ...record3.removedNodes].every(
           (node) => node.nodeType !== Node.ELEMENT_NODE || tooltipish(node)
-        ) && [...record2.addedNodes, ...record2.removedNodes].some(
+        ) && [...record3.addedNodes, ...record3.removedNodes].some(
           (node) => node.nodeType === Node.ELEMENT_NODE
         ))
           continue;
-        if (record2.type === "attributes") {
-          const name = record2.attributeName ?? "";
+        if (record3.type === "attributes") {
+          const name = record3.attributeName ?? "";
           if (transient.test(name)) continue;
           if (name === "data-state" && [
-            record2.oldValue ?? "closed",
-            record2.target.getAttribute?.("data-state") ?? "closed"
+            record3.oldValue ?? "closed",
+            record3.target.getAttribute?.("data-state") ?? "closed"
           ].every(
             (value) => /^(?:closed|delayed-open|instant-open)$/.test(value)
-          ) && record2.target.getAttribute?.("aria-expanded") === null)
+          ) && record3.target.getAttribute?.("aria-expanded") === null)
             continue;
           if (/^aria-(?:pressed|expanded|selected|checked|current)$/.test(name))
             state.aria += 1;
         }
         state.mutations += 1;
         counted.push({
-          target: record2.target,
-          type: record2.type,
-          attributeName: record2.attributeName,
-          oldValue: record2.oldValue
+          target: record3.target,
+          type: record3.type,
+          attributeName: record3.attributeName,
+          oldValue: record3.oldValue
         });
       }
     });
@@ -46918,9 +46982,9 @@ async function installInstrumentation(page, respectControlIntent) {
       if (clipboard !== void 0) {
         const original = clipboard.writeText;
         const write = original?.bind(clipboard);
-        const wrapped = async (text4) => {
+        const wrapped = async (text5) => {
           state.clipboard += 1;
-          return write === void 0 ? void 0 : write(text4).catch(() => void 0);
+          return write === void 0 ? void 0 : write(text5).catch(() => void 0);
         };
         clipboard.writeText = wrapped;
         restore.push(() => {
@@ -46998,12 +47062,12 @@ async function primaryMutations(page, clicked) {
     const scope = window;
     const target2 = document.querySelector(path);
     const active = document.activeElement;
-    return (scope.__idiomRecords ?? []).filter((record2) => {
-      if (record2.type !== "attributes") return true;
-      const name = record2.attributeName ?? "";
+    return (scope.__idiomRecords ?? []).filter((record3) => {
+      if (record3.type !== "attributes") return true;
+      const name = record3.attributeName ?? "";
       if (name !== "class" && name !== "style" && !name.startsWith("data-"))
         return true;
-      const node = record2.target;
+      const node = record3.target;
       return !(node === target2 || active !== null && active !== document.body && node.contains(active));
     }).length;
   }, clicked).catch(() => 1);
@@ -47058,17 +47122,17 @@ async function ancestorSelection(page, path, name) {
       };
       const firsts = /* @__PURE__ */ new Map();
       const ids = /* @__PURE__ */ new Map();
-      for (const record2 of scope.__idiomRecords ?? []) {
-        if (record2.type !== "attributes" || record2.attributeName === null)
+      for (const record3 of scope.__idiomRecords ?? []) {
+        if (record3.type !== "attributes" || record3.attributeName === null)
           continue;
-        if (!(record2.target instanceof Element)) continue;
-        const id2 = ids.get(record2.target) ?? ids.size;
-        ids.set(record2.target, id2);
-        const key5 = `${id2}|${record2.attributeName}`;
+        if (!(record3.target instanceof Element)) continue;
+        const id2 = ids.get(record3.target) ?? ids.size;
+        ids.set(record3.target, id2);
+        const key5 = `${id2}|${record3.attributeName}`;
         if (!firsts.has(key5))
           firsts.set(key5, {
-            element: record2.target,
-            old: record2.oldValue ?? null
+            element: record3.target,
+            old: record3.oldValue ?? null
           });
       }
       const marked = [];
@@ -47077,11 +47141,11 @@ async function ancestorSelection(page, path, name) {
         if (marker !== void 0) marked.push({ element, marker });
       }
       if (marked.length === 0) return void 0;
-      const normalized = (value) => value.replace(/\s+/g, " ").trim().slice(0, 120);
-      const nameOf = (element) => normalized(
+      const normalized2 = (value) => value.replace(/\s+/g, " ").trim().slice(0, 120);
+      const nameOf = (element) => normalized2(
         (element.getAttribute("aria-labelledby") ?? "").split(/\s+/).map((id2) => document.getElementById(id2)?.textContent ?? "").join(" ").trim() || element.getAttribute("aria-label") || element.innerText || (element instanceof HTMLInputElement ? element.value : "") || element.getAttribute("title") || ""
       );
-      const wanted = normalized(name2);
+      const wanted = normalized2(name2);
       const references2 = (element) => target2.id !== "" && ([
         "aria-controls",
         "aria-labelledby",
@@ -47125,23 +47189,23 @@ async function ancestorSelection(page, path, name) {
       );
       if (!holdsOthers && area2(ancestor) < 2 * area2(target2)) return void 0;
       const pathFor = (element) => {
-        const parts = [];
+        const parts2 = [];
         let current = element;
         while (current !== null && current !== document.documentElement) {
           const parent = current.parentElement;
           const tag2 = current.tagName.toLowerCase();
           if (parent === null) {
-            parts.unshift(tag2);
+            parts2.unshift(tag2);
             break;
           }
           const index = [...parent.children].filter((child) => child.tagName === current?.tagName).indexOf(current) + 1;
-          parts.unshift(`${tag2}:nth-of-type(${index})`);
+          parts2.unshift(`${tag2}:nth-of-type(${index})`);
           current = parent;
         }
-        return `html > ${parts.join(" > ")}`;
+        return `html > ${parts2.join(" > ")}`;
       };
       const generatedId = /^[:_«]r|^radix-|^headlessui-|\d{3,}/;
-      const label5 = normalized(
+      const label5 = normalized2(
         ancestor.getAttribute("aria-label") || (ancestor.getAttribute("aria-labelledby") ?? "").split(/\s+/).map((id2) => document.getElementById(id2)?.textContent ?? "").join(" ")
       );
       const tag = ancestor.tagName.toLowerCase();
@@ -47160,20 +47224,20 @@ async function selectionCandidates(page, skip, already, respectControlIntent) {
   return await page.evaluate(
     ({ skipSelectors, already: already2, respectControlIntent: respectControlIntent2 }) => {
       const pathFor = (element) => {
-        const parts = [];
+        const parts2 = [];
         let current = element;
         while (current !== null && current !== document.documentElement) {
           const parent = current.parentElement;
           const tag = current.tagName.toLowerCase();
           if (parent === null) {
-            parts.unshift(tag);
+            parts2.unshift(tag);
             break;
           }
           const index = [...parent.children].filter((child) => child.tagName === current?.tagName).indexOf(current) + 1;
-          parts.unshift(`${tag}:nth-of-type(${index})`);
+          parts2.unshift(`${tag}:nth-of-type(${index})`);
           current = parent;
         }
-        return `html > ${parts.join(" > ")}`;
+        return `html > ${parts2.join(" > ")}`;
       };
       const visible2 = (element) => {
         if (!element.checkVisibility()) return false;
@@ -47216,8 +47280,8 @@ async function selectionCandidates(page, skip, already, respectControlIntent) {
       };
       const directText = (element) => [...element.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent ?? "").join("").replace(/\s+/g, " ").trim();
       const lookAlike = (element) => {
-        const text4 = directText(element);
-        return text4.length >= 1 && text4.length <= 40 && element.getBoundingClientRect().height <= 64 && buttonLook(element);
+        const text5 = directText(element);
+        return text5.length >= 1 && text5.length <= 40 && element.getBoundingClientRect().height <= 64 && buttonLook(element);
       };
       const affordanceOf = (element) => {
         const style = getComputedStyle(element);
@@ -47373,7 +47437,7 @@ async function snapshot2(page) {
       const style = getComputedStyle(element);
       return style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) > 0;
     };
-    const text4 = (id2) => id2 === null ? "" : id2.split(/\s+/).map((part) => document.getElementById(part)?.textContent ?? "").join(" ").replace(/\s+/g, " ").trim();
+    const text5 = (id2) => id2 === null ? "" : id2.split(/\s+/).map((part) => document.getElementById(part)?.textContent ?? "").join(" ").replace(/\s+/g, " ").trim();
     const regions2 = document.querySelectorAll(
       "dialog[open], [role=dialog], [role=alertdialog], [role=menu], [role=listbox], [role=region], [role=tabpanel], aside, [aria-modal=true], [popover]"
     );
@@ -47382,18 +47446,18 @@ async function snapshot2(page) {
       if (!visible2(region)) continue;
       const role = region.getAttribute("role") ?? region.tagName.toLowerCase();
       const heading = region.querySelector("h1, h2, h3, h4, [role=heading]");
-      const name = region.getAttribute("aria-label") ?? (text4(region.getAttribute("aria-labelledby")) || (heading?.textContent ?? "").replace(/\s+/g, " ").trim());
-      const parts = [];
+      const name = region.getAttribute("aria-label") ?? (text5(region.getAttribute("aria-labelledby")) || (heading?.textContent ?? "").replace(/\s+/g, " ").trim());
+      const parts2 = [];
       for (let current = region; current && current !== document.documentElement; current = current.parentElement) {
         const tag = current.tagName.toLowerCase();
         const peers = [
           ...current.parentElement?.children ?? []
         ].filter((element) => element.tagName === current?.tagName);
-        parts.unshift(`${tag}:nth-of-type(${peers.indexOf(current) + 1})`);
+        parts2.unshift(`${tag}:nth-of-type(${peers.indexOf(current) + 1})`);
       }
       names.push({
         name: `${role}:${name.slice(0, 80)}`,
-        selector: `html > ${parts.join(" > ")}`
+        selector: `html > ${parts2.join(" > ")}`
       });
     }
     return names;
@@ -47411,9 +47475,9 @@ async function stateFingerprint(page) {
     const hash3 = () => {
       let value = 2166136261;
       return {
-        add(text5) {
-          for (let index2 = 0; index2 < text5.length; index2 += 1) {
-            value ^= text5.charCodeAt(index2);
+        add(text6) {
+          for (let index2 = 0; index2 < text6.length; index2 += 1) {
+            value ^= text6.charCodeAt(index2);
             value = Math.imul(value, 16777619);
           }
           value ^= 31;
@@ -47422,7 +47486,7 @@ async function stateFingerprint(page) {
         get: () => (value >>> 0).toString(36)
       };
     };
-    const text4 = hash3();
+    const text5 = hash3();
     const attributes = hash3();
     const visibility = hash3();
     let shown = 0;
@@ -47464,14 +47528,14 @@ async function stateFingerprint(page) {
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
         if (node.parentElement?.closest(roots)) continue;
         const value = node.nodeValue?.trim() ?? "";
-        if (value !== "") text4.add(value);
+        if (value !== "") text5.add(value);
       }
     }
     return [
       Math.round(window.scrollX),
       Math.round(window.scrollY),
       index,
-      text4.get(),
+      text5.get(),
       attributes.get(),
       shown,
       visibility.get()
@@ -47490,21 +47554,21 @@ async function closeControl(page, baseline) {
         const style = getComputedStyle(element);
         return style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) > 0;
       };
-      const text4 = (id2) => id2 === null ? "" : id2.split(/\s+/).map((part) => document.getElementById(part)?.textContent ?? "").join(" ").replace(/\s+/g, " ").trim();
+      const text5 = (id2) => id2 === null ? "" : id2.split(/\s+/).map((part) => document.getElementById(part)?.textContent ?? "").join(" ").replace(/\s+/g, " ").trim();
       const pathFor = (element) => {
-        const parts = [];
+        const parts2 = [];
         let current = element;
         while (current !== null && current !== document.documentElement) {
           const node = current;
           const siblings = [...node.parentElement?.children ?? []].filter(
             (child) => child.tagName === node.tagName
           );
-          parts.unshift(
+          parts2.unshift(
             `${node.tagName.toLowerCase()}:nth-of-type(${siblings.indexOf(node) + 1})`
           );
           current = node.parentElement;
         }
-        return `html > ${parts.join(" > ")}`;
+        return `html > ${parts2.join(" > ")}`;
       };
       for (const region of document.querySelectorAll(
         "dialog[open], [role=dialog], [role=alertdialog], [role=menu], [role=listbox], [role=region], aside, [aria-modal=true], [popover]"
@@ -47512,7 +47576,7 @@ async function closeControl(page, baseline) {
         if (!visible2(region)) continue;
         const role = region.getAttribute("role") ?? region.tagName.toLowerCase();
         const heading = region.querySelector("h1, h2, h3, h4, [role=heading]");
-        const name = region.getAttribute("aria-label") ?? (text4(region.getAttribute("aria-labelledby")) || (heading?.textContent ?? "").replace(/\s+/g, " ").trim());
+        const name = region.getAttribute("aria-label") ?? (text5(region.getAttribute("aria-labelledby")) || (heading?.textContent ?? "").replace(/\s+/g, " ").trim());
         if (baseline2.includes(`${role}:${name.slice(0, 80)}`)) continue;
         for (const control of region.querySelectorAll(
           "button, [role=button], input[type=button]"
@@ -47532,20 +47596,20 @@ async function enumerate(page, skip, root2, respectControlIntent = false) {
   return await page.evaluate(
     ({ skipSelectors, rootSelector, respectControlIntent: respectControlIntent2 }) => {
       const pathFor = (element) => {
-        const parts = [];
+        const parts2 = [];
         let current = element;
         while (current !== null && current !== document.documentElement) {
           const parent = current.parentElement;
           const tag = current.tagName.toLowerCase();
           if (parent === null) {
-            parts.unshift(tag);
+            parts2.unshift(tag);
             break;
           }
           const index = [...parent.children].filter((child) => child.tagName === current?.tagName).indexOf(current) + 1;
-          parts.unshift(`${tag}:nth-of-type(${index})`);
+          parts2.unshift(`${tag}:nth-of-type(${index})`);
           current = parent;
         }
-        return `html > ${parts.join(" > ")}`;
+        return `html > ${parts2.join(" > ")}`;
       };
       const visible2 = (element) => {
         if (!element.checkVisibility()) return false;
@@ -47712,18 +47776,18 @@ async function positionedPaths(page) {
       if (!element.checkVisibility({ checkOpacity: true })) continue;
       const rect3 = element.getBoundingClientRect();
       if (rect3.width <= 0 || rect3.height <= 0) continue;
-      const parts = [];
+      const parts2 = [];
       for (let current = element; current !== null && current !== document.documentElement; current = current.parentElement) {
         const parent = current.parentElement;
         const tag = current.tagName.toLowerCase();
         if (parent === null) {
-          parts.unshift(tag);
+          parts2.unshift(tag);
           break;
         }
         const index = [...parent.children].filter((child) => child.tagName === current?.tagName).indexOf(current) + 1;
-        parts.unshift(`${tag}:nth-of-type(${index})`);
+        parts2.unshift(`${tag}:nth-of-type(${index})`);
       }
-      paths.push(`html > ${parts.join(" > ")}`);
+      paths.push(`html > ${parts2.join(" > ")}`);
     }
     return paths;
   });
@@ -47732,20 +47796,20 @@ async function disclosureRoot(page, candidate2, before, openedRoots) {
   return await page.evaluate(
     ({ path, controls, before: before2, openedRoots: openedRoots2 }) => {
       const pathFor = (element) => {
-        const parts = [];
+        const parts2 = [];
         let current = element;
         while (current !== null && current !== document.documentElement) {
           const parent = current.parentElement;
           const tag = current.tagName.toLowerCase();
           if (parent === null) {
-            parts.unshift(tag);
+            parts2.unshift(tag);
             break;
           }
           const index = [...parent.children].filter((child) => child.tagName === current?.tagName).indexOf(current) + 1;
-          parts.unshift(`${tag}:nth-of-type(${index})`);
+          parts2.unshift(`${tag}:nth-of-type(${index})`);
           current = parent;
         }
-        return `html > ${parts.join(" > ")}`;
+        return `html > ${parts2.join(" > ")}`;
       };
       const visible2 = (element) => {
         if (!element.checkVisibility({ checkOpacity: true })) return false;
@@ -47795,20 +47859,20 @@ async function disclosureRoot(page, candidate2, before, openedRoots) {
 async function visibleFields(page) {
   return await page.evaluate(() => {
     const pathFor = (element) => {
-      const parts = [];
+      const parts2 = [];
       let current = element;
       while (current !== null && current !== document.documentElement) {
         const parent = current.parentElement;
         const tag = current.tagName.toLowerCase();
         if (parent === null) {
-          parts.unshift(tag);
+          parts2.unshift(tag);
           break;
         }
         const index = [...parent.children].filter((child) => child.tagName === current?.tagName).indexOf(current) + 1;
-        parts.unshift(`${tag}:nth-of-type(${index})`);
+        parts2.unshift(`${tag}:nth-of-type(${index})`);
         current = parent;
       }
-      return `html > ${parts.join(" > ")}`;
+      return `html > ${parts2.join(" > ")}`;
     };
     return [
       ...document.querySelectorAll(
@@ -48890,7 +48954,7 @@ async function probeControls(options) {
     if (options.signal?.aborted || state.remaining() < reserve()) return;
     progress("selection candidates");
     const trials = [];
-    const record2 = (pass2) => {
+    const record3 = (pass2) => {
       artifact.selectionTrials = pass2;
       return pass2;
     };
@@ -48939,7 +49003,7 @@ async function probeControls(options) {
     } catch (error) {
       rethrowState(error);
       failed(
-        record2({
+        record3({
           status: "ran",
           limit: SELECTION_TRIAL_LIMIT,
           candidates: 0,
@@ -48949,7 +49013,7 @@ async function probeControls(options) {
       );
       return;
     }
-    const pass = record2({
+    const pass = record3({
       status: "ran",
       limit: SELECTION_TRIAL_LIMIT,
       candidates: found.length,
@@ -49101,19 +49165,19 @@ async function probeControls(options) {
           });
         if (failureSummary && original && requests.length) {
           const key5 = failureKey(item.selector, original.requests);
-          const eligibility = failureEligibility(
+          const eligibility2 = failureEligibility(
             original,
             recorder.lastAction()
           );
-          const eligibleRequests = eligibility ? eligibleFailureRequests(
+          const eligibleRequests = eligibility2 ? eligibleFailureRequests(
             original,
             recorder.lastAction(),
-            eligibility,
+            eligibility2,
             requests
           ) : [];
-          if (eligibility && eligibleRequests.length)
+          if (eligibility2 && eligibleRequests.length)
             failureSummary.queued += 1;
-          if (!eligibility || !eligibleRequests.length)
+          if (!eligibility2 || !eligibleRequests.length)
             failureSummary.notes.push(
               `${item.selector}: response-gated visible result was not established`
             );
@@ -49149,7 +49213,7 @@ async function probeControls(options) {
               routePage: realPage,
               item,
               requests: eligibleRequests,
-              eligibility,
+              eligibility: eligibility2,
               settings: failureSummary,
               timeline: recorder,
               clock
@@ -49569,8 +49633,8 @@ async function probeControls(options) {
             artifact.explanations = mergeExplanations(artifact.explanations, {
               version: 1,
               status: "ran",
-              records: entry2.explanations.map((record2) => ({
-                ...record2,
+              records: entry2.explanations.map((record3) => ({
+                ...record3,
                 selector: explanation.selector,
                 controlId: explanation.controlId
               }))
@@ -49706,7 +49770,7 @@ async function probeControls(options) {
             });
             await ladder(page);
             explanationRecords2 = collector.evidence().records.filter(
-              (record2) => record2.selector === explanation.selector
+              (record3) => record3.selector === explanation.selector
             );
           }
           if (!intent) {
@@ -50010,7 +50074,7 @@ async function probeControls(options) {
             parentKey,
             stateId,
             { ...published },
-            explanationRecords2.some((record2) => record2.status === "unavailable") ? [] : explanationRecords2,
+            explanationRecords2.some((record3) => record3.status === "unavailable") ? [] : explanationRecords2,
             nested,
             nestedStarved || tasks.length > 0
           );
@@ -50106,20 +50170,20 @@ async function probeControls(options) {
           );
           triggers = await matches2.evaluateAll(
             (elements) => elements.slice(0, 3).map((element) => {
-              const parts = [];
+              const parts2 = [];
               let current2 = element;
               while (current2 && current2 !== document.documentElement) {
                 const node = current2;
                 const siblings = [
                   ...node.parentElement?.children ?? []
                 ].filter((child) => child.tagName === node.tagName);
-                parts.unshift(
+                parts2.unshift(
                   `${node.tagName.toLowerCase()}:nth-of-type(${siblings.indexOf(node) + 1})`
                 );
                 current2 = node.parentElement;
               }
               return {
-                selector: element.id ? `#${CSS.escape(element.id)}` : `html > ${parts.join(" > ")}`,
+                selector: element.id ? `#${CSS.escape(element.id)}` : `html > ${parts2.join(" > ")}`,
                 name: (element.getAttribute("aria-label") || element.innerText || element.getAttribute("title") || "").trim()
               };
             })
@@ -50228,7 +50292,7 @@ async function probeControls(options) {
       const missing2 = new ExplanationCollector(options.page);
       for (const candidate2 of explanationIdentities) {
         if (!artifact.explanations?.records.some(
-          (record2) => record2.selector === candidate2.selector
+          (record3) => record3.selector === candidate2.selector
         ))
           missing2.unavailable(
             candidate2.selector,
@@ -50346,14 +50410,14 @@ var init_progress = __esm({
                 for (const type of actionEvents)
                   window.removeEventListener(type, onAction, true);
               };
-              const record2 = (kind, element) => {
+              const record3 = (kind, element) => {
                 if (hit !== null || startedAt === null) return true;
                 firstMs = performance.now() - startedAt;
-                const text4 = textOf2(element).slice(0, 80);
+                const text5 = textOf2(element).slice(0, 80);
                 hit = {
                   kind,
                   selector: selectorFor(element),
-                  ...text4 ? { text: text4 } : {}
+                  ...text5 ? { text: text5 } : {}
                 };
                 stop();
                 return true;
@@ -50366,10 +50430,10 @@ var init_progress = __esm({
                   records,
                   skipTrigger: false,
                   rebusyBaseline: true,
-                  visit: record2
+                  visit: record3
                 }))
                   return;
-                addedProgressText(records, record2);
+                addedProgressText(records, record3);
               };
               const observer = new MutationObserver((records) => scan(records));
               observer.observe(document, {
@@ -50734,10 +50798,10 @@ async function captureInContext(context2, tuple, runtime, linkChecker) {
     const health = tuple.health ?? {
       allow: "health" in tuple.state ? tuple.state.health.allow : { urls: [], console: [] }
     };
-    const annotate = (record2) => consoleIsAllowed(record2, health) ? { ...record2, healthAllowed: true } : record2;
+    const annotate = (record3) => consoleIsAllowed(record3, health) ? { ...record3, healthAllowed: true } : record3;
     page.on("console", (message) => {
       const location2 = message.location();
-      const record2 = annotate({
+      const record3 = annotate({
         type: message.type(),
         text: message.text(),
         location: {
@@ -50746,8 +50810,8 @@ async function captureInContext(context2, tuple, runtime, linkChecker) {
           columnNumber: location2.columnNumber
         }
       });
-      records.push(record2);
-      if (provenance2) timestamps.set(record2, message.timestamp());
+      records.push(record3);
+      if (provenance2) timestamps.set(record3, message.timestamp());
     });
     page.on("pageerror", (error) => {
       records.push(annotate({ type: "pageerror", text: error.message }));
@@ -51281,9 +51345,9 @@ function createBrowserLauncher(overrides = {}) {
             await page.waitForTimeout(50);
           }
           await runner?.checkpoint();
-          const rects = await page.evaluate((list5) => {
+          const rects = await page.evaluate((list6) => {
             const round5 = (value) => Math.round(value * 100) / 100;
-            return list5.map(
+            return list6.map(
               (selector) => Array.from(document.querySelectorAll(selector), (element) => {
                 const rect3 = element.getBoundingClientRect();
                 return [rect3.x, rect3.y, rect3.width, rect3.height].map(round5).join(",");
@@ -51408,8 +51472,8 @@ async function openProductionCache(root2, output) {
       if (!metadata2 || metadata2.inputHash !== hash3) return false;
       try {
         await assertContainedPath(root2, join23(entry2, "output"));
-        const stat15 = await lstat4(join23(entry2, "output"));
-        if (!stat15.isDirectory()) return false;
+        const stat16 = await lstat4(join23(entry2, "output"));
+        if (!stat16.isDirectory()) return false;
         const id2 = await readBuildId(join23(entry2, "output"), fallbackId);
         if (id2 !== metadata2.id) return false;
         await cp(join23(entry2, "output"), output, {
@@ -51619,7 +51683,7 @@ async function runToClose(options) {
   if (options.signal?.aborted) abort();
   const result2 = await new Promise((accept, reject) => {
     child.once("error", reject);
-    child.once("close", (code2, signal) => accept({ code: code2, signal }));
+    child.once("close", (code3, signal) => accept({ code: code3, signal }));
   }).finally(() => options.signal?.removeEventListener("abort", abort)).catch((error) => {
     throw new IdiomError(
       `${options.label} could not start (${redact(options.command, options.env)}, cwd ${options.cwd}): ${redact(String(error), options.env)}`
@@ -51709,9 +51773,9 @@ function signalTree(child, signal) {
     if (process.platform === "win32") child.kill(signal);
     else process.kill(-child.pid, signal);
   } catch (error) {
-    const code2 = error.code;
-    if (code2 === "ESRCH") return;
-    if (code2 === "EPERM") {
+    const code3 = error.code;
+    if (code3 === "ESRCH") return;
+    if (code3 === "EPERM") {
       child.kill(signal);
       return;
     }
@@ -52841,8 +52905,8 @@ function mergePlannedProbe(options) {
       artifact.explanations = mergeExplanations(artifact.explanations, {
         version: 1,
         status: "ran",
-        records: cached.explanations.map((record2) => ({
-          ...record2,
+        records: cached.explanations.map((record3) => ({
+          ...record3,
           selector: candidate2.explanation?.selector ?? candidate2.selector,
           controlId: candidate2.explanation?.controlId
         }))
@@ -53010,14 +53074,14 @@ function createReplayLedger() {
       for (const { state, keys } of states)
         for (const key5 of keys) {
           const id2 = slot(partition, key5);
-          const list5 = holders.get(id2) ?? [];
-          if (!list5.includes(state)) list5.push(state);
-          holders.set(id2, list5);
+          const list6 = holders.get(id2) ?? [];
+          if (!list6.includes(state)) list6.push(state);
+          holders.set(id2, list6);
         }
-      for (const [id2, list5] of holders) {
+      for (const [id2, list6] of holders) {
         if (!inPartition(partition, id2) || owners.has(id2)) continue;
         let chosen;
-        for (const state of list5)
+        for (const state of list6)
           if (chosen === void 0 || (counts.get(state) ?? 0) < (counts.get(chosen) ?? 0))
             chosen = state;
         if (chosen === void 0) continue;
@@ -53154,16 +53218,16 @@ function resolveCaptureScope(options) {
   return { declared: declared2, selected: selected2 };
 }
 function probeCoordinates(project, flow, tuples) {
-  const enabled = tuples.filter(
+  const enabled2 = tuples.filter(
     (tuple) => tuple.state.probe ?? project.checks.probe.enabled
   );
   const intended = [];
   if (isWebFlow(flow)) {
     if (project.checks.probe.everywhere)
-      intended.push(...enabled.map(coordinate2));
+      intended.push(...enabled2.map(coordinate2));
     else
-      for (const state of new Set(enabled.map((tuple) => tuple.state.id))) {
-        const candidates = enabled.filter((tuple) => tuple.state.id === state);
+      for (const state of new Set(enabled2.map((tuple) => tuple.state.id))) {
+        const candidates = enabled2.filter((tuple) => tuple.state.id === state);
         const first = candidates[0];
         if (!first) continue;
         intended.push(
@@ -53261,13 +53325,13 @@ function derivedTextTransform(navigationUrl, metadataUrl, aliases = []) {
     matchers[mode],
     (match) => replacements.get(match)?.value ?? match
   );
-  return (value, mode = "text") => mode === "markup" ? mapMarkup(value, (text4) => transform(text4)) : transform(value, mode);
+  return (value, mode = "text") => mode === "markup" ? mapMarkup(value, (text5) => transform(text5)) : transform(value, mode);
 }
 function templatePath(template) {
   const path = template.replace(/^[a-z][a-z\d+.-]*:\/\/[^/?#]*/i, "").split(/[?#]/, 1)[0];
   return path === void 0 || path === "" ? "/" : path;
 }
-function mapMarkup(html, text4) {
+function mapMarkup(html, text5) {
   const tag = /<(\/?)([A-Za-z][^\s/>]*)((?:[^>"']|"[^"]*"|'[^']*')*)(>|$)/y;
   const attribute2 = /([^\s"'>/=]+)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)|[^\s"'>/=]+|[\s\S]/g;
   let out = "";
@@ -53283,10 +53347,10 @@ function mapMarkup(html, text4) {
       continue;
     }
     const [, close2 = "", name = "", attributes = "", end = ""] = match;
-    out += text4(html.slice(textStart, open3));
+    out += text5(html.slice(textStart, open3));
     out += `<${close2}${name}${attributes.replace(
       attribute2,
-      (whole, attributeName, equals, value) => value === void 0 ? whole : `${attributeName}${equals}${text4(value)}`
+      (whole, attributeName, equals, value) => value === void 0 ? whole : `${attributeName}${equals}${text5(value)}`
     )}${end}`;
     index = textStart = tag.lastIndex;
     if (!close2 && rawTextElements.has(name.toLowerCase())) {
@@ -53300,7 +53364,7 @@ function mapMarkup(html, text4) {
       index = body;
     }
   }
-  return out + text4(html.slice(textStart));
+  return out + text5(html.slice(textStart));
 }
 function mapStrings(value, map, field, mapKey, parent, measured2 = false) {
   if (typeof value === "string") return map(value, field, measured2);
@@ -53336,10 +53400,10 @@ function mapStrings(value, map, field, mapKey, parent, measured2 = false) {
   return value;
 }
 function mapResult(result2, map, evidenceMap = map, axeMap = map, axeKeyMap, domMap = map) {
-  const records = result2.console.map((record2) => ({
-    ...record2,
-    text: map(record2.text),
-    ...record2.location === void 0 ? {} : { location: { ...record2.location, url: map(record2.location.url) } }
+  const records = result2.console.map((record3) => ({
+    ...record3,
+    text: map(record3.text),
+    ...record3.location === void 0 ? {} : { location: { ...record3.location, url: map(record3.location.url) } }
   }));
   const axe = mapStrings(result2.axe, axeMap, void 0, axeKeyMap);
   const observations = mapStrings(
@@ -55126,8 +55190,8 @@ var init_deterministic_bound = __esm({
 });
 
 // src/critique/redact.ts
-function redactCredentials(text4) {
-  return text4.replace(CREDENTIAL_PATTERN, "[redacted]");
+function redactCredentials(text5) {
+  return text5.replace(CREDENTIAL_PATTERN, "[redacted]");
 }
 var MISSING_ANTHROPIC_API_KEY_MESSAGE, CREDENTIAL_PATTERN;
 var init_redact = __esm({
@@ -55638,12 +55702,12 @@ function anchored(sentence2, match) {
   const end = match.index + match[0].lastIndexOf(term) + term.length;
   return ANCHOR.test(sentence2.slice(end));
 }
-function evaluative(pattern, text4, surfaceExempt) {
+function evaluative(pattern, text5, surfaceExempt) {
   pattern.lastIndex = 0;
-  for (let match = pattern.exec(text4); match !== null; match = pattern.exec(text4)) {
+  for (let match = pattern.exec(text5); match !== null; match = pattern.exec(text5)) {
     const letter = match.groups?.letter;
     const lowercaseLetter = letter !== void 0 && letter[0] !== letter[0]?.toUpperCase();
-    if (!lowercaseLetter && !(surfaceExempt && anchored(text4, match)))
+    if (!lowercaseLetter && !(surfaceExempt && anchored(text5, match)))
       return match;
     pattern.lastIndex = match.index + 1;
   }
@@ -55964,12 +56028,12 @@ function validateCritiqueResult(options) {
       discardedDecisionObservations: upstreamDiscarded + parsed2.discardedDecisionObservations
     });
   }
-  const record2 = options.result !== null && typeof options.result === "object" ? options.result : {};
-  upstreamDiscarded = typeof record2.discardedDecisionObservations === "number" && Number.isSafeInteger(record2.discardedDecisionObservations) && record2.discardedDecisionObservations >= 0 ? record2.discardedDecisionObservations : 0;
+  const record3 = options.result !== null && typeof options.result === "object" ? options.result : {};
+  upstreamDiscarded = typeof record3.discardedDecisionObservations === "number" && Number.isSafeInteger(record3.discardedDecisionObservations) && record3.discardedDecisionObservations >= 0 ? record3.discardedDecisionObservations : 0;
   const parsed = parseModelResponse(
     JSON.stringify({
-      findings: record2.findings,
-      decisionObservations: record2.decisionObservations
+      findings: record3.findings,
+      decisionObservations: record3.decisionObservations
     }),
     options.screenshots,
     options.references ?? [],
@@ -55983,14 +56047,14 @@ function validateCritiqueResult(options) {
     findings: parsed.findings,
     decisionObservations: parsed.decisionObservations,
     discardedDecisionObservations: upstreamDiscarded + parsed.discardedDecisionObservations,
-    evidenceLimits: evidenceLimitsOf(record2.evidenceLimits)
+    evidenceLimits: evidenceLimitsOf(record3.evidenceLimits)
   });
 }
 function evidenceLimitsOf(value) {
   if (value === null || typeof value !== "object") return void 0;
-  const record2 = value;
-  const limits = record2.limits;
-  if (record2.provider !== "claude-code" || typeof record2.sessions !== "number" || !Number.isSafeInteger(record2.sessions) || record2.sessions < 0 || !Array.isArray(record2.omitted) || limits === null || typeof limits !== "object" || typeof limits.images !== "number" || typeof limits.imageBytes !== "number" || typeof limits.domChars !== "number" || !record2.omitted.every(
+  const record3 = value;
+  const limits = record3.limits;
+  if (record3.provider !== "claude-code" || typeof record3.sessions !== "number" || !Number.isSafeInteger(record3.sessions) || record3.sessions < 0 || !Array.isArray(record3.omitted) || limits === null || typeof limits !== "object" || typeof limits.images !== "number" || typeof limits.imageBytes !== "number" || typeof limits.domChars !== "number" || !record3.omitted.every(
     (item) => item !== null && typeof item === "object" && typeof item.label === "string" && typeof item.kind === "string" && typeof item.reason === "string"
   ))
     return void 0;
@@ -56667,17 +56731,17 @@ function planClaudeCodeSessions(input, sizes, limits = claudeCodeSessionLimits) 
 }
 function describeEvidenceLimits(limits) {
   const budget = `per session: ${limits.limits.images} images, ${formatMegabytes(limits.limits.imageBytes)} of images, ${limits.limits.domChars.toLocaleString("en-US")} DOM characters`;
-  const parts = [
+  const parts2 = [
     limits.sessions === 1 ? "ran in 1 session" : `split across ${limits.sessions} sessions`
   ];
   if (limits.omitted.length > 0) {
     const listed3 = limits.omitted.slice(0, MAX_DESCRIBED_OMISSIONS).map((item) => `${item.label} (${item.kind}: ${item.reason})`);
     const rest = limits.omitted.length - listed3.length;
-    parts.push(
+    parts2.push(
       `omitted ${listed3.join(", ")}${rest > 0 ? `, and ${rest} more` : ""}`
     );
   }
-  return `Claude Code critique evidence was limited (${budget}): ${parts.join("; ")}.`;
+  return `Claude Code critique evidence was limited (${budget}): ${parts2.join("; ")}.`;
 }
 var CLAUDE_CODE_MAX_SESSION_IMAGES, CLAUDE_CODE_MAX_SESSION_IMAGE_BYTES, CLAUDE_CODE_MAX_SESSION_DOM_CHARS, claudeCodeSessionLimits, MIB, MAX_DESCRIBED_OMISSIONS;
 var init_claude_code_sessions = __esm({
@@ -56693,6 +56757,18 @@ var init_claude_code_sessions = __esm({
     };
     MIB = 1024 * 1024;
     MAX_DESCRIBED_OMISSIONS = 10;
+  }
+});
+
+// src/critique/executables.ts
+var CLI_PROVIDER_EXECUTABLES;
+var init_executables = __esm({
+  "src/critique/executables.ts"() {
+    "use strict";
+    CLI_PROVIDER_EXECUTABLES = {
+      "claude-code": "claude",
+      codex: "codex"
+    };
   }
 });
 
@@ -56861,17 +56937,17 @@ function readResultEnvelope(source) {
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
     return void 0;
-  const record2 = parsed;
-  if (record2.type !== "result") return void 0;
-  const failed = record2.is_error === true || record2.subtype !== "success";
-  const errors = Array.isArray(record2.errors) ? record2.errors.filter((item) => typeof item === "string") : [];
+  const record3 = parsed;
+  if (record3.type !== "result") return void 0;
+  const failed = record3.is_error === true || record3.subtype !== "success";
+  const errors = Array.isArray(record3.errors) ? record3.errors.filter((item) => typeof item === "string") : [];
   const diagnostic = [
-    typeof record2.subtype === "string" && record2.subtype !== "success" ? record2.subtype : "",
-    typeof record2.result === "string" ? record2.result.trim() : "",
+    typeof record3.subtype === "string" && record3.subtype !== "success" ? record3.subtype : "",
+    typeof record3.result === "string" ? record3.result.trim() : "",
     errors.join("; ")
   ].filter((part) => part !== "").join(": ");
   return {
-    record: record2,
+    record: record3,
     failed,
     diagnostic,
     auth: failed && CLAUDE_CODE_AUTH_FAILURE.test(diagnostic)
@@ -56906,6 +56982,7 @@ var init_claude_code = __esm({
   "src/critique/claude-code.ts"() {
     "use strict";
     init_claude_code_sessions();
+    init_executables();
     init_process2();
     init_prompt();
     init_schema3();
@@ -56970,7 +57047,7 @@ var init_claude_code = __esm({
         let result2;
         try {
           result2 = await this.runner({
-            executable: "claude",
+            executable: CLI_PROVIDER_EXECUTABLES["claude-code"],
             args: [
               "-p",
               "--output-format",
@@ -57194,6 +57271,7 @@ var MAX_CODEX_STDERR_BYTES, STDERR_TAIL_LENGTH, CodexCritiqueError, STRIPPED_KEY
 var init_codex = __esm({
   "src/critique/codex.ts"() {
     "use strict";
+    init_executables();
     init_process2();
     init_prompt();
     init_schema3();
@@ -57247,7 +57325,7 @@ var init_codex = __esm({
           let result2;
           try {
             result2 = await this.runner({
-              executable: "codex",
+              executable: CLI_PROVIDER_EXECUTABLES.codex,
               args: [
                 "exec",
                 "--skip-git-repo-check",
@@ -57441,6 +57519,7 @@ var init_provider = __esm({
     init_codex();
     init_process2();
     init_redact();
+    init_executables();
     MAX_DEGRADATION_REASON_LENGTH = 600;
     CritiqueFallbackError = class extends Error {
       constructor(message) {
@@ -57863,11 +57942,11 @@ function radius3(element) {
   return new Set(labels).size === 1 ? labels[0] ?? "0" : "mixed";
 }
 function contrast(element, bySelector) {
-  const text4 = element.signals?.paint?.text;
-  if (text4?.status === "measured" && text4.samples.length > 0)
+  const text5 = element.signals?.paint?.text;
+  if (text5?.status === "measured" && text5.samples.length > 0)
     return round(
       Math.min(
-        ...text4.samples.map(
+        ...text5.samples.map(
           (sample) => contrastRatio(sample.foreground, sample.background)
         )
       ),
@@ -58838,33 +58917,33 @@ function lineageFor(catalog, findingId) {
     throw new IdiomError(`unknown finding id ${JSON.stringify(findingId)}`);
   return match;
 }
-function reviewFindings(catalog, record2) {
-  return catalog.runs.find((run2) => run2.runDirectory === record2.runDirectory)?.findings ?? [];
+function reviewFindings(catalog, record3) {
+  return catalog.runs.find((run2) => run2.runDirectory === record3.runDirectory)?.findings ?? [];
 }
-function presentedRecord(record2, id2, aliases, fingerprint3 = record2.finding.fingerprint) {
+function presentedRecord(record3, id2, aliases, fingerprint3 = record3.finding.fingerprint) {
   return {
-    ...record2,
+    ...record3,
     finding: {
-      ...record2.finding,
+      ...record3.finding,
       id: id2,
       fingerprint: fingerprint3,
       ...aliases.length === 0 ? { idAliases: void 0 } : { idAliases: aliases }
     }
   };
 }
-function repairPresentation(catalog, record2) {
-  const lineage = lineageFor(catalog, record2.finding.id);
+function repairPresentation(catalog, record3) {
+  const lineage = lineageFor(catalog, record3.finding.id);
   const firstIdentity = lineage.identities[0] ?? {
     fingerprint: lineage.first.finding.fingerprint,
     findingId: lineage.first.finding.id
   };
   const target2 = presentedRecord(
-    record2,
+    record3,
     lineage.id,
     lineage.ids.filter((id2) => id2 !== lineage.id),
     firstIdentity.fingerprint
   );
-  const siblings = reviewFindings(catalog, record2).flatMap((sibling) => {
+  const siblings = reviewFindings(catalog, record3).flatMap((sibling) => {
     const siblingLineage = lineageFor(catalog, sibling.finding.id);
     if (siblingLineage.id === lineage.id) return [];
     return [
@@ -58881,7 +58960,7 @@ function repairSiblingLines(siblings) {
   return siblings.length === 0 ? ["- Other findings from this review: none."] : [
     "- Other findings from this review are separate work:",
     ...siblings.map(
-      (record2) => `  - ${record2.finding.id}: ${record2.finding.category} on ${record2.finding.state}/${record2.finding.viewport}${record2.finding.colorScheme === void 0 ? "" : `/${record2.finding.colorScheme}`}${record2.finding.combination === void 0 ? "" : ` [${record2.finding.combination}]`}`
+      (record3) => `  - ${record3.finding.id}: ${record3.finding.category} on ${record3.finding.state}/${record3.finding.viewport}${record3.finding.colorScheme === void 0 ? "" : `/${record3.finding.colorScheme}`}${record3.finding.combination === void 0 ? "" : ` [${record3.finding.combination}]`}`
     )
   ];
 }
@@ -58926,7 +59005,7 @@ function renderTicket2(options) {
   const finding = findingForTicket(target2.finding, options.identity);
   const id2 = ticketId(finding.fingerprint, finding.id);
   const title = `Resolve ${finding.category} in ${finding.state} at ${finding.viewport}${finding.colorScheme === void 0 ? "" : ` (${finding.colorScheme})`}`;
-  const siblings = options.presentation?.siblings ?? options.sourceFindings.filter((record2) => record2.finding.id !== finding.id);
+  const siblings = options.presentation?.siblings ?? options.sourceFindings.filter((record3) => record3.finding.id !== finding.id);
   const serialized = JSON.stringify(finding, null, 2);
   const fence = jsonFence(serialized);
   const screenshotLines = finding.evidence.screenshots.map(
@@ -59020,13 +59099,13 @@ function renderClusterTicket(options) {
       ...new Set(
         cluster.members.map((member) => member.record.finding.explanation)
       )
-    ].flatMap((text4) => [text4, ""]),
+    ].flatMap((text5) => [text5, ""]),
     "## Acceptance criteria",
     "",
     ...cause === void 0 ? [] : [
       `- [ ] All ${cluster.members.length} symptoms below clear on recheck (one fix for the shared cause)`
     ],
-    ...criteria.map((text4) => `- [ ] ${text4}`),
+    ...criteria.map((text5) => `- [ ] ${text5}`),
     "",
     "## Out of scope",
     "",
@@ -59049,7 +59128,7 @@ function renderClusterTicket(options) {
       `Selector: ${JSON.stringify(selector ?? "unavailable")}; component: ${JSON.stringify(member.component)}.`,
       "",
       "Acceptance criteria for this member:",
-      ...acceptanceText(finding).map((text4) => `- ${text4}`),
+      ...acceptanceText(finding).map((text5) => `- ${text5}`),
       ""
     );
     const images = options.availableImages.get(member.id) ?? [];
@@ -59311,84 +59390,84 @@ function compatible3(left, right) {
 function unique2(values) {
   return [...new Set(values)];
 }
-function addToLineage(lineage, record2) {
-  lineage.occurrences.push(record2);
-  lineage.latest = record2;
+function addToLineage(lineage, record3) {
+  lineage.occurrences.push(record3);
+  lineage.latest = record3;
   lineage.ids = unique2([
     ...lineage.ids,
-    record2.finding.id,
-    ...record2.finding.idAliases ?? []
+    record3.finding.id,
+    ...record3.finding.idAliases ?? []
   ]);
   lineage.fingerprints = unique2([
     ...lineage.fingerprints,
-    record2.finding.fingerprint
+    record3.finding.fingerprint
   ]);
   for (const findingId of [
-    record2.finding.id,
-    ...record2.finding.idAliases ?? []
+    record3.finding.id,
+    ...record3.finding.idAliases ?? []
   ])
     if (!lineage.identities.some(
-      (identity7) => identity7.fingerprint === record2.finding.fingerprint && identity7.findingId === findingId
+      (identity7) => identity7.fingerprint === record3.finding.fingerprint && identity7.findingId === findingId
     ))
       lineage.identities.push({
-        fingerprint: record2.finding.fingerprint,
+        fingerprint: record3.finding.fingerprint,
         findingId
       });
 }
 function buildLineages(records, names, decisions) {
   const lineages = [];
-  for (const record2 of records) {
-    const registry = registryEntryForFinding(names, record2.finding);
+  for (const record3 of records) {
+    const registry = registryEntryForFinding(names, record3.finding);
     const recordIds = unique2([
       registry.name,
       ...registry.legacyIds,
-      record2.finding.id,
-      ...record2.finding.idAliases ?? []
+      record3.finding.id,
+      ...record3.finding.idAliases ?? []
     ]);
     const idMatches = lineages.filter(
       (lineage2) => lineage2.ids.some((id2) => recordIds.includes(id2))
     );
     if (idMatches.some(
-      (lineage2) => !compatible3(lineage2.first.finding, record2.finding)
+      (lineage2) => !compatible3(lineage2.first.finding, record3.finding)
     )) {
       const existing = idMatches[0];
       throw new IdiomError(
-        `ambiguous finding id ${JSON.stringify(record2.finding.id)} appears in ${existing?.latest.findingsPath} and ${record2.findingsPath} for unrelated findings`
+        `ambiguous finding id ${JSON.stringify(record3.finding.id)} appears in ${existing?.latest.findingsPath} and ${record3.findingsPath} for unrelated findings`
       );
     }
     const fingerprintMatches = lineages.filter(
-      (lineage2) => lineage2.latest.runId !== record2.runId && (lineage2.fingerprints.includes(record2.finding.fingerprint) || registry.fingerprints.some(
+      (lineage2) => lineage2.latest.runId !== record3.runId && (lineage2.fingerprints.includes(record3.finding.fingerprint) || registry.fingerprints.some(
         (fingerprint3) => lineage2.fingerprints.includes(fingerprint3)
-      )) && compatible3(lineage2.first.finding, record2.finding)
+      )) && compatible3(lineage2.first.finding, record3.finding)
     );
     const matches2 = unique2([...idMatches, ...fingerprintMatches]);
     if (matches2.length > 1) {
       throw new IdiomError(
-        `ambiguous finding lineage for ${JSON.stringify(record2.finding.id)} in ${record2.findingsPath}`
+        `ambiguous finding lineage for ${JSON.stringify(record3.finding.id)} in ${record3.findingsPath}`
       );
     }
     const lineage = matches2[0];
     if (lineage === void 0) {
       lineages.push({
         id: registry.name,
-        first: record2,
-        latest: record2,
-        occurrences: [record2],
+        first: record3,
+        latest: record3,
+        occurrences: [record3],
         ids: recordIds,
         fingerprints: unique2([
-          record2.finding.fingerprint,
+          record3.finding.fingerprint,
           ...registry.fingerprints
         ]),
         identities: [
-          record2.finding.id,
-          ...record2.finding.idAliases ?? []
+          record3.finding.id,
+          ...record3.finding.idAliases ?? []
         ].map((findingId) => ({
-          fingerprint: record2.finding.fingerprint,
+          fingerprint: record3.finding.fingerprint,
           findingId
         }))
       });
     } else {
-      addToLineage(lineage, record2);
+      addToLineage(lineage, record3);
     }
   }
   const owners = /* @__PURE__ */ new Map();
@@ -59527,9 +59606,9 @@ function findCatalogFinding(catalog, findingId) {
   return findCatalogLineage(catalog, findingId).latest;
 }
 function newestOpenFindings(catalog, decisions) {
-  return catalog.runs.at(-1)?.findings.filter((record2) => {
-    const lineage = findCatalogLineage(catalog, record2.finding.id);
-    return lineageDecision(lineage, decisions, record2) === void 0;
+  return catalog.runs.at(-1)?.findings.filter((record3) => {
+    const lineage = findCatalogLineage(catalog, record3.finding.id);
+    return lineageDecision(lineage, decisions, record3) === void 0;
   }) ?? [];
 }
 async function checkpointLineageStatus(options) {
@@ -60019,9 +60098,9 @@ function coordinateIndex(drafts) {
       draft.finding.fingerprint,
       ...draft.fingerprintAliases ?? []
     ])) {
-      const list5 = index.get(identity7) ?? [];
-      list5.push(coordinate6);
-      index.set(identity7, list5);
+      const list6 = index.get(identity7) ?? [];
+      list6.push(coordinate6);
+      index.set(identity7, list6);
     }
   }
   return index;
@@ -60503,13 +60582,13 @@ function text2(value) {
   return value.replace(/([\\`|[\]*_#])/g, "\\$1").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/\r\n?|\n/g, "<br>");
 }
 function fencedEvidence(label5, value, language = "text") {
-  const normalized = value.replace(/\r\n?/g, "\n");
+  const normalized2 = value.replace(/\r\n?/g, "\n");
   const longestRun = Math.max(
     0,
-    ...(normalized.match(/`+/g) ?? []).map((run2) => run2.length)
+    ...(normalized2.match(/`+/g) ?? []).map((run2) => run2.length)
   );
   const fence = "`".repeat(Math.max(3, longestRun + 1));
-  return [label5, "", `${fence}${language}`, normalized, fence, ""];
+  return [label5, "", `${fence}${language}`, normalized2, fence, ""];
 }
 function designSystemQuestionsMarkdown(decisions) {
   const questions = (decisions ?? []).filter(
@@ -61394,13 +61473,13 @@ async function runReview(options) {
     flow: options.flow,
     cwd: options.cwd
   });
-  const record2 = validated.flows[0];
-  if (record2 === void 0 || record2.flow.id !== options.flow) {
+  const record3 = validated.flows[0];
+  if (record3 === void 0 || record3.flow.id !== options.flow) {
     throw new IdiomError(
-      `requested flow ${JSON.stringify(options.flow)} does not match the manifest id ${JSON.stringify(record2?.flow.id)}`
+      `requested flow ${JSON.stringify(options.flow)} does not match the manifest id ${JSON.stringify(record3?.flow.id)}`
     );
   }
-  const contentFlow = isWebFlow(record2.flow) && record2.flow.content !== void 0 ? { ...record2.flow, content: record2.flow.content } : void 0;
+  const contentFlow = isWebFlow(record3.flow) && record3.flow.content !== void 0 ? { ...record3.flow, content: record3.flow.content } : void 0;
   if (options.advisory === true && contentFlow === void 0)
     throw new IdiomError(
       "--advisory needs a flow with a content block declaring patterns"
@@ -61431,14 +61510,14 @@ async function runReview(options) {
         projectDirectory: validated.projectDirectory,
         flow: options.flow,
         commit: source.commit,
-        production: isWebFlow(record2.flow) && record2.flow.server === "production"
+        production: isWebFlow(record3.flow) && record3.flow.server === "production"
       })
     );
   } else if (options.from === void 0) {
     const capture = await runCapture({
       projectDirectory: validated.projectDirectory,
       project: validated.project,
-      flow: record2.flow,
+      flow: record3.flow,
       prod: options.prod,
       scope: options.scope,
       port: options.port,
@@ -61466,7 +61545,7 @@ async function runReview(options) {
     colorScheme: "all",
     step: "deterministic review"
   });
-  const loaded = await loadRunTuples(validated, record2.flow, runDirectory);
+  const loaded = await loadRunTuples(validated, record3.flow, runDirectory);
   const issueRankingContext = options.includeIssueRankingContext === true ? buildIssueRankingContext(loaded.tuples) : void 0;
   const primaryActionSelectors = [
     ...new Set(
@@ -61595,7 +61674,7 @@ async function runReview(options) {
         projectDirectory: validated.projectDirectory,
         runDirectory,
         project: validated.project,
-        flow: record2.flow,
+        flow: record3.flow,
         tuples: loaded.tuples,
         priorDecisions: ruleRejections,
         priorRules,
@@ -61664,7 +61743,7 @@ async function runReview(options) {
         projectDirectory: validated.projectDirectory,
         runDirectory,
         project: validated.project,
-        flow: record2.flow,
+        flow: record3.flow,
         tuples: loaded.tuples,
         priorDecisions: ruleRejections,
         priorRules: validated.rules.overrides.filter(
@@ -61831,15 +61910,15 @@ async function runReview(options) {
       ...buildReviewCoverage({
         record: loaded.record,
         collapsedTupleKeys: loaded.collapsedTupleKeys,
-        flow: record2.flow,
+        flow: record3.flow,
         project: validated.project,
         tuples: loaded.tuples,
         commit: loaded.commit,
         briefs: checksConfig.briefs,
-        allFlows: surfaceFlows.length === 0 ? [record2.flow] : surfaceFlows.map(({ flow }) => flow),
+        allFlows: surfaceFlows.length === 0 ? [record3.flow] : surfaceFlows.map(({ flow }) => flow),
         stateCoverage: computeFlowStateCoverage({
           project: validated.project,
-          flow: record2.flow,
+          flow: record3.flow,
           runId: loaded.runId,
           commit: loaded.commit,
           record: loaded.record,
@@ -62821,26 +62900,26 @@ async function resolveTriageRequest(argument, cwd) {
     throw new IdiomError(
       `draft ticket ${argument} is larger than ${MAX_TRIAGE_REQUEST_BYTES / 1024} KB; triage a shorter request`
     );
-  const text4 = await readFile40(path, "utf8");
-  if (text4.trim() === "")
+  const text5 = await readFile40(path, "utf8");
+  if (text5.trim() === "")
     throw new IdiomError(`draft ticket ${argument} is empty`);
-  return { source: "file", path, text: text4 };
+  return { source: "file", path, text: text5 };
 }
 async function triageContext(project) {
   if (project === void 0) return { references: [] };
   let product;
   try {
-    const text4 = await readFile40(
+    const text5 = await readFile40(
       join42(project.projectDirectory, project.productFile),
       "utf8"
     );
-    if (text4.trim() !== "")
-      product = text4.length > MAX_TRIAGE_PRODUCT_CHARS ? `${text4.slice(0, MAX_TRIAGE_PRODUCT_CHARS)}
+    if (text5.trim() !== "")
+      product = text5.length > MAX_TRIAGE_PRODUCT_CHARS ? `${text5.slice(0, MAX_TRIAGE_PRODUCT_CHARS)}
 
-[PRODUCT.md truncated at ${MAX_TRIAGE_PRODUCT_CHARS} characters]` : text4;
+[PRODUCT.md truncated at ${MAX_TRIAGE_PRODUCT_CHARS} characters]` : text5;
   } catch (error) {
-    const code2 = error.code;
-    if (code2 !== "ENOENT" && code2 !== "EISDIR") throw error;
+    const code3 = error.code;
+    if (code3 !== "ENOENT" && code3 !== "EISDIR") throw error;
   }
   return { product, references: project.references };
 }
@@ -63255,12 +63334,12 @@ var init_research = __esm({
 // src/templates.ts
 import { readFile as readFile41 } from "fs/promises";
 import { dirname as dirname17, join as join43 } from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath as fileURLToPath2 } from "url";
 function idiomSkillTemplatePath(name) {
   return join43("idiom", name);
 }
 function templatesDirectory() {
-  return join43(dirname17(fileURLToPath(import.meta.url)), "..", "templates");
+  return join43(dirname17(fileURLToPath2(import.meta.url)), "..", "templates");
 }
 async function readTemplate(name) {
   return readFile41(join43(templatesDirectory(), name), "utf8");
@@ -63305,8 +63384,8 @@ var init_templates = __esm({
 
 // src/brief/rubric.ts
 import { readFile as readFile42 } from "fs/promises";
-function sectionIds(text4, heading) {
-  const section2 = text4.split(`
+function sectionIds(text5, heading) {
+  const section2 = text5.split(`
 ## ${heading}
 `)[1]?.split(/\n## /)[0];
   if (section2 === void 0)
@@ -63318,16 +63397,16 @@ function sectionIds(text4, heading) {
     throw new IdiomError(`brief rubric lists no ${heading.toLowerCase()}`);
   return ids;
 }
-function parseBriefRubric(text4) {
-  const front = /^---\n([\s\S]*?)\n---\n/.exec(text4);
+function parseBriefRubric(text5) {
+  const front = /^---\n([\s\S]*?)\n---\n/.exec(text5);
   const version = Number(/^version:\s*(\d+)\s*$/m.exec(front?.[1] ?? "")?.[1]);
   if (!Number.isSafeInteger(version) || version < 1)
     throw new IdiomError("brief rubric has no positive integer version");
   return {
     version,
-    text: text4,
-    triggers: sectionIds(text4, "Triggers"),
-    nonTriggers: sectionIds(text4, "Non-triggers")
+    text: text5,
+    triggers: sectionIds(text5, "Triggers"),
+    nonTriggers: sectionIds(text5, "Non-triggers")
   };
 }
 async function readBriefRubric() {
@@ -63436,7 +63515,7 @@ async function briefTriageCommand(options) {
     options.cwd ?? process.cwd()
   );
   const run2 = await runBriefTriage({ ...options, request: request2.text });
-  return options.json === true ? JSON.stringify(triageJson(run2), null, 2) : renderTriageRun(run2);
+  return options.json === true ? jsonPayload(triageJson(run2)) : renderTriageRun(run2);
 }
 async function readTicket(path, cwd) {
   const absolute = resolveProjectArgument(path, cwd);
@@ -63447,9 +63526,9 @@ async function readTicket(path, cwd) {
     throw new IdiomError(
       `ticket ${path} is larger than ${MAX_TRIAGE_REQUEST_BYTES / 1024} KB`
     );
-  const text4 = await readFile43(absolute, "utf8");
-  if (text4.trim() === "") throw new IdiomError(`ticket ${path} is empty`);
-  return text4;
+  const text5 = await readFile43(absolute, "utf8");
+  if (text5.trim() === "") throw new IdiomError(`ticket ${path} is empty`);
+  return text5;
 }
 async function resolveLink(projectDirectory, slug3) {
   try {
@@ -63471,8 +63550,8 @@ async function briefGateCommand(options) {
   const cwd = options.cwd ?? process.cwd();
   const tickets = [];
   for (const path of options.tickets) {
-    const text4 = await readTicket(path, cwd);
-    tickets.push({ path, text: text4, refs: findTicketBriefs(text4) });
+    const text5 = await readTicket(path, cwd);
+    tickets.push({ path, text: text5, refs: findTicketBriefs(text5) });
   }
   const needsTriage = tickets.some((ticket) => ticket.refs.length === 0);
   const needsProject = needsTriage || tickets.some((ticket) => ticket.refs.some((ref) => ref.source === "link"));
@@ -63530,10 +63609,10 @@ async function readStdin() {
 }
 async function readBriefInput(file, cwd, dependencies) {
   if (file === void 0 || file === "-") {
-    const text4 = await (dependencies?.readStdin ?? readStdin)();
-    if (Buffer.byteLength(text4) > MAX_BRIEF_INPUT_BYTES)
+    const text5 = await (dependencies?.readStdin ?? readStdin)();
+    if (Buffer.byteLength(text5) > MAX_BRIEF_INPUT_BYTES)
       throw new IdiomError("brief input is larger than 1 MB");
-    return text4;
+    return text5;
   }
   const path = resolveProjectArgument(file, cwd);
   const info = await stat8(path).catch(() => void 0);
@@ -63569,14 +63648,14 @@ async function recordBriefInput(options) {
 }
 async function briefRecordCommand(options) {
   await projectSettings(options);
-  const text4 = await readBriefInput(
+  const text5 = await readBriefInput(
     options.file,
     options.cwd ?? process.cwd(),
     options.dependencies
   );
   let input;
   try {
-    input = JSON.parse(text4);
+    input = JSON.parse(text5);
   } catch (error) {
     throw new IdiomError(
       `brief input is not valid JSON: ${error.message}`
@@ -63670,7 +63749,7 @@ async function runBriefPlan(options) {
 }
 async function briefPlanCommand(options) {
   const plan = await runBriefPlan(options);
-  return options.json === true ? JSON.stringify(plan, null, 2) : renderBriefPlan(plan);
+  return options.json === true ? jsonPayload(plan) : renderBriefPlan(plan);
 }
 async function briefDecideCommand(options) {
   const { projectDirectory, settings } = await projectSettings(options);
@@ -63718,7 +63797,7 @@ function renderBriefList(entries) {
 async function briefShowCommand(options) {
   const { projectDirectory, settings } = await projectSettings(options);
   const { brief, markdown } = await readBrief(projectDirectory, options.slug);
-  if (options.json === true) return JSON.stringify(brief, null, 2);
+  if (options.json === true) return jsonPayload(brief);
   return (markdown ?? renderBrief(brief, settings)).trimEnd();
 }
 async function briefResearchCommand(options) {
@@ -63792,7 +63871,7 @@ async function briefResearchCommand(options) {
 }
 function renderBriefResearch(result2, json5) {
   if (json5)
-    return JSON.stringify(
+    return jsonPayload(
       result2.outcome === "no-decision" ? { outcome: result2.outcome, triage: result2.triage } : {
         outcome: result2.outcome,
         triage: result2.triage,
@@ -63800,9 +63879,7 @@ function renderBriefResearch(result2, json5) {
         markdown: result2.recorded.markdownRelative,
         status: result2.recorded.brief.status,
         researchRun: result2.researchRun
-      },
-      null,
-      2
+      }
     );
   if (result2.outcome === "no-decision")
     return `${renderTriage(result2.triage)}
@@ -63829,6 +63906,7 @@ var init_brief2 = __esm({
     init_store();
     init_triage();
     init_errors();
+    init_version();
     init_project2();
     init_brief();
     init_project();
@@ -64243,9 +64321,9 @@ var init_issues = __esm({
 import { createHash as createHash20 } from "crypto";
 import { readFile as readFile44 } from "fs/promises";
 import { dirname as dirname18, resolve as resolve32 } from "path";
-function findingSelector(record2) {
-  const selector = record2.finding.verification.params?.selector;
-  return typeof selector === "string" && selector.length > 0 ? selector : record2.finding.verification.locus?.target.selector;
+function findingSelector(record3) {
+  const selector = record3.finding.verification.params?.selector;
+  return typeof selector === "string" && selector.length > 0 ? selector : record3.finding.verification.locus?.target.selector;
 }
 function isComponentShell(element) {
   const attrs = element.attributes ?? {};
@@ -64276,9 +64354,9 @@ function isComponentBoundary(element) {
     "toolbar"
   ].includes(role);
 }
-function componentFor(record2, id2, observations) {
+function componentFor(record3, id2, observations) {
   const singleton = `finding:${id2}`;
-  const selector = findingSelector(record2);
+  const selector = findingSelector(record3);
   if (selector === void 0 || observations === void 0) return singleton;
   const unique4 = (value) => {
     const matches2 = observations.elements.filter(
@@ -64333,21 +64411,21 @@ function clusterTicketId(cluster) {
 }
 function observationLoader() {
   const cache = /* @__PURE__ */ new Map();
-  return async (record2) => {
-    const finding = record2.finding;
+  return async (record3) => {
+    const finding = record3.finding;
     const paths = (finding.evidence.artifacts ?? []).filter(
       (path2) => path2.endsWith("/observations.json")
     );
     const matching = [];
     for (const path2 of paths) {
-      await assertEvidencePaths(record2.runDirectory, [path2]);
-      const parts = path2.split("/");
-      if (parts[0] !== finding.state || parts[1] !== finding.viewport || (finding.colorScheme === void 0 ? parts.length !== 3 : parts.length !== 4 || parts[2] !== finding.colorScheme))
+      await assertEvidencePaths(record3.runDirectory, [path2]);
+      const parts2 = path2.split("/");
+      if (parts2[0] !== finding.state || parts2[1] !== finding.viewport || (finding.colorScheme === void 0 ? parts2.length !== 3 : parts2.length !== 4 || parts2[2] !== finding.colorScheme))
         continue;
       try {
         const metadata2 = JSON.parse(
           await readFile44(
-            resolve32(record2.runDirectory, dirname18(path2), "metadata.json"),
+            resolve32(record3.runDirectory, dirname18(path2), "metadata.json"),
             "utf8"
           )
         );
@@ -64363,7 +64441,7 @@ function observationLoader() {
       matching.push(path2);
     }
     if (matching.length !== 1) return void 0;
-    const path = resolve32(record2.runDirectory, matching[0] ?? "");
+    const path = resolve32(record3.runDirectory, matching[0] ?? "");
     let loaded = cache.get(path);
     if (loaded === void 0) {
       loaded = (async () => {
@@ -64636,8 +64714,8 @@ function sheetSelector(key5) {
   const [sheet = "", selector = ""] = key5.split("\0");
   return { sheet, selector };
 }
-function firstSentence(text4) {
-  const sentence2 = /^.*?[.!?](?=\s|$)/.exec(text4.trim())?.[0] ?? text4.trim();
+function firstSentence(text5) {
+  const sentence2 = /^.*?[.!?](?=\s|$)/.exec(text5.trim())?.[0] ?? text5.trim();
   return sentence2.length > 160 ? `${sentence2.slice(0, 159)}\u2026` : sentence2;
 }
 function ruleLabel(group) {
@@ -65249,8 +65327,8 @@ function malformedTickets(index) {
 }
 function unionMalformed(...lists) {
   const byPath = /* @__PURE__ */ new Map();
-  for (const list5 of lists)
-    for (const ticket of list5)
+  for (const list6 of lists)
+    for (const ticket of list6)
       if (!byPath.has(ticket.path)) byPath.set(ticket.path, ticket);
   return [...byPath.values()];
 }
@@ -65295,10 +65373,10 @@ function rankClusters(clusters2, scores) {
   ).map((item) => item.cluster);
 }
 function rankTicketRecords(records) {
-  return records.map((record2) => ({
-    record: record2,
-    severity: record2.finding.severity,
-    score: findingScore(record2.finding)
+  return records.map((record3) => ({
+    record: record3,
+    severity: record3.finding.severity,
+    score: findingScore(record3.finding)
   })).sort(comparePriority).map((item) => item.record);
 }
 var init_ranking2 = __esm({
@@ -65365,8 +65443,8 @@ async function sweepTicketEvidence(options) {
   const ids = new Set(cluster.members.map((m) => m.id));
   const occurrences = options.occurrences.filter((r) => ids.has(r.finding.id));
   const partitions = /* @__PURE__ */ new Map();
-  for (const record2 of occurrences) {
-    const f = record2.finding;
+  for (const record3 of occurrences) {
+    const f = record3.finding;
     const key5 = JSON.stringify([
       f.flow,
       f.state,
@@ -65375,7 +65453,7 @@ async function sweepTicketEvidence(options) {
       f.combination
     ]);
     const partition = partitions.get(key5) ?? [];
-    if (!partition.some((r) => r.finding.id === f.id)) partition.push(record2);
+    if (!partition.some((r) => r.finding.id === f.id)) partition.push(record3);
     partitions.set(key5, partition);
   }
   const sideDirectory = join46(directory, ".idiom", id2);
@@ -65385,8 +65463,8 @@ async function sweepTicketEvidence(options) {
     );
   await mkdir15(sideDirectory, { recursive: true });
   const lines2 = ["", "## Exact source occurrences", ""];
-  for (const record2 of occurrences) {
-    const f = record2.finding;
+  for (const record3 of occurrences) {
+    const f = record3.finding;
     lines2.push(
       `- Coordinate: ${JSON.stringify({ flow: f.flow, state: f.state, viewport: f.viewport, colorScheme: f.colorScheme, combination: f.combination })}; selector/measurements: ${JSON.stringify(f.verification)}.`,
       `  ${f.explanation}`
@@ -65397,16 +65475,16 @@ async function sweepTicketEvidence(options) {
       ...f.evidence.artifacts ?? []
     ];
     for (const path of evidence) {
-      await assertEvidencePaths(record2.runDirectory, [path]);
+      await assertEvidencePaths(record3.runDirectory, [path]);
       lines2.push(
-        `  - [${path.replaceAll("[", "\\[").replaceAll("]", "\\]")}](${link(directory, resolve34(record2.runDirectory, path))})`
+        `  - [${path.replaceAll("[", "\\[").replaceAll("]", "\\]")}](${link(directory, resolve34(record3.runDirectory, path))})`
       );
     }
     const timeline = f.evidence.timeline;
     if (timeline !== void 0) {
-      await assertEvidencePaths(record2.runDirectory, [timeline.artifact]);
+      await assertEvidencePaths(record3.runDirectory, [timeline.artifact]);
       lines2.push(
-        `  - Action timeline \`${timeline.id}\`: [${timeline.artifact.replaceAll("[", "\\[").replaceAll("]", "\\]")}](${link(directory, resolve34(record2.runDirectory, timeline.artifact))})`
+        `  - Action timeline \`${timeline.id}\`: [${timeline.artifact.replaceAll("[", "\\[").replaceAll("]", "\\]")}](${link(directory, resolve34(record3.runDirectory, timeline.artifact))})`
       );
     }
     if (!f.evidence.filmstrip?.sheet)
@@ -65509,9 +65587,9 @@ async function emitClusterTickets(options) {
   const decisions = await readDecisionLog(catalog.projectDirectory);
   const selected2 = options.selection === void 0 ? options.findingIds === void 0 || options.findingIds.length === 0 ? catalog.findings : options.findingIds.map((id2) => findCatalogLineage(catalog, id2).latest) : options.selection.records;
   const unique4 = new Map(
-    selected2.map((record2) => [
-      findCatalogLineage(catalog, record2.finding.id).id,
-      record2
+    selected2.map((record3) => [
+      findCatalogLineage(catalog, record3.finding.id).id,
+      record3
     ])
   );
   const result2 = {
@@ -65539,11 +65617,11 @@ async function emitClusterTickets(options) {
   const loadObservations = observationLoader();
   const checkpoint = /* @__PURE__ */ new Set();
   const acceptedIds = /* @__PURE__ */ new Set();
-  for (const [id2, record2] of [...unique4].sort(
+  for (const [id2, record3] of [...unique4].sort(
     ([a], [b]) => a.localeCompare(b)
   )) {
     const lineage = findCatalogLineage(catalog, id2);
-    const accepted = lineageDecision(lineage, decisions, record2)?.decision === "accept";
+    const accepted = lineageDecision(lineage, decisions, record3)?.decision === "accept";
     const blockers = malformedTicketsForLineage(index, lineage);
     if (blockers.length > 0) {
       result2.outcomes.push({
@@ -65591,30 +65669,30 @@ async function emitClusterTickets(options) {
       result2.ineligible.push(id2);
       continue;
     }
-    if (options.selection !== void 0 && !["open", "approved"].includes(record2.finding.status)) {
+    if (options.selection !== void 0 && !["open", "approved"].includes(record3.finding.status)) {
       result2.ineligible.push(id2);
       continue;
     }
-    const cause = options.rootCauses?.get(record2.finding.id);
-    const observations = await loadObservations(record2);
-    const presented = repairPresentation(catalog, record2).target;
+    const cause = options.rootCauses?.get(record3.finding.id);
+    const observations = await loadObservations(record3);
+    const presented = repairPresentation(catalog, record3).target;
     const canonical2 = {
       ...presented,
       finding: {
         ...presented.finding,
-        fingerprint: record2.finding.fingerprint
+        fingerprint: record3.finding.fingerprint
       }
     };
     pending.push({
       id: id2,
       record: canonical2,
-      component: componentFor(record2, id2, observations),
+      component: componentFor(record3, id2, observations),
       ...cause === void 0 ? {} : { cause }
     });
     const images = [];
-    for (const image2 of record2.finding.evidence.screenshots) {
+    for (const image2 of record3.finding.evidence.screenshots) {
       try {
-        await assertEvidencePaths(record2.runDirectory, [image2]);
+        await assertEvidencePaths(record3.runDirectory, [image2]);
         images.push(image2);
       } catch (error) {
         if (!(error instanceof IdiomError)) throw error;
@@ -65660,11 +65738,11 @@ async function emitClusterTickets(options) {
       id: id2,
       directory: target2.outputDirectory,
       projectDirectory: catalog.projectDirectory,
-      occurrences: options.occurrences.map((record2) => ({
-        ...record2,
+      occurrences: options.occurrences.map((record3) => ({
+        ...record3,
         finding: {
-          ...record2.finding,
-          id: findCatalogLineage(catalog, record2.finding.id).id
+          ...record3.finding,
+          id: findCatalogLineage(catalog, record3.finding.id).id
         }
       }))
     });
@@ -65884,11 +65962,11 @@ async function checkWithReview(options) {
       flow: options.flow,
       cwd: options.cwd
     });
-    const record2 = validated2.flows[0];
-    if (record2 !== void 0) {
+    const record3 = validated2.flows[0];
+    if (record3 !== void 0) {
       const loaded = await loadRunTuples(
         validated2,
-        record2.flow,
+        record3.flow,
         resolveStoredRun(validated2.projectDirectory, baseline)
       );
       known = deterministicFingerprintSet(
@@ -66029,7 +66107,7 @@ async function checkWithReview(options) {
         for (const finding of symptom.findings)
           rootCauses.set(finding.id, { ...rest, symptoms: symptoms.length });
     }
-    const recordIds = new Set(records.map((record2) => record2.finding.id));
+    const recordIds = new Set(records.map((record3) => record3.finding.id));
     const issueScores = /* @__PURE__ */ new Map();
     const groupsById = new Map(
       (summary.groups ?? []).map((group) => [group.id, group])
@@ -66599,13 +66677,13 @@ function routeForFile(root2, path) {
       return void 0;
     const name2 = segments.length === 2 ? segments[0] : file.replace(/\.[^.]+$/, "");
     if (!name2 || /[()[\]]/.test(name2)) return void 0;
-    const parts = name2.split(".").flatMap((part) => {
+    const parts2 = name2.split(".").flatMap((part) => {
       if (part === "_index" || part.startsWith("_")) return [];
       if (part === "$") return ["[...rest]"];
       if (part.startsWith("$")) return [`[${part.slice(1)}]`];
       return [part.replace(/_$/, "")];
     });
-    return `/${parts.join("/")}`;
+    return `/${parts2.join("/")}`;
   }
   const extension = root2.astro ? astroPageFile : pagesRouterFile;
   if (!extension.test(file) || segments[0] === "api" || segments.some((part) => part.startsWith("_")) || /\.d\.[cm]?ts$/.test(file))
@@ -66830,11 +66908,11 @@ async function buildImportGraph(routes, globals) {
   const globalUncertainties = /* @__PURE__ */ new Set();
   const uncertainModules = /* @__PURE__ */ new Map();
   const uncertain = (file, message) => {
-    const text4 = `${file}: ${message}`;
-    uncertainties.add(text4);
-    const list5 = uncertainModules.get(file) ?? [];
-    if (!list5.includes(text4)) list5.push(text4);
-    uncertainModules.set(file, list5);
+    const text5 = `${file}: ${message}`;
+    uncertainties.add(text5);
+    const list6 = uncertainModules.get(file) ?? [];
+    if (!list6.includes(text5)) list6.push(text5);
+    uncertainModules.set(file, list6);
   };
   const edges2 = /* @__PURE__ */ new Map();
   const configs = /* @__PURE__ */ new Map();
@@ -67059,14 +67137,14 @@ var init_imports = __esm({
 import { realpath as realpath10 } from "fs/promises";
 import { dirname as dirname23, relative as relative24, resolve as resolve38, sep as sep16 } from "path";
 function isGlobalFile(path) {
-  const normalized = path.replaceAll(sep16, "/");
-  return /(?:^|\/)\.idiom\//.test(normalized) || /(?:^|\/)DESIGN\.md$/i.test(normalized) || /(?:^|\/)(?:layout|template|_app|_document|\+layout(?:\.server)?|root)\.[^.]+$/.test(
-    normalized
+  const normalized2 = path.replaceAll(sep16, "/");
+  return /(?:^|\/)\.idiom\//.test(normalized2) || /(?:^|\/)DESIGN\.md$/i.test(normalized2) || /(?:^|\/)(?:layout|template|_app|_document|\+layout(?:\.server)?|root)\.[^.]+$/.test(
+    normalized2
   ) || /(?:^|\/)(?:tailwind|postcss|theme)(?:\.config)?\.[^/]+$/.test(
-    normalized
+    normalized2
   ) || /(?:^|\/)(?:globals?|app|main|index|styles)\.(?:css|scss|sass)$/.test(
-    normalized
-  ) || /(?:^|\/)(?:(?:design[-.]?)?tokens)(?:\/|\.[^/]+$)/i.test(normalized);
+    normalized2
+  ) || /(?:^|\/)(?:(?:design[-.]?)?tokens)(?:\/|\.[^/]+$)/i.test(normalized2);
 }
 async function selectChangedStates(project, flows, changes2) {
   project = await realpath10(project);
@@ -67266,7 +67344,7 @@ async function checkChanged(options) {
   );
   const selection2 = await selectChangedStates(
     validated.projectDirectory,
-    validated.flows.map((record2) => record2.flow),
+    validated.flows.map((record3) => record3.flow),
     changes2
   );
   options.dependencies?.capture?.signal?.throwIfAborted();
@@ -68409,8 +68487,8 @@ function trimmedReason(reason) {
   if (value === "") throw new IdiomError("--reason must not be blank");
   return value;
 }
-function promptHeader(record2) {
-  const finding = record2.finding;
+function promptHeader(record3) {
+  const finding = record3.finding;
   return [
     `
 ${finding.id} \u2014 ${finding.category} (${finding.severity})`,
@@ -68440,12 +68518,12 @@ function designChoiceFor(finding, reference3) {
   };
 }
 function defaultPrompt(write) {
-  return async (record2) => {
-    write(promptHeader(record2));
+  return async (record3) => {
+    write(promptHeader(record3));
     const readline = createInterface({ input: stdin, output: stdout });
     try {
-      const decision = record2.finding.evidence.designDrift?.designDecision;
-      if (record2.finding.rule === "idiom:design-decision" && decision) {
+      const decision = record3.finding.evidence.designDrift?.designDecision;
+      if (record3.finding.rule === "idiom:design-decision" && decision) {
         const names = decision.references.map((r) => r.name);
         let answer;
         do {
@@ -68580,13 +68658,13 @@ async function decideCommand(options) {
     }
     if (options.finding === void 0)
       throw new IdiomError("non-interactive decisions require --finding <id>");
-    const record2 = findCatalogFinding(catalog, options.finding);
+    const record3 = findCatalogFinding(catalog, options.finding);
     const lineage = findCatalogLineage(catalog, options.finding);
-    const designChoice = options.choose === void 0 ? void 0 : designChoiceFor(record2.finding, options.choose);
+    const designChoice = options.choose === void 0 ? void 0 : designChoiceFor(record3.finding, options.choose);
     await persistCatalogFindingNames(catalog);
     const result2 = await appendDecision({
       projectDirectory: catalog.projectDirectory,
-      finding: { ...record2.finding, id: lineage.id },
+      finding: { ...record3.finding, id: lineage.id },
       decision: options.reject ? "reject" : "accept",
       scope: options.reject ? options.scope ?? "instance" : "instance",
       ...reason === void 0 ? {} : { reason },
@@ -68605,12 +68683,12 @@ async function decideCommand(options) {
     };
   }
   const prompt = options.dependencies?.prompt ?? defaultPrompt(options.write ?? (() => void 0));
-  for (const record2 of newestOpenFindings(catalog, decisions)) {
-    const lineage = findCatalogLineage(catalog, record2.finding.id);
+  for (const record3 of newestOpenFindings(catalog, decisions)) {
+    const lineage = findCatalogLineage(catalog, record3.finding.id);
     const presentation = {
-      ...record2,
+      ...record3,
       finding: {
-        ...record2.finding,
+        ...record3.finding,
         id: lineage.id,
         ...lineage.ids.filter((id2) => id2 !== lineage.id).length === 0 ? {} : { idAliases: lineage.ids.filter((id2) => id2 !== lineage.id) }
       }
@@ -68622,11 +68700,11 @@ async function decideCommand(options) {
       continue;
     }
     const reason = response.reason?.trim();
-    const designChoice = response.action === "choose" ? designChoiceFor(record2.finding, response.reference) : void 0;
+    const designChoice = response.action === "choose" ? designChoiceFor(record3.finding, response.reference) : void 0;
     await persistCatalogFindingNames(catalog);
     const result2 = await appendDecision({
       projectDirectory: catalog.projectDirectory,
-      finding: { ...record2.finding, id: lineage.id },
+      finding: { ...record3.finding, id: lineage.id },
       decision: response.action === "reject" ? "reject" : "accept",
       scope: response.action === "reject" ? response.scope : "instance",
       ...reason === void 0 || reason === "" ? {} : { reason },
@@ -69399,7 +69477,7 @@ function renderVerificationHtmlReport(options) {
   const verdicts = evaluation === void 0 ? `<section><h2>Diagnostic</h2><p>${escapeHtml(options.diagnostic ?? "unknown comparison failure")}</p><p>No finding was marked fixed.</p></section>` : `<section><h2>Finding verdicts</h2>${evaluation.findings.map(
     (verdict) => `<article class="finding"><h3>${escapeHtml(verdict.finding.id)}</h3><div class="summary">${badge(verdict.status, verdict.status === "fixed" ? "good" : verdict.status)}</div><p class="meta">${escapeHtml(verdict.finding.state)} / ${escapeHtml(verdict.finding.viewport)}${verdict.finding.colorScheme === void 0 ? "" : ` / ${escapeHtml(verdict.finding.colorScheme)}`} \xB7 ${escapeHtml(verdict.locus?.source ?? verdict.finding.verification.kind)}${verdict.locus?.target === void 0 ? "" : ` \xB7 ${escapeHtml(verdict.locus.target)}`}</p><p>${escapeHtml(verdict.reason)}</p>${pairSuppressionHtml(verdict)}<p><strong>Basis:</strong> ${escapeHtml(basisDescription(verdict.finding))}</p><p><strong>Acceptance: ${escapeHtml(verdict.acceptance.status)}</strong> \u2014 ${escapeHtml(verdict.acceptance.reason)}</p><p>${escapeHtml(acceptanceDescription(verdict.acceptance.contract))}</p><ul>${acceptanceText(
       verdict.finding
-    ).map((text4) => `<li>Done when: ${escapeHtml(text4)}</li>`).join("")}</ul></article>`
+    ).map((text5) => `<li>Done when: ${escapeHtml(text5)}</li>`).join("")}</ul></article>`
   ).join(
     ""
   )}</section><section><h2>New deterministic blockers</h2>${evaluation.newBlockers.length === 0 ? "<p>None.</p>" : `<ul>${evaluation.newBlockers.map((blocker) => `<li>${escapeHtml(blocker)}</li>`).join("")}</ul>`}</section>${evaluation.newFindings === void 0 ? "" : `<section><h2>New deterministic findings (all severities)</h2>${evaluation.newFindings.length ? `<ul>${evaluation.newFindings.map((finding) => `<li>${escapeHtml(`${finding.severity}: ${finding.category} ${finding.rule ?? ""} at ${finding.key} (${finding.selector ?? "document"})`)}</li>`).join("")}</ul>` : "<p>None.</p>"}</section>`}`;
@@ -70027,14 +70105,14 @@ import { basename as basename13, resolve as resolve57 } from "path";
 async function eligibleRecords(snapshot3) {
   const decisions = await readDecisionLog(snapshot3.projectDirectory);
   return snapshot3.records.filter(
-    (record2) => repairEligible(snapshot3.catalog, decisions, record2)
+    (record3) => repairEligible(snapshot3.catalog, decisions, record3)
   );
 }
-function repairEligible(catalog, decisions, record2) {
-  return (record2.finding.status === "open" || record2.finding.status === "approved") && lineageDecision(
-    findCatalogLineage(catalog, record2.finding.id),
+function repairEligible(catalog, decisions, record3) {
+  return (record3.finding.status === "open" || record3.finding.status === "approved") && lineageDecision(
+    findCatalogLineage(catalog, record3.finding.id),
     decisions,
-    record2
+    record3
   )?.decision !== "reject";
 }
 async function refreshEligibility(snapshot3) {
@@ -70053,10 +70131,10 @@ async function refreshEligibility(snapshot3) {
   );
 }
 function selectTargets(snapshot3, records, top) {
-  const byId = new Map(records.map((record2) => [record2.finding.id, record2]));
+  const byId = new Map(records.map((record3) => [record3.finding.id, record3]));
   const resolve70 = (ids) => [...new Set(ids)].flatMap((id2) => {
-    const record2 = byId.get(id2);
-    return record2 === void 0 ? [] : [record2];
+    const record3 = byId.get(id2);
+    return record3 === void 0 ? [] : [record3];
   });
   const issues5 = snapshot3.summary.issues;
   if (issues5 === void 0)
@@ -70072,15 +70150,15 @@ function selectTargets(snapshot3, records, top) {
       issue.groups.flatMap(
         (id2) => groups.get(id2)?.members.map((member) => member.id) ?? []
       )
-    ).filter((record2) => !selected2.includes(record2));
+    ).filter((record3) => !selected2.includes(record3));
     if (eligible.length === 0) continue;
     if (issue.rootCause !== void 0) {
       if (selected2.length === 0) return eligible;
       break;
     }
-    for (const record2 of eligible) {
+    for (const record3 of eligible) {
       if (selected2.length >= top) return selected2;
-      selected2.push(record2);
+      selected2.push(record3);
     }
   }
   return selected2;
@@ -70093,7 +70171,7 @@ function selectedCause(snapshot3, selected2) {
         (symptom) => symptom.findings.map((finding) => finding.id)
       )
     );
-    return selected2.every((record2) => ids.has(record2.finding.id));
+    return selected2.every((record3) => ids.has(record3.finding.id));
   })?.rootCause;
 }
 async function takeFixSnapshot(options) {
@@ -70206,12 +70284,12 @@ async function repairPrompt(snapshot3, selected2, eligible) {
     }
   }
   const assignments = selected2.map(({ finding }) => finding.id);
-  const sections = selected2.map((record2) => {
-    const presentation = repairPresentation(snapshot3.catalog, record2);
+  const sections = selected2.map((record3) => {
+    const presentation = repairPresentation(snapshot3.catalog, record3);
     presentation.siblings = eligible.filter(
       (sibling) => !assignments.includes(sibling.finding.id)
     );
-    const finding = record2.finding;
+    const finding = record3.finding;
     const screenshots = finding.evidence.screenshots;
     const crops = screenshots.filter((path) => /(^|\/)crops\//.test(path));
     return [
@@ -70232,7 +70310,7 @@ async function repairPrompt(snapshot3, selected2, eligible) {
           doneWhen: acceptanceText(finding),
           coordinate: tupleCoordinateKey(finding),
           cropPaths: (crops.length ? crops : screenshots).map(
-            (path) => resolve58(record2.runDirectory, path)
+            (path) => resolve58(record3.runDirectory, path)
           )
         },
         null,
@@ -70486,8 +70564,8 @@ function appendIdiomToArray(source, span2) {
   }
   const newline = newlineOf(source);
   const lastLineStart = Math.max(array.lastIndexOf("\n", last - 1) + 1, 0);
-  const lastLine = array.slice(lastLineStart, last + 1);
-  const indent = /^\s*/.exec(lastLine)?.[0] ?? "  ";
+  const lastLine2 = array.slice(lastLineStart, last + 1);
+  const indent = /^\s*/.exec(lastLine2)?.[0] ?? "  ";
   let updated = array;
   if (mask[last] !== ",")
     updated = `${updated.slice(0, last + 1)},${updated.slice(last + 1)}`;
@@ -70842,9 +70920,9 @@ async function openFlowBrowser(project, options = {}) {
         if (xml === void 0) throw new Error("too many sitemap redirects");
         context2 = await browser.newContext();
         const page = await context2.newPage();
-        return await page.evaluate((text4) => {
+        return await page.evaluate((text5) => {
           const document2 = new DOMParser().parseFromString(
-            text4,
+            text5,
             "application/xml"
           );
           if (document2.querySelector("parsererror"))
@@ -70949,13 +71027,13 @@ async function discoverFlowRoutes(options) {
   );
   const records = /* @__PURE__ */ new Map();
   for (const entry2 of entries) {
-    const record2 = records.get(entry2.route) ?? {
+    const record3 = records.get(entry2.route) ?? {
       route: entry2.route,
       sources: [],
       ...!entry2.route.includes("[") ? { path: entry2.route } : {}
     };
-    record2.sources.push(entry2.source);
-    records.set(entry2.route, record2);
+    record3.sources.push(entry2.source);
+    records.set(entry2.route, record3);
   }
   const warnings = [];
   const observed3 = /* @__PURE__ */ new Map();
@@ -71125,21 +71203,21 @@ async function discoverFlowRoutes(options) {
     const matching = exact ? [] : templates.filter((r) => routePattern(r.route).test(path));
     const owners = exact ? [exact] : matching;
     if (owners.length > 0) {
-      for (const record2 of owners) {
-        record2.sources.push(...sources);
+      for (const record3 of owners) {
+        record3.sources.push(...sources);
         if (assessed.expectedPath === void 0) {
-          if (assessed.rejected && record2.route.includes("[")) {
-            const failures = failedExamples.get(record2) ?? [];
+          if (assessed.rejected && record3.route.includes("[")) {
+            const failures = failedExamples.get(record3) ?? [];
             failures.push(`${path}: ${assessed.reason}`);
-            failedExamples.set(record2, failures);
+            failedExamples.set(record3, failures);
           }
           continue;
         }
-        const candidates = fallbackExamples.get(record2) ?? [];
+        const candidates = fallbackExamples.get(record3) ?? [];
         candidates.push(path);
-        fallbackExamples.set(record2, candidates);
-        if (record2 === owners[0] && record2.path === void 0)
-          record2.path = path;
+        fallbackExamples.set(record3, candidates);
+        if (record3 === owners[0] && record3.path === void 0)
+          record3.path = path;
       }
     } else records.set(path, { route: path, path, sources: [...sources] });
   }
@@ -71148,24 +71226,24 @@ async function discoverFlowRoutes(options) {
     if (template.path === void 0 && example !== void 0)
       template.path = example;
   }
-  for (const record2 of records.values()) {
-    record2.sources = [...new Set(record2.sources)].sort();
-    if (record2.path) {
-      const result2 = inspected.get(record2.path);
+  for (const record3 of records.values()) {
+    record3.sources = [...new Set(record3.sources)].sort();
+    if (record3.path) {
+      const result2 = inspected.get(record3.path);
       if (result2 && nonHtml(result2)) {
-        delete record2.path;
-        delete record2.expectedPath;
-        delete record2.setup;
-        Object.assign(record2, assessment(record2.route, origin, result2));
+        delete record3.path;
+        delete record3.expectedPath;
+        delete record3.setup;
+        Object.assign(record3, assessment(record3.route, origin, result2));
       }
     }
-    if (!record2.path)
-      record2.reason ??= "no successfully inspected link or sitemap example matched this dynamic template; it may be unreachable or beyond a discovery limit" + (failedExamples.has(record2) ? `; rejected examples: ${failedExamples.get(record2)?.join(", ")}` : "");
+    if (!record3.path)
+      record3.reason ??= "no successfully inspected link or sitemap example matched this dynamic template; it may be unreachable or beyond a discovery limit" + (failedExamples.has(record3) ? `; rejected examples: ${failedExamples.get(record3)?.join(", ")}` : "");
     else {
-      const result2 = inspected.get(record2.path);
+      const result2 = inspected.get(record3.path);
       Object.assign(
-        record2,
-        result2 !== void 0 ? assessment(record2.path, origin, result2) : {
+        record3,
+        result2 !== void 0 ? assessment(record3.path, origin, result2) : {
           reason: "live inspection unavailable or discovery limit reached"
         }
       );
@@ -71508,16 +71586,16 @@ function safeRelative(path) {
 }
 async function entry(path) {
   try {
-    const stat15 = await lstat8(path);
-    if (stat15.isSymbolicLink())
+    const stat16 = await lstat8(path);
+    if (stat16.isSymbolicLink())
       return { kind: "symlink", target: await readlink3(path) };
-    const token = `${stat15.dev}:${stat15.ino}:${stat15.mode}`;
-    if (stat15.isDirectory()) return { kind: "directory", token };
-    if (stat15.isFile())
+    const token = `${stat16.dev}:${stat16.ino}:${stat16.mode}`;
+    if (stat16.isDirectory()) return { kind: "directory", token };
+    if (stat16.isFile())
       return {
         kind: "file",
-        token: `${stat15.dev}:${stat15.mode}`,
-        mode: stat15.mode,
+        token: `${stat16.dev}:${stat16.mode}`,
+        mode: stat16.mode,
         content: await readFile73(path, "utf8")
       };
     return { kind: "other" };
@@ -71530,9 +71608,9 @@ async function entry(path) {
 async function inspect2(root2, relative42, snapshots) {
   if (!safeRelative(relative42))
     throw new Error(`Unsafe relative path: ${relative42}`);
-  const parts = relative42.split("/");
-  for (let i = 0; i < parts.length; i++) {
-    const path = parts.slice(0, i).join("/");
+  const parts2 = relative42.split("/");
+  for (let i = 0; i < parts2.length; i++) {
+    const path = parts2.slice(0, i).join("/");
     const value2 = await entry(join76(root2, path));
     snapshots?.set(path, fingerprint2(value2));
     if (value2.kind !== "directory" && value2.kind !== "absent")
@@ -71556,9 +71634,9 @@ async function applyWrites(root2, writes, dependencies = {}) {
   const applied = [];
   const createdDirectories = [];
   async function parents(relative42) {
-    const parts = relative42.split("/").slice(0, -1);
-    for (let i = 1; i <= parts.length; i++) {
-      const path = parts.slice(0, i).join("/");
+    const parts2 = relative42.split("/").slice(0, -1);
+    for (let i = 1; i <= parts2.length; i++) {
+      const path = parts2.slice(0, i).join("/");
       const state = await inspect2(root2, path);
       if (state.kind === "absent") {
         await mkdir27(join76(root2, path));
@@ -71668,7 +71746,7 @@ var init_distribution = __esm({
   "src/skills/distribution.ts"() {
     "use strict";
     init_templates();
-    init_version();
+    init_version2();
     skillNames = ["idiom", "ab-verify-idiom"];
     canonicalPath = (skill) => `.agents/skills/${skill}`;
     discoveryPath = (skill) => `.claude/skills/${skill}`;
@@ -71688,9 +71766,9 @@ async function loadPristine(root2, snapshots) {
     throw new Error(
       "Unknown or invalid pristine manifest; preserve it and repair provenance before upgrading"
     );
-  for (const [key5, record2] of Object.entries(parsed.files)) {
+  for (const [key5, record3] of Object.entries(parsed.files)) {
     const skill = key5.split("/")[0];
-    const value = record2;
+    const value = record3;
     if (!safeRelative(key5) || !skillNames.includes(skill) || !key5.includes("/") || !value || typeof value.version !== "string" || !value.version || typeof value.digest !== "string" || !/^[a-f0-9]{64}$/.test(value.digest) || Object.keys(value).some(
       (field) => field !== "version" && field !== "digest"
     ))
@@ -71922,9 +72000,9 @@ function appendJsonArrayItem(source, path, item) {
     node = entry2.node;
     if (last) {
       if (node.kind !== "array") return void 0;
-      const list5 = cursor[segment];
-      if (!Array.isArray(list5)) return void 0;
-      list5.push(item);
+      const list6 = cursor[segment];
+      if (!Array.isArray(list6)) return void 0;
+      list6.push(item);
       const edited2 = insertMember(
         source,
         node,
@@ -71998,7 +72076,7 @@ async function draftSystemLearning(before, extraction, options = {}) {
         rootFontSize,
         scheme: token.theme === "dark" ? "dark" : "light"
       });
-  const normalized = inputs.length ? await normalizeInBrowser(inputs, options.launch) : [];
+  const normalized2 = inputs.length ? await normalizeInBrowser(inputs, options.launch) : [];
   let after = before;
   const append = (path, value) => {
     const current = path.reduce(
@@ -72030,7 +72108,7 @@ async function draftSystemLearning(before, extraction, options = {}) {
     };
     if (!prior) append(["design", "tokens"], persisted);
     const count5 = roots.length || 1;
-    const values = normalized.slice(index * count5, index * count5 + count5);
+    const values = normalized2.slice(index * count5, index * count5 + count5);
     const value = values[0];
     if (token.reason || !value?.value || values.some((v) => v.value !== value.value)) {
       summary.push(
@@ -72685,10 +72763,10 @@ async function firstMetadata(runDirectory) {
         `cannot read capture artifact ${path}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
-    const record2 = value;
-    if (typeof record2.flow?.id !== "string" || typeof record2.timestamps?.startedAt !== "string")
+    const record3 = value;
+    if (typeof record3.flow?.id !== "string" || typeof record3.timestamps?.startedAt !== "string")
       throw new IdiomError(`invalid metadata in ${path}`);
-    return { flow: record2.flow.id, startedAt: record2.timestamps.startedAt };
+    return { flow: record3.flow.id, startedAt: record3.timestamps.startedAt };
   }
   return void 0;
 }
@@ -72766,12 +72844,12 @@ async function newestCompleteCapture(options) {
   return candidates[0];
 }
 function opaqueColor(value) {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "" || normalized === "none" || normalized === "transparent")
+  const normalized2 = value.trim().toLowerCase();
+  if (normalized2 === "" || normalized2 === "none" || normalized2 === "transparent")
     return false;
-  if (/^rgba?\([^)]*,\s*0(?:\.0+)?\s*\)$/u.test(normalized)) return false;
-  if (/^rgb\([^)]*\/\s*0(?:%|\.0+)?\s*\)$/u.test(normalized)) return false;
-  if (/^hsla?\([^)]*[,/]\s*0(?:%|\.0+)?\s*\)$/u.test(normalized)) return false;
+  if (/^rgba?\([^)]*,\s*0(?:\.0+)?\s*\)$/u.test(normalized2)) return false;
+  if (/^rgb\([^)]*\/\s*0(?:%|\.0+)?\s*\)$/u.test(normalized2)) return false;
+  if (/^hsla?\([^)]*[,/]\s*0(?:%|\.0+)?\s*\)$/u.test(normalized2)) return false;
   return true;
 }
 function positiveWidth(value) {
@@ -72786,8 +72864,8 @@ function visibleText(element) {
     return false;
   if (isObservedElementV2(element) && Number.parseFloat(element.styles.opacity) <= 0)
     return false;
-  const text4 = isObservedElementV2(element) ? element.directText : element.text;
-  return text4.trim() !== "";
+  const text5 = isObservedElementV2(element) ? element.directText : element.text;
+  return text5.trim() !== "";
 }
 function coordinate5(tuple) {
   return {
@@ -72798,15 +72876,15 @@ function coordinate5(tuple) {
   };
 }
 function addObserved(target2, value, point) {
-  const normalized = value.trim();
-  if (normalized === "") return;
-  const coordinates = target2.get(normalized) ?? [];
+  const normalized2 = value.trim();
+  if (normalized2 === "") return;
+  const coordinates = target2.get(normalized2) ?? [];
   const key5 = `${point.flow}/${point.state}/${point.viewport}/${point.colorScheme}`;
   if (coordinates.length < 4 && !coordinates.some(
     (item) => `${item.flow}/${item.state}/${item.viewport}/${item.colorScheme}` === key5
   ))
     coordinates.push(point);
-  target2.set(normalized, coordinates);
+  target2.set(normalized2, coordinates);
 }
 function observedValues(source) {
   return [...source.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([value, coordinates]) => ({ value, coordinates }));
@@ -72886,8 +72964,8 @@ async function embedProhibitions(prohibitions) {
         );
         if (target2 === void 0) continue;
         try {
-          const stat15 = await lstat10(target2);
-          if (!stat15.isFile()) continue;
+          const stat16 = await lstat10(target2);
+          if (!stat16.isFile()) continue;
           images.push({ path, dataUri: pngDataUri(await readFile77(target2)) });
         } catch (error) {
           if (error.code !== "ENOENT") throw error;
@@ -72920,7 +72998,7 @@ async function newestCoverage(options) {
       collapsedTupleKeys: loaded.collapsedTupleKeys,
       flow: flow.flow,
       project: options.project,
-      allFlows: options.flows.map((record2) => record2.flow),
+      allFlows: options.flows.map((record3) => record3.flow),
       tuples: loaded.tuples,
       commit: loaded.commit
     });
@@ -73110,7 +73188,7 @@ async function extractDtcg(root2, path) {
         const alpha = value.alpha ?? 1;
         if (typeof alpha !== "number" || alpha < 0 || alpha > 1)
           throw new Error("Invalid colour alpha");
-        const parts = value.components.join(" ");
+        const parts2 = value.components.join(" ");
         const space = value.colorSpace;
         if ([
           "srgb",
@@ -73122,7 +73200,7 @@ async function extractDtcg(root2, path) {
           "xyz-d50",
           "xyz-d65"
         ].includes(space))
-          token.resolved = `color(${space} ${parts} / ${alpha})`;
+          token.resolved = `color(${space} ${parts2} / ${alpha})`;
         else if (["hsl", "hwb", "lab", "lch", "oklab", "oklch"].includes(space)) {
           const components = [...value.components];
           if (space === "hsl" || space === "hwb") {
@@ -74228,8 +74306,6 @@ function initSummaryLines(result2) {
       ...outcome.setup
     ])
       lines2.push(note);
-    if (outcome.content !== void 0)
-      lines2.push("Next: idiom validate site; idiom capture site");
     if (outcome.content !== void 0 && outcome.stateCount === 0)
       lines2.push("TODO-only flow: no concrete states are ready to capture.");
   }
@@ -74253,9 +74329,10 @@ function initSummaryLines(result2) {
     lines2.push(result2.autobuild.addition);
   }
   lines2.push(...briefInstructionLines(result2.briefInstruction));
+  lines2.push(INIT_NEXT_LINE);
   return lines2;
 }
-var directoryNames, canonicalSkillPath, canonicalSkillFile, claudeSkillPath, claudeSkillTarget, autobuildFile, autobuildSkillPath, autobuildSkillFile, autobuildClaudeSkillPath, autobuildClaudeSkillTarget;
+var directoryNames, canonicalSkillPath, canonicalSkillFile, claudeSkillPath, claudeSkillTarget, autobuildFile, autobuildSkillPath, autobuildSkillFile, autobuildClaudeSkillPath, autobuildClaudeSkillTarget, INIT_NEXT_LINE;
 var init_init = __esm({
   "src/commands/init.ts"() {
     "use strict";
@@ -74272,7 +74349,7 @@ var init_init = __esm({
     init_run5();
     init_templates();
     init_validation();
-    init_version();
+    init_version2();
     directoryNames = [
       join81(".idiom", "flows"),
       join81(".idiom", "references"),
@@ -74288,6 +74365,423 @@ var init_init = __esm({
     autobuildSkillFile = join81(autobuildSkillPath, "SKILL.md");
     autobuildClaudeSkillPath = join81(".claude", "skills", "ab-verify-idiom");
     autobuildClaudeSkillTarget = "../../.agents/skills/ab-verify-idiom";
+    INIT_NEXT_LINE = "Next: idiom init --validate";
+  }
+});
+
+// src/setup/facts.ts
+import { readdir as readdir22, readFile as readFile82, stat as stat13 } from "fs/promises";
+import { basename as basename15, join as join83 } from "path";
+async function exists9(path) {
+  try {
+    await stat13(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function readJson2(path) {
+  try {
+    return JSON.parse(await readFile82(path, "utf8"));
+  } catch {
+    return void 0;
+  }
+}
+function record(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
+function text3(value) {
+  return typeof value === "string" && value.trim() !== "" ? value : void 0;
+}
+function clip2(value, limit) {
+  return value.length <= limit ? value : `${value.slice(0, limit - 1)}\u2026`;
+}
+async function packageManager(projectDirectory) {
+  for (const [file, manager] of LOCKFILES)
+    if (await exists9(join83(projectDirectory, file))) return manager;
+  return void 0;
+}
+function relevantScripts(manifest) {
+  const scripts = record(manifest?.scripts) ?? {};
+  return Object.entries(scripts).filter(
+    (entry2) => typeof entry2[1] === "string" && (RELEVANT_SCRIPT.test(entry2[0]) || /seed|fixture/i.test(entry2[0]))
+  ).slice(0, MAX_SETUP_SCRIPTS).map(([name, command]) => ({
+    name,
+    command: clip2(
+      redactCredentials(command.replace(/\s+/g, " ").trim()),
+      MAX_SETUP_SCRIPT_CHARS
+    )
+  }));
+}
+function frameworks(manifest) {
+  const names = /* @__PURE__ */ new Set([
+    ...Object.keys(record(manifest?.dependencies) ?? {}),
+    ...Object.keys(record(manifest?.devDependencies) ?? {})
+  ]);
+  const found = FRAMEWORKS.filter((name) => names.has(name));
+  if ([...names].some((name) => name.startsWith("@remix-run/")))
+    found.push("@remix-run/*");
+  return found.sort();
+}
+async function serverFacts(projectDirectory) {
+  const project = record(
+    await readJson2(join83(projectDirectory, ".idiom", "project.json"))
+  );
+  const server = record(project?.server);
+  if (server === void 0) return void 0;
+  const template = record(
+    record(JSON.parse(await readTemplate("project.json")))?.server
+  );
+  const start = text3(server.start);
+  const build = text3(server.build);
+  const readyUrl = text3(server.readyUrl);
+  const port = typeof server.port === "number" ? server.port : void 0;
+  return {
+    ...start === void 0 ? {} : { start: clip2(redactCredentials(start), MAX_SETUP_SCRIPT_CHARS) },
+    ...build === void 0 ? {} : { build: clip2(redactCredentials(build), MAX_SETUP_SCRIPT_CHARS) },
+    ...port === void 0 ? {} : { port },
+    ...readyUrl === void 0 ? {} : { readyUrl: clip2(readyUrl, 200) },
+    scaffoldDefaults: start === template?.start && readyUrl === template?.readyUrl && port === template?.port
+  };
+}
+async function flowFacts(projectDirectory) {
+  const directory = join83(projectDirectory, ".idiom", "flows");
+  let names;
+  try {
+    names = (await readdir22(directory)).filter((name) => name.endsWith(".json")).sort();
+  } catch {
+    return { flows: [], siteRoutes: [] };
+  }
+  const flows = [];
+  let siteRoutes = [];
+  for (const name of names) {
+    const manifest = record(await readJson2(join83(directory, name)));
+    const states = Array.isArray(manifest?.states) ? manifest.states : [];
+    flows.push({
+      id: text3(manifest?.id) ?? basename15(name, ".json"),
+      states: states.length
+    });
+    if (name === "site.json")
+      siteRoutes = states.map(record).filter((state) => text3(state?.id) !== void 0).slice(0, MAX_SETUP_ROUTES).map((state) => {
+        const path = text3(state?.url);
+        return {
+          state: clip2(String(state?.id), 100),
+          ...path === void 0 ? {} : { path: clip2(path, 200) }
+        };
+      });
+  }
+  flows.sort((left, right) => left.id.localeCompare(right.id));
+  return { flows, siteRoutes };
+}
+async function scaffoldFileState(path, template) {
+  let content;
+  try {
+    content = await readFile82(path, "utf8");
+  } catch {
+    return "missing";
+  }
+  return content === await readTemplate(template) ? "scaffold" : "edited";
+}
+async function collectSetupFacts(projectDirectory) {
+  const manifest = record(
+    await readJson2(join83(projectDirectory, "package.json"))
+  );
+  const manager = await packageManager(projectDirectory);
+  const seedCandidates = [];
+  for (const candidate2 of SEED_CANDIDATES)
+    if (await exists9(join83(projectDirectory, candidate2)))
+      seedCandidates.push(candidate2);
+  let envExample;
+  for (const candidate2 of ENV_EXAMPLES)
+    if (await exists9(join83(projectDirectory, candidate2))) {
+      envExample = candidate2;
+      break;
+    }
+  return {
+    idiomVersion: IDIOM_VERSION,
+    projectDirectory,
+    packageManager: manager,
+    runScript: manager === void 0 ? manifest === void 0 ? void 0 : RUN_SCRIPT.npm : RUN_SCRIPT[manager],
+    scripts: relevantScripts(manifest),
+    frameworks: frameworks(manifest),
+    server: await serverFacts(projectDirectory),
+    ...await flowFacts(projectDirectory),
+    scaffoldFiles: {
+      product: await scaffoldFileState(
+        join83(projectDirectory, "PRODUCT.md"),
+        "PRODUCT.md"
+      ),
+      design: await scaffoldFileState(
+        join83(projectDirectory, "DESIGN.md"),
+        "DESIGN.md"
+      )
+    },
+    seedCandidates,
+    envExample
+  };
+}
+var MAX_SETUP_SCRIPTS, MAX_SETUP_ROUTES, MAX_SETUP_SCRIPT_CHARS, LOCKFILES, RUN_SCRIPT, RELEVANT_SCRIPT, FRAMEWORKS, SEED_CANDIDATES, ENV_EXAMPLES;
+var init_facts = __esm({
+  "src/setup/facts.ts"() {
+    "use strict";
+    init_redact();
+    init_templates();
+    init_version2();
+    MAX_SETUP_SCRIPTS = 20;
+    MAX_SETUP_ROUTES = 30;
+    MAX_SETUP_SCRIPT_CHARS = 200;
+    LOCKFILES = [
+      ["bun.lock", "bun"],
+      ["bun.lockb", "bun"],
+      ["pnpm-lock.yaml", "pnpm"],
+      ["yarn.lock", "yarn"],
+      ["package-lock.json", "npm"],
+      ["npm-shrinkwrap.json", "npm"]
+    ];
+    RUN_SCRIPT = {
+      bun: "bun run",
+      pnpm: "pnpm",
+      yarn: "yarn",
+      npm: "npm run"
+    };
+    RELEVANT_SCRIPT = /^(dev|start|serve|preview|build|seed|db:|prisma|fixtures?|e2e|test:e2e|storybook)/i;
+    FRAMEWORKS = [
+      "next",
+      "vite",
+      "astro",
+      "nuxt",
+      "@sveltejs/kit",
+      "electron",
+      "react-scripts",
+      "gatsby"
+    ];
+    SEED_CANDIDATES = [
+      "prisma/seed.ts",
+      "prisma/seed.js",
+      "db/seeds.rb",
+      "seed",
+      "seeds",
+      "scripts/seed.ts",
+      "scripts/seed.js",
+      "scripts/seed.mjs",
+      "fixtures",
+      "test/fixtures",
+      "tests/fixtures",
+      "e2e/fixtures",
+      "playwright/fixtures",
+      "cypress/fixtures",
+      "supabase/seed.sql"
+    ];
+    ENV_EXAMPLES = [".env.example", ".env.sample", ".env.template"];
+  }
+});
+
+// src/setup/prompt.ts
+function code2(value) {
+  return `\`${value.replace(/`/g, "'")}\``;
+}
+function list3(values) {
+  return values.length === 0 ? NONE : values.join(", ");
+}
+function knownFacts(facts) {
+  const lines2 = [
+    `- Package manager (from lockfiles): ${facts.packageManager ?? NONE}${facts.runScript === void 0 ? "" : `; run scripts with ${code2(facts.runScript)}`}`,
+    `- Frameworks (from package.json dependencies): ${list3(facts.frameworks)}`
+  ];
+  if (facts.scripts.length === 0)
+    lines2.push("- Relevant package.json scripts: none found");
+  else {
+    lines2.push("- Relevant package.json scripts:");
+    for (const script of facts.scripts)
+      lines2.push(`  - ${code2(script.name)}: ${code2(script.command)}`);
+  }
+  const server = facts.server;
+  if (server === void 0)
+    lines2.push(
+      "- Server config (.idiom/project.json `server`): none found; run `idiom init --yes --no-agent` first"
+    );
+  else {
+    const parts2 = [
+      `start ${server.start === void 0 ? NONE : code2(server.start)}`,
+      `build ${server.build === void 0 ? NONE : code2(server.build)}`,
+      `port ${server.port ?? NONE}`,
+      `readyUrl ${server.readyUrl === void 0 ? NONE : code2(server.readyUrl)}`
+    ];
+    lines2.push(
+      `- Server config (.idiom/project.json \`server\`): ${parts2.join("; ")}${server.scaffoldDefaults ? ". These are still the scaffold defaults; replace them." : "."}`
+    );
+  }
+  lines2.push(
+    `- Flows (.idiom/flows): ${list3(facts.flows.map((flow) => `${flow.id} (${flow.states} states)`))}`
+  );
+  if (facts.siteRoutes.length === 0)
+    lines2.push(
+      "- Routes found by `idiom init --flows` (site.json): none found"
+    );
+  else {
+    lines2.push(
+      "- Routes found by `idiom init --flows` (.idiom/flows/site.json):"
+    );
+    for (const route of facts.siteRoutes)
+      lines2.push(
+        `  - ${code2(route.state)}${route.path === void 0 ? "" : ` \u2192 ${code2(route.path)}`}`
+      );
+  }
+  lines2.push(
+    `- Seed scripts and fixtures (by path only): ${list3(facts.seedCandidates)}`,
+    `- Example env file (by name only, contents not read): ${facts.envExample ?? NONE}`,
+    `- PRODUCT.md: ${facts.scaffoldFiles.product}; DESIGN.md: ${facts.scaffoldFiles.design} (scaffold = untouched template, edited = human-owned)`
+  );
+  return lines2;
+}
+function setupPrompt(facts) {
+  const [known, start, seed, routes, flow, docs, finish, rules] = SETUP_PROMPT_HEADINGS;
+  return [
+    `# Set up Idiom in this repository (idiom ${facts.idiomVersion} setup prompt)`,
+    "",
+    "Idiom is a design acceptance layer: it boots this app, captures named UI states and checks them. Your job is to finish its setup in this repository (`.`) so a capture can run, and to stop only when `idiom init --validate` prints `ready`. Use the `idiom` CLI, or the Idiom MCP tools named in parentheses when they are available (`idiom_init`, `idiom_ready`, `idiom_flows`, `idiom_doctor`).",
+    "",
+    known,
+    "",
+    ...knownFacts(facts),
+    "",
+    start,
+    "",
+    "Find the command that starts the app locally, from the scripts and frameworks above. Set `server.build` (or remove it if there is no build step), `server.start`, `server.port` and `server.readyUrl` in `.idiom/project.json` (see docs/configuration.md#project-file). Prefer a fixed port the start command honors, and a readyUrl that answers once the app can render. Confirm with `idiom doctor` (`idiom_doctor`).",
+    "",
+    seed,
+    "",
+    "Use only the repository's own seed scripts, fixtures and example env files (the ones listed above, or others the repo documents). Wire them as flow `setup` steps, or as `server.env` references to variables the repo already defines. **Never use, invent or ask for real credentials, production data or personal accounts.** If the app needs an account the repository cannot create, stop and ask the human how test accounts are provisioned; do not add one yourself.",
+    "",
+    routes,
+    "",
+    `With the app running, run \`idiom init --flows --yes --no-agent\` (\`idiom_init\` with \`flows: true\`). Review the TODOs and setup-required routes in the generated \`.idiom/flows/site.json\`. ${facts.siteRoutes.length === 0 ? "No routes have been found yet." : `${facts.siteRoutes.length} route(s) are already listed above.`}`,
+    "",
+    flow,
+    "",
+    "Choose one primary user journey and write `.idiom/flows/<id>.json` with 3 to 8 named states. Include at least one empty, loading or error state when the repository can force one (see docs/configuration.md#force-empty-error-and-loading-states). Use stable selectors: `data-testid`, an ARIA role plus accessible name, or a label. Never rely on `nth-child`, generated class names or text that changes with data. Run `idiom validate <id>` until it passes (see docs/configuration.md#flows).",
+    "",
+    docs,
+    "",
+    "Follow `.agents/skills/idiom/init.md` (installed by `idiom init`). Mine the repository first, then ask the human only what the code cannot answer. If either file is marked `edited` above, treat it as human-owned: propose changes instead of overwriting it.",
+    "",
+    finish,
+    "",
+    "Run `idiom init --validate` (`idiom_ready`) and repeat the steps above until it prints `ready`. If it does not, stop and report the exact `not ready: \u2026` line and its `Fix:` line as the remaining problem. **Do not say setup is done unless it printed `ready`.**",
+    "",
+    rules,
+    "",
+    "- Do not disable, skip or weaken checks or rules, and do not edit `.idiom/rules.json` or decisions to silence findings.",
+    "- Do not commit, push or open pull requests; leave every change in the working tree for the human to review.",
+    "- Do not change application behavior to make setup pass.",
+    "- Ask before adding any script to the app.",
+    ""
+  ].join("\n");
+}
+function delimitedSetupPrompt(prompt) {
+  return [SETUP_PROMPT_BEGIN, prompt.trimEnd(), SETUP_PROMPT_END];
+}
+var SETUP_PROMPT_BEGIN, SETUP_PROMPT_END, SETUP_PROMPT_HEADINGS, NONE;
+var init_prompt3 = __esm({
+  "src/setup/prompt.ts"() {
+    "use strict";
+    SETUP_PROMPT_BEGIN = "----- BEGIN IDIOM SETUP PROMPT -----";
+    SETUP_PROMPT_END = "----- END IDIOM SETUP PROMPT -----";
+    SETUP_PROMPT_HEADINGS = [
+      "## What Idiom already knows about this repository",
+      "## 1. Start the app: server command, port and readyUrl",
+      "## 2. Seed data and test accounts",
+      "## 3. Find routes",
+      "## 4. Write a first flow of 3\u20138 states",
+      "## 5. Fill PRODUCT.md and DESIGN.md from the repository",
+      "## Finish line: idiom init --validate must print ready",
+      "## Rules"
+    ];
+    NONE = "none found";
+  }
+});
+
+// src/commands/init-validate.ts
+function validationFailure(error, project, cwd) {
+  const failure3 = error.failureJson();
+  if (failure3.cause === "no-project")
+    return {
+      ...failure3,
+      message: `Idiom is not initialized here (no .idiom/project.json in ${resolveProjectArgument(project, cwd)} or any parent directory)`,
+      hint: "run idiom init"
+    };
+  if (failure3.message.endsWith(NO_FLOWS))
+    return {
+      ...failure3,
+      hint: "generate a flow with idiom init --flows --yes, or author .idiom/flows/<id>.json"
+    };
+  return failure3;
+}
+async function initValidate(options) {
+  let validated;
+  try {
+    validated = await validateForRun({
+      project: options.project,
+      cwd: options.cwd
+    });
+  } catch (error) {
+    if (!(error instanceof RunFailure)) throw error;
+    return {
+      ready: false,
+      validate: {
+        ok: false,
+        failure: validationFailure(error, options.project, options.cwd)
+      },
+      doctor: null
+    };
+  }
+  const flows = validated.flows.map(({ file, flow: flow2 }) => ({
+    id: flow2.id,
+    file
+  }));
+  const flow = options.flow ?? flows[0]?.id;
+  const doctor = await runDoctor({
+    flow,
+    project: options.project,
+    cwd: options.cwd,
+    signal: options.signal,
+    dependencies: options.dependencies
+  });
+  return {
+    ready: doctor.ok,
+    validate: { ok: true, projectDirectory: validated.projectDirectory, flows },
+    doctor
+  };
+}
+function initValidateProblem(report) {
+  if (report.ready) return void 0;
+  const failure3 = report.validate.ok ? report.doctor?.failure : report.validate.failure;
+  if (failure3 === void 0) return void 0;
+  return {
+    headline: `not ready: ${failure3.message.replace(/^config invalid: /, "")}`,
+    hint: failure3.hint,
+    stage: failure3.stage,
+    cause: failure3.cause
+  };
+}
+function renderInitValidate(report) {
+  const lines2 = [
+    report.validate.ok ? `validate: ${report.validate.flows.length} flow(s) valid (${report.validate.flows.map((flow) => flow.id).join(", ")})` : "validate: failed"
+  ];
+  if (report.doctor !== null)
+    lines2.push(...renderDoctorReport(report.doctor).trimEnd().split("\n"));
+  if (report.ready) lines2.push("ready");
+  return lines2;
+}
+var NO_FLOWS;
+var init_init_validate = __esm({
+  "src/commands/init-validate.ts"() {
+    "use strict";
+    init_errors();
+    init_preflight();
+    init_project2();
+    init_doctor();
+    NO_FLOWS = ".idiom/flows: no flow manifests found";
   }
 });
 
@@ -74414,8 +74908,8 @@ var init_config = __esm({
 
 // src/quick/run.ts
 import { randomUUID as randomUUID14 } from "crypto";
-import { readFile as readFile83, writeFile as writeFile47 } from "fs/promises";
-import { join as join84, resolve as resolve63 } from "path";
+import { readFile as readFile85, writeFile as writeFile47 } from "fs/promises";
+import { join as join86, resolve as resolve63 } from "path";
 function defaultRunName2(now2) {
   return now2.toISOString().replaceAll(":", "-").replaceAll(".", "-");
 }
@@ -74609,7 +75103,7 @@ async function writeReviewReports(runDirectory, reportOptions) {
   const screenshots = new Map(
     await Promise.all(
       screenshotPaths.map(
-        async (path) => [path, pngDataUri(await readFile83(join84(runDirectory, path)))]
+        async (path) => [path, pngDataUri(await readFile85(join86(runDirectory, path)))]
       )
     )
   );
@@ -74662,7 +75156,7 @@ async function runQuick(options) {
   });
   const now2 = options.dependencies?.now ?? (() => /* @__PURE__ */ new Date());
   const startedAt = now2();
-  const finalDirectory = options.out === void 0 ? join84(
+  const finalDirectory = options.out === void 0 ? join86(
     directory,
     "idiom-quick-reports",
     options.literal ? `${defaultRunName2(startedAt)}-${randomUUID14().slice(0, 8)}` : defaultRunName2(startedAt)
@@ -74733,7 +75227,7 @@ async function runQuick(options) {
     if (options.materializeAllDeterministic) {
       await writeGroups(runDirectory, groups);
       await writeFile47(
-        join84(runDirectory, "mcp-detail.json"),
+        join86(runDirectory, "mcp-detail.json"),
         JSON.stringify({ version: 1, issues: issues5, interaction })
       );
     }
@@ -74822,7 +75316,7 @@ var init_run6 = __esm({
 });
 
 // src/commands/ruling.ts
-import { join as join89 } from "path";
+import { join as join91 } from "path";
 import { stdin as stdin7, stdout as stdout7 } from "process";
 import { createInterface as createInterface7 } from "readline/promises";
 async function defaultConfirmation4() {
@@ -74852,7 +75346,7 @@ async function rulingCommand(options) {
   if (options.wording !== void 0 && options.wording.trim() === "")
     throw new IdiomError("--wording must not be blank");
   const context2 = await loadProjectContext(options);
-  const designPath = join89(
+  const designPath = join91(
     context2.projectDirectory,
     context2.project.design.designFile
   );
@@ -75002,11 +75496,11 @@ async function groupSweep(flows) {
   );
   const load = observationLoader();
   const members = await Promise.all(
-    records.map(async (record2) => ({
-      id: record2.finding.id,
-      record: record2,
-      component: componentFor(record2, record2.finding.id, await load(record2)),
-      cause: causes.get(record2.finding.id)
+    records.map(async (record3) => ({
+      id: record3.finding.id,
+      record: record3,
+      component: componentFor(record3, record3.finding.id, await load(record3)),
+      cause: causes.get(record3.finding.id)
     }))
   );
   const severity2 = { blocker: 0, major: 1, minor: 2 };
@@ -75083,37 +75577,37 @@ function polishMarkdown(s) {
   return [
     "# Whole-product polish",
     "",
-    text3(renderProductSweep(s)),
+    text4(renderProductSweep(s)),
     "",
     `Severity counts (all findings): ${JSON.stringify(s.severityCounts)}`,
-    `Rule counts (all findings): ${text3(JSON.stringify(s.ruleCounts))}`,
+    `Rule counts (all findings): ${text4(JSON.stringify(s.ruleCounts))}`,
     "",
     "## Ranked cleanup tickets",
     "",
     ...s.proposals.flatMap((p, i) => [
-      `### ${i + 1}. ${text3(p.cluster.cause?.cause ?? p.cluster.component)}`,
+      `### ${i + 1}. ${text4(p.cluster.cause?.cause ?? p.cluster.component)}`,
       "",
-      `Salience ${p.salience}; prominence ${p.prominence}; score ${p.score}. ${text3(JSON.stringify(p.explanation))}`,
+      `Salience ${p.salience}; prominence ${p.prominence}; score ${p.score}. ${text4(JSON.stringify(p.explanation))}`,
       "",
       ...p.cluster.members.map(
-        (m) => `- ${text3(m.id)}: ${text3(basisDescription(m.record.finding))} \u2014 ${text3(m.record.finding.explanation)} ([source report](${href(s, `${m.record.runDirectory}/report.md`)}))`
+        (m) => `- ${text4(m.id)}: ${text4(basisDescription(m.record.finding))} \u2014 ${text4(m.record.finding.explanation)} ([source report](${href(s, `${m.record.runDirectory}/report.md`)}))`
       ),
       ""
     ]),
     ...(s.tickets?.outcomes ?? []).map(
-      (o) => o.kind === "created" || o.kind === "already-emitted" ? `- ${o.kind}: [ticket](${href(s, o.path)})` : `- ${text3(JSON.stringify(o))}`
+      (o) => o.kind === "created" || o.kind === "already-emitted" ? `- ${o.kind}: [ticket](${href(s, o.path)})` : `- ${text4(JSON.stringify(o))}`
     ),
     "",
     "## Flows and coverage",
     "",
     ...s.flows.flatMap(
-      (f) => f.status === "failed" ? [`### ${text3(f.flow)}`, `Failed/unreviewed: ${text3(f.reason)}`, ""] : [
-        `### ${text3(f.flow)}`,
+      (f) => f.status === "failed" ? [`### ${text4(f.flow)}`, `Failed/unreviewed: ${text4(f.reason)}`, ""] : [
+        `### ${text4(f.flow)}`,
         "",
         `[Markdown report](${href(s, f.summary.reportPath)}) \xB7 [HTML report](${href(s, f.summary.htmlReportPath)})`,
         "",
         f.coverage.reportCoverage === void 0 ? "Coverage unavailable." : renderCoverageMarkdown(f.coverage.reportCoverage),
-        `Model: ${text3(JSON.stringify({ outcome: f.summary.outcome, surfaces: f.summary.surfaces }))}`,
+        `Model: ${text4(JSON.stringify({ outcome: f.summary.outcome, surfaces: f.summary.surfaces }))}`,
         "",
         "Probe coordinates, controls, reuse and limitations (reused controls are not additional clicks):",
         "",
@@ -75162,7 +75656,7 @@ async function writePolishReports(s) {
     await rename30(`${path}.tmp`, path);
   }
 }
-var href, text3;
+var href, text4;
 var init_report3 = __esm({
   "src/sweep/report.ts"() {
     "use strict";
@@ -75171,7 +75665,7 @@ var init_report3 = __esm({
     init_html();
     init_emit();
     href = (s, path) => relative40(s.runDirectory, path).split(sep25).map(encodeURIComponent).join("/");
-    text3 = (s) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/([\\`*_[\]])/g, "\\$1");
+    text4 = (s) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/([\\`*_[\]])/g, "\\$1");
   }
 });
 
@@ -75219,7 +75713,7 @@ var init_coverage3 = __esm({
 
 // src/sweep/run.ts
 import { mkdir as mkdir31, mkdtemp as mkdtemp13 } from "fs/promises";
-import { basename as basename16, join as join90 } from "path";
+import { basename as basename17, join as join92 } from "path";
 async function runProductSweep(options) {
   const signal = options.dependencies?.capture?.signal;
   signal?.throwIfAborted();
@@ -75231,7 +75725,7 @@ async function runProductSweep(options) {
     throw new IdiomError("--prod requires server.production configuration");
   const ids = /* @__PURE__ */ new Set();
   for (const { file, flow } of project.flows) {
-    if (basename16(file, ".json") !== flow.id || ids.has(flow.id))
+    if (basename17(file, ".json") !== flow.id || ids.has(flow.id))
       throw new IdiomError(
         `${file}: filename must match its unique manifest id ${JSON.stringify(flow.id)}`
       );
@@ -75247,7 +75741,7 @@ async function runProductSweep(options) {
     await indexTickets([
       target2.canonicalRoot,
       target2.root,
-      join90(project.projectDirectory, ".autobuild/tickets")
+      join92(project.projectDirectory, ".autobuild/tickets")
     ]);
   }
   const complete = [];
@@ -75330,9 +75824,9 @@ async function runProductSweep(options) {
   const incomplete = flows.some(
     (f) => f.status === "failed" || f.summary.outcome.kind === "degraded" || (f.coverage.reportCoverage?.successfulTuples ?? 0) < (f.coverage.reportCoverage?.selectedTuples ?? 0)
   );
-  const parent = join90(project.projectDirectory, ".idiom/reports");
+  const parent = join92(project.projectDirectory, ".idiom/reports");
   await mkdir31(parent, { recursive: true });
-  const runDirectory = await mkdtemp13(join90(parent, "polish-"));
+  const runDirectory = await mkdtemp13(join92(parent, "polish-"));
   const summary = {
     scope: "all",
     outcome: incomplete ? {
@@ -75353,9 +75847,9 @@ async function runProductSweep(options) {
     blocking: complete.reduce((n, f) => n + f.summary.blocking, 0),
     tickets,
     runDirectory,
-    jsonPath: join90(runDirectory, "polish.json"),
-    reportPath: join90(runDirectory, "polish.md"),
-    htmlReportPath: join90(runDirectory, "polish.html")
+    jsonPath: join92(runDirectory, "polish.json"),
+    reportPath: join92(runDirectory, "polish.md"),
+    htmlReportPath: join92(runDirectory, "polish.html")
   };
   await writePolishReports(summary);
   return summary;
@@ -75379,8 +75873,8 @@ var init_run7 = __esm({
 
 // src/commands/sweep.ts
 import { randomUUID as randomUUID15 } from "crypto";
-import { readFile as readFile87 } from "fs/promises";
-import { basename as basename17 } from "path";
+import { readFile as readFile89 } from "fs/promises";
+import { basename as basename18 } from "path";
 function rankSweepFindings(findings) {
   return [...findings].sort(
     (left, right) => severityRank[left.severity] - severityRank[right.severity] || layerRank[left.layer] - layerRank[right.layer] || right.confidence - left.confidence || left.state.localeCompare(right.state) || left.id.localeCompare(right.id)
@@ -75458,7 +75952,7 @@ async function sweepWithReview(options) {
       }
     }
   });
-  const findings = findingSchema.array().parse(JSON.parse(await readFile87(result2.findingsPath, "utf8")));
+  const findings = findingSchema.array().parse(JSON.parse(await readFile89(result2.findingsPath, "utf8")));
   const ranked = rankSweepFindings(
     findings.filter(
       (finding) => finding.status === "open" || finding.status === "approved"
@@ -75490,7 +75984,7 @@ async function sweepWithReview(options) {
   };
   const records = ranked.map((finding) => ({
     finding,
-    runId: basename17(result2.runDirectory),
+    runId: basename18(result2.runDirectory),
     runDirectory: result2.runDirectory,
     findingsPath: result2.findingsPath
   }));
@@ -75501,7 +75995,7 @@ async function sweepWithReview(options) {
     records,
     occurrences: (result2.occurrences ?? ranked).filter((f) => ranked.some((r) => r.id === f.id)).map((finding) => ({
       finding,
-      runId: basename17(result2.runDirectory),
+      runId: basename18(result2.runDirectory),
       runDirectory: result2.runDirectory,
       findingsPath: result2.findingsPath
     }))
@@ -75570,21 +76064,344 @@ var init_verify = __esm({
   }
 });
 
+// src/update/notice.ts
+import { randomUUID as randomUUID16 } from "crypto";
+import { existsSync as existsSync4, readFileSync as readFileSync3, realpathSync } from "fs";
+import { mkdir as mkdir34, readFile as readFile90, rename as rename31, writeFile as writeFile51 } from "fs/promises";
+import { homedir } from "os";
+import { join as join95 } from "path";
+async function updateCheckDisabled(env, projectDirectory) {
+  if (enabled(env.IDIOM_NO_UPDATE_CHECK)) return true;
+  if ((env.NO_UPDATE_NOTIFIER ?? "").trim() !== "") return true;
+  if (enabled(env.CI)) return true;
+  if (projectDirectory === void 0) return false;
+  try {
+    const project = JSON.parse(
+      await readFile90(join95(projectDirectory, ".idiom", "project.json"), "utf8")
+    );
+    return project?.updateCheck === false;
+  } catch {
+    return false;
+  }
+}
+async function projectDirectoryFor(options) {
+  try {
+    return await findOptionalProjectDirectory(
+      resolveProjectArgument(options.project, options.cwd)
+    );
+  } catch {
+    return void 0;
+  }
+}
+function releaseSpec(npxRoot) {
+  try {
+    const manifest = JSON.parse(
+      readFileSync3(join95(npxRoot, "package.json"), "utf8")
+    );
+    const spec = manifest.dependencies?.[PACKAGE_NAME];
+    return typeof spec === "string" ? spec : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function resolvedRoot(packageRoot) {
+  let root2 = packageRoot;
+  try {
+    root2 = realpathSync(packageRoot);
+  } catch {
+  }
+  return root2;
+}
+function releaseTarballNpx(path) {
+  const npx = /^(.*\/_npx\/[^/]+)\//.exec(path);
+  if (npx?.[1] === void 0) return void 0;
+  return releaseSpec(npx[1])?.startsWith(RELEASE_TARBALL_PREFIX) ?? false;
+}
+function ambiguousPluginInstall(packageRoot, env) {
+  return releaseTarballNpx(normalized(resolvedRoot(packageRoot))) === true && !enabled(env.CLAUDE_PLUGIN_ROOT);
+}
+function detectInstall(packageRoot, env, client) {
+  const root2 = resolvedRoot(packageRoot);
+  if (existsSync4(join95(root2, "src", "cli.ts")) || existsSync4(join95(root2, ".git")))
+    return "source";
+  const path = normalized(root2);
+  const tarball = releaseTarballNpx(path);
+  if (tarball !== void 0) {
+    if (!tarball) return "npx";
+    if (enabled(env.CLAUDE_PLUGIN_ROOT)) return "claude-plugin";
+    return client?.name === CODEX_MCP_CLIENT ? "codex-plugin" : "npx";
+  }
+  if (new RegExp(`/\\.bun/install/cache/${PACKAGE_NAME}@[^/]+$`).test(path) || new RegExp(`/bunx-[^/]+(?:/[^/]+)*/node_modules/${PACKAGE_NAME}$`).test(
+    path
+  ))
+    return "bunx";
+  if (path.endsWith(`/.bun/install/global/node_modules/${PACKAGE_NAME}`))
+    return "bun-global";
+  if (path.endsWith(`/lib/node_modules/${PACKAGE_NAME}`) || path.endsWith(`/npm/node_modules/${PACKAGE_NAME}`))
+    return "npm-global";
+  return "unknown";
+}
+function updateCommand(kind, latest) {
+  switch (kind) {
+    // `idiom upgrade` installs the new CLI itself for these two kinds.
+    case "npm-global":
+    case "bun-global":
+      return "idiom upgrade";
+    case "npx":
+      return `npx -y ${PACKAGE_NAME}@latest upgrade`;
+    case "bunx":
+      return `bunx ${PACKAGE_NAME}@latest upgrade`;
+    case "claude-plugin":
+      return "claude plugin marketplace update idiom && claude plugin update idiom@idiom";
+    case "codex-plugin":
+      return `codex plugin marketplace upgrade idiom && codex plugin add idiom@idiom && codex mcp add idiom -- npx -y --package=${RELEASE_TARBALL_PREFIX}v${latest}/mattskilly-idiom-${latest}.tgz idiom mcp`;
+  }
+}
+function registryLatestUrl(env) {
+  const configured = [env.NPM_CONFIG_REGISTRY, env.npm_config_registry].map((value) => value?.trim()).find((value) => value !== void 0 && value !== "");
+  const base = (configured ?? "https://registry.npmjs.org").replace(/\/+$/, "");
+  return `${base}/${PACKAGE_NAME.replace("/", "%2f")}/latest`;
+}
+async function fetchLatest(url, fetcher, signal, version) {
+  try {
+    const response = await fetcher(url, {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        "user-agent": `idiom/${version} (node ${process.version}; ${process.platform})`
+      },
+      signal
+    });
+    if (!response.ok) return void 0;
+    const body = await response.json();
+    return typeof body?.version === "string" ? body.version : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function parts(version) {
+  if (!SEMVER.test(version)) return void 0;
+  const [core = "", prerelease] = (version.split("+")[0] ?? "").split(/-(.*)/s);
+  const [major, minor, patch] = core.split(".").map(Number);
+  return {
+    triple: [major ?? 0, minor ?? 0, patch ?? 0],
+    prerelease: prerelease !== void 0
+  };
+}
+function isNewer(latest, current) {
+  const next = parts(latest);
+  const now2 = parts(current);
+  if (next === void 0 || now2 === void 0 || next.prerelease) return false;
+  for (let index = 0; index < 3; index += 1) {
+    const a = next.triple[index] ?? 0;
+    const b = now2.triple[index] ?? 0;
+    if (a !== b) return a > b;
+  }
+  return now2.prerelease;
+}
+function updateCacheDirectory(env) {
+  if (env.XDG_CACHE_HOME?.trim()) return join95(env.XDG_CACHE_HOME, "idiom");
+  if (process.platform === "win32" && env.LOCALAPPDATA?.trim())
+    return join95(env.LOCALAPPDATA, "idiom");
+  return join95(homedir(), ".cache", "idiom");
+}
+async function readCache(directory, registry, now2) {
+  try {
+    const record3 = JSON.parse(
+      await readFile90(join95(directory, CACHE_FILE), "utf8")
+    );
+    if (typeof record3?.checkedAt !== "number" || record3.registry !== registry || record3.latest !== null && typeof record3.latest !== "string")
+      return void 0;
+    const ttl = record3.latest === null ? UPDATE_CHECK_FAILURE_TTL_MS : UPDATE_CHECK_TTL_MS;
+    const age = now2 - record3.checkedAt;
+    return age >= 0 && age < ttl ? record3 : void 0;
+  } catch {
+    return void 0;
+  }
+}
+async function writeCache(directory, record3) {
+  try {
+    await mkdir34(directory, { recursive: true });
+    const temporary = join95(directory, `${CACHE_FILE}.${randomUUID16()}.tmp`);
+    await writeFile51(temporary, `${JSON.stringify(record3)}
+`);
+    await rename31(temporary, join95(directory, CACHE_FILE));
+  } catch {
+  }
+}
+async function eligibility(options) {
+  const env = options.env ?? process.env;
+  if (await updateCheckDisabled(env, await projectDirectoryFor(options)))
+    return void 0;
+  const kind = detectInstall(
+    options.packageRoot ?? IDIOM_PACKAGE_ROOT,
+    env,
+    options.client
+  );
+  if (kind === "source" || kind === "unknown") return void 0;
+  return {
+    kind,
+    env,
+    current: options.currentVersion ?? IDIOM_VERSION,
+    registry: registryLatestUrl(env),
+    cacheDirectory: options.cacheDirectory ?? updateCacheDirectory(env),
+    now: (options.now ?? Date.now)()
+  };
+}
+function noticeFor(eligible, latest) {
+  if (latest === null || !isNewer(latest, eligible.current)) return void 0;
+  return {
+    current: eligible.current,
+    latest,
+    command: updateCommand(eligible.kind, latest)
+  };
+}
+async function readCachedUpdate(options = {}) {
+  try {
+    const eligible = await eligibility(options);
+    if (eligible === void 0) return { fresh: true };
+    const cached = await readCache(
+      eligible.cacheDirectory,
+      eligible.registry,
+      eligible.now
+    );
+    if (cached === void 0) return { fresh: false };
+    return { fresh: true, notice: noticeFor(eligible, cached.latest) };
+  } catch {
+    return { fresh: false };
+  }
+}
+async function checkForUpdate(options = {}) {
+  try {
+    const eligible = await eligibility(options);
+    if (eligible === void 0) return void 0;
+    const cached = await readCache(
+      eligible.cacheDirectory,
+      eligible.registry,
+      eligible.now
+    );
+    if (cached !== void 0) return noticeFor(eligible, cached.latest);
+    const latest = await fetchLatestRelease({
+      env: eligible.env,
+      current: eligible.current,
+      cacheDirectory: eligible.cacheDirectory,
+      now: eligible.now,
+      fetch: options.fetch,
+      setTimer: options.setTimer,
+      deadlineMs: options.deadlineMs
+    }) ?? null;
+    return noticeFor(eligible, latest);
+  } catch {
+    return void 0;
+  }
+}
+async function fetchLatestRelease(options) {
+  const controller = new AbortController();
+  let cancel;
+  try {
+    const registry = registryLatestUrl(options.env);
+    const deadline = new Promise((resolve70) => {
+      cancel = (options.setTimer ?? defaultTimer)(() => {
+        controller.abort();
+        resolve70(void 0);
+      }, options.deadlineMs ?? UPDATE_CHECK_DEADLINE_MS);
+    });
+    const latest = await Promise.race([
+      fetchLatest(
+        registry,
+        options.fetch ?? fetch,
+        controller.signal,
+        options.current
+      ),
+      deadline
+    ]);
+    await writeCache(options.cacheDirectory, {
+      checkedAt: options.now,
+      registry,
+      latest: latest ?? null
+    });
+    return latest;
+  } catch {
+    return void 0;
+  } finally {
+    cancel?.();
+  }
+}
+function renderUpdateNotice(notice) {
+  return `Idiom ${notice.latest} is available (you have ${notice.current}). Update: ${notice.command}`;
+}
+async function createUpdateNoticeSession(options = {}) {
+  const cached = await readCachedUpdate(options);
+  const pending = cached.fresh ? Promise.resolve(cached.notice) : checkForUpdate(options);
+  const env = options.env ?? process.env;
+  const packageRoot = options.packageRoot ?? IDIOM_PACKAGE_ROOT;
+  let ambiguous = false;
+  try {
+    ambiguous = ambiguousPluginInstall(packageRoot, env);
+  } catch {
+  }
+  let delivered;
+  return {
+    instructions() {
+      if (ambiguous || cached.notice === void 0 || delivered === "result")
+        return void 0;
+      delivered = "instructions";
+      return renderUpdateNotice(cached.notice);
+    },
+    async take(client) {
+      if (delivered !== void 0) return void 0;
+      const notice = await pending;
+      if (notice === void 0 || delivered !== void 0) return void 0;
+      delivered = "result";
+      if (!ambiguous) return notice;
+      const kind = detectInstall(packageRoot, env, client);
+      return kind === "source" || kind === "unknown" ? notice : { ...notice, command: updateCommand(kind, notice.latest) };
+    },
+    settled: () => pending.then(
+      () => void 0,
+      () => void 0
+    )
+  };
+}
+var defaultTimer, UPDATE_CHECK_DEADLINE_MS, UPGRADE_CHECK_DEADLINE_MS, UPDATE_CHECK_TTL_MS, UPDATE_CHECK_FAILURE_TTL_MS, PACKAGE_NAME, RELEASE_TARBALL_PREFIX, CACHE_FILE, CODEX_MCP_CLIENT, enabled, normalized;
+var init_notice = __esm({
+  "src/update/notice.ts"() {
+    "use strict";
+    init_project2();
+    init_version2();
+    defaultTimer = (callback, ms) => {
+      const timer = setTimeout(callback, ms);
+      timer.unref?.();
+      return () => clearTimeout(timer);
+    };
+    UPDATE_CHECK_DEADLINE_MS = 3e3;
+    UPGRADE_CHECK_DEADLINE_MS = 1e4;
+    UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1e3;
+    UPDATE_CHECK_FAILURE_TTL_MS = 60 * 60 * 1e3;
+    PACKAGE_NAME = "@mattskilly/idiom";
+    RELEASE_TARBALL_PREFIX = "https://github.com/mattskilly/idiom/releases/download/";
+    CACHE_FILE = "update-check.json";
+    CODEX_MCP_CLIENT = "codex-mcp-client";
+    enabled = (value) => value !== void 0 && value.trim() !== "" && !["0", "false"].includes(value.trim().toLowerCase());
+    normalized = (root2) => root2.replaceAll("\\", "/").replace(/\/+$/, "");
+  }
+});
+
 // src/mcp/binding.ts
-import { access as access13, readFile as readFile88 } from "fs/promises";
-import { join as join93, resolve as resolve67 } from "path";
-import { fileURLToPath as fileURLToPath2 } from "url";
+import { access as access13, readFile as readFile91 } from "fs/promises";
+import { join as join97, resolve as resolve67 } from "path";
+import { fileURLToPath as fileURLToPath3 } from "url";
 async function isIdiomPluginInstall(directory) {
-  if (await exists11(join93(directory, PROJECT_FILE2))) return false;
+  if (await exists12(join97(directory, PROJECT_FILE2))) return false;
   try {
     const metadata2 = JSON.parse(
-      await readFile88(join93(directory, "package.json"), "utf8")
+      await readFile91(join97(directory, "package.json"), "utf8")
     );
     if (metadata2.name !== "@mattskilly/idiom") return false;
   } catch {
     return false;
   }
-  return await exists11(join93(directory, "plugin.json")) || await exists11(join93(directory, ".claude-plugin", "plugin.json"));
+  return await exists12(join97(directory, "plugin.json")) || await exists12(join97(directory, ".claude-plugin", "plugin.json"));
 }
 async function rootFromClient(server) {
   const { roots } = await server.server.listRoots(void 0, {
@@ -75592,13 +76409,13 @@ async function rootFromClient(server) {
   });
   const directories2 = roots.flatMap((root2) => {
     try {
-      return root2.uri.startsWith("file:") ? [fileURLToPath2(root2.uri)] : [];
+      return root2.uri.startsWith("file:") ? [fileURLToPath3(root2.uri)] : [];
     } catch {
       return [];
     }
   });
   for (const directory of directories2)
-    if (await exists11(join93(directory, PROJECT_FILE2))) return directory;
+    if (await exists12(join97(directory, PROJECT_FILE2))) return directory;
   return directories2[0];
 }
 function projectBinding(server, options) {
@@ -75628,15 +76445,15 @@ function projectBinding(server, options) {
     );
   };
 }
-var PROJECT_FILE2, ROOTS_TIMEOUT_MS, exists11;
+var PROJECT_FILE2, ROOTS_TIMEOUT_MS, exists12;
 var init_binding = __esm({
   "src/mcp/binding.ts"() {
     "use strict";
     init_errors();
     init_project2();
-    PROJECT_FILE2 = join93(".idiom", "project.json");
+    PROJECT_FILE2 = join97(".idiom", "project.json");
     ROOTS_TIMEOUT_MS = 5e3;
-    exists11 = (path) => access13(path).then(
+    exists12 = (path) => access13(path).then(
       () => true,
       () => false
     );
@@ -75748,25 +76565,25 @@ var init_execution = __esm({
 });
 
 // src/mcp/evidence.ts
-import { readFile as readFile89, realpath as realpath16 } from "fs/promises";
+import { readFile as readFile92, realpath as realpath16 } from "fs/promises";
 import {
-  basename as basename19,
+  basename as basename20,
   dirname as dirname34,
-  isAbsolute as isAbsolute26,
-  join as join94,
+  isAbsolute as isAbsolute27,
+  join as join98,
   relative as relative41,
   resolve as resolve68,
   sep as sep26
 } from "path";
-function result(text4, data) {
+function result(text5, data) {
   return {
-    content: [{ type: "text", text: text4 }],
+    content: [{ type: "text", text: text5 }],
     structuredContent: JSON.parse(JSON.stringify(data))
   };
 }
 function inside4(root2, target2) {
   const path = relative41(root2, target2);
-  return path !== ".." && !path.startsWith(`..${sep26}`) && !isAbsolute26(path);
+  return path !== ".." && !path.startsWith(`..${sep26}`) && !isAbsolute27(path);
 }
 async function insideRoot(root2, supplied, label5 = "path") {
   const target2 = resolve68(root2, supplied);
@@ -75781,25 +76598,25 @@ async function insideRoot(root2, supplied, label5 = "path") {
       if (error.code !== "ENOENT") throw error;
       const parent = dirname34(existing);
       if (parent === existing) break;
-      rest = join94(basename19(existing), rest);
+      rest = join98(basename20(existing), rest);
       existing = parent;
     }
   }
-  if (/\0/.test(supplied) || !(inside4(root2, target2) || inside4(physicalRoot, target2)) || !inside4(physicalRoot, join94(existing, rest)))
+  if (/\0/.test(supplied) || !(inside4(root2, target2) || inside4(physicalRoot, target2)) || !inside4(physicalRoot, join98(existing, rest)))
     throw new IdiomError(
       `${label5} must be inside the bound project root ${root2}: ${supplied}`
     );
   return target2;
 }
-function findingDetail(record2, qualify2 = (id2) => id2) {
-  const finding = record2.finding;
+function findingDetail(record3, qualify2 = (id2) => id2) {
+  const finding = record3.finding;
   const screenshots = finding.evidence.screenshots;
   const crop = screenshots.find((path) => /(^|\/)crops\//.test(path)) ?? screenshots[0];
   return {
     id: qualify2(finding.id),
-    runId: record2.runId,
+    runId: record3.runId,
     flow: finding.flow,
-    verificationReference: { id: qualify2(finding.id), runId: record2.runId },
+    verificationReference: { id: qualify2(finding.id), runId: record3.runId },
     finding,
     basis: finding.basis,
     basisDetails: finding.basisDetails,
@@ -75817,15 +76634,15 @@ function findingDetail(record2, qualify2 = (id2) => id2) {
       combination: finding.combination
     },
     filmstrip: finding.evidence.filmstrip,
-    cropPath: crop === void 0 ? void 0 : resolve68(record2.runDirectory, crop),
+    cropPath: crop === void 0 ? void 0 : resolve68(record3.runDirectory, crop),
     evidencePaths: screenshots.map(
-      (path) => resolve68(record2.runDirectory, path)
+      (path) => resolve68(record3.runDirectory, path)
     ),
     evidenceStatus: crop === void 0 ? "unavailable: original finding has no visual evidence" : "available",
     timeline: finding.evidence.timeline === void 0 ? void 0 : {
       id: finding.evidence.timeline.id,
       path: resolve68(
-        record2.runDirectory,
+        record3.runDirectory,
         finding.evidence.timeline.artifact
       )
     }
@@ -75835,10 +76652,10 @@ async function timelineDetail(runDirectory, reference3) {
   try {
     const path = await evidencePath(runDirectory, reference3.artifact);
     const parsed = actionTimelineArtifactSchema.parse(
-      JSON.parse(await readFile89(path, "utf8"))
+      JSON.parse(await readFile92(path, "utf8"))
     );
-    const record2 = parsed.actions.find((action) => action.id === reference3.id);
-    if (record2) return { status: "available", record: record2 };
+    const record3 = parsed.actions.find((action) => action.id === reference3.id);
+    if (record3) return { status: "available", record: record3 };
   } catch {
   }
   return { status: "unavailable: recapture" };
@@ -75869,7 +76686,7 @@ var init_evidence2 = __esm({
       root;
       ids = /* @__PURE__ */ new Map();
       remember(run2) {
-        const qualify2 = (id2) => run2.quick ? `quick:${basename19(run2.runDirectory)}:${id2}` : id2;
+        const qualify2 = (id2) => run2.quick ? `quick:${basename20(run2.runDirectory)}:${id2}` : id2;
         for (const id2 of [
           ...run2.findings.map((finding) => finding.id),
           ...run2.groups.map((group) => group.id)
@@ -75885,19 +76702,19 @@ var init_evidence2 = __esm({
             );
           let run2 = this.ids.get(id2);
           if (!run2) {
-            const runDirectory = join94(this.root, "idiom-quick-reports", runId);
+            const runDirectory = join98(this.root, "idiom-quick-reports", runId);
             await evidencePath(
-              join94(this.root, "idiom-quick-reports"),
+              join98(this.root, "idiom-quick-reports"),
               `${runId}/findings.json`
             );
             const findings = findingSchema.array().parse(
               JSON.parse(
-                await readFile89(join94(runDirectory, "findings.json"), "utf8")
+                await readFile92(join98(runDirectory, "findings.json"), "utf8")
               )
             );
             const groups2 = await readGroups(runDirectory) ?? [];
             const detail = JSON.parse(
-              await readFile89(join94(runDirectory, "mcp-detail.json"), "utf8")
+              await readFile92(join98(runDirectory, "mcp-detail.json"), "utf8")
             );
             run2 = {
               runDirectory,
@@ -75916,7 +76733,7 @@ var init_evidence2 = __esm({
           for (const item of [...catalog.runs].reverse()) {
             const groups2 = await readGroups(item.runDirectory) ?? [];
             if (groups2.some((group) => group.id === id2)) {
-              const findings = item.findings.map((record3) => record3.finding);
+              const findings = item.findings.map((record4) => record4.finding);
               return this.resolve(
                 {
                   runDirectory: item.runDirectory,
@@ -75940,19 +76757,19 @@ var init_evidence2 = __esm({
           }
           throw new IdiomError(`Unknown issue/group ${id2}; run idiom_check first.`);
         }
-        const record2 = findCatalogFinding(catalog, id2);
-        if (cached?.runDirectory === record2.runDirectory)
-          return this.resolve(cached, record2.finding.id);
-        const groups = await readGroups(record2.runDirectory) ?? [];
+        const record3 = findCatalogFinding(catalog, id2);
+        if (cached?.runDirectory === record3.runDirectory)
+          return this.resolve(cached, record3.finding.id);
+        const groups = await readGroups(record3.runDirectory) ?? [];
         return this.resolve(
           {
-            runDirectory: record2.runDirectory,
-            findings: catalog.runs.find((run2) => run2.runDirectory === record2.runDirectory)?.findings.map((entry2) => entry2.finding) ?? [record2.finding],
+            runDirectory: record3.runDirectory,
+            findings: catalog.runs.find((run2) => run2.runDirectory === record3.runDirectory)?.findings.map((entry2) => entry2.finding) ?? [record3.finding],
             groups,
             issues: collapseIssues(
               groups.map((group) => ({
                 ...group,
-                selector: catalog.runs.find((run2) => run2.runDirectory === record2.runDirectory)?.findings.find(
+                selector: catalog.runs.find((run2) => run2.runDirectory === record3.runDirectory)?.findings.find(
                   (entry2) => entry2.finding.id === group.representative
                 )?.finding.verification.params?.selector,
                 coordinates: group.coordinates.map(tupleCoordinateKey)
@@ -75961,7 +76778,7 @@ var init_evidence2 = __esm({
             ),
             quick: false
           },
-          record2.finding.id
+          record3.finding.id
         );
       }
       resolve(run2, id2) {
@@ -75976,12 +76793,12 @@ var init_evidence2 = __esm({
           throw new IdiomError(
             `Evidence ${id2} is not materialized in its original run. Obtain a full idiom_check.`
           );
-        const qualify2 = (value) => run2.quick ? `quick:${basename19(run2.runDirectory)}:${value}` : value;
-        const record2 = (finding) => ({
+        const qualify2 = (value) => run2.quick ? `quick:${basename20(run2.runDirectory)}:${value}` : value;
+        const record3 = (finding) => ({
           finding,
-          runId: basename19(run2.runDirectory),
+          runId: basename20(run2.runDirectory),
           runDirectory: run2.runDirectory,
-          findingsPath: join94(run2.runDirectory, "findings.json")
+          findingsPath: join98(run2.runDirectory, "findings.json")
         });
         const groups = issue ? run2.groups.filter((candidate2) => issue.groups.includes(candidate2.id)) : group ? [group] : [];
         return {
@@ -75989,7 +76806,7 @@ var init_evidence2 = __esm({
           group,
           representative,
           detail: {
-            ...findingDetail(record2(representative), qualify2),
+            ...findingDetail(record3(representative), qualify2),
             id: qualify2(id2),
             group: group === void 0 ? void 0 : {
               ...group,
@@ -76013,7 +76830,7 @@ var init_evidence2 = __esm({
               (finding) => groups.some(
                 (candidate2) => candidate2.members.some((member) => member.id === finding.id)
               )
-            ).map((finding) => findingDetail(record2(finding), qualify2))
+            ).map((finding) => findingDetail(record3(finding), qualify2))
           }
         };
       }
@@ -76034,7 +76851,7 @@ var init_evidence2 = __esm({
         const filmstrip = found.representative.evidence.filmstrip;
         if (filmstrip?.sheet) {
           try {
-            const data = await readFile89(
+            const data = await readFile92(
               await evidencePath(found.run.runDirectory, filmstrip.sheet)
             );
             if (data.length > FILMSTRIP_LIMITS.bytes)
@@ -76058,7 +76875,7 @@ var init_evidence2 = __esm({
         if (selected2 !== void 0) {
           try {
             const path = await evidencePath(found.run.runDirectory, selected2);
-            const data = await readFile89(path);
+            const data = await readFile92(path);
             if (!data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
               throw new Error("not a PNG");
             response.content.push({
@@ -76088,11 +76905,11 @@ var init_evidence2 = __esm({
         const configuredFlow = validated.flows[0]?.flow;
         if (!configuredFlow || configuredFlow.id !== flow)
           throw new IdiomError(`Unknown flow ${flow}.`);
-        const reports = join94(validated.projectDirectory, ".idiom", "reports");
-        const runDirectory = join94(reports, runId);
+        const reports = join98(validated.projectDirectory, ".idiom", "reports");
+        const runDirectory = join98(reports, runId);
         await evidencePath(reports, `${runId}/findings.json`);
         const originals = findingSchema.array().parse(
-          JSON.parse(await readFile89(join94(runDirectory, "findings.json"), "utf8"))
+          JSON.parse(await readFile92(join98(runDirectory, "findings.json"), "utf8"))
         );
         const findings = refs.map((ref) => {
           const finding = originals.find((finding2) => finding2.id === ref.id);
@@ -76132,14 +76949,14 @@ var init_evidence2 = __esm({
 // src/mcp/tools.ts
 import {
   mkdtemp as mkdtemp14,
-  readdir as readdir24,
-  readFile as readFile90,
+  readdir as readdir25,
+  readFile as readFile93,
   rm as rm29,
-  stat as stat14,
-  writeFile as writeFile51
+  stat as stat15,
+  writeFile as writeFile52
 } from "fs/promises";
 import { tmpdir as tmpdir10 } from "os";
-import { basename as basename20, isAbsolute as isAbsolute27, join as join95, resolve as resolve69 } from "path";
+import { basename as basename21, isAbsolute as isAbsolute28, join as join99, resolve as resolve69 } from "path";
 import { z as z33 } from "zod";
 function registerIdiomTools(server, binding2, queue, dependencies) {
   const bind = typeof binding2 === "string" ? async () => binding2 : binding2;
@@ -76192,18 +77009,35 @@ function registerIdiomTools(server, binding2, queue, dependencies) {
       })
     );
   }
-  const record2 = (finding, runDirectory) => ({
+  async function withUpdateNotice(response) {
+    const notice = await dependencies.update?.take(
+      server.server.getClientVersion()
+    );
+    if (notice === void 0) return response;
+    return {
+      ...response,
+      content: [
+        ...response.content,
+        { type: "text", text: renderUpdateNotice(notice) }
+      ],
+      structuredContent: {
+        ...response.structuredContent,
+        update: notice
+      }
+    };
+  }
+  const record3 = (finding, runDirectory) => ({
     finding,
-    runId: basename20(runDirectory),
+    runId: basename21(runDirectory),
     runDirectory,
-    findingsPath: join95(runDirectory, "findings.json")
+    findingsPath: join99(runDirectory, "findings.json")
   });
   register(
     "idiom_quick",
     "Review a public page at an absolute HTTP(S) URL with zero configuration and no model. Returns ranked Top 5 issues, complete evidence IDs and absolute report paths; writes local reports, captures desktop/mobile in light/dark and safely probes controls once per page (first viewport, light; only GET/HEAD/OPTIONS requests leave the browser; destructive-looking controls are skipped). For configured flows or intended designs use idiom_check. For requested repairs use idiom_fix_plan, then idiom_verify.",
     z33.strictObject({
       url: z33.url().refine((value) => /^https?:\/\//i.test(value), "URL must use HTTP(S)").describe("Absolute URL to review"),
-      viewports: list4(z33.enum(["desktop", "mobile"])).optional().describe(
+      viewports: list5(z33.enum(["desktop", "mobile"])).optional().describe(
         "Preset viewports; defaults to both desktop (1440x900) and mobile (390x844)"
       ),
       probe: z33.boolean().optional().describe(
@@ -76252,9 +77086,9 @@ function registerIdiomTools(server, binding2, queue, dependencies) {
         issues: issues5,
         quick: true
       });
-      const qualify2 = (id2) => `quick:${basename20(output.runDirectory)}:${id2}`;
+      const qualify2 = (id2) => `quick:${basename21(output.runDirectory)}:${id2}`;
       const details = findings.map(
-        (finding) => findingDetail(record2(finding, output.runDirectory), qualify2)
+        (finding) => findingDetail(record3(finding, output.runDirectory), qualify2)
       );
       const issueDetails = issues5.map((issue) => ({
         ...issue,
@@ -76280,7 +77114,7 @@ function registerIdiomTools(server, binding2, queue, dependencies) {
       return result(
         `Quick review: ${findings.length} findings, ${issues5.length} issues, ${interactionTail(output.interaction)}. Top ${Math.min(5, issues5.length)} issues returned. Report: ${output.reportPath}`,
         {
-          runId: basename20(output.runDirectory),
+          runId: basename21(output.runDirectory),
           topIssues: issueDetails.slice(0, 5),
           issues: issueDetails,
           findings: details,
@@ -76317,7 +77151,7 @@ function registerIdiomTools(server, binding2, queue, dependencies) {
       throw new IdiomError(
         `Capture failed: ${failures.join("; ")}. Report: ${output.reportPath}`
       );
-    const originals = findingSchema.array().parse(JSON.parse(await readFile90(output.findingsPath, "utf8")));
+    const originals = findingSchema.array().parse(JSON.parse(await readFile93(output.findingsPath, "utf8")));
     const live = summary.baseline ? (output.deterministicOccurrences ?? originals).filter(
       (finding) => summary.findings.some(
         (item) => item.id === finding.id && item.where === tupleCoordinateKey(finding)
@@ -76344,7 +77178,7 @@ function registerIdiomTools(server, binding2, queue, dependencies) {
       primaryActionSelectors: output.primaryActionSelectors
     });
     const details = originals.map(
-      (finding) => findingDetail(record2(finding, output.runDirectory))
+      (finding) => findingDetail(record3(finding, output.runDirectory))
     );
     const issues5 = projection.issues.map((issue) => ({
       ...issue,
@@ -76365,7 +77199,7 @@ function registerIdiomTools(server, binding2, queue, dependencies) {
       {
         flow: flowId,
         ...questions.length === 0 ? {} : { designSystemQuestions: questions },
-        runId: basename20(output.runDirectory),
+        runId: basename21(output.runDirectory),
         topIssues: issues5.slice(0, 5),
         ...all ? { issues: issues5, findings: details } : {},
         groups: projection.groups,
@@ -76388,7 +77222,7 @@ function registerIdiomTools(server, binding2, queue, dependencies) {
         },
         baselineRecorded: summary.baselineRecorded,
         newFindings: live.map(
-          (finding) => findingDetail(record2(finding, output.runDirectory))
+          (finding) => findingDetail(record3(finding, output.runDirectory))
         ),
         preExistingFindings: summary.preExistingFindings?.map((item) => ({
           ...item,
@@ -76413,8 +77247,8 @@ function registerIdiomTools(server, binding2, queue, dependencies) {
       changed: z33.union([z33.literal(true), z33.string().trim().min(1)]).optional().describe(
         "Select states affected by Git changes; true uses the default merge base, a string names a base"
       ),
-      states: list4(selection).optional().describe("Exact configured state IDs; omitted means every state"),
-      viewports: list4(selection).optional().describe(
+      states: list5(selection).optional().describe("Exact configured state IDs; omitted means every state"),
+      viewports: list5(selection).optional().describe(
         "Exact configured viewport names; omitted means every flow viewport"
       ),
       all: z33.boolean().default(false).describe(
@@ -76459,11 +77293,13 @@ function registerIdiomTools(server, binding2, queue, dependencies) {
             });
           }
         }
-        return result(renderChangedSelection(changed), {
-          selection: changed.selection,
-          checkedStates: changed.checkedStates,
-          checks
-        });
+        return withUpdateNotice(
+          result(renderChangedSelection(changed), {
+            selection: changed.selection,
+            checkedStates: changed.checkedStates,
+            checks
+          })
+        );
       }
       if (!args.flow)
         throw new IdiomError("flow is required unless changed is supplied");
@@ -76481,7 +77317,9 @@ function registerIdiomTools(server, binding2, queue, dependencies) {
         recordAgentCheck: true,
         dependencies: review(execution)
       });
-      return projectCheckedRun(args.flow, args.all, summary, output);
+      return withUpdateNotice(
+        await projectCheckedRun(args.flow, args.all, summary, output)
+      );
     }
   );
   register(
@@ -76524,12 +77362,12 @@ function registerIdiomTools(server, binding2, queue, dependencies) {
           records: selected2.map((entry2) => findingDetail(entry2)),
           findings: selected2.map((entry2) => entry2.finding),
           verificationReferences: references2,
-          sourceRun: basename20(snapshot3.runDirectory),
+          sourceRun: basename21(snapshot3.runDirectory),
           runDirectory: snapshot3.runDirectory,
           reports: {
             markdown: snapshot3.summary.reportPath,
-            findings: join95(snapshot3.runDirectory, "findings.json"),
-            html: join95(snapshot3.runDirectory, "report.html")
+            findings: join99(snapshot3.runDirectory, "findings.json"),
+            html: join99(snapshot3.runDirectory, "report.html")
           },
           next: references2.length ? {
             tool: "idiom_verify",
@@ -76556,10 +77394,10 @@ function registerIdiomTools(server, binding2, queue, dependencies) {
     false,
     async ({ flow, findings }, execution) => {
       const source = await evidence.source(flow, findings);
-      const temporary = await mkdtemp14(join95(tmpdir10(), "idiom-mcp-verify-"));
+      const temporary = await mkdtemp14(join99(tmpdir10(), "idiom-mcp-verify-"));
       try {
-        const spec = join95(temporary, "findings.md");
-        await writeFile51(
+        const spec = join99(temporary, "findings.md");
+        await writeFile52(
           spec,
           source.findings.map(
             (finding) => `\`\`\`idiom:finding
@@ -76603,8 +77441,8 @@ ${JSON.stringify(finding)}
     true,
     async () => {
       const context2 = await loadProjectContext(configured);
-      const entries = await readdir24(
-        join95(context2.projectDirectory, ".idiom", "flows")
+      const entries = await readdir25(
+        join99(context2.projectDirectory, ".idiom", "flows")
       ).catch((error) => {
         if (error.code === "ENOENT") return [];
         throw error;
@@ -76723,6 +77561,7 @@ ${JSON.stringify(finding)}
       });
       const generated = "stateCount" in output.flows && output.flows.content !== void 0;
       const nextSteps = [
+        "Call idiom_setup_prompt and follow it to finish setup.",
         "Fill PRODUCT.md and DESIGN.md with the human, then call idiom_context.",
         ...generated ? ["Call idiom_flows, then idiom_check with flow site."] : [
           "Author a flow in .idiom/flows, or call idiom_init with flows:true while the app is running, then call idiom_flows."
@@ -76740,7 +77579,7 @@ ${JSON.stringify(finding)}
         ] : []
       ];
       const lines2 = initSummaryLines(output).map(
-        (line3) => line3 === "Next: idiom validate site; idiom capture site" ? "Next: idiom_flows; idiom_check site" : line3
+        (line3) => line3 === INIT_NEXT_LINE ? "Next: idiom_ready \u2014 setup is done when it reports ready (idiom_setup_prompt has the full setup procedure)" : line3
       );
       const flowOutcome = "stateCount" in output.flows ? (({ content: _content, ...rest }) => rest)(output.flows) : output.flows;
       return result([...notes, ...lines2].join("\n"), {
@@ -76756,6 +77595,50 @@ ${JSON.stringify(finding)}
         notes,
         nextSteps
       });
+    }
+  );
+  register(
+    "idiom_setup_prompt",
+    "The versioned, repository-aware setup prompt `idiom init` hands to a coding agent: server command/port/readyUrl, seed data and test accounts from repo fixtures only, routes, a first 3\u20138-state flow, PRODUCT.md and DESIGN.md, ending at idiom_ready. Follow it in this session. Read-only.",
+    z33.strictObject({}),
+    true,
+    async () => {
+      const facts = await collectSetupFacts(root2);
+      const prompt = setupPrompt(facts);
+      return result(prompt, {
+        version: IDIOM_VERSION,
+        prompt,
+        facts: { ...facts, projectDirectory: root2 }
+      });
+    }
+  );
+  register(
+    "idiom_ready",
+    "Return the same verdict as idiom init --validate: validate every flow, then boot the first (or named) flow's server once. Reports ready, or the first problem and its fix; setup is done only when ready is true. Not-ready is a result, not a tool error. Runs project commands; creates nothing.",
+    z33.strictObject({
+      flow: identifier2.optional().describe("Configured flow ID to boot; defaults to the first flow")
+    }),
+    false,
+    async ({ flow }, execution) => {
+      const dependencies2 = capture(execution);
+      const report = await initValidate({
+        project: root2,
+        cwd: root2,
+        flow,
+        signal: execution.signal,
+        dependencies: {
+          process: dependencies2.process,
+          inheritedEnvironment: dependencies2.inheritedEnvironment
+        }
+      });
+      const problem = initValidateProblem(report);
+      const lines2 = renderInitValidate(report);
+      if (problem !== void 0)
+        lines2.push(problem.headline, `Fix: ${problem.hint}`);
+      return result(
+        lines2.join("\n"),
+        problem === void 0 ? report : { ...report, problem }
+      );
     }
   );
   register(
@@ -76832,7 +77715,7 @@ ${JSON.stringify(finding)}
     "idiom_tickets",
     "Emit accepted findings as clustered ticket proposals (grouped by component and category) into a file-tracker triage directory inside the bound project. Only human-accepted findings become tickets; tickets land in triage, never ready, and are promoted by a human. Returns absolute ticket paths.",
     z33.strictObject({
-      findings: list4(identifier2).optional().describe("Accepted finding IDs; omitted means every accepted finding"),
+      findings: list5(identifier2).optional().describe("Accepted finding IDs; omitted means every accepted finding"),
       out: relativePath3.optional().describe(
         "Ticket directory relative to the bound root; defaults to the file tracker's triage"
       )
@@ -76888,13 +77771,13 @@ ${JSON.stringify(finding)}
         emitTickets,
         dependencies: review(execution)
       });
-      const normalizeRecord = async (record3) => ({
-        ...record3,
+      const normalizeRecord = async (record4) => ({
+        ...record4,
         evidencePaths: await Promise.all(
           [
-            ...record3.finding.evidence.screenshots,
-            ...record3.finding.evidence.artifacts ?? []
-          ].map((path) => evidencePath(record3.runDirectory, path))
+            ...record4.finding.evidence.screenshots,
+            ...record4.finding.evidence.artifacts ?? []
+          ].map((path) => evidencePath(record4.runDirectory, path))
         )
       });
       const normalizeProposal = async (proposal) => ({
@@ -77038,7 +77921,9 @@ Model critique used fallback provider ${fallback.to} after ${fallback.from} fail
           inheritedEnvironment: dependencies2.inheritedEnvironment
         }
       });
-      return result(renderDoctorReport(report).trimEnd(), report);
+      return withUpdateNotice(
+        result(renderDoctorReport(report).trimEnd(), report)
+      );
     }
   );
   register(
@@ -77140,23 +78025,23 @@ Model critique used fallback provider ${fallback.to} after ${fallback.from} fail
     async ({ request: request2, file, noModel }) => {
       if (request2 === void 0 === (file === void 0))
         throw new IdiomError("Supply exactly one of request or file");
-      let text4 = request2;
+      let text5 = request2;
       if (file !== void 0) {
         const path = await insideRoot(root2, file, "Draft ticket");
-        const info = await stat14(path).catch(() => void 0);
+        const info = await stat15(path).catch(() => void 0);
         if (info?.isFile() !== true)
           throw new IdiomError(`No draft ticket file at ${file}`);
         if (info.size > MAX_TRIAGE_REQUEST_BYTES)
           throw new IdiomError("Draft ticket must be at most 64 KB");
-        text4 = await readFile90(path, "utf8");
-        if (text4.trim() === "")
+        text5 = await readFile93(path, "utf8");
+        if (text5.trim() === "")
           throw new IdiomError(`Draft ticket ${file} is empty`);
       }
       const warnings = [];
       const run2 = await runBriefTriage({
         ...configured,
         cwd: root2,
-        request: text4,
+        request: text5,
         noModel,
         // stderr belongs to the host; fallbacks go in the result.
         onFallback: (fallback) => warnings.push(
@@ -77245,7 +78130,7 @@ Model critique used fallback provider ${fallback.to} after ${fallback.from} fail
     }
   );
 }
-var identifier2, selection, list4, relativePath3, humanReason, httpUrl2, commitGuidance, reference2;
+var identifier2, selection, list5, relativePath3, humanReason, httpUrl2, commitGuidance, reference2;
 var init_tools = __esm({
   "src/mcp/tools.ts"() {
     "use strict";
@@ -77267,6 +78152,7 @@ var init_tools = __esm({
     init_design2();
     init_doctor();
     init_init();
+    init_init_validate();
     init_ruling2();
     init_sweep();
     init_verify();
@@ -77282,21 +78168,25 @@ var init_tools = __esm({
     init_summary2();
     init_brief();
     init_finding();
+    init_facts();
+    init_prompt3();
     init_emit();
     init_target();
+    init_notice();
     init_validation();
+    init_version2();
     init_evidence2();
     identifier2 = z33.string().trim().min(1).refine(safeIdentifier, "Use an identifier without path separators, . or ..");
     selection = z33.string().trim().min(1).refine(
       (value) => !value.includes(","),
       "Supply exact names as separate array items"
     );
-    list4 = (item) => z33.array(item).min(1).refine(
+    list5 = (item) => z33.array(item).min(1).refine(
       (values) => new Set(values).size === values.length,
       "Lists must not contain duplicates"
     );
     relativePath3 = z33.string().trim().min(1).refine(
-      (value) => !isAbsolute27(value) && !value.includes("\0"),
+      (value) => !isAbsolute28(value) && !value.includes("\0"),
       "Use a path relative to the bound project root"
     );
     humanReason = z33.string().refine((value) => value.trim().length > 0, "Reason must not be blank").describe("Human-supplied reason, preserved verbatim");
@@ -77314,17 +78204,24 @@ var init_tools = __esm({
 // src/mcp/server.ts
 import { McpServer } from "@modelcontextprotocol/server";
 function createIdiomMcpServer(options = {}) {
+  const instructions = options.update?.instructions();
   const server = new McpServer(
     { name: "idiom", version: IDIOM_VERSION },
-    { capabilities: { tools: {} } }
+    {
+      capabilities: {
+        tools: {},
+        // Implementation-specific data lives under `experimental`; a key on
+        // serverInfo would be stripped by the client. See docs/stability.md.
+        experimental: { idiom: { interfaceVersion: INTERFACE_VERSION } }
+      },
+      ...instructions === void 0 ? {} : { instructions }
+    }
   );
   const queue = new ToolExecutionQueue();
-  registerIdiomTools(
-    server,
-    projectBinding(server, options),
-    queue,
-    options.dependencies ?? {}
-  );
+  registerIdiomTools(server, projectBinding(server, options), queue, {
+    ...options.dependencies,
+    update: options.update
+  });
   const close2 = server.close.bind(server);
   server.close = async () => {
     await queue.close();
@@ -77336,6 +78233,7 @@ var init_server = __esm({
   "src/mcp/server.ts"() {
     "use strict";
     init_version();
+    init_version2();
     init_binding();
     init_execution();
     init_tools();
@@ -77349,12 +78247,17 @@ __export(mcp_exports, {
 });
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 async function mcpCommand(options = {}) {
+  const update = await createUpdateNoticeSession({
+    project: options.project,
+    cwd: options.cwd
+  });
   let server;
   const handle = serveStdio(
     () => {
       server = createIdiomMcpServer({
         project: options.project,
-        cwd: options.cwd
+        cwd: options.cwd,
+        update
       });
       return server;
     },
@@ -77374,6 +78277,7 @@ async function mcpCommand(options = {}) {
       void (async () => {
         try {
           await server?.close();
+          await update.settled();
           await handle.close();
         } catch (error) {
           process.stderr.write(`Idiom MCP shutdown: ${String(error)}
@@ -77392,6 +78296,7 @@ var init_mcp = __esm({
   "src/commands/mcp.ts"() {
     "use strict";
     init_server();
+    init_notice();
   }
 });
 
@@ -77405,7 +78310,7 @@ init_timings();
 init_baseline2();
 init_brief2();
 import { realpath as realpath17 } from "fs/promises";
-import { fileURLToPath as fileURLToPath3 } from "url";
+import { fileURLToPath as fileURLToPath4 } from "url";
 import {
   Command,
   CommanderError,
@@ -77425,16 +78330,16 @@ async function captureCommand(options) {
     flow: options.flow,
     cwd
   });
-  const record2 = validated.flows[0];
-  if (record2 === void 0 || record2.flow.id !== options.flow) {
+  const record3 = validated.flows[0];
+  if (record3 === void 0 || record3.flow.id !== options.flow) {
     throw new IdiomError(
-      `requested flow ${JSON.stringify(options.flow)} does not match the manifest id ${JSON.stringify(record2?.flow.id)}`
+      `requested flow ${JSON.stringify(options.flow)} does not match the manifest id ${JSON.stringify(record3?.flow.id)}`
     );
   }
   return await runCapture({
     projectDirectory: validated.projectDirectory,
     project: validated.project,
-    flow: record2.flow,
+    flow: record3.flow,
     out: options.out === void 0 ? void 0 : resolve30(cwd, options.out),
     prod: options.prod,
     scope: options.scope,
@@ -77493,11 +78398,11 @@ var buildConfig = /(?:^|\/)(?:package\.json|[^/]+\.config\.[cm]?[jt]s|(?:middlew
 function classifyByPath(files, nonUi = []) {
   const globs = nonUi.map((glob) => [glob, globRegex(glob)]);
   return files.map(({ path }) => {
-    const normalized = path.replaceAll("\\", "/");
+    const normalized2 = path.replaceAll("\\", "/");
     for (const [pattern, reason] of nonUiPatterns)
-      if (pattern.test(normalized))
+      if (pattern.test(normalized2))
         return reason ? { path, ui: false, reason } : { path, ui: true, reason: "design context" };
-    const glob = globs.find(([, regex]) => regex.test(normalized));
+    const glob = globs.find(([, regex]) => regex.test(normalized2));
     if (glob)
       return { path, ui: false, reason: `checks.gate.nonUi ${glob[0]}` };
     return { path, ui: true, reason: "may affect the UI" };
@@ -77633,25 +78538,25 @@ async function loadFlowHistory(projectDirectory, flow, limit = 5, accept) {
   for (const runId of await storedRunsNewestFirst(reports)) {
     if (runs.length >= limit) break;
     const directory = join51(reports, runId);
-    let record2;
+    let record3;
     try {
-      record2 = await loadRunRecord(directory);
+      record3 = await loadRunRecord(directory);
     } catch {
       continue;
     }
-    if (record2?.flow !== flow) continue;
-    if (accept && !await accept(record2)) continue;
+    if (record3?.flow !== flow) continue;
+    if (accept && !await accept(record3)) continue;
     const checks = await readJson(join51(directory, "checks-timings.json"));
     const run2 = {
       runId,
       directory,
-      record: record2,
+      record: record3,
       ...checks?.checks?.status === "measured" && typeof checks.checks.ms === "number" ? { checksMs: checks.checks.ms } : {},
       probed: /* @__PURE__ */ new Map(),
       fingerprints: /* @__PURE__ */ new Map()
     };
-    const schemes2 = new Set(record2.selected.map((tuple) => tuple.colorScheme));
-    for (const tuple of record2.probe.executed) {
+    const schemes2 = new Set(record3.selected.map((tuple) => tuple.colorScheme));
+    for (const tuple of record3.probe.executed) {
       const segments = [tuple.state, tuple.viewport];
       const candidates = [
         join51(directory, ...segments, tuple.colorScheme, "observations.json"),
@@ -77774,9 +78679,9 @@ function estimateGate(options) {
 // src/gate/region.ts
 function reflectsBase(git2, repository, base) {
   const ancestry = /* @__PURE__ */ new Map();
-  return (record2) => {
-    if (record2.source.dirty) return Promise.resolve(false);
-    const commit = record2.source.commit;
+  return (record3) => {
+    if (record3.source.dirty) return Promise.resolve(false);
+    const commit = record3.source.commit;
     let answer = ancestry.get(commit);
     if (!answer) {
       answer = git2(repository, ["merge-base", "--is-ancestor", commit, base]).then(() => true).catch(() => false);
@@ -77936,8 +78841,8 @@ function trimToBudget(options) {
         ).at(-1);
         const before = current.totalMs;
         for (const state of members) {
-          const list5 = values(state);
-          if (list5.length > 1 && list5.at(-1) === value) list5.pop();
+          const list6 = values(state);
+          if (list6.length > 1 && list6.at(-1) === value) list6.pop();
         }
         current = estimate();
         skippedWork.push({
@@ -78019,7 +78924,7 @@ async function planGate(options) {
     files: files2
   });
   if (!byPath.some((file) => file.ui)) return skip(byPath);
-  const flows = validated.flows.map((record2) => record2.flow);
+  const flows = validated.flows.map((record3) => record3.flow);
   const select = options.dependencies?.select ?? selectChangedStates;
   const uiPaths = new Set(
     byPath.filter((file) => file.ui).map((file) => file.path)
@@ -78497,19 +79402,19 @@ function unmatched(records, other) {
   );
   const seen = /* @__PURE__ */ new Set();
   const result2 = [];
-  for (const record2 of records) {
-    if ([record2.fingerprint, ...record2.aliases].some((id2) => known.has(id2)))
+  for (const record3 of records) {
+    if ([record3.fingerprint, ...record3.aliases].some((id2) => known.has(id2)))
       continue;
-    const identity7 = `${record2.fingerprint}\0${record2.key}`;
+    const identity7 = `${record3.fingerprint}\0${record3.key}`;
     if (seen.has(identity7)) continue;
     seen.add(identity7);
     result2.push({
-      category: record2.category,
-      rule: record2.rule,
-      severity: record2.severity,
-      selector: record2.selector,
-      key: record2.key,
-      fingerprint: record2.fingerprint
+      category: record3.category,
+      rule: record3.rule,
+      severity: record3.severity,
+      selector: record3.selector,
+      key: record3.key,
+      fingerprint: record3.fingerprint
     });
   }
   return result2;
@@ -78884,8 +79789,8 @@ async function loadExplorationContext(options) {
       "provide exactly one of --question <text> or --decision <ruling-N>"
     );
   const context2 = await loadProjectContext(options);
-  const record2 = await validateNamedFlow(context2, options.flow);
-  const state = record2.flow.states.find(
+  const record3 = await validateNamedFlow(context2, options.flow);
+  const state = record3.flow.states.find(
     (candidate2) => candidate2.id === options.state
   );
   if (state === void 0)
@@ -78909,12 +79814,12 @@ async function loadExplorationContext(options) {
       `${decision.id} is a design system question; answer it with idiom ruling --decision ${decision.id} --add-step or --drift`
     );
   const question = decision?.question ?? steering.data.question.trim();
-  const viewports = selectViewports(context2.project, record2.flow);
-  const schemes2 = selectColorSchemes(context2.project, record2.flow);
+  const viewports = selectViewports(context2.project, record3.flow);
+  const schemes2 = selectColorSchemes(context2.project, record3.flow);
   return {
     projectDirectory: context2.projectDirectory,
     project: context2.project,
-    flow: record2.flow,
+    flow: record3.flow,
     state,
     question,
     ...decision === void 0 ? {} : { decision },
@@ -79060,10 +79965,10 @@ function issues3(error) {
   );
 }
 function canonicalizeReferences(values, permittedLabels, locations) {
-  const normalized = /* @__PURE__ */ new Map();
+  const normalized2 = /* @__PURE__ */ new Map();
   for (const label5 of permittedLabels) {
     const key5 = normalizeExplorationKey(label5);
-    normalized.set(key5, [...normalized.get(key5) ?? [], label5]);
+    normalized2.set(key5, [...normalized2.get(key5) ?? [], label5]);
   }
   const exact = new Set(permittedLabels);
   const permitted = JSON.stringify(permittedLabels);
@@ -79075,7 +79980,7 @@ function canonicalizeReferences(values, permittedLabels, locations) {
       );
     const canonical2 = value.references.map((reference3, referenceIndex) => {
       if (exact.has(reference3)) return reference3;
-      const matches2 = normalized.get(normalizeExplorationKey(reference3)) ?? [];
+      const matches2 = normalized2.get(normalizeExplorationKey(reference3)) ?? [];
       if (matches2.length === 1) return matches2[0];
       citationIssues.push(
         `${locations[valueIndex]}.references.${referenceIndex}: citation ${JSON.stringify(reference3)} does not unambiguously match a managed reference; permitted labels: ${permitted}`
@@ -79152,7 +80057,7 @@ async function preserveRejectedOutput(options) {
     `.${options.kind}-rejected.${process.pid}.${randomUUID9()}.tmp`
   );
   await mkdir19(directory, { recursive: true });
-  const record2 = {
+  const record3 = {
     version: 1,
     kind: options.kind,
     attempts: [
@@ -79169,7 +80074,7 @@ async function preserveRejectedOutput(options) {
     ]
   };
   try {
-    await writeFile33(temporary, `${JSON.stringify(record2, null, 2)}
+    await writeFile33(temporary, `${JSON.stringify(record3, null, 2)}
 `, "utf8");
     await rename21(temporary, target2);
   } catch (error) {
@@ -79318,11 +80223,11 @@ function blocks(response) {
 }
 function jsonOutput(response) {
   const content = blocks(response);
-  const text4 = content.filter((block) => block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
-  if (text4.trim() === "")
+  const text5 = content.filter((block) => block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
+  if (text5.trim() === "")
     throw new IdiomError("Anthropic returned no structured exploration output");
   try {
-    return JSON.parse(text4);
+    return JSON.parse(text5);
   } catch (error) {
     throw new IdiomError(
       `Anthropic returned malformed exploration JSON: ${sanitizeCritiqueDiagnostic(error)}`
@@ -79495,8 +80400,8 @@ var AnthropicExplorationAdapter = class {
               );
               if (source.byteLength > MAX_FILE_BYTES) continue;
               totalBytes += source.byteLength;
-              const text4 = source.toString("utf8");
-              if (text4.includes(input.query)) matches2.push(item);
+              const text5 = source.toString("utf8");
+              if (text5.includes(input.query)) matches2.push(item);
             }
             result2 = JSON.stringify(matches2);
           } else
@@ -79949,21 +80854,21 @@ function lifecycleResolutionStatus(lineage) {
 function outputPath(out, cwd) {
   return isAbsolute21(out) ? resolve51(out) : resolve51(cwd ?? process.cwd(), out);
 }
-function canonicalTicketOptions(catalog, record2, ticketDirectory) {
-  const lineage = findCatalogLineage(catalog, record2.finding.id);
+function canonicalTicketOptions(catalog, record3, ticketDirectory) {
+  const lineage = findCatalogLineage(catalog, record3.finding.id);
   const firstIdentity = lineage.identities[0] ?? {
     fingerprint: lineage.first.finding.fingerprint,
     findingId: lineage.first.finding.id
   };
   return {
-    record: record2,
-    sourceFindings: reviewFindings(catalog, record2),
+    record: record3,
+    sourceFindings: reviewFindings(catalog, record3),
     ticketDirectory,
     identity: {
       fingerprint: firstIdentity.fingerprint,
       findingId: lineage.id
     },
-    presentation: repairPresentation(catalog, record2)
+    presentation: repairPresentation(catalog, record3)
   };
 }
 function compatibleTicketBodies(catalog, lineage, ticketDirectory) {
@@ -79985,7 +80890,7 @@ function compatibleTicketBodies(catalog, lineage, ticketDirectory) {
   );
 }
 function ticketBytesAreKnown(source, canonical2, legacy) {
-  const normalized = (body) => body.replace(
+  const normalized2 = (body) => body.replace(
     /(`{3,})idiom:finding\r?\n([\s\S]*?)\r?\n\1/g,
     (_block, fence, json5) => {
       const sort = (value) => Array.isArray(value) ? value.map(sort) : value && typeof value === "object" ? Object.fromEntries(
@@ -79999,7 +80904,7 @@ ${fence}`;
     }
   );
   return [canonical2, ...legacy].some(
-    (body) => normalized(source) === normalized(body)
+    (body) => normalized2(source) === normalized2(body)
   );
 }
 async function ticketsCommand(options) {
@@ -80011,8 +80916,8 @@ async function ticketsCommand(options) {
   const trackerOutput = resolve51(outputDirectory) === resolve51(defaultTriage);
   const selected2 = options.findingIds === void 0 || options.findingIds.length === 0 ? catalog.findings : options.findingIds.map((id2) => findCatalogFinding(catalog, id2));
   const unique4 = new Map(
-    selected2.map((record2) => {
-      const lineage = findCatalogLineage(catalog, record2.finding.id);
+    selected2.map((record3) => {
+      const lineage = findCatalogLineage(catalog, record3.finding.id);
       return [lineage.id, lineage.latest];
     })
   );
@@ -80020,9 +80925,9 @@ async function ticketsCommand(options) {
   const ineligible = [];
   const outcomes = [];
   await persistCatalogFindingNames(catalog);
-  for (const record2 of rankTicketRecords([...unique4.values()])) {
-    const lineage = findCatalogLineage(catalog, record2.finding.id);
-    const accepted = lineageDecision(lineage, decisions, record2)?.decision === "accept";
+  for (const record3 of rankTicketRecords([...unique4.values()])) {
+    const lineage = findCatalogLineage(catalog, record3.finding.id);
+    const accepted = lineageDecision(lineage, decisions, record3)?.decision === "accept";
     const firstIdentity = lineage.identities[0] ?? {
       fingerprint: lineage.first.finding.fingerprint,
       findingId: lineage.id
@@ -80059,7 +80964,7 @@ async function ticketsCommand(options) {
       }
       if (located.length > 1) {
         const rendered2 = renderTicket2(
-          canonicalTicketOptions(catalog, record2, outputDirectory)
+          canonicalTicketOptions(catalog, record3, outputDirectory)
         );
         outcomes.push({
           kind: "conflict",
@@ -80072,7 +80977,7 @@ async function ticketsCommand(options) {
       const existing = located[0];
       if (existing !== void 0) {
         const rendered2 = renderTicket2(
-          canonicalTicketOptions(catalog, record2, outputDirectory)
+          canonicalTicketOptions(catalog, record3, outputDirectory)
         );
         outcomes.push({
           kind: "already-emitted",
@@ -80102,7 +81007,7 @@ async function ticketsCommand(options) {
         }
         if (located.length > 1) {
           const rendered2 = renderTicket2(
-            canonicalTicketOptions(catalog, record2, outputDirectory)
+            canonicalTicketOptions(catalog, record3, outputDirectory)
           );
           outcomes.push({
             kind: "conflict",
@@ -80116,7 +81021,7 @@ async function ticketsCommand(options) {
         if (located.length === 1) {
           if (path === void 0) continue;
           const rendered2 = renderTicket2(
-            canonicalTicketOptions(catalog, record2, outputDirectory)
+            canonicalTicketOptions(catalog, record3, outputDirectory)
           );
           outcomes.push({
             kind: "already-emitted",
@@ -80144,7 +81049,7 @@ async function ticketsCommand(options) {
         kind: "conflict",
         findingId: lineage.id,
         ticketId: renderTicket2(
-          canonicalTicketOptions(catalog, record2, outputDirectory)
+          canonicalTicketOptions(catalog, record3, outputDirectory)
         ).id,
         paths: embedded.paths
       });
@@ -80173,7 +81078,7 @@ async function ticketsCommand(options) {
       continue;
     }
     const rendered = renderTicket2(
-      canonicalTicketOptions(catalog, record2, outputDirectory)
+      canonicalTicketOptions(catalog, record3, outputDirectory)
     );
     const filename = `${rendered.id}.md`;
     const destination = join64(outputDirectory, filename);
@@ -80513,9 +81418,9 @@ var ExplorationSession = class {
   }
   select(label5) {
     if (label5 === void 0) return void 0;
-    const normalized = label5.trim().toLowerCase();
+    const normalized2 = label5.trim().toLowerCase();
     const match = this.candidates.find(
-      (candidate2) => candidate2.label.trim().toLowerCase() === normalized || candidate2.direction.trim().toLowerCase() === normalized
+      (candidate2) => candidate2.label.trim().toLowerCase() === normalized2 || candidate2.direction.trim().toLowerCase() === normalized2
     );
     if (match === void 0)
       throw new IdiomError(
@@ -80798,8 +81703,8 @@ function assertSafeGeneratedContent(edits, baselineCorpus, sources) {
         throw new IdiomError(
           `unparseable CSS content is not allowed in ${edit2.path}`
         );
-      const normalized = normalizeCopy(literal);
-      if (normalized !== "" && !baselineCorpus.includes(normalized))
+      const normalized2 = normalizeCopy(literal);
+      if (normalized2 !== "" && !baselineCorpus.includes(normalized2))
         throw new IdiomError(
           `CSS content in ${edit2.path} introduces copy not present in the baseline`
         );
@@ -80982,13 +81887,13 @@ function secretName(name) {
   return SECRET_NAME.test(name) || !DESIGN_TOKEN_NAME.test(name) && TOKEN_SECRET_NAME.test(name);
 }
 function excludedRuntime(path) {
-  const normalized = path.split(sep23).join("/");
-  return normalized === ".git" || normalized.startsWith(".git/") || normalized === ".idiom/reports" || normalized.startsWith(".idiom/reports/") || normalized === ".autobuild/worktrees" || normalized.startsWith(".autobuild/worktrees/");
+  const normalized2 = path.split(sep23).join("/");
+  return normalized2 === ".git" || normalized2.startsWith(".git/") || normalized2 === ".idiom/reports" || normalized2.startsWith(".idiom/reports/") || normalized2 === ".autobuild/worktrees" || normalized2.startsWith(".autobuild/worktrees/");
 }
 function excludedMirror(path) {
-  const normalized = path.split(sep23).join("/");
-  const parts = normalized.split("/");
-  return excludedRuntime(normalized) || normalized === EVIDENCE || normalized.startsWith(`${EVIDENCE}/`) || parts.some(secretName) || parts.includes("node_modules") || parts.includes("dist") || parts.includes("build") || normalized.startsWith(".autobuild/tickets/");
+  const normalized2 = path.split(sep23).join("/");
+  const parts2 = normalized2.split("/");
+  return excludedRuntime(normalized2) || normalized2 === EVIDENCE || normalized2.startsWith(`${EVIDENCE}/`) || parts2.some(secretName) || parts2.includes("node_modules") || parts2.includes("dist") || parts2.includes("build") || normalized2.startsWith(".autobuild/tickets/");
 }
 async function reflink(source, target2) {
   await mkdir22(dirname26(target2), { recursive: true });
@@ -81831,7 +82736,7 @@ var spawnAgentProcess = (request2) => new Promise((accept) => {
   let failure3;
   let finished = false;
   let killTimer;
-  const finish = (code2, signal) => {
+  const finish = (code3, signal) => {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
@@ -81841,7 +82746,7 @@ var spawnAgentProcess = (request2) => new Promise((accept) => {
     child.stdout.destroy();
     child.stderr.destroy();
     accept({
-      code: code2,
+      code: code3,
       signal,
       stdout: Buffer.concat(chunks.stdout).toString("utf8"),
       stderr: Buffer.concat(chunks.stderr).toString("utf8"),
@@ -81882,8 +82787,8 @@ function safeDiagnostic(value) {
       String(value instanceof Error ? value.message : value)
     )
   ].map((char) => {
-    const code2 = char.charCodeAt(0);
-    return code2 < 32 && code2 !== 9 && code2 !== 10 || code2 === 127 ? " " : char;
+    const code3 = char.charCodeAt(0);
+    return code3 < 32 && code3 !== 9 && code3 !== 10 || code3 === 127 ? " " : char;
   }).join("").replace(
     /\b(?:sk-[A-Za-z0-9_-]+|(?:Bearer\s+)[A-Za-z0-9._-]+)/gi,
     "[redacted]"
@@ -82205,6 +83110,167 @@ async function fixCommand(options) {
 // src/cli.ts
 init_init();
 
+// src/setup/agents.ts
+init_executables();
+init_process2();
+import { spawn as spawn4 } from "child_process";
+import { readFile as readFile81 } from "fs/promises";
+import { join as join82 } from "path";
+var SETUP_AGENTS = ["claude-code", "codex"];
+var SETUP_AGENT_LABELS = {
+  "claude-code": "Claude Code",
+  codex: "Codex"
+};
+var SETUP_AGENT_ENV = "IDIOM_SETUP_AGENT";
+var DEFAULT_PROBE_TIMEOUT_MS = 1e4;
+function firstLine3(value) {
+  return sanitizeCritiqueDiagnostic(value.trim().split("\n")[0] ?? "", 200);
+}
+async function probeOne(agent, options) {
+  const executable = CLI_PROVIDER_EXECUTABLES[agent];
+  try {
+    const result2 = await options.runner({
+      executable,
+      args: ["--version"],
+      cwd: options.cwd,
+      environment: options.environment,
+      stdin: "",
+      label: SETUP_AGENT_LABELS[agent],
+      timeoutMs: options.timeoutMs
+    });
+    if (result2.exitCode === 0)
+      return {
+        agent,
+        usable: true,
+        reason: firstLine3(result2.stdout) || `${executable} --version passed`
+      };
+    const detail = firstLine3(result2.stderr) || firstLine3(result2.stdout);
+    return {
+      agent,
+      usable: false,
+      reason: `${executable} --version exited ${result2.exitCode ?? result2.signal}${detail === "" ? "" : `: ${detail}`}`
+    };
+  } catch (error) {
+    return {
+      agent,
+      usable: false,
+      reason: error.code === "ENOENT" ? `${executable} not found on PATH` : sanitizeCritiqueDiagnostic(error, 200)
+    };
+  }
+}
+async function probeSetupAgents(options) {
+  const settings = {
+    cwd: options.cwd,
+    environment: options.environment,
+    runner: options.runner ?? runCritiqueProcess,
+    timeoutMs: options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS
+  };
+  return Promise.all(options.order.map((agent) => probeOne(agent, settings)));
+}
+function isSetupAgent(value) {
+  return SETUP_AGENTS.includes(value);
+}
+async function setupAgentOrder(projectDirectory) {
+  let preferred;
+  try {
+    const project = JSON.parse(
+      await readFile81(join82(projectDirectory, ".idiom", "project.json"), "utf8")
+    );
+    const provider = project.model?.provider;
+    const fallback = project.model?.fallback?.provider;
+    preferred = isSetupAgent(provider) ? provider : isSetupAgent(fallback) ? fallback : void 0;
+  } catch {
+    preferred = void 0;
+  }
+  return preferred === void 0 ? [...SETUP_AGENTS] : [preferred, ...SETUP_AGENTS.filter((agent) => agent !== preferred)];
+}
+var launchSetupAgent = (request2) => new Promise((accept) => {
+  const child = spawn4(
+    CLI_PROVIDER_EXECUTABLES[request2.agent],
+    [request2.prompt],
+    {
+      cwd: request2.cwd,
+      env: { ...request2.environment, [SETUP_AGENT_ENV]: "1" },
+      stdio: "inherit",
+      shell: false
+    }
+  );
+  child.once("error", () => accept(null));
+  child.once("exit", (code3) => accept(code3));
+});
+
+// src/commands/init-agent.ts
+init_facts();
+init_prompt3();
+var AGENT_SETUP_SKIPPED_LINE = "Agent-led setup skipped; idiom init --print-setup-prompt prints the setup prompt.";
+var AGENT_SETUP_PRINT_LEAD = "Recommended next step: paste this prompt into your coding agent (Claude Code, Codex or another), or run idiom init --agent claude-code|codex.";
+async function offerAgentSetup(options) {
+  const { projectDirectory, write, environment } = options;
+  if (options.agent === false) {
+    write(AGENT_SETUP_SKIPPED_LINE);
+    return { kind: "skipped" };
+  }
+  if (options.agent === void 0 && environment[SETUP_AGENT_ENV] === "1")
+    return { kind: "skipped" };
+  const printPrompt = async () => {
+    const prompt = setupPrompt(await collectSetupFacts(projectDirectory));
+    write(AGENT_SETUP_PRINT_LEAD);
+    for (const line3 of delimitedSetupPrompt(prompt)) write(line3);
+  };
+  const launch = async (agent) => {
+    const prompt = setupPrompt(await collectSetupFacts(projectDirectory));
+    const label5 = SETUP_AGENT_LABELS[agent];
+    write(`Launching ${label5} for setup\u2026`);
+    const exitCode = await (options.launch ?? launchSetupAgent)({
+      agent,
+      prompt,
+      cwd: projectDirectory,
+      environment
+    });
+    write(
+      `${label5} exited (${exitCode ?? "no exit code"}). Confirm setup with: idiom init --validate`
+    );
+    return { kind: "launched", agent, exitCode };
+  };
+  const probe = (order2) => probeSetupAgents({
+    order: order2,
+    cwd: projectDirectory,
+    environment,
+    runner: options.probe
+  });
+  if (options.agent !== void 0) {
+    const [result2] = await probe([options.agent]);
+    if (result2?.usable === true) return launch(options.agent);
+    const reason = result2?.reason ?? "not usable";
+    write(`${SETUP_AGENT_LABELS[options.agent]} is not usable: ${reason}`);
+    await printPrompt();
+    return { kind: "unavailable", agent: options.agent, reason };
+  }
+  if (options.yes || !options.interactive) {
+    await printPrompt();
+    return { kind: "printed", reason: "noninteractive", probes: [] };
+  }
+  const probes = await probe(await setupAgentOrder(projectDirectory));
+  const usable = probes.find((result2) => result2.usable);
+  if (usable === void 0) {
+    for (const result2 of probes)
+      write(`${SETUP_AGENT_LABELS[result2.agent]}: ${result2.reason}`);
+    await printPrompt();
+    return { kind: "printed", reason: "none-usable", probes };
+  }
+  const accepted = await options.confirm({
+    kind: "offer-agent-setup",
+    path: ".idiom/project.json",
+    prompt: `Hand the rest of setup to ${SETUP_AGENT_LABELS[usable.agent]} now? It will configure the server, seed data and a first flow, then run idiom init --validate. [y/N] `
+  });
+  if (accepted) return launch(usable.agent);
+  await printPrompt();
+  return { kind: "printed", reason: "declined", probes };
+}
+
+// src/cli.ts
+init_init_validate();
+
 // src/commands/instruction.ts
 init_log();
 init_errors();
@@ -82238,11 +83304,11 @@ import { createInterface as createInterface6 } from "readline/promises";
 
 // src/learn/capture.ts
 init_artifacts2();
-import { readdir as readdir22, readFile as readFile81, stat as stat13 } from "fs/promises";
-import { join as join82, relative as relative38 } from "path";
-async function exists9(path) {
+import { readdir as readdir23, readFile as readFile83, stat as stat14 } from "fs/promises";
+import { join as join84, relative as relative38 } from "path";
+async function exists10(path) {
   try {
-    await stat13(path);
+    await stat14(path);
     return true;
   } catch {
     return false;
@@ -82250,7 +83316,7 @@ async function exists9(path) {
 }
 async function directories(path) {
   try {
-    return (await readdir22(path, { withFileTypes: true })).filter((entry2) => entry2.isDirectory()).map((entry2) => entry2.name).sort();
+    return (await readdir23(path, { withFileTypes: true })).filter((entry2) => entry2.isDirectory()).map((entry2) => entry2.name).sort();
   } catch {
     return [];
   }
@@ -82258,7 +83324,7 @@ async function directories(path) {
 async function capturedFlow(tuple) {
   try {
     const metadata2 = JSON.parse(
-      await readFile81(join82(tuple, "metadata.json"), "utf8")
+      await readFile83(join84(tuple, "metadata.json"), "utf8")
     );
     return typeof metadata2.flow?.id === "string" ? metadata2.flow.id : void 0;
   } catch {
@@ -82266,23 +83332,23 @@ async function capturedFlow(tuple) {
   }
 }
 async function tupleDirectory(viewportDirectory, colorScheme) {
-  if (await exists9(join82(viewportDirectory, "dom.html")))
+  if (await exists10(join84(viewportDirectory, "dom.html")))
     return viewportDirectory;
   const schemes2 = await directories(viewportDirectory);
   for (const scheme of [
     colorScheme,
     ...schemes2.filter((s) => s !== colorScheme)
   ])
-    if (await exists9(join82(viewportDirectory, scheme, "dom.html")))
-      return join82(viewportDirectory, scheme);
+    if (await exists10(join84(viewportDirectory, scheme, "dom.html")))
+      return join84(viewportDirectory, scheme);
   return void 0;
 }
 async function findStateCapture(options) {
-  const reports = join82(options.projectDirectory, ".idiom", "reports");
+  const reports = join84(options.projectDirectory, ".idiom", "reports");
   const runs = options.from === void 0 ? (await directories(reports)).reverse() : [options.from];
   for (const runId of runs) {
     const runDirectory = resolveStoredRun(options.projectDirectory, runId);
-    const stateDirectory = join82(runDirectory, options.state);
+    const stateDirectory = join84(runDirectory, options.state);
     const present2 = await directories(stateDirectory);
     const ordered2 = [
       ...options.viewports.filter((viewport) => present2.includes(viewport)),
@@ -82290,17 +83356,17 @@ async function findStateCapture(options) {
     ];
     for (const viewport of ordered2) {
       const tuple = await tupleDirectory(
-        join82(stateDirectory, viewport),
+        join84(stateDirectory, viewport),
         options.colorScheme
       );
       if (tuple === void 0) continue;
       if (await capturedFlow(tuple) !== options.flow) continue;
-      const screenshot2 = join82(tuple, "screenshot.png");
+      const screenshot2 = join84(tuple, "screenshot.png");
       return {
         runId,
         viewport,
-        domPath: join82(tuple, "dom.html"),
-        ...await exists9(screenshot2) ? { screenshot: relative38(runDirectory, screenshot2) } : {}
+        domPath: join84(tuple, "dom.html"),
+        ...await exists10(screenshot2) ? { screenshot: relative38(runDirectory, screenshot2) } : {}
       };
     }
   }
@@ -82313,8 +83379,8 @@ init_fingerprint();
 init_law();
 init_names2();
 init_flow();
-import { readFile as readFile82 } from "fs/promises";
-import { join as join83, relative as relative39 } from "path";
+import { readFile as readFile84 } from "fs/promises";
+import { join as join85, relative as relative39 } from "path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "util";
 
 // src/schemas/learned.ts
@@ -82371,8 +83437,8 @@ var glossaryPatterns = [
 ];
 var mirroredPattern = /^(?:the\s+)?(.+?)\s+and\s+(?:the\s+)?(.+?)\s+should\s+(?:mirror|match|be\s+mirrored)(?:\s+each\s+other)?(?:\s+(horizontally|vertically))?\.?$/i;
 var stopWords = /* @__PURE__ */ new Set(["the", "a", "an", "this", "that", "these", "those"]);
-function interpretObservation(text4) {
-  const observation = text4.trim().replace(/\s+/g, " ");
+function interpretObservation(text5) {
+  const observation = text5.trim().replace(/\s+/g, " ");
   const invariant = invariantPattern.exec(observation);
   if (invariant?.[1] !== void 0 && invariant[2] !== void 0) {
     const value = Number(invariant[2]);
@@ -82503,7 +83569,7 @@ async function resolveSubject(options) {
   } finally {
     await browser.close();
   }
-  const describe6 = (list5) => list5.slice(0, 5).map((candidate2) => `${candidate2.selector} (${candidate2.count})`).join(", ");
+  const describe6 = (list6) => list6.slice(0, 5).map((candidate2) => `${candidate2.selector} (${candidate2.count})`).join(", ");
   const byClass = candidates.filter((candidate2) => candidate2.via === "class").sort(
     (left, right) => left.extra - right.extra || right.count - left.count || left.selector.localeCompare(right.selector)
   );
@@ -82548,7 +83614,7 @@ var PNG_SIGNATURE2 = Buffer.from([
 ]);
 async function optionalText(path) {
   try {
-    return await readFile82(path, "utf8");
+    return await readFile84(path, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return void 0;
     throw error;
@@ -82562,10 +83628,10 @@ function edited(before, path, item, value) {
   const appended = appendJsonArrayItem(before, path, item);
   return appended !== void 0 && isDeepStrictEqual2(JSON.parse(appended), value) ? appended : json4(value);
 }
-function record(value) {
+function record2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
-function list3(parent, key5) {
+function list4(parent, key5) {
   const current = parent[key5];
   if (Array.isArray(current)) return current;
   const created = [];
@@ -82591,7 +83657,7 @@ async function draftLearning(options) {
   if (options.screenshot !== void 0) {
     let source;
     try {
-      source = await readFile82(options.screenshot);
+      source = await readFile84(options.screenshot);
     } catch (error) {
       throw new IdiomError(
         `cannot read --screenshot ${options.screenshot}: ${error instanceof Error ? error.message : String(error)}`
@@ -82608,7 +83674,7 @@ async function draftLearning(options) {
       throw new IdiomError(
         `no capture of ${options.flow.flow.id}/${options.state} found; run idiom capture ${options.flow.flow.id} or pass --selector`
       );
-    html ??= await readFile82(options.capture.domPath, "utf8");
+    html ??= await readFile84(options.capture.domPath, "utf8");
     return (await resolveSubject({ html, subject, launch: options.launch })).selector;
   };
   const expectSelectors = (count6) => {
@@ -82617,12 +83683,12 @@ async function draftLearning(options) {
         `this observation needs ${count6} --selector value(s), got ${options.selectors.length}`
       );
   };
-  const projectPath = join83(projectDirectory, ".idiom", "project.json");
+  const projectPath = join85(projectDirectory, ".idiom", "project.json");
   const editProject = async (path, item, edit2) => {
-    const before = await readFile82(projectPath, "utf8");
-    const value = record(JSON.parse(before));
+    const before = await readFile84(projectPath, "utf8");
+    const value = record2(JSON.parse(before));
     if (value.checks === void 0) value.checks = {};
-    edit2(record(value.checks));
+    edit2(record2(value.checks));
     const after = edited(before, ["checks", ...path], item, value);
     const parsed = projectSchema.safeParse(value);
     if (!parsed.success)
@@ -82643,19 +83709,19 @@ async function draftLearning(options) {
   let ruling;
   const editStateInvariants = async (items) => {
     const path = options.flow.file;
-    const before = await readFile82(path, "utf8");
-    const value = record(JSON.parse(before));
-    const state = (Array.isArray(value.states) ? value.states : []).map(record).find((candidate2) => candidate2.id === options.state);
+    const before = await readFile84(path, "utf8");
+    const value = record2(JSON.parse(before));
+    const state = (Array.isArray(value.states) ? value.states : []).map(record2).find((candidate2) => candidate2.id === options.state);
     if (state === void 0)
       throw new IdiomError(
         `${display(path)} declares no state ${JSON.stringify(options.state)}`
       );
     const index = value.states.findIndex(
-      (candidate2) => record(candidate2).id === options.state
+      (candidate2) => record2(candidate2).id === options.state
     );
     let after = before;
     for (const item of items) {
-      list3(state, "invariants").push(item);
+      list4(state, "invariants").push(item);
       after = edited(after, ["states", index, "invariants"], item, value);
     }
     const parsed = flowSchema.safeParse(value);
@@ -82679,8 +83745,8 @@ async function draftLearning(options) {
         height: interpretation.height
       };
       await editProject(["components"], entry2, (checks) => {
-        const components = list3(checks, "components");
-        const existing = components.map(record).find(
+        const components = list4(checks, "components");
+        const existing = components.map(record2).find(
           (component) => component.selector === selector || component.name === name
         );
         if (existing !== void 0)
@@ -82718,10 +83784,10 @@ async function draftLearning(options) {
         preferred: interpretation.preferred
       };
       await editProject(["copy", "glossary"], entry2, (checks) => {
-        const copy2 = record(checks.copy);
+        const copy2 = record2(checks.copy);
         checks.copy = copy2;
-        const glossary = list3(copy2, "glossary");
-        if (glossary.map(record).some(
+        const glossary = list4(copy2, "glossary");
+        if (glossary.map(record2).some(
           (item) => typeof item.term === "string" && item.term.toLowerCase() === interpretation.term.toLowerCase()
         ))
           throw new IdiomError(
@@ -82739,8 +83805,8 @@ async function draftLearning(options) {
       const b = await resolveSelector(second, 1);
       entry2 = { name: `${first} / ${second}`, a, b, axis: interpretation.axis };
       await editProject(["mirrored"], entry2, (checks) => {
-        const pairs = list3(checks, "mirrored");
-        if (pairs.map(record).some(
+        const pairs = list4(checks, "mirrored");
+        if (pairs.map(record2).some(
           (pair) => pair.a === a && pair.b === b || pair.a === b && pair.b === a
         ))
           throw new IdiomError(
@@ -82752,7 +83818,7 @@ async function draftLearning(options) {
       break;
     }
     case "ruling": {
-      const designPath = join83(
+      const designPath = join85(
         projectDirectory,
         options.project.design.designFile
       );
@@ -82790,13 +83856,13 @@ async function draftLearning(options) {
     }
   }
   const learnedKind = interpretation.kind === "brief-invariants" ? "invariant" : interpretation.kind;
-  const logPath = join83(projectDirectory, ".idiom", "learned.jsonl");
+  const logPath = join85(projectDirectory, ".idiom", "learned.jsonl");
   const logBefore = await optionalText(logPath);
   const count5 = (logBefore ?? "").split("\n").filter((line3) => line3.trim() !== "").length;
   const id2 = `learned-${count5 + 1}`;
   let screenshot2;
   if (options.screenshot !== void 0) {
-    const to = join83(projectDirectory, ".idiom", "learned", `${id2}.png`);
+    const to = join85(projectDirectory, ".idiom", "learned", `${id2}.png`);
     screenshot2 = display(to);
     copies.push({ from: options.screenshot, to });
   }
@@ -82946,7 +84012,7 @@ async function learnCommand(options) {
       "pass --state, or --from-brief with a brief that names one"
     );
   const matching = validated.flows.filter(
-    (record2) => (flowId === void 0 || record2.flow.id === flowId) && record2.flow.states.some((state2) => state2.id === stateId)
+    (record3) => (flowId === void 0 || record3.flow.id === flowId) && record3.flow.states.some((state2) => state2.id === stateId)
   );
   if (matching.length === 0)
     throw new IdiomError(
@@ -82954,7 +84020,7 @@ async function learnCommand(options) {
     );
   if (matching.length > 1)
     throw new IdiomError(
-      `state ${JSON.stringify(stateId)} is declared by ${matching.map((record2) => record2.flow.id).join(", ")}; pass --flow`
+      `state ${JSON.stringify(stateId)} is declared by ${matching.map((record3) => record3.flow.id).join(", ")}; pass --flow`
     );
   const flow = matching[0];
   if (flow === void 0) throw new IdiomError("unreachable: no flow");
@@ -83037,13 +84103,13 @@ import {
   lstat as lstat12,
   mkdir as mkdir30,
   mkdtemp as mkdtemp12,
-  readFile as readFile84,
+  readFile as readFile86,
   rename as rename29,
   rm as rm27,
   writeFile as writeFile48
 } from "fs/promises";
-import { basename as basename15, extname as extname5, join as join85, resolve as resolve64 } from "path";
-async function exists10(path) {
+import { basename as basename16, extname as extname5, join as join87, resolve as resolve64 } from "path";
+async function exists11(path) {
   try {
     await lstat12(path);
     return true;
@@ -83076,8 +84142,8 @@ async function addReference(options) {
     throw new IdiomError("--viewport is required with --url");
   const root2 = referenceRoot(options.projectDirectory, options.polarity);
   await mkdir30(root2, { recursive: true });
-  const destination = join85(root2, name);
-  if (await exists10(destination))
+  const destination = join87(root2, name);
+  if (await exists11(destination))
     throw new IdiomError(
       `reference ${JSON.stringify(name)} already exists as ${options.polarity}`
     );
@@ -83103,7 +84169,7 @@ async function addReference(options) {
       throw new IdiomError(
         `local reference is not a regular file: ${localSource}`
       );
-    imageData = await readFile84(localSource);
+    imageData = await readFile86(localSource);
     metadata2 = {
       version: 1,
       name,
@@ -83166,12 +84232,12 @@ async function addReference(options) {
     throw new IdiomError(
       `reference image exceeds model transport limits: ${limitIssue}`
     );
-  const temporary = await mkdtemp12(join85(root2, `.${name}-`));
+  const temporary = await mkdtemp12(join87(root2, `.${name}-`));
   try {
-    const imagePath = join85(temporary, metadata2.image);
+    const imagePath = join87(temporary, metadata2.image);
     await writeFile48(imagePath, imageData, { flag: "wx" });
     await writeFile48(
-      join85(temporary, "reference.json"),
+      join87(temporary, "reference.json"),
       `${JSON.stringify(metadata2, null, 2)}
 `,
       { flag: "wx" }
@@ -83189,11 +84255,11 @@ async function addReference(options) {
 }
 async function removeReference(options) {
   const name = validateName(options.name);
-  const directory = join85(
+  const directory = join87(
     referenceRoot(options.projectDirectory, options.polarity),
     name
   );
-  if (!await exists10(directory))
+  if (!await exists11(directory))
     throw new IdiomError(
       `managed ${options.polarity} ${JSON.stringify(name)} not found`
     );
@@ -83204,14 +84270,14 @@ async function removeReference(options) {
     if (!(error instanceof IdiomError)) throw error;
     let marker;
     try {
-      marker = await lstat12(join85(directory, "reference.json"));
+      marker = await lstat12(join87(directory, "reference.json"));
     } catch (markerError) {
       if (markerError.code !== "ENOENT")
         throw markerError;
     }
     if (marker === void 0 || !marker.isFile() || marker.isSymbolicLink())
       throw new IdiomError(
-        `${basename15(directory)} exists but is not a removable managed reference`
+        `${basename16(directory)} exists but is not a removable managed reference`
       );
   }
   await rm27(directory, { recursive: true });
@@ -83259,9 +84325,9 @@ async function removeReferenceCommand(options) {
 // src/report/open.ts
 init_errors();
 init_project2();
-import { spawn as spawn4 } from "child_process";
-import { lstat as lstat13, readdir as readdir23 } from "fs/promises";
-import { join as join86 } from "path";
+import { spawn as spawn5 } from "child_process";
+import { lstat as lstat13, readdir as readdir24 } from "fs/promises";
+import { join as join88 } from "path";
 function validateRunId(runId) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runId) || runId === "." || runId === "..") {
     throw new IdiomError(
@@ -83270,8 +84336,8 @@ function validateRunId(runId) {
   }
 }
 async function regularReport(reportsDirectory, runId) {
-  const runDirectory = join86(reportsDirectory, runId);
-  const reportPath3 = join86(runDirectory, "report.html");
+  const runDirectory = join88(reportsDirectory, runId);
+  const reportPath3 = join88(runDirectory, "report.html");
   try {
     const [run2, report] = await Promise.all([
       lstat13(runDirectory),
@@ -83287,13 +84353,13 @@ async function resolveHtmlReport(options) {
   const projectDirectory = await findProjectDirectory(
     resolveProjectArgument(options.project, options.cwd)
   );
-  const reportsDirectory = join86(projectDirectory, ".idiom", "reports");
+  const reportsDirectory = join88(projectDirectory, ".idiom", "reports");
   if (options.runId !== void 0) {
     validateRunId(options.runId);
     const selected3 = await regularReport(reportsDirectory, options.runId);
     if (selected3 === void 0)
       throw new IdiomError(
-        `HTML report does not exist for run ${options.runId}: ${join86(reportsDirectory, options.runId, "report.html")}`
+        `HTML report does not exist for run ${options.runId}: ${join88(reportsDirectory, options.runId, "report.html")}`
       );
     return {
       projectDirectory,
@@ -83303,7 +84369,7 @@ async function resolveHtmlReport(options) {
   }
   let entries;
   try {
-    entries = await readdir23(reportsDirectory, { withFileTypes: true });
+    entries = await readdir24(reportsDirectory, { withFileTypes: true });
   } catch {
     throw new IdiomError(
       `no HTML reports found beneath ${reportsDirectory}; run idiom review or idiom verify first`
@@ -83337,7 +84403,7 @@ function reportLaunchCommand(platform, reportPath3) {
 }
 var launchProcess = async (command, args) => {
   await new Promise((accept, reject) => {
-    const child = spawn4(command, args, { detached: true, stdio: "ignore" });
+    const child = spawn5(command, args, { detached: true, stdio: "ignore" });
     child.once("error", reject);
     child.once("spawn", () => {
       child.unref();
@@ -83373,8 +84439,8 @@ async function reportCommand(options) {
 // src/commands/review.ts
 init_summary();
 init_names();
-import { readFile as readFile86, writeFile as writeFile49 } from "fs/promises";
-import { join as join88 } from "path";
+import { readFile as readFile88, writeFile as writeFile49 } from "fs/promises";
+import { join as join90 } from "path";
 
 // src/review/page.ts
 init_page_content();
@@ -83396,8 +84462,8 @@ init_validation();
 init_crops();
 init_findings();
 init_run2();
-import { readFile as readFile85 } from "fs/promises";
-import { join as join87, resolve as resolve66 } from "path";
+import { readFile as readFile87 } from "fs/promises";
+import { join as join89, resolve as resolve66 } from "path";
 var DEFAULT_MAX_FINDINGS = 10;
 function numberedLines(source) {
   const lines2 = source.split(/\r\n?|\n/);
@@ -83406,7 +84472,7 @@ function numberedLines(source) {
 }
 async function readInput(cwd, path, label5) {
   try {
-    return { path, text: await readFile85(resolve66(cwd, path), "utf8") };
+    return { path, text: await readFile87(resolve66(cwd, path), "utf8") };
   } catch (error) {
     throw new IdiomError(
       `cannot read ${label5} ${path}: ${error instanceof Error ? error.message : String(error)}`
@@ -83415,7 +84481,7 @@ async function readInput(cwd, path, label5) {
 }
 async function optionalText2(path) {
   try {
-    return await readFile85(path, "utf8");
+    return await readFile87(path, "utf8");
   } catch {
     return "";
   }
@@ -83462,7 +84528,7 @@ async function runPageReview(options) {
     checks.page = { ...checks.page, brief: { text: brief.text } };
   const now2 = options.dependencies?.capture?.now ?? (() => /* @__PURE__ */ new Date());
   const startedAt = now2();
-  const finalDirectory = options.out === void 0 ? join87(directory, "idiom-page-reviews", defaultRunName3(startedAt)) : resolve66(directory, options.out);
+  const finalDirectory = options.out === void 0 ? join89(directory, "idiom-page-reviews", defaultRunName3(startedAt)) : resolve66(directory, options.out);
   const { runDirectory, loaded, reviewed, counts } = await captureLiteralPages({
     directory,
     finalDirectory,
@@ -83534,10 +84600,10 @@ async function runPageReview(options) {
         screenshots: material.screenshots,
         domExcerpts: material.domExcerpts,
         productMd: projectDirectory === void 0 || project === void 0 ? "" : await optionalText2(
-          join87(projectDirectory, project.design.productFile)
+          join89(projectDirectory, project.design.productFile)
         ),
         designMd: projectDirectory === void 0 || project === void 0 ? "" : await optionalText2(
-          join87(projectDirectory, project.design.designFile)
+          join89(projectDirectory, project.design.designFile)
         ),
         references: references2,
         priorDecisions: [],
@@ -83684,7 +84750,7 @@ async function reviewCommand(options) {
   const published = validated.flows.some(({ flow }) => isPublishedFlow(flow));
   let material;
   const readMaterial = async () => {
-    material ??= findingSchema.array().parse(JSON.parse(await readFile86(result2.findingsPath, "utf8")));
+    material ??= findingSchema.array().parse(JSON.parse(await readFile88(result2.findingsPath, "utf8")));
     return material;
   };
   const publishedBudget = published ? {
@@ -83706,7 +84772,7 @@ async function reviewCommand(options) {
     ).length
   };
   await writeFile49(
-    join88(result2.runDirectory, "baseline-comparison.json"),
+    join90(result2.runDirectory, "baseline-comparison.json"),
     `${JSON.stringify(comparison2, null, 2)}
 `
   );
@@ -83726,7 +84792,7 @@ init_errors();
 init_project2();
 init_html();
 import { mkdir as mkdir32 } from "fs/promises";
-import { join as join91 } from "path";
+import { join as join93 } from "path";
 init_collect();
 
 // src/system/html.ts
@@ -83957,7 +85023,7 @@ async function runSystem(options) {
     source: { figma, refresh: options.refreshDesign }
   }) : void 0;
   const model = learning?.model ?? await collectSystemPage(options);
-  const reportsDirectory = join91(resolvedProject, ".idiom", "reports");
+  const reportsDirectory = join93(resolvedProject, ".idiom", "reports");
   await mkdir32(reportsDirectory, { recursive: true });
   const reportPath3 = await writeHtmlFile(
     reportsDirectory,
@@ -83987,7 +85053,7 @@ init_merge();
 init_paths();
 init_pristine();
 import { mkdir as mkdir33, rm as rm28, rmdir as rmdir2, symlink as symlink3 } from "fs/promises";
-import { dirname as dirname33, join as join92 } from "path";
+import { dirname as dirname33, join as join94 } from "path";
 
 // src/skills/resolver.ts
 init_anthropic();
@@ -84377,9 +85443,9 @@ async function upgradeSkills(options, dependencies = {}) {
         if (expected.has(path)) expected.set(path, value);
       await unchanged(root2, expected);
       if (main.outcome.action === "removed") {
-        if (!link2.missing) await rm28(join92(root2, discoveryPath(skill)));
+        if (!link2.missing) await rm28(join94(root2, discoveryPath(skill)));
         try {
-          await rmdir2(join92(root2, canonicalPath(skill)));
+          await rmdir2(join94(root2, canonicalPath(skill)));
         } catch {
         }
       } else if (link2.missing) {
@@ -84389,10 +85455,10 @@ async function upgradeSkills(options, dependencies = {}) {
           continue;
         const parent = dirname33(discoveryPath(skill));
         await inspect2(root2, `${parent}/.idiom-safety-check`);
-        await mkdir33(join92(root2, parent), { recursive: true });
+        await mkdir33(join94(root2, parent), { recursive: true });
         await symlink3(
           discoveryTarget(skill),
-          join92(root2, discoveryPath(skill)),
+          join94(root2, discoveryPath(skill)),
           "dir"
         );
         const refreshed = /* @__PURE__ */ new Map();
@@ -84448,13 +85514,13 @@ var upgradeFailed = (report) => report.files.some((file) => file.action === "con
 // src/commands/validate.ts
 init_resolve();
 init_validation();
-import { basename as basename18 } from "path";
+import { basename as basename19 } from "path";
 async function validateCommand(options) {
   const result2 = await validateProject(options);
   const flowNames = result2.flows.map(
     ({ flow }) => `${flow.id} (color schemes: ${selectColorSchemes(result2.project, flow).join(", ")})`
   ).join(", ");
-  return `Validated ${basename18(result2.projectDirectory)}: ${flowNames}`;
+  return `Validated ${basename19(result2.projectDirectory)}: ${flowNames}`;
 }
 
 // src/cli.ts
@@ -84471,12 +85537,408 @@ function severityGateEligible(finding, failOn, failOnJudged = false) {
   return (rank[finding.severity] ?? 3) <= (rank[failOn] ?? -1);
 }
 
+// src/help.ts
+var START_HERE = [
+  [
+    "idiom init",
+    "scaffold PRODUCT.md, DESIGN.md and .idiom, then hand setup to your coding agent"
+  ],
+  [
+    "idiom init --validate",
+    "confirm setup is done: prints ready, or the first problem and its fix"
+  ],
+  ["idiom check <flow>", "capture the flow and gate new findings"],
+  [
+    "idiom fix / idiom decide",
+    "repair findings with your agent, or record accept and reject decisions"
+  ]
+];
+var HELP_GROUPS = [
+  {
+    title: "Setup",
+    commands: ["init", "validate", "doctor", "reference", "design"]
+  },
+  {
+    title: "Daily loop",
+    commands: [
+      "check",
+      "review",
+      "fix",
+      "verify",
+      "capture",
+      "report",
+      "compare"
+    ]
+  },
+  { title: "Judgment and decisions", commands: ["decide", "ruling", "learn"] },
+  { title: "Briefs", commands: ["brief"] },
+  {
+    title: "Explore and inspect",
+    commands: ["quick", "sweep", "coverage", "explore", "system"]
+  },
+  {
+    title: "Agents and integration",
+    commands: ["mcp", "context", "instruction", "tickets"]
+  },
+  { title: "Maintenance", commands: ["upgrade", "baseline"] }
+];
+var COMMAND_EXAMPLES = {
+  init: [
+    "idiom init --agent claude-code  # hand setup to your coding agent",
+    "idiom init --print-setup-prompt  # paste into any agent",
+    "idiom init --yes",
+    "idiom init --flows --yes  # also generate a site flow",
+    "idiom init --validate  # setup is done when this prints ready",
+    "idiom init --validate --flow booking --json"
+  ],
+  check: [
+    "idiom check booking",
+    "idiom check booking --since-baseline",
+    "idiom check --gate --budget 3m  # build gate for the current change",
+    "idiom check booking --fail-on major"
+  ],
+  review: [
+    "idiom review booking",
+    "idiom review booking --deterministic-only  # no model or external detector",
+    "idiom review --page http://localhost:3000/pricing",
+    "idiom review booking --from <runId>"
+  ],
+  fix: [
+    "idiom fix booking",
+    "idiom fix booking --dry-run  # print the repair prompt only",
+    "idiom fix booking --top 3 --max-rounds 2"
+  ],
+  decide: [
+    "idiom decide --list",
+    "idiom decide --finding finding-3 --accept",
+    'idiom decide --finding finding-3 --reject --scope rule --reason "intentional brand colour"'
+  ],
+  brief: [
+    'idiom brief triage "<request>"',
+    'idiom brief "<request>" --research',
+    "idiom brief plan <id>",
+    "idiom brief decide <slug> --option <id>"
+  ]
+};
+var FOOTER = "Run idiom help <command> or idiom <command> --help for details and examples.";
+function formatRootHelp(cmd, helper) {
+  const commands = helper.visibleCommands(cmd).filter((sub) => cmd.commands.includes(sub));
+  const byName = new Map(commands.map((sub) => [sub.name(), sub]));
+  const groups = HELP_GROUPS.map((group) => ({
+    title: group.title,
+    commands: group.commands.flatMap((name) => byName.get(name) ?? [])
+  }));
+  const listed3 = new Set(HELP_GROUPS.flatMap((group) => group.commands));
+  const other = commands.filter((sub) => !listed3.has(sub.name()));
+  if (other.length > 0)
+    groups.push({ title: "Other commands", commands: other });
+  const options = helper.visibleOptions(cmd);
+  const termWidth = Math.max(
+    ...START_HERE.map(([term]) => helper.displayWidth(term)),
+    ...options.map((option) => helper.displayWidth(helper.optionTerm(option))),
+    ...commands.map((sub) => helper.displayWidth(helper.subcommandTerm(sub)))
+  );
+  const item = (term, description2) => helper.formatItem(term, termWidth, description2, helper);
+  const section2 = (title, items) => items.length === 0 ? [] : [helper.styleTitle(title), ...items, ""];
+  const description = helper.commandDescription(cmd);
+  return [
+    `${helper.styleTitle("Usage:")} ${helper.styleUsage(helper.commandUsage(cmd))}`,
+    "",
+    ...description === "" ? [] : [helper.styleCommandDescription(description), ""],
+    ...section2(
+      "Start here:",
+      START_HERE.map(([term, sentence2]) => item(term, sentence2))
+    ),
+    ...section2(
+      "Options:",
+      options.map(
+        (option) => item(
+          helper.styleOptionTerm(helper.optionTerm(option)),
+          helper.styleOptionDescription(helper.optionDescription(option))
+        )
+      )
+    ),
+    ...groups.flatMap(
+      (group) => section2(
+        `${group.title}:`,
+        group.commands.map(
+          (sub) => item(
+            helper.styleSubcommandTerm(helper.subcommandTerm(sub)),
+            helper.styleSubcommandDescription(
+              helper.subcommandDescription(sub)
+            )
+          )
+        )
+      )
+    ),
+    FOOTER,
+    ""
+  ].join("\n");
+}
+function applyHelp(program) {
+  program.configureHelp({ formatHelp: formatRootHelp });
+  for (const [name, lines2] of Object.entries(COMMAND_EXAMPLES)) {
+    const command = program.commands.find((entry2) => entry2.name() === name);
+    if (command === void 0)
+      throw new Error(`help examples name unregistered command ${name}`);
+    command.addHelpText(
+      "after",
+      `
+Examples:
+${lines2.map((line3) => `  ${line3}`).join("\n")}`
+    );
+  }
+}
+
 // src/cli.ts
+init_version();
+init_project2();
 init_interaction();
 init_advisory();
 init_finding();
+init_facts();
+init_prompt3();
 init_emit();
-init_version();
+init_notice();
+
+// src/update/self-update.ts
+init_project2();
+init_version2();
+init_notice();
+import { spawn as spawn6 } from "child_process";
+import { isAbsolute as isAbsolute26, join as join96 } from "path";
+var SELF_UPDATE_HANDOFF_ENV = "IDIOM_SELF_UPDATE_HANDOFF";
+var SELF_UPDATE_FROM_ENV = "IDIOM_SELF_UPDATE_FROM";
+var SELF_UPDATE_COMMAND_ENV = "IDIOM_SELF_UPDATE_COMMAND";
+var SOURCE_UPDATE_COMMAND = "git pull && bun install --frozen-lockfile && bun run build";
+var DEPENDENCY_UPDATE_COMMAND = `npm install --save-dev --save-exact ${PACKAGE_NAME}@latest`;
+var runCommand = ([command = "", ...args], options) => new Promise((accept) => {
+  let stdout8 = "";
+  let stderr = "";
+  const child = spawn6(command, args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    // npm and bun are .cmd shims on Windows, which need a shell; every
+    // argument is a fixed token. The --version probe runs node by absolute
+    // path, which may contain spaces, so it never goes through one.
+    shell: process.platform === "win32" && !isAbsolute26(command)
+  });
+  child.stdout?.on("data", (chunk) => {
+    stdout8 += String(chunk);
+  });
+  child.stderr?.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  child.once(
+    "error",
+    (error) => accept({ exitCode: null, stdout: stdout8, stderr: stderr || error.message })
+  );
+  child.once("close", (code3) => accept({ exitCode: code3, stdout: stdout8, stderr }));
+});
+var runHandoff = ([command = "", ...args], options) => new Promise((accept) => {
+  const child = spawn6(command, args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: "inherit",
+    shell: false
+  });
+  child.once("error", () => accept(null));
+  child.once("exit", (code3) => accept(code3));
+});
+async function projectDirectoryFor2(project, cwd) {
+  try {
+    return await findOptionalProjectDirectory(
+      resolveProjectArgument(project, cwd)
+    );
+  } catch {
+    return void 0;
+  }
+}
+function lastLine(text5) {
+  return text5.split(/\r?\n/).map((line3) => line3.trim()).filter((line3) => line3 !== "").at(-1);
+}
+async function selfUpdate(options, dependencies = {}) {
+  const env = dependencies.env ?? process.env;
+  const current = dependencies.currentVersion ?? IDIOM_VERSION;
+  const cwd = options.cwd ?? process.cwd();
+  const root2 = resolvedRoot(dependencies.packageRoot ?? IDIOM_PACKAGE_ROOT);
+  const proceed = (cli2, ...lines2) => ({
+    kind: "continue",
+    cli: cli2,
+    lines: lines2
+  });
+  if (env[SELF_UPDATE_HANDOFF_ENV] === "1")
+    return proceed({
+      from: env[SELF_UPDATE_FROM_ENV] ?? current,
+      to: current,
+      command: env[SELF_UPDATE_COMMAND_ENV] ?? null,
+      outcome: "updated"
+    });
+  if (!options.selfUpdate)
+    return proceed({
+      from: current,
+      to: null,
+      command: null,
+      outcome: "skipped"
+    });
+  const kind = detectInstall(root2, env);
+  if (kind === "source")
+    return proceed(
+      {
+        from: current,
+        to: null,
+        command: SOURCE_UPDATE_COMMAND,
+        outcome: "manual"
+      },
+      `Idiom is running from a source checkout, so the CLI was not updated. To update it: ${SOURCE_UPDATE_COMMAND}, then run idiom upgrade again.`
+    );
+  if (kind === "unknown")
+    return proceed(
+      {
+        from: current,
+        to: null,
+        command: DEPENDENCY_UPDATE_COMMAND,
+        outcome: "manual"
+      },
+      `Idiom could not tell how it was installed, so the CLI was not updated. Update it with the package manager that installed it (for a project dependency: ${DEPENDENCY_UPDATE_COMMAND}), then run idiom upgrade again.`
+    );
+  if (await updateCheckDisabled(
+    env,
+    await projectDirectoryFor2(options.project, cwd)
+  ))
+    return proceed(
+      { from: current, to: null, command: null, outcome: "disabled" },
+      `The Idiom CLI update check is turned off (IDIOM_NO_UPDATE_CHECK, NO_UPDATE_NOTIFIER, CI or "updateCheck": false); merging skills with the installed ${current}.`
+    );
+  const latest = await fetchLatestRelease({
+    env,
+    current,
+    cacheDirectory: dependencies.cacheDirectory ?? updateCacheDirectory(env),
+    now: (dependencies.now ?? Date.now)(),
+    fetch: dependencies.fetch,
+    setTimer: dependencies.setTimer,
+    deadlineMs: dependencies.deadlineMs ?? UPGRADE_CHECK_DEADLINE_MS
+  });
+  if (latest === void 0)
+    return proceed(
+      { from: current, to: null, command: null, outcome: "unchecked" },
+      `Could not check for a newer Idiom CLI (offline or the registry did not answer); merging skills with the installed ${current}.`
+    );
+  if (!isNewer(latest, current))
+    return proceed(
+      { from: current, to: latest, command: null, outcome: "current" },
+      `Idiom CLI ${current} is the latest release.`
+    );
+  if (kind !== "npm-global" && kind !== "bun-global") {
+    const command = updateCommand(kind, latest);
+    return proceed(
+      { from: current, to: latest, command, outcome: "manual" },
+      `Idiom ${latest} is available (you have ${current}). This install is updated outside idiom upgrade: ${command}. Merging skills with the installed ${current}.`
+    );
+  }
+  const install = kind === "npm-global" ? ["npm", "install", "-g"] : ["bun", "add", "-g"];
+  const argv = [...install, `${PACKAGE_NAME}@${latest}`];
+  const commandText = argv.join(" ");
+  const cli = (outcome) => ({
+    from: current,
+    to: latest,
+    command: commandText,
+    outcome
+  });
+  if (options.dryRun === true)
+    return proceed(
+      cli("would-update"),
+      `Would update the Idiom CLI ${current} \u2192 ${latest} with: ${commandText}, then merge ${latest}'s skills. The skill report below uses the installed ${current} templates.`
+    );
+  const failed = (message) => ({
+    kind: "failed",
+    cli: cli("failed"),
+    message
+  });
+  const run2 = dependencies.run ?? runCommand;
+  let installed;
+  try {
+    installed = await run2(argv, { cwd, env });
+  } catch (error) {
+    installed = {
+      exitCode: null,
+      stdout: "",
+      stderr: error instanceof Error ? error.message : String(error)
+    };
+  }
+  if (installed.exitCode !== 0) {
+    const output = lastLine(installed.stderr) ?? lastLine(installed.stdout) ?? "(no output)";
+    return failed(
+      `Idiom CLI update failed: ${commandText} exited ${installed.exitCode ?? "without starting"}: ${output}. Your installed Idiom ${current} was left as it was and no skills were changed.`
+    );
+  }
+  const execPath = dependencies.execPath ?? process.execPath;
+  const entry2 = join96(root2, "dist", "cli.js");
+  let reported;
+  try {
+    const probe = await run2([execPath, entry2, "--version"], {
+      cwd,
+      env: { ...env, IDIOM_NO_UPDATE_CHECK: "1" }
+    });
+    if (probe.exitCode === 0) reported = probe.stdout.trim().split(/\s+/)[0];
+  } catch {
+  }
+  if (reported !== latest)
+    return failed(
+      `${commandText} finished, but the installed idiom reports ${reported || "no version"}, expected ${latest}. No skills were changed. To return to your previous version: ${install.join(" ")} ${PACKAGE_NAME}@${current}`
+    );
+  options.write?.(
+    `Updated the Idiom CLI ${current} \u2192 ${latest} (ran: ${commandText}).`
+  );
+  const exitCode = await (dependencies.handoff ?? runHandoff)(
+    [execPath, entry2, ...options.args],
+    {
+      cwd,
+      env: {
+        ...env,
+        [SELF_UPDATE_HANDOFF_ENV]: "1",
+        [SELF_UPDATE_FROM_ENV]: current,
+        [SELF_UPDATE_COMMAND_ENV]: commandText
+      }
+    }
+  );
+  if (exitCode === null)
+    return failed(
+      `Updated the Idiom CLI to ${latest} but could not start it to merge skills. Run idiom upgrade again.`
+    );
+  return { kind: "handoff", exitCode };
+}
+
+// src/cli.ts
+init_version2();
+var UPDATE_NOTICE_COMMANDS = /* @__PURE__ */ new Set(["init", "check", "review", "doctor"]);
+function createUpdateNotices(dependencies) {
+  let pending;
+  let json5 = false;
+  return {
+    start(project, jsonMode) {
+      json5 = jsonMode;
+      pending ??= checkForUpdate({
+        ...dependencies.updateCheck,
+        project,
+        cwd: dependencies.cwd
+      });
+    },
+    async withUpdate(value) {
+      const update = await pending;
+      return update === void 0 ? value : { ...value, update };
+    },
+    async finish(write) {
+      if (pending === void 0 || json5) return;
+      const notice = await pending;
+      if (notice !== void 0) write(renderUpdateNotice(notice));
+    },
+    async settled() {
+      await pending;
+    }
+  };
+}
 function lineWriter(write) {
   return (message) => write(message.endsWith("\n") ? message : `${message}
 `);
@@ -84487,14 +85949,10 @@ async function withFailureJson(json5, flow, writeOut, work) {
   } catch (error) {
     if (json5 === true && error instanceof RunFailure)
       writeOut(
-        JSON.stringify(
-          {
-            ...flow === void 0 ? {} : { flow },
-            failure: error.failureJson()
-          },
-          null,
-          2
-        )
+        jsonPayload({
+          ...flow === void 0 ? {} : { flow },
+          failure: error.failureJson()
+        })
       );
     throw error;
   }
@@ -84560,7 +86018,7 @@ function parseMaxFindings(value) {
     );
   return parsed;
 }
-function createProgram(dependencies = {}) {
+function createProgram(dependencies = {}, notices = createUpdateNotices(dependencies)) {
   const writeOut = lineWriter(
     dependencies.stdout ?? ((message) => process.stdout.write(message))
   );
@@ -84588,12 +86046,74 @@ function createProgram(dependencies = {}) {
     capture: captureDependencies(dependencies.review?.capture)
   };
   const program = new Command().name("idiom").description("A repo-native design acceptance loop for product UI").version(IDIOM_VERSION_DISPLAY).addOption(new Option("--project <dir>", "target project directory")).configureOutput({ writeOut, writeErr });
+  const { withUpdate } = notices;
+  program.hook("preAction", (_root, action) => {
+    if (action.parent !== program || !UPDATE_NOTICE_COMMANDS.has(action.name()))
+      return;
+    notices.start(
+      action.optsWithGlobals().project,
+      action.opts().json === true
+    );
+  });
   program.command("init").description("scaffold PRODUCT.md, DESIGN.md, and .idiom without data loss").option("--yes", "accept scaffold defaults without prompting").option(
     "--flows",
     "generate a site flow from filesystem and running local routes"
-  ).option("--surface <id>", "project surface for the generated site flow").action(async (_options, command) => {
+  ).option("--surface <id>", "project surface for the generated site flow").option(
+    "--validate",
+    "check that setup is done without changing anything; exits 0 when ready, 2 when not"
+  ).option(
+    "--flow <id>",
+    "with --validate: the flow to boot (default: the first flow)"
+  ).option("--json", "with --validate: print { ready, validate, doctor }").addOption(
+    new Option(
+      "--agent <name>",
+      "launch this coding agent for setup without asking"
+    ).choices(SETUP_AGENTS)
+  ).option("--no-agent", "skip agent-led setup").option(
+    "--print-setup-prompt",
+    "print only the agent setup prompt and exit"
+  ).action(async (_options, command) => {
     const local = command.opts();
     const shared = command.optsWithGlobals();
+    if (local.validate === true && (local.yes === true || local.flows === true || local.surface !== void 0 || local.agent !== void 0 || local.printSetupPrompt === true))
+      throw new IdiomError(
+        "--validate cannot be combined with --yes, --flows, --surface, --agent, --no-agent or --print-setup-prompt"
+      );
+    if (local.printSetupPrompt === true && (local.yes === true || local.flows === true || local.surface !== void 0 || local.agent !== void 0 || local.flow !== void 0 || local.json === true))
+      throw new IdiomError(
+        "--print-setup-prompt cannot be combined with other init options"
+      );
+    if (local.validate !== true && (local.flow !== void 0 || local.json === true))
+      throw new IdiomError("--flow and --json apply only with --validate");
+    if (local.validate === true) {
+      const report = await initValidate({
+        project: shared.project,
+        cwd: dependencies.cwd,
+        flow: local.flow,
+        dependencies: {
+          process: dependencies.capture?.process,
+          inheritedEnvironment: dependencies.capture?.inheritedEnvironment
+        }
+      });
+      if (local.json === true) writeOut(jsonPayload(report));
+      else for (const line3 of renderInitValidate(report)) writeOut(line3);
+      const problem = initValidateProblem(report);
+      if (problem !== void 0)
+        throw new RunFailure({
+          stage: problem.stage,
+          cause: problem.cause,
+          headline: problem.headline,
+          hint: problem.hint
+        });
+      return;
+    }
+    if (local.printSetupPrompt === true) {
+      const facts = await collectSetupFacts(
+        resolveProjectArgument(shared.project, dependencies.cwd)
+      );
+      writeOut(setupPrompt(facts));
+      return;
+    }
     const result2 = await initProject({
       project: shared.project,
       cwd: dependencies.cwd,
@@ -84605,12 +86125,58 @@ function createProgram(dependencies = {}) {
       write: writeOut
     });
     for (const line3 of initSummaryLines(result2)) writeOut(line3);
+    const outcome = await offerAgentSetup({
+      projectDirectory: result2.projectDirectory,
+      agent: local.agent,
+      yes: local.yes === true,
+      interactive: dependencies.confirm !== void 0 || process.stdin.isTTY === true && process.stdout.isTTY === true,
+      confirm: dependencies.confirm ?? defaultConfirmation2,
+      write: writeOut,
+      environment: dependencies.setupAgent?.environment ?? process.env,
+      probe: dependencies.setupAgent?.probe,
+      launch: dependencies.setupAgent?.launch
+    });
+    if (outcome.kind === "unavailable")
+      throw new IdiomError(`--agent ${outcome.agent}: ${outcome.reason}`);
   });
-  program.command("upgrade").description("update vendored skills while preserving local customization").option("--no-agent", "leave overlapping edits for manual resolution").option(
+  program.command("upgrade").description(
+    "update the Idiom CLI, then its vendored skills, keeping local customization"
+  ).option("--no-agent", "leave overlapping edits for manual resolution").option(
+    "--no-self-update",
+    "merge skills without updating the Idiom CLI first"
+  ).option(
     "--dry-run",
     "report proposed changes without writing or calling a model"
   ).option("--json", "print a structured upgrade report").action(async (_options, command) => {
     const options = command.optsWithGlobals();
+    const cli = await selfUpdate(
+      {
+        project: options.project,
+        cwd: dependencies.cwd,
+        dryRun: options.dryRun,
+        selfUpdate: options.selfUpdate,
+        // Everything after `node idiom`, global options included. Commander
+        // records the parsed argv as `rawArgs` but leaves it out of its types.
+        args: program.rawArgs.slice(2),
+        write: options.json ? void 0 : writeOut
+      },
+      dependencies.selfUpdate
+    );
+    if (cli.kind === "failed") {
+      if (options.json)
+        writeOut(jsonPayload({ cli: { ...cli.cli, error: cli.message } }));
+      throw new IdiomError(cli.message);
+    }
+    if (cli.kind === "handoff") {
+      if (cli.exitCode !== 0)
+        throw new CommanderError(
+          cli.exitCode,
+          "idiom.upgrade-handoff",
+          "The updated Idiom CLI's upgrade did not succeed"
+        );
+      return;
+    }
+    if (!options.json) for (const line3 of cli.lines) writeOut(line3);
     const report = await upgradeCommand(
       {
         project: options.project,
@@ -84626,10 +86192,10 @@ function createProgram(dependencies = {}) {
       confirm: dependencies.confirm ?? defaultConfirmation2
     });
     if (options.json)
-      writeOut(JSON.stringify({ ...report, briefInstruction }, null, 2));
+      writeOut(jsonPayload({ ...report, cli: cli.cli, briefInstruction }));
     else
       writeOut(
-        [renderUpgrade(report), ...briefInstructionLines(briefInstruction)].filter((text4) => text4 !== "").join("\n")
+        [renderUpgrade(report), ...briefInstructionLines(briefInstruction)].filter((text5) => text5 !== "").join("\n")
       );
     if (upgradeFailed(report))
       throw new CommanderError(
@@ -84818,7 +86384,7 @@ function createProgram(dependencies = {}) {
           })
         );
         writeOut(
-          options.json === true ? JSON.stringify(result2, null, 2) : renderBaselineRecord(result2)
+          options.json === true ? jsonPayload(result2) : renderBaselineRecord(result2)
         );
         if ("findingNameWarning" in result2)
           writeErr(result2.findingNameWarning);
@@ -84917,7 +86483,7 @@ function createProgram(dependencies = {}) {
           dependencies: dependencies.page ?? (dependencies.quick === void 0 ? void 0 : { capture: dependencies.quick })
         });
         writeOut(
-          options.json === true ? JSON.stringify(result3, null, 2) : `Page review ${options.page}: ${result3.findingCount} finding(s) \u2014 Markdown: ${result3.reportPath} \u2014 HTML: ${result3.htmlReportPath}`
+          options.json === true ? jsonPayload(await withUpdate(result3)) : `Page review ${options.page}: ${result3.findingCount} finding(s) \u2014 Markdown: ${result3.reportPath} \u2014 HTML: ${result3.htmlReportPath}`
         );
         if (result3.outcome.kind === "degraded")
           writeErr(
@@ -84955,7 +86521,7 @@ function createProgram(dependencies = {}) {
       if (result2.findingNameWarning !== void 0)
         writeErr(result2.findingNameWarning);
       writeOut(
-        options.json === true ? JSON.stringify(result2, null, 2) : `Reviewed ${flow}: ${result2.findingCount} finding(s), ${result2.unruledDecisionCount} unruled decision(s)${result2.designSystemQuestions.length === 0 ? "" : `, ${result2.designSystemQuestions.length} design system question(s)`}${result2.build === void 0 ? "" : ` \xB7 production build ${result2.build.id}`} \u2014 ${result2.reportPath}`
+        options.json === true ? jsonPayload(await withUpdate(result2)) : `Reviewed ${flow}: ${result2.findingCount} finding(s), ${result2.unruledDecisionCount} unruled decision(s)${result2.designSystemQuestions.length === 0 ? "" : `, ${result2.designSystemQuestions.length} design system question(s)`}${result2.build === void 0 ? "" : ` \xB7 production build ${result2.build.id}`} \u2014 ${result2.reportPath}`
       );
       if (options.json !== true && result2.advisory !== void 0)
         writeErr(
@@ -85144,17 +86710,15 @@ function createProgram(dependencies = {}) {
         );
         if (result2.skipped) {
           writeOut(
-            options.json ? JSON.stringify(
-              {
+            options.json ? jsonPayload(
+              await withUpdate({
                 gate: {
                   skipped: true,
                   reason: result2.reason,
                   base: result2.base,
                   files: result2.files
                 }
-              },
-              null,
-              2
+              })
             ) : result2.line
           );
           return;
@@ -85165,8 +86729,8 @@ function createProgram(dependencies = {}) {
         );
         const plan = result2.plan;
         writeOut(
-          options.json ? JSON.stringify(
-            {
+          options.json ? jsonPayload(
+            await withUpdate({
               gate: {
                 plan,
                 skippedWork: result2.skippedWork,
@@ -85184,9 +86748,7 @@ function createProgram(dependencies = {}) {
                   summary: entry2.summary
                 } : entry2
               )
-            },
-            null,
-            2
+            })
           ) : [
             `idiom check --gate: checked ${output.checkedStates} state(s).`,
             ...checked.map(
@@ -85243,8 +86805,8 @@ function createProgram(dependencies = {}) {
           (entry2) => entry2.status === "checked"
         );
         writeOut(
-          options.json ? JSON.stringify(
-            {
+          options.json ? jsonPayload(
+            await withUpdate({
               selection: output.selection,
               checkedStates: output.checkedStates,
               checks: output.checks.map(
@@ -85254,9 +86816,7 @@ function createProgram(dependencies = {}) {
                   summary: entry2.summary
                 } : entry2
               )
-            },
-            null,
-            2
+            })
           ) : [
             renderChangedSelection(output),
             ...checked.map(
@@ -85336,7 +86896,7 @@ function createProgram(dependencies = {}) {
         })
       );
       writeOut(
-        options.json === true ? JSON.stringify(summary, null, 2) : renderCheckSummary(summary, {
+        options.json === true ? jsonPayload(await withUpdate(summary)) : renderCheckSummary(summary, {
           ungrouped: options.ungrouped,
           top: options.top,
           all: options.all
@@ -85411,7 +86971,7 @@ function createProgram(dependencies = {}) {
         dependencies: reviewDependencies
       });
       writeOut(
-        options.json === true ? JSON.stringify(summary, null, 2) : renderSweepSummary(summary).trimEnd()
+        options.json === true ? jsonPayload(summary) : renderSweepSummary(summary).trimEnd()
       );
       if (summary.outcome.kind === "degraded")
         writeErr(
@@ -85444,7 +87004,7 @@ function createProgram(dependencies = {}) {
           cwd: dependencies.cwd
         });
         writeOut(
-          options.json === true ? JSON.stringify(states, null, 2) : renderStateCoverage(states).trimEnd()
+          options.json === true ? jsonPayload(states) : renderStateCoverage(states).trimEnd()
         );
         return;
       }
@@ -85454,7 +87014,7 @@ function createProgram(dependencies = {}) {
         crawl: options.crawl
       });
       writeOut(
-        options.json === true ? JSON.stringify(summary, null, 2) : renderCoverage(summary).trimEnd()
+        options.json === true ? jsonPayload(summary) : renderCoverage(summary).trimEnd()
       );
     }
   );
@@ -85574,7 +87134,7 @@ function createProgram(dependencies = {}) {
         out: options.out
       });
       writeOut(
-        options.json === true ? JSON.stringify(result2, null, 2) : `Compared ${flow}: ${result2.changed.length} changed, ${result2.unchanged.length} unchanged, ${result2.newFindings.length} new / ${result2.fixedFindings.length} fixed finding(s) \u2014 ${result2.reportPath}`
+        options.json === true ? jsonPayload(result2) : `Compared ${flow}: ${result2.changed.length} changed, ${result2.unchanged.length} unchanged, ${result2.newFindings.length} new / ${result2.fixedFindings.length} fixed finding(s) \u2014 ${result2.reportPath}`
       );
     }
   );
@@ -85695,8 +87255,7 @@ function createProgram(dependencies = {}) {
         ),
         dependencies: dependencies.brief
       });
-      if (shared.json === true)
-        writeOut(JSON.stringify(gateJson(result2), null, 2));
+      if (shared.json === true) writeOut(jsonPayload(gateJson(result2)));
       else {
         const rendered = renderGate(result2);
         if (rendered !== "") writeOut(rendered);
@@ -85746,7 +87305,7 @@ function createProgram(dependencies = {}) {
       dependencies: dependencies.brief
     });
     if (shared.json === true) {
-      writeOut(JSON.stringify(briefRecordJson(recorded), null, 2));
+      writeOut(jsonPayload(briefRecordJson(recorded)));
       return;
     }
     writeOut(
@@ -85770,7 +87329,7 @@ function createProgram(dependencies = {}) {
         dependencies: dependencies.brief
       });
       writeOut(
-        shared.json === true ? JSON.stringify(briefDecideJson(decided), null, 2) : renderBriefDecide(decided)
+        shared.json === true ? jsonPayload(briefDecideJson(decided)) : renderBriefDecide(decided)
       );
     }
   );
@@ -85781,10 +87340,14 @@ function createProgram(dependencies = {}) {
       cwd: dependencies.cwd
     });
     writeOut(
-      shared.json === true ? JSON.stringify(
-        entries.map((entry2) => "error" in entry2 ? entry2 : entry2.brief),
-        null,
-        2
+      shared.json === true ? (
+        // The one --json payload that is a bare array, so it carries no
+        // interfaceVersion; docs/stability.md lists it as the exception.
+        JSON.stringify(
+          entries.map((entry2) => "error" in entry2 ? entry2 : entry2.brief),
+          null,
+          2
+        )
       ) : renderBriefList(entries)
     );
   });
@@ -86005,7 +87568,7 @@ ${result2.next}` : "Cancelled; no files changed."
         }
       });
       writeOut(
-        options.json === true ? JSON.stringify(report, null, 2) : renderDoctorReport(report).trimEnd()
+        options.json === true ? jsonPayload(await withUpdate(report)) : renderDoctorReport(report).trimEnd()
       );
       if (report.failure !== void 0) {
         const step = report.steps.find((entry2) => entry2.status === "fail");
@@ -86029,39 +87592,46 @@ ${result2.next}` : "Cancelled; no files changed."
       })
     );
   });
+  applyHelp(program);
   return program;
 }
 async function run(argv = process.argv, dependencies = {}) {
-  const program = createProgram(dependencies);
+  const notices = createUpdateNotices(dependencies);
+  const program = createProgram(dependencies, notices);
   program.exitOverride();
   for (const command of program.commands) command.exitOverride();
+  const writeErr = lineWriter(
+    dependencies.stderr ?? ((message) => process.stderr.write(message))
+  );
+  let exitCode;
   try {
-    await program.parseAsync(argv);
-    return 0;
-  } catch (error) {
-    if (error instanceof RunFailure) {
-      const write = lineWriter(
-        dependencies.stderr ?? ((message) => process.stderr.write(message))
-      );
-      write(error.message);
-      write(`Fix: ${error.hint}`);
-      return RUN_FAILURE_EXIT_CODE;
+    try {
+      await program.parseAsync(argv);
+      exitCode = EXIT_CODES.ok;
+    } catch (error) {
+      if (error instanceof RunFailure) {
+        writeErr(error.message);
+        writeErr(`Fix: ${error.hint}`);
+        exitCode = RUN_FAILURE_EXIT_CODE;
+      } else if (error instanceof IdiomError) {
+        writeErr(`Error: ${error.message}`);
+        exitCode = EXIT_CODES.failed;
+      } else if (error instanceof CommanderError) {
+        if (error.code === "commander.version") notices.start(void 0, false);
+        exitCode = error.exitCode;
+      } else throw error;
     }
-    if (error instanceof IdiomError) {
-      lineWriter(
-        dependencies.stderr ?? ((message) => process.stderr.write(message))
-      )(`Error: ${error.message}`);
-      return 1;
-    }
-    if (error instanceof CommanderError) return error.exitCode;
-    throw error;
+    await notices.finish(writeErr);
+  } finally {
+    await notices.settled();
   }
+  return exitCode;
 }
 async function isEntryPoint(moduleUrl, argvEntry) {
   if (argvEntry === void 0) return false;
   try {
     const [modulePath, entryPath] = await Promise.all([
-      realpath17(fileURLToPath3(moduleUrl)),
+      realpath17(fileURLToPath4(moduleUrl)),
       realpath17(argvEntry)
     ]);
     return modulePath === entryPath;

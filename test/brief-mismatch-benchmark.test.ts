@@ -1,6 +1,9 @@
 import { type Browser, chromium } from "playwright";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import type { BriefCheck } from "../src/brief/assertions.js";
+import {
+  type BriefCheck,
+  briefAssertionIdentity,
+} from "../src/brief/assertions.js";
 import { briefAssertionSchema } from "../src/schemas/brief.js";
 import { fixture, reviewFixture } from "./benchmark-support.js";
 
@@ -42,6 +45,9 @@ const brief: BriefCheck = {
   ],
 };
 
+const identity = (index: number) =>
+  briefAssertionIdentity(brief.criteria[0]?.assertions[index] as never);
+
 const mismatches = async (name: string) =>
   (
     await reviewFixture(browser, await fixture(name), {
@@ -56,8 +62,8 @@ test("a full-size sibling pin breaks both parts of the decided brief", async () 
   const rules = new Set(found.map((candidate) => candidate.rule));
   expect(rules).toEqual(
     new Set([
-      "idiom:brief-mismatch:pinned-group:c0:a0:size",
-      "idiom:brief-mismatch:pinned-group:c0:a1:within",
+      `idiom:brief-mismatch:pinned-group:c0:a0:size:${identity(0)}`,
+      `idiom:brief-mismatch:pinned-group:c0:a1:within:${identity(1)}`,
     ]),
   );
   // One finding per drawer item for each part.

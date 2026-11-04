@@ -57,12 +57,14 @@ test("triage --json prints id, verdict, reason and questions and stores the tria
   expect(result.code).toBe(0);
   const printed = JSON.parse(result.stdout);
   expect(Object.keys(printed)).toEqual([
+    "interfaceVersion",
     "id",
     "verdict",
     "reason",
     "questions",
   ]);
   expect(printed).toEqual({
+    interfaceVersion: 1,
     id: triageId(1, "add a pin to every tile"),
     ...verdict,
   });
@@ -470,6 +472,7 @@ test("--research --json prints the outcome", async () => {
   );
   expect(result.code).toBe(0);
   expect(JSON.parse(result.stdout)).toEqual({
+    interfaceVersion: 1,
     outcome: "stored",
     triage: verdict,
     slug: "pinned-group-in-the-add-drawer",
@@ -751,7 +754,12 @@ test("gate --json reports each ticket's outcome and reason", async () => {
     });
     expect(result.code).toBe(0);
     const printed = JSON.parse(result.stdout);
-    expect(Object.keys(printed)).toEqual(["strict", "warnings", "tickets"]);
+    expect(Object.keys(printed)).toEqual([
+      "interfaceVersion",
+      "strict",
+      "warnings",
+      "tickets",
+    ]);
     expect(printed.strict).toBe(false);
     expect(printed.warnings).toBe(1);
     expect(

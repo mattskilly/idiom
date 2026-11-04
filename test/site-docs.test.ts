@@ -191,6 +191,17 @@ describe("landing structured data", () => {
   });
 });
 
+test("troubleshooting, upgrading and glossary are Reference pages in the sitemap", async () => {
+  const reference = docsGroups.find((group) => group.label === "Reference");
+  const sitemap = await readFile(join(dist, "sitemap.xml"), "utf8");
+  for (const slug of ["troubleshooting", "upgrading", "glossary"]) {
+    expect(reference?.pages).toContainEqual(
+      expect.objectContaining({ slug, source: `docs/${slug}.md` }),
+    );
+    expect(sitemap).toContain(`<loc>https://idiom.build/docs/${slug}</loc>`);
+  }
+});
+
 test("update and rollback workflow is under Start and describes upgrade safety and legacy binaries", async () => {
   expect(
     docsGroups.find((group) => group.label === "Start")?.pages,

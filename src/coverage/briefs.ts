@@ -18,6 +18,8 @@ export type BriefAssertionCoverage = {
   passed: number;
   mismatched: number;
   unmeasured: string[];
+  /** Gaps in an otherwise measured result, such as matches with no painted foreground. */
+  notes: string[];
 };
 
 /**
@@ -75,6 +77,7 @@ export function computeBriefCoverage(
             passed: 0,
             mismatched: 0,
             unmeasured: [],
+            notes: [],
           });
     const measured = new Set<string>();
     for (const tuple of flowTuples)
@@ -85,7 +88,13 @@ export function computeBriefCoverage(
         measured.add(key);
         if (result.outcome === "pass") entry.passed += 1;
         else if (result.outcome === "mismatch") entry.mismatched += 1;
-        else if (
+        if (result.outcome === "pass" || result.outcome === "mismatch") {
+          if (
+            result.reason !== undefined &&
+            !entry.notes.includes(result.reason)
+          )
+            entry.notes.push(result.reason);
+        } else if (
           result.outcome === "unmeasured" &&
           result.reason !== undefined &&
           !entry.unmeasured.includes(result.reason)
@@ -148,6 +157,16 @@ function entryLines(entry: BriefCoverageEntry): string[] {
       (assertion) =>
         `  - ${assertionLabel(assertion)}: ${assertion.unmeasured.join("; ")}`,
     ),
+    ...entry.assertions
+      .filter(
+        (assertion) =>
+          assertion.passed + assertion.mismatched > 0 &&
+          assertion.notes.length > 0,
+      )
+      .map(
+        (assertion) =>
+          `  - ${assertionLabel(assertion)}: ${assertion.notes.join("; ")}`,
+      ),
   ];
 }
 

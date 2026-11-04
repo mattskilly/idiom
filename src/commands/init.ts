@@ -77,7 +77,8 @@ export type InitConfirmationRequest =
       prompt: string;
       path: string;
     }
-  | { kind: "offer-brief-instruction"; prompt: string; path: string };
+  | { kind: "offer-brief-instruction"; prompt: string; path: string }
+  | { kind: "offer-agent-setup"; prompt: string; path: string };
 
 export type Confirmation = (
   request: InitConfirmationRequest,
@@ -827,6 +828,9 @@ export async function initProject(options: {
   return result;
 }
 
+/** The last line of every init summary: the readiness check that marks setup done. */
+export const INIT_NEXT_LINE = "Next: idiom init --validate";
+
 /** The human summary `idiom init` prints after scaffolding; MCP reuses it. */
 export function initSummaryLines(result: InitResult): string[] {
   const lines: string[] = [];
@@ -846,8 +850,6 @@ export function initSummaryLines(result: InitResult): string[] {
       ...outcome.setup,
     ])
       lines.push(note);
-    if (outcome.content !== undefined)
-      lines.push("Next: idiom validate site; idiom capture site");
     if (outcome.content !== undefined && outcome.stateCount === 0)
       lines.push("TODO-only flow: no concrete states are ready to capture.");
   }
@@ -871,5 +873,6 @@ export function initSummaryLines(result: InitResult): string[] {
     lines.push(result.autobuild.addition);
   }
   lines.push(...briefInstructionLines(result.briefInstruction));
+  lines.push(INIT_NEXT_LINE);
   return lines;
 }

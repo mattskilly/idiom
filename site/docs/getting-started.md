@@ -40,7 +40,7 @@ For Codex, in your shell:
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.18.0/mattskilly-idiom-0.18.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.19.0/mattskilly-idiom-0.19.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.
@@ -57,11 +57,23 @@ Remove a duplicate standalone server when switching (`claude mcp remove idiom` f
 idiom init
 ```
 
-`init` reads your repo, asks what code can't answer, and writes three things:
+`init` scaffolds the project, then offers to hand the rest of setup to Claude Code or Codex if either is installed. The agent gets a setup prompt built from your repo: how to start your app, seed data from your own fixtures (never real credentials), your routes and a first flow of 3–8 states. Using another agent? Print the prompt and paste it in:
+
+```sh
+idiom init --print-setup-prompt
+```
+
+Setup writes three things:
 
 - `PRODUCT.md` and `DESIGN.md`: your product's purpose and design law, which your agent reads before it writes UI.
 - `.idiom/project.json`: how to start your app, viewports and check settings.
 - `.idiom/flows/*.json`: flows, each a list of named states with how to reach them.
+
+Setup is done when this prints `ready`; otherwise it names the first problem and its fix:
+
+```sh
+idiom init --validate
+```
 
 Then run the loop on a flow:
 
@@ -85,3 +97,5 @@ idiom check home --fail-on major  # later runs fail only on new problems
 The first check on a clean commit records a baseline. After that, `check` reports only findings the baseline didn't have, and `idiom baseline accept home` accepts intentional changes. The [GitHub Action](/docs/configuration#github-action) runs this on every pull request and posts one comment.
 
 To gate every build an agent makes, use `idiom check home --gate --fail-on major`. It checks only what the change affects within a 3-minute budget, skips docs- and test-only changes in under a second, and ends with a `Timing:` line. Keep the full check on a schedule.
+
+If a step fails, [Troubleshooting](/docs/troubleshooting) lists each symptom with its cause and fix, and `idiom doctor` names the step that failed.

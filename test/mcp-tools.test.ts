@@ -1,6 +1,7 @@
 import {
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -13,11 +14,19 @@ import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, test, vi } from "vitest";
 import { initProject } from "../src/commands/init.js";
+import {
+  type InitValidateReport,
+  initValidate,
+} from "../src/commands/init-validate.js";
 import { critiqueResult } from "../src/critique/types.js";
 import { appendDecision, readDecisionLog } from "../src/decisions/log.js";
 import type { McpDependencies } from "../src/mcp/tools.js";
 import { type Finding, findingSchema } from "../src/schemas/finding.js";
+import { collectSetupFacts } from "../src/setup/facts.js";
+import { setupPrompt } from "../src/setup/prompt.js";
+import { IDIOM_VERSION } from "../src/version.js";
 import { commit, git } from "./baseline-support.js";
+import { passingProject } from "./doctor-support.js";
 import { mcpClient, toolData } from "./mcp-support.js";
 import { storedRun, studioProject } from "./stored-run-support.js";
 
@@ -126,16 +135,26 @@ test("idiom_init scaffolds the bound root without touching stdout and reports ne
     },
   });
   const stdout = vi.spyOn(process.stdout, "write");
+  const firstResult = await call(client, "idiom_init", {});
   const first = toolData<{
     created: string[];
     nextSteps: string[];
     flows: { kind: string };
-  }>(await call(client, "idiom_init", {}));
+  }>(firstResult);
+  expect(JSON.stringify(firstResult.content)).toContain(
+    "Next: idiom_ready — setup is done when it reports ready",
+  );
+  expect(JSON.stringify(firstResult.content)).not.toContain(
+    "idiom init --validate",
+  );
   expect(stdout).not.toHaveBeenCalled();
   expect(first.created).toEqual(
     expect.arrayContaining(["PRODUCT.md", "DESIGN.md"]),
   );
   expect(first.flows).toEqual({ kind: "not-requested" });
+  expect(first.nextSteps[0]).toBe(
+    "Call idiom_setup_prompt and follow it to finish setup.",
+  );
   expect(first.nextSteps.join(" ")).toContain("idiom_context");
   const second = await call(client, "idiom_init", { flows: true });
   const data = toolData<{
@@ -148,13 +167,72 @@ test("idiom_init scaffolds the bound root without touching stdout and reports ne
   expect(data.flows).not.toHaveProperty("content");
   expect(data.nextSteps.join(" ")).toContain("idiom_check with flow site");
   expect(JSON.stringify(second.content)).toContain(
-    "Next: idiom_flows; idiom_check site",
+    "Next: idiom_ready — setup is done when it reports ready",
   );
+  expect(JSON.stringify(second.content)).not.toContain("idiom init --validate");
   expect(
     JSON.parse(await readFile(join(project, ".idiom/flows/site.json"), "utf8"))
       .id,
   ).toBe("site");
   expect(stdout).not.toHaveBeenCalled();
+});
+
+test("idiom_setup_prompt returns the versioned prompt and the facts it was built from", async () => {
+  const project = await temporary();
+  await initProject({ project, yes: true });
+  const client = await connect(project);
+  const response = await call(client, "idiom_setup_prompt", {});
+  const data = toolData<{
+    version: string;
+    prompt: string;
+    facts: { projectDirectory: string; scaffoldFiles: unknown };
+  }>(response);
+  expect(data.version).toBe(IDIOM_VERSION);
+  expect(data.prompt).toBe(setupPrompt(await collectSetupFacts(project)));
+  expect(JSON.stringify(response.content)).toContain(
+    "## Finish line: idiom init --validate must print ready",
+  );
+  expect(data.facts.projectDirectory).toBe(project);
+  expect(data.facts.scaffoldFiles).toEqual({
+    product: "scaffold",
+    design: "scaffold",
+  });
+});
+
+test("idiom_ready reports not ready as a result on an uninitialized root", async () => {
+  const project = await temporary();
+  const client = await connect(project);
+  const response = await call(client, "idiom_ready", {});
+  expect(response.isError).toBeFalsy();
+  const data = toolData<{
+    ready: boolean;
+    doctor: unknown;
+    problem: { hint: string; headline: string };
+  }>(response);
+  expect(data.ready).toBe(false);
+  expect(data.doctor).toBeNull();
+  expect(data.problem.hint).toBe("run idiom init");
+  expect(data.problem.headline).toMatch(/^not ready: Idiom is not initialized/);
+  expect(JSON.stringify(response.content)).toContain("Fix: run idiom init");
+  expect(await readdir(project)).toEqual([]);
+});
+
+test("idiom_ready returns the same verdict as idiom init --validate for a ready project", async () => {
+  const { directory } = await passingProject(directories);
+  const project = await realpath(directory);
+  const client = await connect(project);
+  const response = await call(client, "idiom_ready", {});
+  const data = toolData<InitValidateReport & { problem?: unknown }>(response);
+  const direct = await initValidate({ project, cwd: project });
+  const shape = (report: InitValidateReport) => ({
+    ready: report.ready,
+    validate: report.validate,
+    steps: report.doctor?.steps.map((step) => [step.id, step.status]),
+  });
+  expect(Object.keys(data)).toEqual(["ready", "validate", "doctor"]);
+  expect(data.ready).toBe(true);
+  expect(shape(data)).toEqual(shape(direct));
+  expect(JSON.stringify(response.content)).toContain("ready");
 });
 
 test("idiom_design_add stores local designs relative, refuses escapes and needs FIGMA_TOKEN in the server env", async () => {

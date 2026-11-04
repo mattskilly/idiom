@@ -1,6 +1,7 @@
 import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
+import { CLI_PROVIDER_EXECUTABLES } from "./executables.js";
 import {
   type CritiqueProcessResult,
   type CritiqueProcessRunner,
@@ -192,7 +193,7 @@ export class CodexCritiqueAdapter implements CritiqueAdapter {
       let result: CritiqueProcessResult;
       try {
         result = await this.runner({
-          executable: "codex",
+          executable: CLI_PROVIDER_EXECUTABLES.codex,
           args: [
             "exec",
             "--skip-git-repo-check",

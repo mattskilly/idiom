@@ -12,6 +12,7 @@
       "api/**",
       "!test/fixtures/**/*.html",
       "!test/fixtures/mcp-registry/server.schema.json",
+      "!test/contract/interface.json",
       "scripts/**",
       "plugins/**",
       "*.json",

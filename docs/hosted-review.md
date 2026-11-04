@@ -163,7 +163,7 @@ None of this is done in the build.
 3. **Set env** (Functions only): the snapshot id, runtime hash, `IDIOM_HOSTED_IP_SECRET` (`openssl rand -hex 32`) and `CRON_SECRET`.
 4. **Choose the cap**: set `IDIOM_HOSTED_MONTHLY_CAP_USD` (capacity = cap ÷ $0.50 runs per month).
 5. **Plan and cron**: on Pro, tighten the cleanup cron to hourly. Optionally set account Spend Management as a backstop.
-6. **Smoke-check on a preview with the flag on**:
+6. **Smoke-check on a preview with the flag on** (a `main` preview works):
    - a target whose DNS rebinds to `127.0.0.1` / `169.254.169.254` is blocked, and the firewall denies a literal private IP from inside a sandbox;
    - BotID rejects a scripted `curl` POST;
    - a review completes in well under 90 s;
@@ -172,4 +172,4 @@ None of this is done in the build.
    - the cron (called with `CRON_SECRET`) purges a report whose expiry was set in the past;
    - no `idiom-hosted-review` sandboxes remain afterwards.
 7. **Check costs**: compare the preview's actual Sandbox and Blob usage with the cost model above, and update `PRICES` or `RUN_RESERVATION` if the region or rates differ.
-8. Only then set `IDIOM_HOSTED_REVIEW=on` for production and **redeploy**. Update site copy in the same release; while the flag is off, no copy may claim the feature is available.
+8. Only then set `IDIOM_HOSTED_REVIEW=on` for production and **redeploy**. Production idiom.build serves the `release` branch, and the hosted-review Functions (`api/hosted-*.ts`) and `vercel.json` deploy from it with the site. So the flip goes live with a release (the release moves `release`), or through the site-only path in [releases](releases.md#fixing-the-live-site-between-releases). Update site copy in the same release; while the flag is off, no copy may claim the feature is available.

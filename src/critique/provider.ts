@@ -18,6 +18,10 @@ import type {
   ModelFindingCandidate,
 } from "./types.js";
 
+export {
+  CLI_PROVIDER_EXECUTABLES,
+  type CliCritiqueProvider,
+} from "./executables.js";
 export type { CritiqueProvider };
 
 /** A critique adapter, or an injected one that returns bare candidates. */

@@ -31,6 +31,11 @@ import { IDIOM_VERSION_DISPLAY } from "../src/version.js";
 
 import { productionFixture } from "./production-support.js";
 
+/** Interactive init probes for setup agents; never run the real CLIs here. */
+const unusableAgentProbe = async () => {
+  throw Object.assign(new Error("not installed"), { code: "ENOENT" });
+};
+
 const temporaryDirectories: string[] = [];
 
 beforeEach(() => {
@@ -312,6 +317,7 @@ test("interactive init emits the Autobuild diff before confirmation and write", 
   const code = await run(["node", "idiom", "init", "--project", project], {
     stdout: (message) => events.push(`out:${message}`),
     stderr: () => undefined,
+    setupAgent: { probe: unusableAgentProbe },
     confirm: async (request) => {
       if (request.kind === "offer-flow-generation") return false;
       events.push(`confirm:${request.kind}`);
@@ -364,6 +370,7 @@ test("unsafe Autobuild configuration prints manual guidance and exits zero", asy
 
   const code = await run(["node", "idiom", "init", "--project", project], {
     stdout: (message) => stdout.push(message),
+    setupAgent: { probe: unusableAgentProbe },
     confirm: async (request) => request.kind !== "offer-flow-generation",
   });
 

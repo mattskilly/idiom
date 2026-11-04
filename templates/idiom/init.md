@@ -16,7 +16,7 @@ interview and the captured references. Phase 1 decides which.
 When the `idiom_init` MCP tool is present, call it (`flows:true` for route generation) instead of the CLI; it is always non-interactive. Otherwise run `idiom init --yes` from the repository root. Always pass `--yes`: without it
 the CLI opens an interactive stdin prompt a non-interactive shell cannot answer,
 and `--yes` still never overwrites a differing file. Never run `idiom init`
-without `--yes`. For requested route generation, run the configured local app and use
+without `--yes` (`idiom init --validate` only reads). For requested route generation, run the configured local app and use
 `idiom init --flows --yes` (`--surface <id>` for multiple surfaces); review setup/route TODOs.
 
 Read the output. Every `Preserved existing <file>` line marks a **human-owned**
@@ -137,13 +137,13 @@ section-by-section amendment, and write only on explicit approval of the result.
 
 Close with `idiom reference list`: it parses `.idiom/project.json`, so it is the
 configuration check a freshly initialized project can actually pass, and it
-prints the labels to cite. Run `idiom validate` **only if** `.idiom/flows/`
-already holds a `*.json` manifest. Plain `--yes` authors none; explicit `--flows`
-can generate `site.json`. Without a manifest, `.idiom/flows: no flow manifests found`
-is expected: do not run validation there or report its absence as a failure.
+prints the labels to cite. `idiom init --validate` is the "setup is done"
+signal: exit 0 and a final `ready` line mean done. Plain `--yes` authors no flow;
+until one exists it reports `not ready: .idiom/flows: no flow manifests found`.
+That is expected, not a failure of the interview: say so instead of hiding it.
 
 Then report both file paths and the captured reference labels, and name the next
 step: generate a flow with `idiom init --flows --yes` or author one, complete its
-setup and route TODOs, then `/idiom <flow>`.
+setup and route TODOs, rerun `idiom init --validate` until it prints `ready`, then `/idiom <flow>`.
 
 Never edit product code, generate tokens or components, or start Autobuild or any other dispatcher.

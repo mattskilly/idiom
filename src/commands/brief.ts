@@ -51,6 +51,7 @@ import {
   triageContext,
 } from "../brief/triage.js";
 import { IdiomError } from "../errors.js";
+import { jsonPayload } from "../interface/version.js";
 import {
   findOptionalProjectDirectory,
   resolveProjectArgument,
@@ -185,7 +186,7 @@ export async function runBriefTriage(
   return { mode: "model", request: options.request, result, stored };
 }
 
-export function triageJson(run: BriefTriageRun): unknown {
+export function triageJson(run: BriefTriageRun): object {
   if (run.mode === "no-model") return run.triage;
   return {
     id: run.stored.id,
@@ -219,7 +220,7 @@ export async function briefTriageCommand(
   );
   const run = await runBriefTriage({ ...options, request: request.text });
   return options.json === true
-    ? JSON.stringify(triageJson(run), null, 2)
+    ? jsonPayload(triageJson(run))
     : renderTriageRun(run);
 }
 
@@ -550,9 +551,7 @@ export async function briefPlanCommand(
   options: Parameters<typeof runBriefPlan>[0] & { json?: boolean | undefined },
 ): Promise<string> {
   const plan = await runBriefPlan(options);
-  return options.json === true
-    ? JSON.stringify(plan, null, 2)
-    : renderBriefPlan(plan);
+  return options.json === true ? jsonPayload(plan) : renderBriefPlan(plan);
 }
 
 export type BriefDecideResult = DecidedBrief & { markdownRelative: string };
@@ -627,7 +626,7 @@ export async function briefShowCommand(
 ): Promise<string> {
   const { projectDirectory, settings } = await projectSettings(options);
   const { brief, markdown } = await readBrief(projectDirectory, options.slug);
-  if (options.json === true) return JSON.stringify(brief, null, 2);
+  if (options.json === true) return jsonPayload(brief);
   return (markdown ?? renderBrief(brief, settings)).trimEnd();
 }
 
@@ -728,7 +727,7 @@ export function renderBriefResearch(
   json: boolean,
 ): string {
   if (json)
-    return JSON.stringify(
+    return jsonPayload(
       result.outcome === "no-decision"
         ? { outcome: result.outcome, triage: result.triage }
         : {
@@ -739,8 +738,6 @@ export function renderBriefResearch(
             status: result.recorded.brief.status,
             researchRun: result.researchRun,
           },
-      null,
-      2,
     );
   if (result.outcome === "no-decision")
     return `${renderTriage(result.triage)}\nNo design decision; no research run.`;

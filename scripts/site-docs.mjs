@@ -66,7 +66,32 @@ export const docsGroups = [
         slug: "configuration",
         source: "docs/configuration.md",
         description:
-          "The project file, flows and states, checks, baselines, Autobuild and the GitHub Action.",
+          "An at-a-glance map of the project file, then flows and states, checks, baselines, Autobuild and the GitHub Action.",
+      },
+      {
+        slug: "troubleshooting",
+        source: "docs/troubleshooting.md",
+        description:
+          "Symptom, cause and fix for a server that won't start, a missing browser, refused baselines, MCP binding, degraded critique, probe coverage, recaptures and slow gates.",
+      },
+      {
+        slug: "upgrading",
+        source: "docs/upgrading.md",
+        description:
+          "Update Idiom by install kind, bring project skills up to date, roll back, and the action each release requires.",
+      },
+      {
+        slug: "stability",
+        source: "docs/stability.md",
+        title: "Stability",
+        description:
+          "What is stable in Idiom's CLI, JSON output, MCP tools and project files, the interface version and the deprecation policy.",
+      },
+      {
+        slug: "glossary",
+        source: "docs/glossary.md",
+        description:
+          "One- or two-sentence definitions of Idiom's terms, from flow and state to ruling, brief and intended design.",
       },
       {
         slug: "brief",

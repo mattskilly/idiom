@@ -209,6 +209,7 @@ test("the CLI prints the refusal first, exits 2, and adds JSON with --json", asy
   );
   const json = JSON.parse(stdout.join(""));
   expect(json).toEqual({
+    interfaceVersion: 1,
     flow: "studio",
     failure: {
       stage: "preflight",

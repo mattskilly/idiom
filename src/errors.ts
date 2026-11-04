@@ -1,3 +1,5 @@
+import { EXIT_CODES } from "./interface/version.js";
+
 export class IdiomError extends Error {
   constructor(message: string) {
     super(message);
@@ -6,7 +8,7 @@ export class IdiomError extends Error {
 }
 
 /** Exit code for a run that could not happen; findings and other errors use 1. */
-export const RUN_FAILURE_EXIT_CODE = 2;
+export const RUN_FAILURE_EXIT_CODE = EXIT_CODES["run-failure"];
 
 export type RunFailureStage = "preflight" | "server" | "capture";
 

@@ -964,6 +964,8 @@ const projectInputSchema = z
       })
       .strict()
       .optional(),
+    /** false turns off the once-a-day check for a newer Idiom release. */
+    updateCheck: z.boolean().optional(),
     model: z
       .object({
         provider: critiqueProviderSchema,

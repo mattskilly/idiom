@@ -53,7 +53,16 @@ import {
 import { decideCommand } from "../commands/decide.js";
 import { addDesignCommand } from "../commands/design.js";
 import { renderDoctorReport, runDoctor } from "../commands/doctor.js";
-import { initProject, initSummaryLines } from "../commands/init.js";
+import {
+  INIT_NEXT_LINE,
+  initProject,
+  initSummaryLines,
+} from "../commands/init.js";
+import {
+  initValidate,
+  initValidateProblem,
+  renderInitValidate,
+} from "../commands/init-validate.js";
 import { rulingCommand } from "../commands/ruling.js";
 import { renderSweepSummary, sweepCommand } from "../commands/sweep.js";
 import { verifyCommand } from "../commands/verify.js";
@@ -80,12 +89,19 @@ import {
   briefTriageIdSchema,
 } from "../schemas/brief.js";
 import { type Finding, findingSchema } from "../schemas/finding.js";
+import { collectSetupFacts } from "../setup/facts.js";
+import { setupPrompt } from "../setup/prompt.js";
 import {
   emitClusterTickets,
   renderClusterTicketsResult,
 } from "../tickets/emit.js";
 import { resolveTicketTarget } from "../tickets/target.js";
+import {
+  renderUpdateNotice,
+  type UpdateNoticeSession,
+} from "../update/notice.js";
 import { loadProjectContext, validateProject } from "../validation.js";
+import { IDIOM_VERSION } from "../version.js";
 import {
   EvidenceStore,
   evidencePath,
@@ -105,6 +121,8 @@ export type McpDependencies = {
   init?: { generateFlows?: GenerateFlow | undefined } | undefined;
   /** Test seam: the triage model call and clock for the brief tools. */
   brief?: BriefDependencies | undefined;
+  /** Newer-version notice, delivered once per server session. */
+  update?: UpdateNoticeSession | undefined;
 };
 const identifier = z
   .string()
@@ -219,6 +237,26 @@ export function registerIdiomTools(
           return handler(args, execution);
         }),
     );
+  }
+  /** Appends the session's update notice, once, as a line agents can relay. */
+  async function withUpdateNotice(
+    response: CallToolResult,
+  ): Promise<CallToolResult> {
+    const notice = await dependencies.update?.take(
+      server.server.getClientVersion(),
+    );
+    if (notice === undefined) return response;
+    return {
+      ...response,
+      content: [
+        ...response.content,
+        { type: "text", text: renderUpdateNotice(notice) },
+      ],
+      structuredContent: {
+        ...(response.structuredContent as Record<string, unknown> | undefined),
+        update: notice,
+      },
+    };
   }
   const record = (finding: Finding, runDirectory: string): CatalogFinding => ({
     finding,
@@ -543,11 +581,13 @@ export function registerIdiomTools(
             });
           }
         }
-        return result(renderChangedSelection(changed), {
-          selection: changed.selection,
-          checkedStates: changed.checkedStates,
-          checks,
-        });
+        return withUpdateNotice(
+          result(renderChangedSelection(changed), {
+            selection: changed.selection,
+            checkedStates: changed.checkedStates,
+            checks,
+          }),
+        );
       }
       if (!args.flow)
         throw new IdiomError("flow is required unless changed is supplied");
@@ -565,7 +605,9 @@ export function registerIdiomTools(
         recordAgentCheck: true,
         dependencies: review(execution),
       });
-      return projectCheckedRun(args.flow, args.all, summary, output);
+      return withUpdateNotice(
+        await projectCheckedRun(args.flow, args.all, summary, output),
+      );
     },
   );
   register(
@@ -843,6 +885,7 @@ export function registerIdiomTools(
       const generated =
         "stateCount" in output.flows && output.flows.content !== undefined;
       const nextSteps = [
+        "Call idiom_setup_prompt and follow it to finish setup.",
         "Fill PRODUCT.md and DESIGN.md with the human, then call idiom_context.",
         ...(generated
           ? ["Call idiom_flows, then idiom_check with flow site."]
@@ -869,8 +912,8 @@ export function registerIdiomTools(
           : []),
       ];
       const lines = initSummaryLines(output).map((line) =>
-        line === "Next: idiom validate site; idiom capture site"
-          ? "Next: idiom_flows; idiom_check site"
+        line === INIT_NEXT_LINE
+          ? "Next: idiom_ready — setup is done when it reports ready (idiom_setup_prompt has the full setup procedure)"
           : line,
       );
       const flowOutcome =
@@ -890,6 +933,52 @@ export function registerIdiomTools(
         notes,
         nextSteps,
       });
+    },
+  );
+  register(
+    "idiom_setup_prompt",
+    "The versioned, repository-aware setup prompt `idiom init` hands to a coding agent: server command/port/readyUrl, seed data and test accounts from repo fixtures only, routes, a first 3–8-state flow, PRODUCT.md and DESIGN.md, ending at idiom_ready. Follow it in this session. Read-only.",
+    z.strictObject({}),
+    true,
+    async () => {
+      const facts = await collectSetupFacts(root);
+      const prompt = setupPrompt(facts);
+      return result(prompt, {
+        version: IDIOM_VERSION,
+        prompt,
+        facts: { ...facts, projectDirectory: root },
+      });
+    },
+  );
+  register(
+    "idiom_ready",
+    "Return the same verdict as idiom init --validate: validate every flow, then boot the first (or named) flow's server once. Reports ready, or the first problem and its fix; setup is done only when ready is true. Not-ready is a result, not a tool error. Runs project commands; creates nothing.",
+    z.strictObject({
+      flow: identifier
+        .optional()
+        .describe("Configured flow ID to boot; defaults to the first flow"),
+    }),
+    false,
+    async ({ flow }, execution) => {
+      const dependencies = capture(execution);
+      const report = await initValidate({
+        project: root,
+        cwd: root,
+        flow,
+        signal: execution.signal,
+        dependencies: {
+          process: dependencies.process,
+          inheritedEnvironment: dependencies.inheritedEnvironment,
+        },
+      });
+      const problem = initValidateProblem(report);
+      const lines = renderInitValidate(report);
+      if (problem !== undefined)
+        lines.push(problem.headline, `Fix: ${problem.hint}`);
+      return result(
+        lines.join("\n"),
+        problem === undefined ? report : { ...report, problem },
+      );
     },
   );
   register(
@@ -1229,7 +1318,9 @@ export function registerIdiomTools(
           inheritedEnvironment: dependencies.inheritedEnvironment,
         },
       });
-      return result(renderDoctorReport(report).trimEnd(), report);
+      return withUpdateNotice(
+        result(renderDoctorReport(report).trimEnd(), report),
+      );
     },
   );
   register(

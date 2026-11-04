@@ -329,6 +329,20 @@ test("the close runs only commands a freshly initialized project can pass", asyn
   expect(guide).toContain("no flow manifests found");
 });
 
+test("init --validate is the setup-is-done signal in the skill and guide", async () => {
+  const skill = await readIdiomSkillTemplate();
+  expect(skill).toContain(
+    "Setup is done when `idiom init --validate` prints `ready`",
+  );
+  expect(guide).toContain(
+    '`idiom init --validate` is the "setup is done"\nsignal',
+  );
+  expect(guide).toContain(
+    "rerun `idiom init --validate` until it prints `ready`",
+  );
+  expect(guide).toContain("That is expected, not a failure of the interview");
+});
+
 test("the interview names no command the CLI does not have", async () => {
   const registered = new Set(
     createProgram().commands.map((command) => command.name()),

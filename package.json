@@ -1,6 +1,6 @@
 {
   "name": "@mattskilly/idiom",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "Design acceptance for AI-built software.",
   "type": "module",
   "license": "Apache-2.0",
@@ -41,6 +41,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun run build && vitest run",
+    "contract:update": "IDIOM_UPDATE_CONTRACT=1 vitest run test/interface-contract.test.ts",
     "lint": "biome check .",
     "build": "node scripts/check-plugins.mjs && tsup --config tsup.config.ts",
     "build:site": "node scripts/build-site.mjs",

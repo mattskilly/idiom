@@ -1,3 +1,4 @@
+import { briefAssertionIdentity } from "../brief/assertions.js";
 import { judgeFailure } from "../checks/failure-state.js";
 import { judgeDoubleSubmit, judgeLoading } from "../checks/loading-state.js";
 import { runDeterministicChecks } from "../checks/registry.js";
@@ -396,6 +397,31 @@ export function evaluateRuleAcceptance(options: {
       contract,
       "Effective check settings changed; disabled checks or relaxed thresholds cannot prove acceptance.",
     );
+  // The rule id carries the assertion's identity, so a re-decided assertion
+  // never emits the old rule; that is not a fix.
+  const { brief, assertionIdentity } = contract.condition.parameters;
+  if (
+    contract.check === "brief-mismatch" &&
+    typeof brief === "string" &&
+    typeof assertionIdentity === "string"
+  ) {
+    const current = options.config?.briefs?.find(
+      (check) => check.slug === brief && check.eligible === true,
+    );
+    if (
+      current !== undefined &&
+      !current.criteria.some((criterion) =>
+        criterion.assertions.some(
+          (assertion) =>
+            briefAssertionIdentity(assertion) === assertionIdentity,
+        ),
+      )
+    )
+      return unavailableAcceptance(
+        contract,
+        "The brief assertion this finding judged was re-decided; its findings are reported under the new assertion.",
+      );
+  }
   const statuses = [options.currentA, options.currentB].map((tuples, index) => {
     const checked =
       options.checkedCaptures?.[index] ??

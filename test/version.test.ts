@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
+import { INTERFACE_VERSION } from "../src/interface/version.js";
 import {
   IDIOM_BUILD_COMMIT,
   IDIOM_VERSION,
@@ -17,6 +18,13 @@ test("version is valid semver sourced from package metadata", () => {
 
 test("direct source imports identify an unbundled development build", () => {
   expect(IDIOM_BUILD_COMMIT).toBe("unknown");
-  expect(IDIOM_VERSION_DISPLAY).toBe(`${packageMetadata.version} (unknown)`);
+  expect(IDIOM_VERSION_DISPLAY).toBe(
+    `${packageMetadata.version} (unknown) · interface 1`,
+  );
   expect(IDIOM_VERSION).not.toContain("(");
+});
+
+test("the interface version is a positive integer", () => {
+  expect(Number.isInteger(INTERFACE_VERSION)).toBe(true);
+  expect(INTERFACE_VERSION).toBeGreaterThan(0);
 });

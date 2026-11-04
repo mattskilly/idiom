@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   type BriefCheck,
+  briefAssertionIdentity,
   briefCheckFrom,
   briefSelectorsFor,
 } from "../src/brief/assertions.js";
@@ -9,13 +10,21 @@ import {
   evaluateBriefAssertions,
 } from "../src/checks/brief-mismatch.js";
 import { checksConfigFrom } from "../src/checks/registry.js";
+import { verify } from "../src/checks/shared.js";
 import type {
   ActionTimelineArtifact,
   CheckTuple,
+  FindingCandidate,
   ObservedElementV2,
   Rect,
   SelectorMark,
 } from "../src/checks/types.js";
+import { ruleRejection } from "../src/decisions/log.js";
+import { buildRuleContract } from "../src/findings/contract.js";
+import type { FindingLineage } from "../src/review/catalog.js";
+import { buildDeterministicDrafts } from "../src/review/findings.js";
+import { lineageDecision } from "../src/review/lifecycle.js";
+import type { RuleAcceptance } from "../src/schemas/acceptance.js";
 import {
   briefAssertionSchema,
   type CompleteStoredBrief,
@@ -23,6 +32,8 @@ import {
   type StoredBrief,
   storedBriefSchema,
 } from "../src/schemas/brief.js";
+import type { Decision } from "../src/schemas/decision.js";
+import { evaluateRuleAcceptance } from "../src/verify/acceptance.js";
 import { invariantObservations, invariantTuple } from "./invariant-support.js";
 
 type ElementInput = {
@@ -408,8 +419,111 @@ describe("minContrast", () => {
           color: "rgba(0, 0, 0, 0)",
         }),
         brief,
-      )[0]?.outcome,
-    ).toBe("unmeasured");
+      )[0],
+    ).toMatchObject({
+      outcome: "unmeasured",
+      reason: ".pin has no painted foreground",
+    });
+  });
+
+  const unpainted = {
+    fill: "rgba(0, 0, 0, 0)",
+    stroke: "none",
+    color: "rgba(0, 0, 0, 0)",
+  };
+  const pins = (styles: Array<Partial<ObservedElementV2["styles"]>>) => {
+    const selectors = styles.map(
+      (_, index) => `.tile .pin:nth-of-type(${index + 1})`,
+    );
+    return tuple({
+      elements: [
+        {
+          selector: ".tile",
+          rect: {},
+          styles: { backgroundColor: "rgb(255, 255, 255)" },
+        },
+        ...styles.map((style, index) => ({
+          selector: selectors[index] as string,
+          tag: "svg",
+          ancestors: [".tile"],
+          rect: {},
+          styles: style,
+        })),
+      ],
+      marks: [{ selector: ".pin", matches: selectors }],
+    });
+  };
+  test("every match measured and passing passes with no note", () => {
+    expect(
+      outcomes(
+        pins([{ fill: "rgb(0, 0, 0)" }, { fill: "rgb(0, 0, 0)" }]),
+        brief,
+      ),
+    ).toEqual([{ outcome: "pass", reason: undefined, details: [] }]);
+  });
+  test("an unpainted match is skipped and the rest are still judged", () => {
+    const expected = {
+      outcome: "mismatch",
+      details: [".pin contrast 1.61:1, expected at least 3:1"],
+    };
+    expect(
+      outcomes(
+        pins([
+          { fill: "rgb(0, 0, 0)" },
+          unpainted,
+          { fill: "rgb(204, 204, 204)" },
+        ]),
+        brief,
+      ),
+    ).toEqual([
+      {
+        ...expected,
+        reason:
+          "1 of 3 .pin matches had no painted foreground and were not measured: .tile .pin:nth-of-type(2)",
+      },
+    ]);
+    expect(
+      outcomes(
+        pins([
+          { fill: "rgb(204, 204, 204)" },
+          { fill: "rgb(0, 0, 0)" },
+          unpainted,
+        ]),
+        brief,
+      ),
+    ).toEqual([
+      {
+        ...expected,
+        reason:
+          "1 of 3 .pin matches had no painted foreground and were not measured: .tile .pin:nth-of-type(3)",
+      },
+    ]);
+    expect(
+      run(pins([unpainted, { fill: "rgb(204, 204, 204)" }]), [
+        brief,
+      ]).candidates.map((candidate) => candidate.selectorHint),
+    ).toEqual([".tile .pin:nth-of-type(2)"]);
+  });
+  test("a passing result still names the skipped matches", () => {
+    expect(
+      outcomes(pins([unpainted, { fill: "rgb(0, 0, 0)" }, unpainted]), brief),
+    ).toEqual([
+      {
+        outcome: "pass",
+        reason:
+          "2 of 3 .pin matches had no painted foreground and were not measured: .tile .pin:nth-of-type(1), .tile .pin:nth-of-type(3)",
+        details: [],
+      },
+    ]);
+  });
+  test("no match with a painted foreground is unmeasured", () => {
+    expect(outcomes(pins([unpainted, unpainted]), brief)).toEqual([
+      {
+        outcome: "unmeasured",
+        reason: ".pin has no painted foreground",
+        details: [],
+      },
+    ]);
   });
 });
 
@@ -481,6 +595,8 @@ describe("the check", () => {
       { selector: ".tile", matches: [".item:nth-of-type(1) .tile"] },
     ],
   });
+  const identity = (index: number) =>
+    briefAssertionIdentity(brief.criteria[0]?.assertions[index] as never);
   test("names the brief, the criterion and the measured values", () => {
     const result = run(subject, [brief]);
     expect(result.coverage.status).toBe("ran");
@@ -495,14 +611,14 @@ describe("the check", () => {
       ),
     ).toEqual([
       {
-        rule: "idiom:brief-mismatch:pinned-group:c0:a0:size",
+        rule: `idiom:brief-mismatch:pinned-group:c0:a0:size:${identity(0)}`,
         selectorHint: ".item:nth-of-type(1)",
         explanation:
           'Brief "Pinned group" (pinned-group), criterion "tile height unchanged at 56px; pin inside the tile": .item height 100, expected 56 (tolerance 1)',
         severity: "major",
       },
       {
-        rule: "idiom:brief-mismatch:pinned-group:c0:a1:within",
+        rule: `idiom:brief-mismatch:pinned-group:c0:a1:within:${identity(1)}`,
         selectorHint: ".item:nth-of-type(1) .pin",
         explanation:
           'Brief "Pinned group" (pinned-group), criterion "tile height unchanged at 56px; pin inside the tile": .item .pin extends 44px below .tile',
@@ -514,7 +630,12 @@ describe("the check", () => {
     ]);
     expect(result.candidates[0]?.verification).toMatchObject({
       check: "brief-mismatch",
-      params: { brief: "pinned-group", criterion: 0, assertion: 0 },
+      params: {
+        brief: "pinned-group",
+        criterion: 0,
+        assertion: 0,
+        assertionIdentity: identity(0),
+      },
     });
   });
   test("not applicable without a targeting brief; unavailable without v2 observations", () => {
@@ -619,5 +740,182 @@ describe("decided briefs as checks", () => {
       reason: expect.stringContaining("re-record"),
     });
     expect(briefSelectorsFor([other], "studio", "editor")).toEqual([]);
+  });
+});
+
+describe("re-deciding a brief", () => {
+  const assertion = (input: Record<string, unknown>) =>
+    briefAssertionSchema.parse({ flow: "studio", state: "editor", ...input });
+  const base = { selector: ".item", height: 56 };
+
+  test("the assertion identity covers what it asserts, not its name", () => {
+    const identity = (input: Record<string, unknown>) =>
+      briefAssertionIdentity(assertion(input));
+    const original = identity(base);
+    expect(original).toMatch(/^[0-9a-f]{8}$/);
+    for (const changed of [
+      { ...base, height: 40 },
+      { ...base, tolerance: 2 },
+      { ...base, selector: ".tile" },
+      { selector: ".item", within: ".tile" },
+      { ...base, state: "drawer" },
+    ])
+      expect(identity(changed)).not.toBe(original);
+    expect(identity({ ...base, name: "tile height" })).toBe(original);
+    expect(identity({ ...base, tolerance: 1 })).toBe(original);
+  });
+
+  const subject = tuple({
+    elements: [{ selector: ".item:nth-of-type(1)", rect: { height: 100 } }],
+    marks: [{ selector: ".item", matches: [".item:nth-of-type(1)"] }],
+  });
+  const v1 = check([base]);
+  const v2 = check([{ ...base, height: 40 }]);
+  // Re-decided with this assertion unchanged: a new assertion beside it.
+  const v1Again = check(
+    [base, { selector: ".item", within: ".tile" }],
+    "tile height unchanged at 56px, reworded",
+  );
+  const other: FindingCandidate = {
+    category: "overflow-clip",
+    severity: "minor",
+    rule: "idiom:overflow-clip",
+    selectorHint: ".item:nth-of-type(1)",
+    explanation: "clipped",
+    acceptance: ["not clipped"],
+    verification: verify("overflow-clip", { selector: ".item:nth-of-type(1)" }),
+  };
+  const drafts = (briefs: BriefCheck[]) => {
+    const mismatches = run(subject, briefs).candidates;
+    const built = buildDeterministicDrafts({
+      config: { ...checksConfigFrom(), briefs },
+      tuples: [subject],
+      runId: "run",
+      entries: [...mismatches, other].map((candidate, checkOrder) => ({
+        tuple: subject,
+        candidate,
+        checkOrder,
+      })),
+    });
+    const found = built.find(
+      (draft) => draft.finding.category === "brief-mismatch",
+    );
+    const unrelated = built.find(
+      (draft) => draft.finding.category === "overflow-clip",
+    );
+    if (unrelated === undefined) throw new Error("expected the other draft");
+    return { found, unrelated };
+  };
+  type Draft = ReturnType<typeof drafts>["unrelated"];
+  // The name registry keys lineages by fingerprint.
+  const lineage = (draft: Draft) =>
+    ({
+      id: `name-${draft.finding.fingerprint}`,
+      ids: [`name-${draft.finding.fingerprint}`],
+      fingerprints: [draft.finding.fingerprint],
+    }) as unknown as FindingLineage;
+  const decision = (
+    draft: Draft,
+    scope: Decision["scope"],
+    verdict: Decision["decision"],
+  ): Decision => ({
+    at: "2026-11-01T00:00:00.000Z",
+    commit: draft.finding.commit,
+    findingId: lineage(draft).id,
+    fingerprint: draft.finding.fingerprint,
+    decision: verdict,
+    scope,
+    actor: "human",
+  });
+  const first = drafts([v1]);
+  const accepted = first.found as Draft;
+
+  test("a changed expected value reopens accepted findings; an unchanged one keeps them", () => {
+    const decisions = [
+      decision(accepted, "instance", "accept"),
+      decision(accepted, "rule", "reject"),
+    ];
+    const identities = (draft: Draft) => [
+      draft.finding.fingerprint,
+      ...(draft.fingerprintAliases ?? []),
+    ];
+    const decided = (draft: Draft) => ({
+      instance: lineageDecision(lineage(draft), decisions.slice(0, 1)),
+      rule: ruleRejection(identities(draft), decisions),
+    });
+    expect(decided(accepted)).toEqual({
+      instance: decisions[0],
+      rule: decisions[1],
+    });
+
+    const redecided = drafts([v2]).found as Draft;
+    expect(redecided.finding.fingerprint).not.toBe(
+      accepted.finding.fingerprint,
+    );
+    expect(decided(redecided)).toEqual({
+      instance: undefined,
+      rule: undefined,
+    });
+
+    const unchanged = drafts([v1Again]).found as Draft;
+    expect(unchanged.finding.fingerprint).toBe(accepted.finding.fingerprint);
+    expect(decided(unchanged)).toEqual(decided(accepted));
+  });
+
+  test("another rule's identity and acceptance survive any brief change", () => {
+    const settings = (draft: Draft) =>
+      draft.finding.acceptance.kind === "rule"
+        ? draft.finding.acceptance.condition.settingsIdentity
+        : undefined;
+    expect(settings(first.unrelated)).toBeDefined();
+    // Re-decided, unchanged, and superseded (gone from config).
+    for (const briefs of [[v2], [v1Again], []]) {
+      const { unrelated } = drafts(briefs);
+      expect(unrelated.finding.fingerprint).toBe(
+        first.unrelated.finding.fingerprint,
+      );
+      expect(settings(unrelated)).toBe(settings(first.unrelated));
+    }
+  });
+
+  test("verify does not call a re-decided assertion fixed", () => {
+    const mismatch = run(subject, [v1]).candidates[0] as FindingCandidate;
+    const contract = buildRuleContract(subject, mismatch, {
+      ...checksConfigFrom(),
+      briefs: [v1],
+    }).acceptance as RuleAcceptance;
+    const evaluate = (briefs: BriefCheck[], current: CheckTuple) => {
+      // Only this check runs; the hand-built tuple is not a full capture.
+      const result = run(current, briefs);
+      const checked = {
+        candidates: result.candidates.map((candidate) => ({
+          tuple: current,
+          candidate,
+          checkOrder: 0,
+        })),
+        coverage: [{ tuple: current, coverage: result.coverage }],
+        captureCoverage: [],
+      };
+      return evaluateRuleAcceptance({
+        contract,
+        currentA: [current],
+        currentB: [current],
+        config: { ...checksConfigFrom(), briefs },
+        checkedCaptures: [checked, checked],
+      });
+    };
+    const fixed = tuple({
+      elements: [{ selector: ".item:nth-of-type(1)", rect: { height: 56 } }],
+      marks: [{ selector: ".item", matches: [".item:nth-of-type(1)"] }],
+    });
+    expect(evaluate([v2], subject)).toMatchObject({
+      status: "not-recheckable",
+      reason: expect.stringContaining("re-decided"),
+    });
+    expect(evaluate([v1], fixed).status).toBe("passed");
+    expect(evaluate([v1], subject).status).toBe("failed");
+    expect(evaluate([v1Again], fixed).status).toBe("passed");
+    // A superseded brief is no longer in config: today's behaviour.
+    expect(evaluate([], fixed).status).toBe("passed");
   });
 });

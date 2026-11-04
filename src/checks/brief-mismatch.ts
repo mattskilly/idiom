@@ -1,4 +1,8 @@
-import { type BriefCheck, briefAssertionsFor } from "../brief/assertions.js";
+import {
+  type BriefCheck,
+  briefAssertionIdentity,
+  briefAssertionsFor,
+} from "../brief/assertions.js";
 import {
   type BriefAssertion,
   type BriefAssertionForm,
@@ -43,6 +47,10 @@ export type BriefAssertionResult = {
   assertion: BriefAssertion;
   form: BriefAssertionForm;
   outcome: "pass" | "mismatch" | "unmeasured" | "not-applicable";
+  /**
+   * On `unmeasured`, why. On `pass` or `mismatch`, an optional note about
+   * matches that were not measured.
+   */
   reason?: string | undefined;
   failures: BriefFailure[];
 };
@@ -197,9 +205,13 @@ export function evaluateBriefAssertions(
       reason,
       failures: [],
     });
-    const judged = (failures: BriefFailure[]): BriefAssertionResult => ({
+    const judged = (
+      failures: BriefFailure[],
+      reason?: string,
+    ): BriefAssertionResult => ({
       ...base,
       outcome: failures.length === 0 ? "pass" : "mismatch",
+      ...(reason === undefined ? {} : { reason }),
       failures,
     });
     const missing = (selector: string) =>
@@ -362,10 +374,13 @@ export function evaluateBriefAssertions(
     }
 
     if ("minContrast" in assertion) {
+      const skipped: string[] = [];
       for (const element of subject.elements) {
         const color = foreground(element, bySelector);
-        if (color === undefined)
-          return unmeasured(`${assertion.selector} has no painted foreground`);
+        if (color === undefined) {
+          skipped.push(element.selector);
+          continue;
+        }
         const background = effectiveBackground(element, bySelector);
         const blend = (channel: "r" | "g" | "b") =>
           color[channel] * color.a + background[channel] * (1 - color.a);
@@ -380,7 +395,14 @@ export function evaluateBriefAssertions(
           measured: { ratio, foreground: color, background },
         });
       }
-      return judged(failures);
+      if (skipped.length === subject.elements.length)
+        return unmeasured(`${assertion.selector} has no painted foreground`);
+      return judged(
+        failures,
+        skipped.length === 0
+          ? undefined
+          : `${skipped.length} of ${subject.elements.length} ${assertion.selector} matches had no painted foreground and were not measured: ${skipped.join(", ")}`,
+      );
     }
 
     for (const element of subject.elements)
@@ -418,11 +440,12 @@ export const briefMismatchCheck: DeterministicCheck = {
     const candidates: FindingCandidate[] = [];
     for (const result of evaluateBriefAssertions(tuple, briefs)) {
       const { brief, criterion, assertionIndex, form } = result;
+      const identity = briefAssertionIdentity(result.assertion);
       for (const failure of result.failures)
         candidates.push({
           category: this.id,
           severity: "major",
-          rule: `idiom:brief-mismatch:${brief.slug}:c${criterion.index}:a${assertionIndex}:${form}`,
+          rule: `idiom:brief-mismatch:${brief.slug}:c${criterion.index}:a${assertionIndex}:${form}:${identity}`,
           selectorHint: failure.selector,
           explanation: `Brief "${brief.title}" (${brief.slug}), criterion "${criterion.statement}": ${failure.detail}`,
           acceptance: [`${criterion.statement} (brief ${brief.slug})`],
@@ -430,6 +453,7 @@ export const briefMismatchCheck: DeterministicCheck = {
             brief: brief.slug,
             criterion: criterion.index,
             assertion: assertionIndex,
+            assertionIdentity: identity,
             selector: failure.selector,
             measured: failure.measured,
           }),

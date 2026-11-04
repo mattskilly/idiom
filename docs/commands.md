@@ -1,14 +1,17 @@
 # Commands
 
-How to run each Idiom command, its flags and what it prints. What to write in `.idiom/project.json`, flow files and CI configuration is in [configuration.md](configuration.md).
+How to run each Idiom command, its flags and what it prints. What to write in `.idiom/project.json`, flow files and CI configuration is in [configuration.md](configuration.md). When a newer Idiom is released, a few commands say so once a day; see [Update notices](#update-notices).
 
 ## Command index
+
+`idiom --help` opens with a four-line **Start here** workflow (`idiom init`, `idiom init --validate`, `idiom check <flow>`, then `idiom fix` or `idiom decide`) and lists every command once under a group: Setup, Daily loop, Judgment and decisions, Briefs, Explore and inspect, Agents and integration, and Maintenance. `idiom <command> --help` shows the command's flags; `init`, `check`, `review`, `fix`, `decide` and `brief` also end with an **Examples** block.
 
 ```
 idiom mcp                    # stdio MCP tools for coding agents
 idiom quick <url...>         # public-page review with no setup
-idiom init                   # safe project scaffold
-idiom upgrade                # update vendored skills, preserving customization
+idiom init                   # safe project scaffold, then hand setup to your coding agent
+idiom init --validate        # setup is done? ready, or not ready + Fix
+idiom upgrade                # update the CLI, then vendored skills, preserving customization
 idiom validate [flow]        # project + manifest validation
 idiom doctor [flow]          # boot the server once and diagnose setup
 idiom reference add|list|remove  # manage visual references and anti-references
@@ -94,6 +97,28 @@ Quick review requires no Idiom files, product or design documents, flow manifest
 
 ## init
 
+### Hand setup to your coding agent (recommended)
+
+```sh
+idiom init                          # scaffold, then offer to launch Claude Code or Codex
+idiom init --agent claude-code      # launch that agent without asking
+idiom init --print-setup-prompt     # print only the prompt, for any other agent
+```
+
+Scaffolding is the easy part; the work is writing the server command, seed steps and a first flow. After scaffolding, an interactive `idiom init` hands that work to the coding agent you already use. It checks whether `claude` (Claude Code) or `codex` (Codex) runs here by calling `<cli> --version` through the same process transport critique uses. The project's configured critique provider (`model.provider`, then `model.fallback.provider`) is tried first; otherwise Claude Code is. If one is usable, init asks `Hand the rest of setup to <agent> now? [y/N]` and, on yes, starts that agent's interactive session in the project with the setup prompt as its first message. When it exits, confirm with `idiom init --validate`; the agent's exit code is reported but never fails init.
+
+If no agent is usable, or you decline, init prints the same prompt between `----- BEGIN IDIOM SETUP PROMPT -----` and `----- END IDIOM SETUP PROMPT -----`, ready to paste into any coding agent.
+
+- `--agent claude-code|codex` launches that agent without asking (the flag is the consent). If it is not usable, init prints why and the prompt, then exits 1; the scaffold is still written.
+- `--no-agent` leaves out the agent step entirely and prints a one-line hint.
+- `--yes` never launches an agent unless `--agent` is also given; without it, init prints the prompt instead. A non-interactive run (no TTY) behaves the same way.
+- `--print-setup-prompt` prints only the prompt and exits, without scaffolding; it works in an uninitialized directory and cannot be combined with other init options.
+- A launched agent runs with `IDIOM_SETUP_AGENT=1`, so an `idiom init` it runs never offers again.
+
+The prompt is versioned with the CLI (its title names the Idiom version) and repository-aware: it lists what Idiom found — package manager, relevant `package.json` scripts (credentials redacted), frameworks, the current `server` config and whether it is still the scaffold default, existing flows and routes found by `--flows`, seed scripts and fixtures, an example env file by name only, and whether `PRODUCT.md` and `DESIGN.md` are untouched or human-edited. It never includes env file contents or `server.env` values. Its steps are: start the app (server command, port, `readyUrl`); seed data and test accounts from the repository's own scripts and fixtures, never real credentials; find routes with `idiom init --flows`; write a first flow of 3–8 states with stable selectors; and fill `PRODUCT.md` and `DESIGN.md` from the repository. It ends at `idiom init --validate`: the agent must keep going until that prints `ready`, and otherwise report the exact `not ready` and `Fix` lines as the remaining problem rather than claim success. The agent is told never to disable or weaken checks, edit rules or decisions to silence findings, commit, push or open pull requests.
+
+Agents that use Idiom through MCP get the same prompt from `idiom_setup_prompt` and the same verdict as `init --validate` from `idiom_ready` (see [mcp.md](mcp.md)).
+
 ## Initialize a project
 
 From the unrelated application you want to inspect:
@@ -106,7 +131,7 @@ idiom init --yes
 
 The Git check must print a commit. A plain directory, an uninitialized repository, or a repository with no commits can be initialized and validated, but cannot be captured; make its first application commit before continuing. Later uncommitted application or Idiom configuration changes are allowed and are recorded as a dirty source state.
 
-Then edit `.idiom/project.json` and define a flow; both files are described in [configuration.md](configuration.md#project-file). Validate and capture the first flow end to end:
+To set up by hand instead of with an agent (add `--no-agent` to leave out the printed prompt), edit `.idiom/project.json` and define a flow; both files are described in [configuration.md](configuration.md#project-file). Validate and capture the first flow end to end:
 
 ```sh
 idiom validate home
@@ -180,6 +205,21 @@ wired rerun does not prompt or duplicate entries. `idiom init --yes` never
 changes Autobuild configuration or installs the verifier; it only reports that
 interactive wiring is available.
 
+### Check that setup is done
+
+```sh
+idiom init --validate
+idiom init --validate --flow site --json
+```
+
+`idiom init` ends with `Next: idiom init --validate`. `--validate` is the noninteractive readiness check: it creates and changes nothing. It runs `idiom validate` across every flow in `.idiom/flows`, then one `idiom doctor` boot of the first flow (in filename order) or the flow named by `--flow <id>`, and prints both results. When every step passes, the last line is `ready` and the exit code is 0. Otherwise stderr holds two lines, `not ready: <first problem>` and `Fix: <what to do>`, and the exit code is 2 (see [Exit codes and setup failures](#exit-codes-and-setup-failures)). Doctor warnings such as a dirty tree do not block readiness.
+
+- In a directory with no `.idiom/project.json` here or above, it prints `not ready: Idiom is not initialized here (…)` and `Fix: run idiom init`.
+- A project with no flow manifest yet (plain `idiom init --yes` authors none) prints `not ready: .idiom/flows: no flow manifests found` with the fix to generate one with `idiom init --flows --yes` or author `.idiom/flows/<id>.json`.
+- A manifest or project error names the file and field, as `idiom validate` does, and no server is started.
+
+`--json` prints `{ ready, validate, doctor }`: `validate` is `{ ok: true, projectDirectory, flows: [{ id, file }] }` or `{ ok: false, failure }`, and `doctor` is the [`idiom doctor --json`](#doctor) report, or `null` when validation failed. `--validate` cannot be combined with `--yes`, `--flows`, `--surface`, `--agent`, `--no-agent` or `--print-setup-prompt`; `--flow` and `--json` apply only with `--validate`. Note that `--flow <id>` (one flow to boot) is distinct from `--flows` (generate a site flow). The MCP `idiom_init` tool ends with `Next: idiom_ready` instead; `idiom_ready` returns the same report and verdict as a tool.
+
 ### Use the conversational skill
 
 Start Claude Code in the initialized repository and invoke:
@@ -229,13 +269,48 @@ restart the session so `/idiom` is discovered.
 ## upgrade
 
 ```sh
-idiom upgrade [--project <dir>] [--no-agent] [--dry-run] [--json]
+idiom upgrade [--project <dir>] [--no-agent] [--no-self-update] [--dry-run] [--json]
 ```
 
-Merge the installed CLI's skill templates into a project (0.16.0 and later).
-It never updates the CLI itself. Without `--project`, an initialized ancestor is selected, with
+Update the Idiom CLI, then merge its skill templates into a project (the skill
+merge since 0.16.0). Without `--project`, an initialized ancestor is selected, with
 the current directory as fallback. Only already-installed or pristine-tracked
 `ab-verify-idiom` skills participate; Autobuild detection alone grants no install.
+
+**First, the CLI.** For a global `npm install -g` or `bun add -g` install,
+`idiom upgrade` reads the registry's `latest` (a fresh read, up to 10 seconds,
+never the notice's cache). When a newer stable release exists it runs
+`npm install -g @mattskilly/idiom@<latest>` or `bun add -g @mattskilly/idiom@<latest>`,
+checks that the replaced package reports `<latest>` from `--version`, prints
+`Updated the Idiom CLI <old> → <new> (ran: <command>).` and re-runs the new
+package's `idiom upgrade` with the same arguments and `IDIOM_SELF_UPDATE_HANDOFF=1`.
+That fresh process merges skills with the new templates and never self-updates
+again; its exit code is `idiom upgrade`'s exit code.
+
+Every other install leaves the CLI alone and still merges skills. A plugin,
+`npx` or `bunx` install prints one line with its [update command](#update-notices)
+when a newer release exists. A source checkout prints
+`git pull && bun install --frozen-lockfile && bun run build`, and an install
+Idiom cannot identify (usually a project dependency) prints
+`npm install --save-dev --save-exact @mattskilly/idiom@latest`; neither makes a
+network request. The [update-notice off switches](#update-notices) also turn
+the registry read off, with one line saying so. Offline, a timeout or a registry
+failure prints one line saying the CLI version could not be checked, and the
+skills merge anyway.
+
+If the package manager fails, or the replaced package reports a different
+version, `idiom upgrade` exits 1 before touching any skill, naming the command
+(and, after a version mismatch, the command that reinstalls your previous
+version). A failed install leaves the existing CLI in place.
+
+`--no-self-update` skips this step: skills only, with the installed templates.
+`--dry-run` names the install it would run and reports the skill merge against
+the installed templates, changing nothing. `--json` adds
+`"cli": { "from", "to", "command", "outcome" }`, where `outcome` is `updated`
+(reported by the handed-off process), `would-update`, `current`, `manual`,
+`skipped`, `disabled`, `unchecked` or `failed`. A failure prints
+`{ "interfaceVersion", "cli": { …, "outcome": "failed", "error" } }` and no
+skill report.
 
 Init seeds upstream bytes under `.agents/skills/.idiom-pristine/<skill>/<file>`
 and per-file version/digest records in its `manifest.json`. Upgrade compares
@@ -308,7 +383,7 @@ idiom doctor booking --port 4100 --json
 
 Electron flows launch the app directly, so every server step is skipped for them. The first line is `idiom doctor <flow>: ok` or `idiom doctor <flow>: <failure>`; each failing or warning step adds a `fix:` line. The fixes cover the known causes: a start command that pins its port without `server.fixedPort`, a missing environment variable (add it to `server.env`), a port already in use, and a readiness URL that never returns `200`. `--json` prints `{ flow, ok, steps: [{ id, status, ms, detail, hint }], failure }`.
 
-Doctor exits `0` when every step passes or warns, and `2` with the failing step's one-line cause when one fails. It captures nothing and writes nothing to the project. The MCP tool is `idiom_doctor`.
+Doctor exits `0` when every step passes or warns, and `2` with the failing step's one-line cause when one fails. It captures nothing and writes nothing to the project. The MCP tool is `idiom_doctor`. [Troubleshooting](troubleshooting.md) covers each failure with its cause and fix.
 
 ## Exit codes and setup failures
 
@@ -346,7 +421,45 @@ The first line is one of:
 
 With `--json`, `check` and `baseline record|accept` also print `{ "flow": …, "failure": { "stage": "preflight"|"server"|"capture", "cause": …, "hint": …, "message": … } }` on stdout; `tree-dirty` adds `paths`. MCP tools return the same object as `structuredContent.failure`.
 
+Every `--json` payload is an object whose first key is `interfaceVersion`, except `brief list --json`, which prints a bare array. Which payloads and fields are stable is in [stability](stability.md#json-output).
+
 Server failures exit `2` from any command that starts the server (`capture`, `check`, `review`, `sweep`, `verify`, `baseline record`). Preflight runs only for `check` and `baseline record|accept`; `review` also checks the finding-name registry before a fresh capture.
+
+## Update notices
+
+When a newer Idiom release exists, `idiom init`, `check`, `review`, `doctor` and `idiom --version` print one line on stderr after all their other output, including a failure's `Fix:` line. The exit code is unchanged:
+
+```
+Idiom 0.19.0 is available (you have 0.18.0). Update: idiom upgrade
+```
+
+With `--json` the line is not printed. Instead the JSON object gains `"update": { "current", "latest", "command" }`, and only when a newer release exists. `idiom mcp` delivers the same notice to agents; see [mcp.md](mcp.md#update-notices).
+
+The update command depends on how Idiom was installed:
+
+| Install | Update command |
+| --- | --- |
+| `npm install -g` | `idiom upgrade` |
+| `bun add -g` | `idiom upgrade` |
+| `npx` (including a hand-run `npx --package=<tarball>`) | `npx -y @mattskilly/idiom@latest upgrade` |
+| `bunx` | `bunx @mattskilly/idiom@latest upgrade` |
+| Claude Code plugin | `claude plugin marketplace update idiom && claude plugin update idiom@idiom` |
+| Codex plugin | `codex plugin marketplace upgrade idiom && codex plugin add idiom@idiom && codex mcp add idiom -- npx -y --package=<new release tarball> idiom mcp` |
+
+For the two global installs, [`idiom upgrade`](#upgrade) runs the package manager itself and then updates the project's skills. The Codex row applies when Codex starts the MCP server (the `codex mcp add` line), which Idiom recognises by the MCP client name. The CLI never reports the Codex command.
+
+A source checkout, or an install whose kind Idiom cannot identify (for example a project-local dev dependency), never checks.
+
+**What is requested.** One `GET <registry>/@mattskilly%2fidiom/latest`, where `<registry>` is `NPM_CONFIG_REGISTRY` (or npm's `npm_config_registry`) and otherwise `https://registry.npmjs.org`. The request sends only `accept: application/json` and `user-agent: idiom/<version> (node <version>; <platform>)`. It carries no project, path or user data, and nothing else is ever reported. The check gives up after 3 seconds and runs alongside the command, so it never delays a command by more than that plus one small local cache write. Any failure, timeout, malformed answer or prerelease is silent.
+
+**Cache.** The answer is cached per user for 24 hours in `update-check.json` under `$XDG_CACHE_HOME/idiom/`, else `%LOCALAPPDATA%\idiom\` on Windows, else `~/.cache/idiom/`. A failed check is retried after an hour. A cache hit makes no network request, and the cached version is compared with the version now running, so the notice disappears as soon as you update.
+
+**Turn it off.** Any of these disables the check, and no network request is made:
+
+- `IDIOM_NO_UPDATE_CHECK=1`
+- `NO_UPDATE_NOTIFIER` set to any value
+- `CI` set (other than `false` or `0`)
+- `"updateCheck": false` in `.idiom/project.json` ([configuration.md](configuration.md#update-check))
 
 ## reference
 

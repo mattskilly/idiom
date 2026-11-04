@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { run } from "../src/cli.js";
 import { initProject } from "../src/commands/init.js";
+import { AGENT_SETUP_PRINT_LEAD } from "../src/commands/init-agent.js";
 import {
   discoverFlowRoutes,
   type Inspection,
@@ -20,6 +21,7 @@ import {
 import { constructSiteFlow } from "../src/flows/generate.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
+import { SETUP_PROMPT_END } from "../src/setup/prompt.js";
 
 const directories: string[] = [];
 async function temporary() {
@@ -475,7 +477,10 @@ test("CLI threads --flows --yes --surface and reports partial routes and next co
   );
   expect(stdout.join(" ")).toContain("1 setup-required");
   expect(stdout.join(" ")).toContain("/p/[id]");
-  expect(stdout.join(" ")).toContain("idiom capture site");
+  const next = stdout.indexOf("Next: idiom init --validate\n");
+  expect(next).toBeGreaterThan(0);
+  expect(stdout[next + 1]).toBe(`${AGENT_SETUP_PRINT_LEAD}\n`);
+  expect(stdout.at(-1)).toBe(`${SETUP_PROMPT_END}\n`);
   expect(stdout.join(" ")).toContain("offline");
 });
 

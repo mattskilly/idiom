@@ -1,6 +1,31 @@
 # Configuration
 
-What to write in `.idiom/project.json`, flow files, `.idiom/glossary.json`, `.idiom/baselines/`, `autobuild.toml` and the GitHub workflow. How to run each command is in [commands.md](commands.md).
+What to write in `.idiom/project.json`, flow files, `.idiom/glossary.json`, `.idiom/baselines/`, `autobuild.toml` and the GitHub workflow. How to run each command is in [commands.md](commands.md). When something won't run, see [Troubleshooting](troubleshooting.md); terms are defined in the [Glossary](glossary.md).
+
+## Overview
+
+Every top-level area of `.idiom/project.json`, its purpose and the default to know. `idiom init` writes a working file, and the full field list is in [schemas.md](schemas.md).
+
+| Area | Purpose | Notable default | Details |
+| --- | --- | --- | --- |
+| `version` | File format version | Always `1` | [schemas.md](schemas.md) |
+| `app` | App name and framework (`nextjs` or `other`) | Required | [schemas.md](schemas.md) |
+| `server` | How to build, start and reach the app | `startupTimeoutMs` 60000; free port per capture | [Project file](#project-file) |
+| `viewports` | Screen sizes every state is captured at | desktop 1440×900, mobile 390×844 | [Project file](#project-file) |
+| `surfaces` | Ordered inventory of product areas flows cover | `[]` | [Project file](#project-file) |
+| `colorSchemes` | Colour schemes to capture | `capture.colorScheme` only | [Capture settings](#capture-settings) |
+| `capture` | Locale, scheme, motion, timing and filmstrips | light, reduced motion, 30-minute budget, 4 lanes | [Capture settings](#capture-settings) |
+| `design` | PRODUCT.md, DESIGN.md and design tokens | `PRODUCT.md`, `DESIGN.md`; no tokens file | [token-drift](rules.md#token-drift) |
+| `baselines` | Where recorded baselines live | `.idiom/baselines` | [Baselines](#baselines) |
+| `agent` | Claude Code UI-edit reminders | Plugin reminders on; built-in UI file patterns | [Claude Code reminders](mcp.md#claude-code-reminders) |
+| `checks` | Per-check settings, the probe and the build gate | Most rules on; probe on for web flows | [Checks](#checks) |
+| `coverage` | Routes `idiom coverage` leaves out | None excluded | [Coverage](#coverage) |
+| `brief` | Reference products and brief template | No references | [Briefs](#briefs) |
+| `findingNames` | Whether a worktree consults the primary's names | Shared with the primary checkout | [Finding names](#finding-names) |
+| `updateCheck` | The once-a-day check for a newer release | On | [Update check](#update-check) |
+| `model` | Provider, model and fallback for the optional critique | Required; `claude-code` in new projects, at most 5 findings, no fallback | [review](commands.md#review) |
+
+Outside the project file: [flows](#flows) in `.idiom/flows/`, [rules overrides](#rules) in `.idiom/rules.json`, the copy glossary in `.idiom/glossary.json`, [Autobuild](#autobuild) wiring in `autobuild.toml`, and the [GitHub Action](#github-action) workflow.
 
 ## Project file
 
@@ -895,6 +920,18 @@ In a linked Git worktree, finding names union `.idiom/finding-names.json` with t
 ```
 
 The `--isolated-registry` flag on `check`, `review` and `baseline record|accept` does the same for one run and overrides the key.
+
+## Update check
+
+Idiom checks the npm registry for a newer release at most once a day and says so on stderr, in `--json` output and over MCP. To turn that off for everyone working in this project:
+
+```json
+{
+  "updateCheck": false
+}
+```
+
+The `IDIOM_NO_UPDATE_CHECK=1`, `NO_UPDATE_NOTIFIER` and `CI` environment variables turn it off too. See [Update notices](commands.md#update-notices) for exactly what is requested and where the answer is cached.
 
 ## Coverage
 

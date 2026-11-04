@@ -317,6 +317,72 @@ describe("coverage", () => {
       "  - criterion 0 assertion 0 (size .drawer-item at editor): the capture predates the brief and did not measure .drawer-item; recapture",
     );
   });
+
+  test("a partly measured assertion names the matches it skipped", () => {
+    const contrast = briefCheckFrom(
+      stored(
+        withAssertions([
+          {
+            flow: "studio-lab",
+            state: "editor",
+            selector: ".pin",
+            minContrast: 3,
+          },
+        ]),
+      ),
+    );
+    const pin = (selector: string, styles: object) =>
+      ({
+        ...element(selector, {}, ["#a .tile"]),
+        tag: "svg",
+        styles: {
+          opacity: "1",
+          visibility: "visible",
+          display: "block",
+          color: "rgba(0, 0, 0, 0)",
+          backgroundColor: "rgba(0, 0, 0, 0)",
+          stroke: "none",
+          ...styles,
+        },
+      }) as unknown as ObservedElementV2;
+    const subject: CheckTuple = {
+      ...invariantTuple({
+        ...invariantObservations(),
+        elements: [
+          {
+            ...element("#a .tile", {}),
+            styles: {
+              opacity: "1",
+              visibility: "visible",
+              display: "block",
+              backgroundColor: "rgb(255, 255, 255)",
+            },
+          } as unknown as ObservedElementV2,
+          pin("#a .pin:nth-of-type(1)", { fill: "rgb(0, 0, 0)" }),
+          pin("#a .pin:nth-of-type(2)", { fill: "rgba(0, 0, 0, 0)" }),
+        ],
+        selectorMarks: [
+          {
+            purpose: "brief",
+            selector: ".pin",
+            matches: ["#a .pin:nth-of-type(1)", "#a .pin:nth-of-type(2)"],
+          },
+        ] as SelectorMark[],
+      }),
+      flow: "studio-lab",
+    };
+    const note =
+      "1 of 2 .pin matches had no painted foreground and were not measured: #a .pin:nth-of-type(2)";
+    const coverage = computeBriefCoverage([subject], [contrast], "studio-lab");
+    expect(coverage.entries[0]).toMatchObject({
+      status: "checked",
+      assertions: [{ passed: 1, mismatched: 0, notes: [note] }],
+    });
+    expect(briefCoverageLines(coverage).slice(1)).toEqual([
+      "- Pinned group in the Add drawer (pinned-group): checked; 1 passed, 0 mismatched, 0 unmeasured",
+      `  - criterion 0 assertion 0 (minContrast .pin at editor): ${note}`,
+    ]);
+  });
 });
 
 describe("project config, context and learn", () => {

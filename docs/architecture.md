@@ -280,6 +280,16 @@ Nine checks, each a `checkId` registered in `src/checks/`, run as pure evaluator
 
 **The `--with-impeccable` adapter** keeps the door open: shell `npx impeccable detect <state-url>` per state (Apache-2.0, license-compatible), map P0 → blocker, P1 → major, P2–P3 → minor, tag rules as `impeccable:<rule-id>`, and dedupe against native findings by fingerprint. Whether the flag defaults on is decided empirically by backlog ticket T1.
 
+## Data and privacy
+
+Idiom has no telemetry and no analytics, and sends no project or user data on its own. Captures, reports, decisions, baselines, finding names and briefs stay on your machine, in your repository under `.idiom/` (reports are gitignored by default; `idiom quick` writes to `idiom-quick-reports/`). The only network traffic is:
+
+1. **The model provider you configure** (`claude-code`, `anthropic` or `codex`), and only for commands that use it: `idiom review`, `idiom sweep`, `idiom explore`, page review, `idiom check --advisory`, the `idiom brief` steps that triage or research a request, and conflict resolution in `idiom upgrade`. It receives screenshots, crops, bounded DOM excerpts, your PRODUCT.md and DESIGN.md, references, prior decisions and the deterministic findings (see [Model critique layer](#model-critique-layer)). `idiom fix` hands findings and crops to the Claude Code or Codex CLI you choose. Off switch: `--deterministic-only`, `idiom check` without `--advisory`, and `idiom upgrade --no-agent`.
+2. **The hosted review on idiom.build**, which ships disabled. When enabled, it receives only the URL and optional image you submit in its web form; the CLI never calls it. Off switch: don't use the form.
+3. **The update check.** At most once a day, `idiom check`, `review`, `doctor`, `init`, `--version` and the MCP server read the public `latest` document for `@mattskilly/idiom` from the npm registry (or your `NPM_CONFIG_REGISTRY`), with a 3-second limit. The request carries no project or user data, and source checkouts never make it. Off switch: `IDIOM_NO_UPDATE_CHECK=1`, `NO_UPDATE_NOTIFIER`, `CI`, or `"updateCheck": false` in the project file. See [Update notices](commands.md#update-notices).
+
+Besides these, Idiom fetches only what you ask for: your app at `server.readyUrl` and the URLs you pass to `idiom quick`, live-site references, the Figma API with your `FIGMA_TOKEN` when you add a Figma frame, Playwright's one-time Chromium download, and the pinned release tarball the plugin and `npx` launchers download from GitHub. During capture the probe blocks every request that could change data, and failure replays are answered locally without reaching your server.
+
 ## Model critique layer
 
 ```ts

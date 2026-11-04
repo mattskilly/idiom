@@ -1,19 +1,18 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { isPortOpen } from "../src/capture/process.js";
 import { run } from "../src/cli.js";
 import { renderDoctorReport, runDoctor } from "../src/commands/doctor.js";
 import type { DoctorReport } from "../src/doctor/run.js";
 import { RUN_FAILURE_EXIT_CODE } from "../src/errors.js";
+import { neverReadyProject, passingProject } from "./doctor-support.js";
 import { mcpClient, toolData } from "./mcp-support.js";
 
 // Doctor boots a real fixture server once. Each test proves the port is
 // released afterwards, so doctor never leaks a process.
 
-const SERVER = resolve("test/fixtures/capture/server.mjs");
 const directories: string[] = [];
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -26,78 +25,8 @@ afterEach(async () => {
   );
 });
 
-async function freePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((accept, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", accept);
-  });
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("no port");
-  await new Promise<void>((accept) => server.close(() => accept()));
-  return address.port;
-}
-
-async function doctorProject(
-  server: { start: string; startupTimeoutMs?: number },
-  port: number,
-): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "idiom-doctor-test-"));
-  directories.push(directory);
-  await mkdir(join(directory, ".idiom", "flows"), { recursive: true });
-  await writeFile(
-    join(directory, ".idiom", "project.json"),
-    JSON.stringify({
-      version: 1,
-      app: { name: "doctor", framework: "other" },
-      server: {
-        build: "node -e 0",
-        readyUrl: `http://127.0.0.1:${port}/`,
-        port,
-        env: {},
-        ...server,
-      },
-      viewports: [{ name: "desktop", width: 800, height: 600 }],
-      capture: {},
-      design: {},
-      model: { provider: "anthropic", model: "unused" },
-    }),
-  );
-  await writeFile(
-    join(directory, ".idiom", "flows", "home.json"),
-    JSON.stringify({
-      id: "home",
-      title: "Home",
-      intent: [],
-      setup: [],
-      states: [{ id: "home", description: "Home", url: "/", expect: {} }],
-    }),
-  );
-  return directory;
-}
-
-const passing = async () => {
-  const port = await freePort();
-  return {
-    port,
-    directory: await doctorProject({ start: `node ${SERVER}` }, port),
-  };
-};
-
-const neverReady = async () => {
-  const port = await freePort();
-  return {
-    port,
-    directory: await doctorProject(
-      {
-        start: `node -e ${JSON.stringify("setInterval(() => {}, 1000)")}`,
-        startupTimeoutMs: 1_500,
-      },
-      port,
-    ),
-  };
-};
+const passing = () => passingProject(directories);
+const neverReady = () => neverReadyProject(directories);
 
 test("the fixture app passes every server step and releases its port", async () => {
   const { directory, port } = await passing();

@@ -5,23 +5,23 @@ description: Update or pin the Idiom CLI, merge new skill guidance without losin
 
 # Update and roll back
 
-Update the CLI once, then run `idiom upgrade` in each project to bring its vendored skills to that installed version. Commit the skills and their pristine records together so the next update can distinguish your customization from upstream guidance.
+Run `idiom upgrade` in each project. For a global npm or bun install it first updates the CLI to the latest release, then brings the project's vendored skills to that version; other installs update the CLI their own way first. Commit the skills and their pristine records together so the next update can distinguish your customization from upstream guidance.
 
 ## Update or pin the CLI
 
-Install the latest released CLI from npm:
+For a global npm or bun install, `idiom upgrade` updates the CLI itself: it checks the npm registry, runs `npm install -g @mattskilly/idiom@<latest>` or `bun add -g @mattskilly/idiom@<latest>`, checks the new version, then merges skills with the new release. If the install fails or the new CLI reports the wrong version, it stops before touching any skill and names the command. Plugin, `npx` and `bunx` installs print their update command instead, and a source checkout or project dependency prints how to update it. To install by hand:
 
 ```sh
 npm install -g @mattskilly/idiom@latest
 idiom --version
 ```
 
-`idiom upgrade` needs 0.16.0 or later. Read the [changelog](https://github.com/mattskilly/idiom/blob/main/CHANGELOG.md) when choosing a version.
+`idiom upgrade` needs 0.16.0 or later. Read the [changelog](https://github.com/mattskilly/idiom/blob/main/CHANGELOG.md) when choosing a version. [Upgrading](/docs/upgrading#action-required-by-release) lists what each release asks you to do.
 
 For a project dependency, pin an exact version and commit the package manifest and lockfile:
 
 ```sh
-npm install --save-dev --save-exact @mattskilly/idiom@0.18.0
+npm install --save-dev --save-exact @mattskilly/idiom@0.19.0
 npx --no-install idiom --version
 ```
 
@@ -37,7 +37,7 @@ idiom upgrade
 # For a pinned project dependency: npx --no-install idiom upgrade
 ```
 
-`--project <dir>` chooses an explicit directory. Without it, the command finds an initialized ancestor of the current directory, or uses the current directory for a new installation. It changes only Idiom's skill files, pristine state, and owned discovery links. It does not update the CLI or other project configuration. The optional `ab-verify-idiom` skill participates only if already installed or recorded in pristine state; detecting `autobuild.toml` alone does not install it.
+`--project <dir>` chooses an explicit directory. Without it, the command finds an initialized ancestor of the current directory, or uses the current directory for a new installation. In the project it changes only Idiom's skill files, pristine state, and owned discovery links, never other project configuration. Its first step updates a global npm or bun CLI, as above; `--no-self-update` skips that step and merges the installed CLI's skills, and `--dry-run` names the CLI install it would run without running it. The optional `ab-verify-idiom` skill participates only if already installed or recorded in pristine state; detecting `autobuild.toml` alone does not install it.
 
 The report names the installed CLI version and previous per-file versions. Legacy files with identical bytes in several releases report candidate versions; partial upgrades may report mixed versions. The outcomes are:
 
@@ -84,6 +84,14 @@ Never put the manually merged result into pristine state: that would hide your e
 
 ## Roll back
 
-Install or pin an earlier **upgrade-capable** CLI, verify it with `idiom --version`, and run `idiom upgrade` again in the project. The same three-way merge rules apply in either version direction, preserving local edits and reporting overlaps for review.
+Install or pin an earlier **upgrade-capable** CLI, verify it with `idiom --version`, and run `idiom upgrade --no-self-update` again in the project (releases through 0.18.0 have no such flag and never update the CLI, so run plain `idiom upgrade` there). Without the flag, a global install would update straight back to the latest release. Idiom never rolls the CLI back itself; pin it with the install command:
+
+```sh
+npm install -g @mattskilly/idiom@<version>    # or: bun add -g @mattskilly/idiom@<version>
+idiom --version
+idiom upgrade --no-self-update
+```
+
+ The same three-way merge rules apply in either version direction, preserving local edits and reporting overlaps for review.
 
 Already-published releases that predate this command cannot run it. To restore their guidance, restore the desired committed skill **and pristine** files from Git, or use an upgrade-capable installed release. Keep a commit of your customized skill state before changing versions so you can restore that project state too.

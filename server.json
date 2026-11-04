@@ -3,7 +3,7 @@
   "name": "io.github.mattskilly/idiom",
   "title": "Idiom",
   "description": "Design acceptance for UI: capture flows, inspect findings, plan repairs and verify fixes.",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "websiteUrl": "https://idiom.build",
   "repository": {
     "url": "https://github.com/mattskilly/idiom",
@@ -14,7 +14,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@mattskilly/idiom",
-      "version": "0.18.0",
+      "version": "0.19.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -93,6 +93,14 @@
         {
           "name": "idiom_doctor",
           "description": "Boot the app server once and diagnose why a run could not start."
+        },
+        {
+          "name": "idiom_setup_prompt",
+          "description": "The repository-aware setup prompt init hands to a coding agent."
+        },
+        {
+          "name": "idiom_ready",
+          "description": "Same readiness verdict as idiom init --validate."
         },
         {
           "name": "idiom_brief_triage",

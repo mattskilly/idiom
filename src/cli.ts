@@ -76,6 +76,12 @@ import {
   initProject,
   initSummaryLines,
 } from "./commands/init.js";
+import { offerAgentSetup } from "./commands/init-agent.js";
+import {
+  initValidate,
+  initValidateProblem,
+  renderInitValidate,
+} from "./commands/init-validate.js";
 import { instructionCommand } from "./commands/instruction.js";
 import { type LearnDependencies, learnCommand } from "./commands/learn.js";
 import { quickCommand } from "./commands/quick.js";
@@ -98,11 +104,15 @@ import {
 import { validateCommand } from "./commands/validate.js";
 import { verifyCommand } from "./commands/verify.js";
 import { renderStateCoverage } from "./coverage/states.js";
+import type { CritiqueProcessRunner } from "./critique/process.js";
 import { IdiomError, RUN_FAILURE_EXIT_CODE, RunFailure } from "./errors.js";
 import { severityGateEligible } from "./findings/gate.js";
 import { renderFixSummary } from "./fix/report.js";
 import type { FixDependencies } from "./fix/run.js";
 import type { GenerateFlow } from "./flows/generate.js";
+import { applyHelp } from "./help.js";
+import { EXIT_CODES, jsonPayload } from "./interface/version.js";
+import { resolveProjectArgument } from "./project.js";
 import { interactionTail } from "./quick/interaction.js";
 import type { QuickDependencies } from "./quick/run.js";
 import type { ReferenceDependencies } from "./references/run.js";
@@ -113,9 +123,26 @@ import type { ReviewOutcome } from "./review/report.js";
 import type { ReviewDependencies } from "./review/run.js";
 import { type PageFocusArea, pageFocusAreas } from "./schemas/finding.js";
 import type { CritiqueProvider } from "./schemas/project.js";
+import {
+  SETUP_AGENTS,
+  type SetupAgent,
+  type SetupAgentLauncher,
+} from "./setup/agents.js";
+import { collectSetupFacts } from "./setup/facts.js";
+import { setupPrompt } from "./setup/prompt.js";
 import type { UpgradeDependencies } from "./skills/upgrade.js";
 import type { SystemRunDependencies } from "./system/run.js";
 import { renderClusterTicketsResult } from "./tickets/emit.js";
+import {
+  checkForUpdate,
+  renderUpdateNotice,
+  type UpdateCheckDependencies,
+  type UpdateNotice,
+} from "./update/notice.js";
+import {
+  type SelfUpdateDependencies,
+  selfUpdate,
+} from "./update/self-update.js";
 import type { VerifyDependencies } from "./verify/run.js";
 import { IDIOM_VERSION_DISPLAY } from "./version.js";
 
@@ -141,7 +168,61 @@ export type ProgramDependencies = {
   page?: PageReviewDependencies;
   system?: SystemRunDependencies;
   upgrade?: UpgradeDependencies;
+  /** Test seam for upgrade's CLI step: install detection, registry, runners. */
+  selfUpdate?: SelfUpdateDependencies;
+  updateCheck?: UpdateCheckDependencies;
+  /** Test seam for agent-led setup after init: probe runner, launcher, environment. */
+  setupAgent?: {
+    probe?: CritiqueProcessRunner;
+    launch?: SetupAgentLauncher;
+    environment?: NodeJS.ProcessEnv;
+  };
 };
+
+/** Commands that tell people a newer Idiom exists. */
+const UPDATE_NOTICE_COMMANDS = new Set(["init", "check", "review", "doctor"]);
+
+/**
+ * The update check for one invocation: started before the action so a cold
+ * fetch overlaps the command's work, rendered by `run()` after all output.
+ */
+type UpdateNotices = {
+  start(project: string | undefined, json: boolean): void;
+  /** Spreads `update` into a JSON result only when a newer version exists. */
+  withUpdate<T extends object>(
+    value: T,
+  ): Promise<T | (T & { update: UpdateNotice })>;
+  finish(write: (message: string) => void): Promise<void>;
+  /** Waits out a started check, cache write included, without rendering. */
+  settled(): Promise<void>;
+};
+
+function createUpdateNotices(dependencies: ProgramDependencies): UpdateNotices {
+  let pending: Promise<UpdateNotice | undefined> | undefined;
+  let json = false;
+  return {
+    start(project, jsonMode) {
+      json = jsonMode;
+      pending ??= checkForUpdate({
+        ...dependencies.updateCheck,
+        project,
+        cwd: dependencies.cwd,
+      });
+    },
+    async withUpdate(value) {
+      const update = await pending;
+      return update === undefined ? value : { ...value, update };
+    },
+    async finish(write) {
+      if (pending === undefined || json) return;
+      const notice = await pending;
+      if (notice !== undefined) write(renderUpdateNotice(notice));
+    },
+    async settled() {
+      await pending;
+    },
+  };
+}
 
 type SharedOptions = { project?: string };
 
@@ -166,14 +247,10 @@ async function withFailureJson<T>(
   } catch (error) {
     if (json === true && error instanceof RunFailure)
       writeOut(
-        JSON.stringify(
-          {
-            ...(flow === undefined ? {} : { flow }),
-            failure: error.failureJson(),
-          },
-          null,
-          2,
-        ),
+        jsonPayload({
+          ...(flow === undefined ? {} : { flow }),
+          failure: error.failureJson(),
+        }),
       );
     throw error;
   }
@@ -259,7 +336,10 @@ function parseMaxFindings(value: string | undefined): number | undefined {
   return parsed;
 }
 
-export function createProgram(dependencies: ProgramDependencies = {}): Command {
+export function createProgram(
+  dependencies: ProgramDependencies = {},
+  notices: UpdateNotices = createUpdateNotices(dependencies),
+): Command {
   const writeOut = lineWriter(
     dependencies.stdout ?? ((message) => process.stdout.write(message)),
   );
@@ -294,6 +374,15 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
     .version(IDIOM_VERSION_DISPLAY)
     .addOption(new Option("--project <dir>", "target project directory"))
     .configureOutput({ writeOut, writeErr });
+  const { withUpdate } = notices;
+  program.hook("preAction", (_root, action) => {
+    if (action.parent !== program || !UPDATE_NOTICE_COMMANDS.has(action.name()))
+      return;
+    notices.start(
+      action.optsWithGlobals<SharedOptions>().project,
+      action.opts<{ json?: boolean }>().json === true,
+    );
+  });
 
   program
     .command("init")
@@ -304,15 +393,98 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       "generate a site flow from filesystem and running local routes",
     )
     .option("--surface <id>", "project surface for the generated site flow")
+    .option(
+      "--validate",
+      "check that setup is done without changing anything; exits 0 when ready, 2 when not",
+    )
+    .option(
+      "--flow <id>",
+      "with --validate: the flow to boot (default: the first flow)",
+    )
+    .option("--json", "with --validate: print { ready, validate, doctor }")
+    .addOption(
+      new Option(
+        "--agent <name>",
+        "launch this coding agent for setup without asking",
+      ).choices(SETUP_AGENTS),
+    )
+    // Defined after --agent so the default stays undefined: neither flag given.
+    .option("--no-agent", "skip agent-led setup")
+    .option(
+      "--print-setup-prompt",
+      "print only the agent setup prompt and exit",
+    )
     .action(async (_options, command: Command) => {
       const local = command.opts<{
         yes?: boolean;
         flows?: boolean;
         surface?: string;
+        validate?: boolean;
+        flow?: string;
+        json?: boolean;
+        agent?: SetupAgent | false;
+        printSetupPrompt?: boolean;
       }>();
       const shared = command.optsWithGlobals<
         SharedOptions & { yes?: boolean }
       >();
+      if (
+        local.validate === true &&
+        (local.yes === true ||
+          local.flows === true ||
+          local.surface !== undefined ||
+          local.agent !== undefined ||
+          local.printSetupPrompt === true)
+      )
+        throw new IdiomError(
+          "--validate cannot be combined with --yes, --flows, --surface, --agent, --no-agent or --print-setup-prompt",
+        );
+      if (
+        local.printSetupPrompt === true &&
+        (local.yes === true ||
+          local.flows === true ||
+          local.surface !== undefined ||
+          local.agent !== undefined ||
+          local.flow !== undefined ||
+          local.json === true)
+      )
+        throw new IdiomError(
+          "--print-setup-prompt cannot be combined with other init options",
+        );
+      if (
+        local.validate !== true &&
+        (local.flow !== undefined || local.json === true)
+      )
+        throw new IdiomError("--flow and --json apply only with --validate");
+      if (local.validate === true) {
+        const report = await initValidate({
+          project: shared.project,
+          cwd: dependencies.cwd,
+          flow: local.flow,
+          dependencies: {
+            process: dependencies.capture?.process,
+            inheritedEnvironment: dependencies.capture?.inheritedEnvironment,
+          },
+        });
+        if (local.json === true) writeOut(jsonPayload(report));
+        else for (const line of renderInitValidate(report)) writeOut(line);
+        const problem = initValidateProblem(report);
+        if (problem !== undefined)
+          throw new RunFailure({
+            stage: problem.stage,
+            cause: problem.cause,
+            headline: problem.headline,
+            hint: problem.hint,
+          });
+        return;
+      }
+      if (local.printSetupPrompt === true) {
+        const facts = await collectSetupFacts(
+          resolveProjectArgument(shared.project, dependencies.cwd),
+        );
+        writeOut(setupPrompt(facts));
+        return;
+      }
       const result = await initProject({
         project: shared.project,
         cwd: dependencies.cwd,
@@ -324,12 +496,33 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         write: writeOut,
       });
       for (const line of initSummaryLines(result)) writeOut(line);
+      const outcome = await offerAgentSetup({
+        projectDirectory: result.projectDirectory,
+        agent: local.agent,
+        yes: local.yes === true,
+        interactive:
+          dependencies.confirm !== undefined ||
+          (process.stdin.isTTY === true && process.stdout.isTTY === true),
+        confirm: dependencies.confirm ?? defaultConfirmation,
+        write: writeOut,
+        environment: dependencies.setupAgent?.environment ?? process.env,
+        probe: dependencies.setupAgent?.probe,
+        launch: dependencies.setupAgent?.launch,
+      });
+      if (outcome.kind === "unavailable")
+        throw new IdiomError(`--agent ${outcome.agent}: ${outcome.reason}`);
     });
 
   program
     .command("upgrade")
-    .description("update vendored skills while preserving local customization")
+    .description(
+      "update the Idiom CLI, then its vendored skills, keeping local customization",
+    )
     .option("--no-agent", "leave overlapping edits for manual resolution")
+    .option(
+      "--no-self-update",
+      "merge skills without updating the Idiom CLI first",
+    )
     .option(
       "--dry-run",
       "report proposed changes without writing or calling a model",
@@ -337,8 +530,42 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
     .option("--json", "print a structured upgrade report")
     .action(async (_options, command: Command) => {
       const options = command.optsWithGlobals<
-        SharedOptions & { agent: boolean; dryRun?: boolean; json?: boolean }
+        SharedOptions & {
+          agent: boolean;
+          selfUpdate: boolean;
+          dryRun?: boolean;
+          json?: boolean;
+        }
       >();
+      const cli = await selfUpdate(
+        {
+          project: options.project,
+          cwd: dependencies.cwd,
+          dryRun: options.dryRun,
+          selfUpdate: options.selfUpdate,
+          // Everything after `node idiom`, global options included. Commander
+          // records the parsed argv as `rawArgs` but leaves it out of its types.
+          args: (program as Command & { rawArgs: string[] }).rawArgs.slice(2),
+          write: options.json ? undefined : writeOut,
+        },
+        dependencies.selfUpdate,
+      );
+      if (cli.kind === "failed") {
+        if (options.json)
+          writeOut(jsonPayload({ cli: { ...cli.cli, error: cli.message } }));
+        throw new IdiomError(cli.message);
+      }
+      if (cli.kind === "handoff") {
+        // The replaced CLI already reported; pass its exit code through.
+        if (cli.exitCode !== 0)
+          throw new CommanderError(
+            cli.exitCode,
+            "idiom.upgrade-handoff",
+            "The updated Idiom CLI's upgrade did not succeed",
+          );
+        return;
+      }
+      if (!options.json) for (const line of cli.lines) writeOut(line);
       const report = await upgradeCommand(
         {
           project: options.project,
@@ -357,7 +584,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         confirm: dependencies.confirm ?? defaultConfirmation,
       });
       if (options.json)
-        writeOut(JSON.stringify({ ...report, briefInstruction }, null, 2));
+        writeOut(jsonPayload({ ...report, cli: cli.cli, briefInstruction }));
       else
         writeOut(
           [renderUpgrade(report), ...briefInstructionLines(briefInstruction)]
@@ -674,7 +901,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           );
           writeOut(
             options.json === true
-              ? JSON.stringify(result, null, 2)
+              ? jsonPayload(result)
               : renderBaselineRecord(result),
           );
           if ("findingNameWarning" in result)
@@ -832,7 +1059,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           });
           writeOut(
             options.json === true
-              ? JSON.stringify(result, null, 2)
+              ? jsonPayload(await withUpdate(result))
               : `Page review ${options.page}: ${result.findingCount} finding(s) — Markdown: ${result.reportPath} — HTML: ${result.htmlReportPath}`,
           );
           if (result.outcome.kind === "degraded")
@@ -874,7 +1101,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           writeErr(result.findingNameWarning);
         writeOut(
           options.json === true
-            ? JSON.stringify(result, null, 2)
+            ? jsonPayload(await withUpdate(result))
             : `Reviewed ${flow}: ${result.findingCount} finding(s), ${result.unruledDecisionCount} unruled decision(s)${result.designSystemQuestions.length === 0 ? "" : `, ${result.designSystemQuestions.length} design system question(s)`}${result.build === undefined ? "" : ` · production build ${result.build.id}`} — ${result.reportPath}`,
         );
         if (options.json !== true && result.advisory !== undefined)
@@ -1154,17 +1381,15 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           if (result.skipped) {
             writeOut(
               options.json
-                ? JSON.stringify(
-                    {
+                ? jsonPayload(
+                    await withUpdate({
                       gate: {
                         skipped: true,
                         reason: result.reason,
                         base: result.base,
                         files: result.files,
                       },
-                    },
-                    null,
-                    2,
+                    }),
                   )
                 : result.line,
             );
@@ -1177,8 +1402,8 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           const plan = result.plan;
           writeOut(
             options.json
-              ? JSON.stringify(
-                  {
+              ? jsonPayload(
+                  await withUpdate({
                     gate: {
                       plan,
                       skippedWork: result.skippedWork,
@@ -1198,9 +1423,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
                           }
                         : entry,
                     ),
-                  },
-                  null,
-                  2,
+                  }),
                 )
               : [
                   `idiom check --gate: checked ${output.checkedStates} state(s).`,
@@ -1267,8 +1490,8 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           );
           writeOut(
             options.json
-              ? JSON.stringify(
-                  {
+              ? jsonPayload(
+                  await withUpdate({
                     selection: output.selection,
                     checkedStates: output.checkedStates,
                     checks: output.checks.map((entry) =>
@@ -1280,9 +1503,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
                           }
                         : entry,
                     ),
-                  },
-                  null,
-                  2,
+                  }),
                 )
               : [
                   renderChangedSelection(output),
@@ -1370,7 +1591,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         );
         writeOut(
           options.json === true
-            ? JSON.stringify(summary, null, 2)
+            ? jsonPayload(await withUpdate(summary))
             : renderCheckSummary(summary, {
                 ungrouped: options.ungrouped,
                 top: options.top,
@@ -1484,7 +1705,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         });
         writeOut(
           options.json === true
-            ? JSON.stringify(summary, null, 2)
+            ? jsonPayload(summary)
             : renderSweepSummary(summary).trimEnd(),
         );
         if (summary.outcome.kind === "degraded")
@@ -1532,7 +1753,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
           });
           writeOut(
             options.json === true
-              ? JSON.stringify(states, null, 2)
+              ? jsonPayload(states)
               : renderStateCoverage(states).trimEnd(),
           );
           return;
@@ -1544,7 +1765,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         });
         writeOut(
           options.json === true
-            ? JSON.stringify(summary, null, 2)
+            ? jsonPayload(summary)
             : renderCoverage(summary).trimEnd(),
         );
       },
@@ -1746,7 +1967,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         });
         writeOut(
           options.json === true
-            ? JSON.stringify(result, null, 2)
+            ? jsonPayload(result)
             : `Compared ${flow}: ${result.changed.length} changed, ${result.unchanged.length} unchanged, ${result.newFindings.length} new / ${result.fixedFindings.length} fixed finding(s) — ${result.reportPath}`,
         );
       },
@@ -1933,8 +2154,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
             ),
           dependencies: dependencies.brief,
         });
-        if (shared.json === true)
-          writeOut(JSON.stringify(gateJson(result), null, 2));
+        if (shared.json === true) writeOut(jsonPayload(gateJson(result)));
         else {
           const rendered = renderGate(result);
           if (rendered !== "") writeOut(rendered);
@@ -2006,7 +2226,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         dependencies: dependencies.brief,
       });
       if (shared.json === true) {
-        writeOut(JSON.stringify(briefRecordJson(recorded), null, 2));
+        writeOut(jsonPayload(briefRecordJson(recorded)));
         return;
       }
       writeOut(
@@ -2047,7 +2267,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         });
         writeOut(
           shared.json === true
-            ? JSON.stringify(briefDecideJson(decided), null, 2)
+            ? jsonPayload(briefDecideJson(decided))
             : renderBriefDecide(decided),
         );
       },
@@ -2065,7 +2285,9 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       });
       writeOut(
         shared.json === true
-          ? JSON.stringify(
+          ? // The one --json payload that is a bare array, so it carries no
+            // interfaceVersion; docs/stability.md lists it as the exception.
+            JSON.stringify(
               entries.map((entry) => ("error" in entry ? entry : entry.brief)),
               null,
               2,
@@ -2399,7 +2621,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
         });
         writeOut(
           options.json === true
-            ? JSON.stringify(report, null, 2)
+            ? jsonPayload(await withUpdate(report))
             : renderDoctorReport(report).trimEnd(),
         );
         if (report.failure !== undefined) {
@@ -2430,6 +2652,7 @@ export function createProgram(dependencies: ProgramDependencies = {}): Command {
       );
     });
 
+  applyHelp(program);
   return program;
 }
 
@@ -2437,31 +2660,39 @@ export async function run(
   argv: string[] = process.argv,
   dependencies: ProgramDependencies = {},
 ): Promise<number> {
-  const program = createProgram(dependencies);
+  const notices = createUpdateNotices(dependencies);
+  const program = createProgram(dependencies, notices);
   program.exitOverride();
   for (const command of program.commands) command.exitOverride();
+  const writeErr = lineWriter(
+    dependencies.stderr ?? ((message) => process.stderr.write(message)),
+  );
+  let exitCode: number;
   try {
-    await program.parseAsync(argv);
-    return 0;
-  } catch (error) {
-    if (error instanceof RunFailure) {
-      // The headline is the first line a wrapper or CI log reads.
-      const write = lineWriter(
-        dependencies.stderr ?? ((message) => process.stderr.write(message)),
-      );
-      write(error.message);
-      write(`Fix: ${error.hint}`);
-      return RUN_FAILURE_EXIT_CODE;
+    try {
+      await program.parseAsync(argv);
+      exitCode = EXIT_CODES.ok;
+    } catch (error) {
+      if (error instanceof RunFailure) {
+        // The headline is the first line a wrapper or CI log reads.
+        writeErr(error.message);
+        writeErr(`Fix: ${error.hint}`);
+        exitCode = RUN_FAILURE_EXIT_CODE;
+      } else if (error instanceof IdiomError) {
+        writeErr(`Error: ${error.message}`);
+        exitCode = EXIT_CODES.failed;
+      } else if (error instanceof CommanderError) {
+        if (error.code === "commander.version") notices.start(undefined, false);
+        exitCode = error.exitCode;
+      } else throw error;
     }
-    if (error instanceof IdiomError) {
-      lineWriter(
-        dependencies.stderr ?? ((message) => process.stderr.write(message)),
-      )(`Error: ${error.message}`);
-      return 1;
-    }
-    if (error instanceof CommanderError) return error.exitCode;
-    throw error;
+    // After all normal output, including a failure's Fix: line.
+    await notices.finish(writeErr);
+  } finally {
+    // An unexpected throw or --json run leaves no cache write running.
+    await notices.settled();
   }
+  return exitCode;
 }
 
 async function isEntryPoint(

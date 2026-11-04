@@ -13,6 +13,7 @@ import {
   type ImageReference,
   planClaudeCodeSessions,
 } from "./claude-code-sessions.js";
+import { CLI_PROVIDER_EXECUTABLES } from "./executables.js";
 import {
   type CritiqueProcessRequest,
   type CritiqueProcessResult,
@@ -343,7 +344,7 @@ export class ClaudeCodeCritiqueAdapter implements CritiqueAdapter {
     let result: ClaudeCodeRunResult;
     try {
       result = await this.runner({
-        executable: "claude",
+        executable: CLI_PROVIDER_EXECUTABLES["claude-code"],
         args: [
           "-p",
           "--output-format",

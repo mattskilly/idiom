@@ -504,24 +504,32 @@ test("a ready URL already answering on its own host is refused before spawn", as
 });
 
 test("an IPv6 ready host is refused even when IPv4 loopback is free", async (context) => {
-  const blocker = createServer();
-  try {
-    await new Promise<void>((accept, reject) => {
-      blocker.once("error", reject);
-      blocker.listen({ port: 0, host: "::1", ipv6Only: true }, accept);
-    });
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "EAFNOSUPPORT" || code === "EADDRNOTAVAIL") {
-      context.skip();
-      return;
+  // A parallel test can hold the same port number on IPv4; rebind until it is free there.
+  let blocker = createServer();
+  let port = 0;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await new Promise<void>((accept, reject) => {
+        blocker.once("error", reject);
+        blocker.listen({ port: 0, host: "::1", ipv6Only: true }, accept);
+      });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EAFNOSUPPORT" || code === "EADDRNOTAVAIL") {
+        context.skip();
+        return;
+      }
+      throw error;
     }
-    throw error;
+    const address = blocker.address();
+    if (address === null || typeof address === "string")
+      throw new Error("no port");
+    port = address.port;
+    if (!(await isPortOpen(port)) || attempt >= 4) break;
+    const taken = blocker;
+    await new Promise<void>((accept) => taken.close(() => accept()));
+    blocker = createServer();
   }
-  const address = blocker.address();
-  if (address === null || typeof address === "string")
-    throw new Error("no port");
-  const port = address.port;
   let spawned = false;
   try {
     expect(await isPortOpen(port)).toBe(false);

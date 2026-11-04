@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,7 @@ const outputDirectory =
   process.env.IDIOM_SITE_OUTPUT ?? join(siteDirectory, "dist");
 const outputPath = join(outputDirectory, "index.html");
 const outputImagePath = join(outputDirectory, "social-preview.png");
+const versionPath = join(outputDirectory, "version.txt");
 
 const canonicalUrl = "https://idiom.build/";
 const imageUrl = "https://idiom.build/social-preview.png";
@@ -206,7 +208,36 @@ function structuredData(source, description) {
   return `<script type="application/ld+json">${json.replace(/</g, "\\u003c")}</script>`;
 }
 
+// The commit this site was built from, so the release check can confirm that
+// production idiom.build serves the release (docs/releases.md "Done when").
+function sourceCommit() {
+  const commitPattern = /^[0-9a-f]{40}$/i;
+  for (const name of ["IDIOM_SITE_SOURCE_COMMIT", "VERCEL_GIT_COMMIT_SHA"]) {
+    const value = process.env[name]?.trim();
+    if (value === undefined || value === "") continue;
+    if (!commitPattern.test(value)) {
+      fail(`${name} must be a 40-character commit sha; got "${value}"`);
+    }
+    return value.toLowerCase();
+  }
+  try {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (commitPattern.test(head)) return head.toLowerCase();
+  } catch {
+    // No git metadata (e.g. a CLI upload); fall through to "unknown".
+  }
+  console.warn(
+    "site build: source commit unknown; /version.txt will read 'unknown'",
+  );
+  return "unknown";
+}
+
 async function build() {
+  const commit = sourceCommit();
   const [source, image] = await Promise.all([
     readFile(sourcePath, "utf8"),
     readFile(imagePath),
@@ -264,23 +295,27 @@ async function build() {
   }
 
   const title = `${wordmark} · ${mastheadMeta}`;
-  const output = `<!doctype html>\n<html lang="en">\n<head>\n${metadataMarkup({ title, description })}\n${structuredData(source, description)}\n${head}\n</head>\n<body>${body}</body>\n</html>\n`;
+  const output = `<!doctype html>\n<html lang="en">\n<head>\n${metadataMarkup({ title, description })}\n<meta name="idiom-source" content="${commit}">\n${structuredData(source, description)}\n${head}\n</head>\n<body>${body}</body>\n</html>\n`;
 
   await mkdir(outputDirectory, { recursive: true });
   const nonce = `${process.pid}-${Date.now()}`;
   const temporaryOutput = `${outputPath}.${nonce}.tmp`;
   const temporaryImage = `${outputImagePath}.${nonce}.tmp`;
+  const temporaryVersion = `${versionPath}.${nonce}.tmp`;
   try {
     await Promise.all([
       writeFile(temporaryOutput, output, "utf8"),
       writeFile(temporaryImage, image),
+      writeFile(temporaryVersion, `${commit}\n`, "utf8"),
     ]);
     await rename(temporaryImage, outputImagePath);
+    await rename(temporaryVersion, versionPath);
     await rename(temporaryOutput, outputPath);
   } catch (error) {
     await Promise.all([
       rm(temporaryOutput, { force: true }),
       rm(temporaryImage, { force: true }),
+      rm(temporaryVersion, { force: true }),
     ]);
     throw error;
   }

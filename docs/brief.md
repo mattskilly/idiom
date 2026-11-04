@@ -328,7 +328,7 @@ A brief is only half the loop: once the build ships, Idiom checks the UI against
 | Contained | `within: "<selector>"` | every match lies inside a container's rectangle: the nearest enclosing container when the element sits inside one, otherwise any container. |
 | Visible without hover | `visibleWithoutHover: true` | on touch viewports (no hover, or a coarse pointer), every match is visible at rest: rendered, opacity above 0, not `visibility: hidden`, with a non-zero size. Desktop viewports are not judged. |
 | No layout shift on hover | `stableOnHover: true` | when the interaction probe hovers the element or anything inside it, nothing outside the element moves. |
-| Minimum contrast | `minContrast: <1–21>` | every match's foreground meets the ratio against its background. For an icon (an `svg` or anything inside one) the foreground is its painted stroke, else its fill; otherwise its text colour. |
+| Minimum contrast | `minContrast: <1–21>` | every match's foreground meets the ratio against its background. For an icon (an `svg` or anything inside one) the foreground is its painted stroke, else its fill; otherwise its text colour. A match with no painted foreground is skipped and the rest are still judged; coverage names the skipped matches. |
 
 Every assertion also takes `flow`, `state` (a declared state id; it also covers that state's combinations), `selector`, an optional `name`, and `tolerance` in CSS pixels (default `1`).
 
@@ -338,7 +338,9 @@ Capture measures each decided brief's selectors on the states its assertions nam
 Brief "Pinned group in the Add drawer" (pinned-group), criterion "The pin icon is at most 20px square and tile height is unchanged at 56px.": .drawer-item height 100, expected 56 (tolerance 1)
 ```
 
-A subject, reference or container selector that matched nothing is a mismatch. An assertion Idiom cannot measure is not a finding; coverage names why: the capture predates the brief, the selector is invalid, a match was not observed, no touch viewport was captured, no hover probe reached the element, or it has no painted foreground.
+Each finding's rule id is `idiom:brief-mismatch:<slug>:c<criterion>:a<assertion>:<form>:<hash>`. The hash covers what the assertion asserts: its selector, form, expected values, tolerance, flow and state, but not its `name`. Changing an assertion and re-deciding the brief therefore reopens the findings accepted or rejected against the old one, and `idiom verify` reports a ticketed finding whose assertion was re-decided as not recheckable rather than fixed. Re-deciding a brief without changing an assertion keeps that assertion's decisions, and recording, deciding or superseding a brief never affects the decisions on any other rule. Findings accepted before the hash was added reappear once.
+
+A subject, reference or container selector that matched nothing is a mismatch. An assertion Idiom cannot measure is not a finding; coverage names why: the capture predates the brief, the selector is invalid, a match was not observed, no touch viewport was captured, no hover probe reached the element, or none of its matches has a painted foreground. When only some matches have no painted foreground, the others are judged as usual and coverage lists the skipped ones under the assertion.
 
 Only `decided` briefs are checked. A brief decided as "don't build it", or decided on an option other than the recommendation its criteria were written for, is skipped until it is re-recorded. The check summary and the report's coverage list every decided brief relevant to the flow:
 

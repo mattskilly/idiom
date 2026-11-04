@@ -1,6 +1,6 @@
 # Idiom tools for coding agents
 
-`idiom mcp` exposes twenty tools over stdio using the official TypeScript MCP SDK. It works with Claude Code, Codex, Cursor, Claude Desktop and other local MCP clients. No HTTP service or repair agent is required. Only model-enabled `idiom_sweep` needs model credentials, and only Figma references need `FIGMA_TOKEN`; both come from the server's environment, never from tool arguments (see [Credentials](#credentials)).
+`idiom mcp` exposes twenty-two tools over stdio using the official TypeScript MCP SDK. It works with Claude Code, Codex, Cursor, Claude Desktop and other local MCP clients. No HTTP service or repair agent is required. Only model-enabled `idiom_sweep` needs model credentials, and only Figma references need `FIGMA_TOKEN`; both come from the server's environment, never from tool arguments (see [Credentials](#credentials)).
 
 Install Node 20 or newer and the matching Playwright Chromium browser. Run `npx playwright@1.62.1 install chromium`. The application must be reachable for quick review; configured flows use their normal setup/build/server settings.
 
@@ -29,7 +29,7 @@ For Codex (see [plugin packaging and marketplaces](https://developers.openai.com
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.18.0/mattskilly-idiom-0.18.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.19.0/mattskilly-idiom-0.19.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.
@@ -121,7 +121,7 @@ Configured findings and groups keep their canonical IDs. Quick IDs are opaque an
 
 ## Tools and inputs
 
-Every input is a strict JSON object. Lists, when present, must be nonempty and duplicate-free. Flow/run identifiers cannot contain path separators or equal `.` or `..`. The server advertises the complete JSON schemas through MCP discovery.
+Every input is a strict JSON object. Lists, when present, must be nonempty and duplicate-free. Flow/run identifiers cannot contain path separators or equal `.` or `..`. The server advertises the complete JSON schemas through MCP discovery. Its initialize result also carries the [interface version](stability.md) under `capabilities.experimental.idiom.interfaceVersion`; which tools, inputs and outputs are stable is in [stability](stability.md#mcp).
 
 | Tool | Input | Result |
 | --- | --- | --- |
@@ -134,6 +134,8 @@ Every input is a strict JSON object. Lists, when present, must be nonempty and d
 | `idiom_flows` | `{}` | Sorted validated flows with ordered states, selected viewports and schemes; suggests `idiom_init` with `flows:true` if empty. |
 | `idiom_decide` | `{"id":"finding-1","decision":"accept","reason":"Intentional product choice"}` or `{"id":"ruling-3","decision":"add-step","token":"space-row","reason":"Dense rows"}` | Accept/reject counts and decision log path. Reason must be nonblank and is preserved verbatim; instance scope only. For a design system question from `idiom_check`, `add-step` records the step in the design file (`token` is optional and defaults to the suggestion), and `drift` keeps it reported as one grouped finding. |
 | `idiom_init` | `{"flows":false,"surface":"web"}`; both optional | Non-interactive `idiom init`: files created/replaced/unchanged/preserved, Autobuild and design-token learning availability, `briefInstruction` (the brief instruction offer for CLAUDE.md or AGENTS.md, reported but never written), the generated site-flow outcome with `flows:true`, and next steps. Never overwrites changed files, wires Autobuild or edits agent files. |
+| `idiom_setup_prompt` | `{}` | The versioned, repository-aware setup prompt `idiom init` prints or hands to a coding agent (`version`, `prompt`, and the `facts` it was built from): server command, port and readyUrl; seed data and test accounts from the repository's own fixtures only; routes; a first 3–8-state flow; PRODUCT.md and DESIGN.md; ending at `idiom_ready`. Read-only; an agent calling it follows the prompt in its own session. |
+| `idiom_ready` | `{"flow":"checkout"}`; flow optional | Same verdict as `idiom init --validate`: `{ready, validate, doctor}` (the `--json` shape) plus `problem` (`headline`, `hint`, `stage`, `cause`) when not ready. Validates every flow, then boots the first (or named) flow's server once; creates nothing. Not ready is a result, not a tool error. |
 | `idiom_design_add` | `{"state":"cart","source":"https://www.figma.com/design/…?node-id=1-2","flow":"checkout","name":"figma","viewport":"desktop"}`; flow/name/viewport optional | Same as `idiom design add`: the flow manifest written, whether it changed, the stored source and whether it is Figma. Figma sources without `FIGMA_TOKEN` in the server env fail before writing. |
 | `idiom_choose` | `{"id":"finding-3","reference":"figma","reason":"Figma is the source of truth"}` | Same as `idiom decide --choose`: records the human's chosen reference for one `idiom:design-decision` finding. Reason preserved verbatim; groups and quick evidence are refused. |
 | `idiom_tickets` | `{"findings":["finding-1"],"out":"tickets/triage"}`; both optional | Same as `idiom tickets --cluster`: accepted findings clustered into triage proposals, absolute created paths and per-finding outcomes. Never writes to ready. |
@@ -188,7 +190,7 @@ Every CLI command is either reachable as an MCP tool or deliberately CLI-only. A
 
 | CLI command | MCP tool | Reason |
 | --- | --- | --- |
-| `init` | `idiom_init` | Non-interactive; Autobuild wiring, design-token learning and adding the brief instruction need the interactive CLI. |
+| `init` | `idiom_init`, `idiom_ready`, `idiom_setup_prompt` | Non-interactive; Autobuild wiring, design-token learning and adding the brief instruction need the interactive CLI. `idiom_ready` is `init --validate`; `idiom_setup_prompt` is `init --print-setup-prompt`. Launching a setup agent (`--agent`) is CLI-only, because an MCP caller is already the agent. |
 | `upgrade` | CLI-only | Maintaining the agent’s vendored skills is an explicit project maintenance operation, separate from design checks. |
 | `mcp` | CLI-only | It is the MCP server itself. |
 | `quick` | `idiom_quick` | `--design` and `--out` are CLI-only; MCP writes under the bound root. |
@@ -226,6 +228,12 @@ Every CLI command is either reachable as an MCP tool or deliberately CLI-only. A
 | `system` | CLI-only | Opens the design-system page in a browser and learns interactively. |
 | `doctor` | `idiom_doctor` | `--port` is CLI-only. |
 | `validate` | `idiom_flows` | `idiom_flows` lists validated manifests; every configured tool validates first and returns validation errors as tool errors. |
+
+## Update notices
+
+When a newer Idiom release exists, the server tells the agent once per session. If the answer is already cached, the notice is the initialize `instructions`. Otherwise the server checks the registry in the background, and the first `idiom_check` or `idiom_doctor` result after that check finishes carries it. The result gains a final text line, for example `Idiom 0.19.0 is available (you have 0.18.0). Update: claude plugin marketplace update idiom && claude plugin update idiom@idiom`, plus `structuredContent.update` (`current`, `latest`, `command`). Agents can relay the line to you. For the Codex install (`codex mcp add`), the notice always arrives in the first `idiom_check` or `idiom_doctor` result, never in the initialize instructions, because the update command depends on which client connected. Nothing is written to stdout outside the protocol.
+
+`IDIOM_NO_UPDATE_CHECK=1`, `NO_UPDATE_NOTIFIER`, `CI` or `"updateCheck": false` in `.idiom/project.json` turn it off. See [Update notices](commands.md#update-notices) for the exact request, cache and per-install commands.
 
 ## Local plugin development
 

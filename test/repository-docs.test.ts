@@ -36,6 +36,12 @@ let designGuide: string;
 let mcpGuide: string;
 let changelog: string;
 let releaseGuide: string;
+let troubleshootingDoc: string;
+let upgradingDoc: string;
+let glossaryDoc: string;
+let stabilityDoc: string;
+let architectureDoc: string;
+let landingPage: string;
 let packageMetadata: PackageMetadata;
 
 beforeAll(async () => {
@@ -47,6 +53,12 @@ beforeAll(async () => {
     mcpGuide,
     changelog,
     releaseGuide,
+    troubleshootingDoc,
+    upgradingDoc,
+    glossaryDoc,
+    stabilityDoc,
+    architectureDoc,
+    landingPage,
     packageMetadata,
   ] = await Promise.all([
     readFile(join(repositoryRoot, "README.md"), "utf8"),
@@ -56,6 +68,12 @@ beforeAll(async () => {
     readFile(join(repositoryRoot, "docs", "mcp.md"), "utf8"),
     readFile(join(repositoryRoot, "CHANGELOG.md"), "utf8"),
     readFile(join(repositoryRoot, "docs", "releases.md"), "utf8"),
+    readFile(join(repositoryRoot, "docs", "troubleshooting.md"), "utf8"),
+    readFile(join(repositoryRoot, "docs", "upgrading.md"), "utf8"),
+    readFile(join(repositoryRoot, "docs", "glossary.md"), "utf8"),
+    readFile(join(repositoryRoot, "docs", "stability.md"), "utf8"),
+    readFile(join(repositoryRoot, "docs", "architecture.md"), "utf8"),
+    readFile(join(repositoryRoot, "site", "index.html"), "utf8"),
     readFile(join(repositoryRoot, "package.json"), "utf8").then(
       (contents) => JSON.parse(contents) as PackageMetadata,
     ),
@@ -207,7 +225,7 @@ test("README exposes design and agent entry points", () => {
     expect(design).toContain(fragment);
   const agent = readmeSection("## Use it from your agent");
   for (const fragment of [
-    "twenty",
+    "twenty-two",
     "stdio",
     "/plugin marketplace add mattskilly/idiom",
     "/plugin install idiom@idiom",
@@ -280,6 +298,10 @@ test("README links the command and configuration references", async () => {
     ["docs/configuration.md", configurationDoc],
     ["docs/design-compare.md", designGuide],
     ["docs/mcp.md", mcpGuide],
+    ["docs/troubleshooting.md", troubleshootingDoc],
+    ["docs/upgrading.md", upgradingDoc],
+    ["docs/glossary.md", glossaryDoc],
+    ["docs/stability.md", stabilityDoc],
   ];
   const targets: string[] = [];
   for (const [path, contents] of documents) {
@@ -340,6 +362,9 @@ test("every documented command exists", () => {
     configurationDoc,
     designGuide,
     mcpGuide,
+    troubleshootingDoc,
+    upgradingDoc,
+    glossaryDoc,
   ].flatMap(documentedInvocations);
   expect(invocations.length).toBeGreaterThan(0);
   for (const [name, subcommand] of invocations) {
@@ -532,4 +557,120 @@ test("validate reference states project discovery for explicit and omitted --pro
     /walks upward to the nearest `\.idiom\/project\.json`/,
   );
   expect(section).not.toContain("Without `--project`, validation");
+});
+
+function markdownSections(contents: string, level: "##" | "###") {
+  const sections = new Map<string, string>();
+  const parts = contents.split(new RegExp(`^${level} `, "m")).slice(1);
+  for (const part of parts) {
+    const newline = part.indexOf("\n");
+    const body = part.slice(newline + 1);
+    const next = body.search(/^#{1,3} /m);
+    sections.set(
+      part.slice(0, newline).trim(),
+      next === -1 ? body : body.slice(0, next),
+    );
+  }
+  return sections;
+}
+
+test("troubleshooting gives symptom, cause and fix for every required failure", () => {
+  const sections = markdownSections(troubleshootingDoc, "##");
+  const headings = [...sections.keys()];
+  for (const keyword of [
+    "server won't start",
+    "Chromium",
+    "dirty tree",
+    "registry conflict",
+    "MCP server",
+    "critique degraded",
+    "probe coverage",
+    "recapture",
+    "--gate",
+  ]) {
+    const heading = headings.find((candidate) =>
+      candidate.toLowerCase().includes(keyword.toLowerCase()),
+    );
+    expect(heading, keyword).toBeDefined();
+    const body = sections.get(heading as string) as string;
+    for (const label of ["**Symptom.**", "**Cause.**", "**Fix**"])
+      expect(body, `${heading}: ${label}`).toContain(label);
+    expect(body, heading).toMatch(/```sh\n/);
+  }
+  expect(troubleshootingDoc).toContain("](commands.md#doctor)");
+});
+
+test("the glossary defines every core term with a link to its doc", () => {
+  const sections = markdownSections(glossaryDoc, "##");
+  for (const term of [
+    "Flow",
+    "State",
+    "Surface",
+    "Viewport",
+    "Tuple",
+    "Capture",
+    "Observation",
+    "Check",
+    "Rule",
+    "Finding",
+    "Finding name",
+    "Severity",
+    "Ruling",
+    "Decision",
+    "Baseline",
+    "Gate",
+    "Probe",
+    "Verification",
+    "Brief",
+    "Triage",
+    "Reference",
+    "Anti-reference",
+    "Intended design",
+  ]) {
+    const body = sections.get(term);
+    expect(body, term).toBeDefined();
+    expect(body, term).toMatch(/\]\([^)\s]+\)/);
+  }
+});
+
+test("upgrading lists the action each release since 0.12.0 requires", () => {
+  const sections = markdownSections(upgradingDoc, "###");
+  expect(sections.has("Unreleased")).toBe(true);
+  const since = datedReleaseVersions().filter((version) => {
+    const [major, minor] = version.split(".").map(Number) as [number, number];
+    return major > 0 || minor >= 12;
+  });
+  expect(since).toContain("0.12.0");
+  for (const version of since) {
+    const body = sections.get(`v${version}`);
+    expect(body, `v${version}`).toBeDefined();
+    expect((body as string).trim(), `v${version}`).not.toBe("");
+  }
+  expect(releaseGuide).toContain("](upgrading.md#action-required-by-release)");
+});
+
+test("the configuration overview names every top-level project key", () => {
+  const start = configurationDoc.indexOf("\n## Overview\n");
+  expect(start).toBeGreaterThan(-1);
+  const end = configurationDoc.indexOf("\n## ", start + 1);
+  const overview = configurationDoc.slice(start, end);
+  const keys = Object.keys(projectSchema.in.shape);
+  expect(keys.length).toBeGreaterThan(10);
+  for (const key of keys) expect(overview, key).toContain(`| \`${key}\` |`);
+});
+
+test("README, architecture and the landing FAQ state there is no telemetry", () => {
+  const architecture = architectureDoc.slice(
+    architectureDoc.indexOf("\n## Data and privacy\n"),
+  );
+  expect(architecture.startsWith("\n## Data and privacy\n")).toBe(true);
+  for (const [name, text] of [
+    ["README", readmeSection("## Data and privacy")],
+    ["architecture", architecture.slice(0, architecture.indexOf("\n## ", 1))],
+    ["landing FAQ", landingPage],
+  ] as const) {
+    expect(text.toLowerCase(), name).toContain("no telemetry");
+    expect(text, name).toContain("--deterministic-only");
+  }
+  expect(readme).toContain("](docs/architecture.md#data-and-privacy)");
 });

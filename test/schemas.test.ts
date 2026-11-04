@@ -176,6 +176,18 @@ describe("schema behavior", () => {
     ).toBe(false);
   });
 
+  test("accepts updateCheck as a boolean only", async () => {
+    const legacy = (await json(
+      "examples/booking/.idiom/project.json",
+    )) as Record<string, unknown>;
+    expect(
+      projectSchema.parse({ ...legacy, updateCheck: false }).updateCheck,
+    ).toBe(false);
+    expect(
+      projectSchema.safeParse({ ...legacy, updateCheck: "no" }).success,
+    ).toBe(false);
+  });
+
   test("accepts codex and an opt-in fallback naming a different provider", async () => {
     const legacy = (await json("examples/booking/.idiom/project.json")) as {
       model: Record<string, unknown>;

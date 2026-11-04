@@ -59,10 +59,12 @@ For Codex, run in your shell:
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.18.0/mattskilly-idiom-0.18.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.19.0/mattskilly-idiom-0.19.0.tgz idiom mcp
 ```
 
-The Claude Code plugin bundles twenty MCP tools over stdio, the Idiom skill and UI-edit and stop reminders. In Codex the plugin supplies the skill and `codex mcp add` registers the tools, because Codex starts a plugin's own MCP server in the plugin directory rather than your project. No global Idiom install is needed for the plugin. You need Node 20 or newer, npm/npx and the matching browser: `npx playwright@1.62.1 install chromium`. The first MCP launch downloads the exact GitHub release named by the plugin, independently of the npm registry's current version. Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom`, rerun the `codex mcp add` line above with the new release (it replaces the entry), and start a new session.
+The Claude Code plugin bundles twenty-two MCP tools over stdio, the Idiom skill and UI-edit and stop reminders. In Codex the plugin supplies the skill and `codex mcp add` registers the tools, because Codex starts a plugin's own MCP server in the plugin directory rather than your project. No global Idiom install is needed for the plugin. You need Node 20 or newer, npm/npx and the matching browser: `npx playwright@1.62.1 install chromium`. The first MCP launch downloads the exact GitHub release named by the plugin, independently of the npm registry's current version.
+
+Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom`, rerun the `codex mcp add` line above with the new release (it replaces the entry), and start a new session.
 
 [docs/mcp.md](docs/mcp.md) covers standalone MCP for Cursor and Claude Desktop, timeouts, credentials, and local plugin development with `claude --plugin-dir /path/to/checkout`. When switching from standalone MCP, remove the duplicate registration with `claude mcp remove idiom`.
 
@@ -74,15 +76,7 @@ After an autonomous build, `idiom sweep --all` captures every flow and groups fi
 
 ![After: the same editor with the Layers shortcut help shown, 8px override dots, labelled toolbar buttons and spaced Versions controls](docs/images/benchmark-after.png)
 
-These are Idiom's benchmark fixture pages in `test/fixtures/benchmark/`, a reconstruction of an AI-built editor with seven defects that a human reviewer found and an earlier version of Idiom missed. The test suite checks that, with no configuration beyond the fixture's `DESIGN.md`, Idiom reports all seven on the before page and none on the after page. Results on real apps vary with how much of the app a flow covers.
-
-- a bare "?" beside the Layers heading
-- Page settings reachable three ways
-- override dots at 12px against an 8px design
-- Button / Highlight specimen text below centre
-- composer input touching Send; Versions cards flush with their button
-- "Name this version" does nothing
-- "View terms" and the top-bar Help as disabled navigation buttons
+These are Idiom's benchmark fixture pages in `test/fixtures/benchmark/`, a reconstruction of an AI-built editor with seven defects that a human reviewer found and an earlier version of Idiom missed. The test suite checks that, with no configuration beyond the fixture's `DESIGN.md`, Idiom reports all seven on the before page and none on the after page. The seven: a bare "?" beside the Layers heading, Page settings reachable three ways, override dots at 12px against an 8px design, Button / Highlight specimen text below centre, the composer input touching Send and Versions cards flush with their button, a "Name this version" button that does nothing, and "View terms" and the top-bar Help as disabled navigation buttons. Results on real apps vary with how much of the app a flow covers.
 
 ## Install
 
@@ -93,7 +87,7 @@ npm install -g @mattskilly/idiom
 idiom --version
 ```
 
-`bun add -g @mattskilly/idiom` works too. The version command prints `<version> (<short source commit>)`, for example `0.18.0 (00663e4)`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D --save-exact @mattskilly/idiom@0.18.0` or `bun add -d --exact @mattskilly/idiom@0.18.0`. Every release's tarball is also attached to its [GitHub release](https://github.com/mattskilly/idiom/releases).
+`bun add -g @mattskilly/idiom` works too. The version command prints `<version> (<short source commit>) · interface <n>`, for example `0.19.0 (00663e4) · interface 1`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D --save-exact @mattskilly/idiom@0.19.0` or `bun add -d --exact @mattskilly/idiom@0.19.0`. Every release's tarball is also attached to its [GitHub release](https://github.com/mattskilly/idiom/releases).
 
 ### Browser setup
 
@@ -139,13 +133,12 @@ Quick review needs no Idiom files, flow manifest or model credentials. Its final
 Quick review is the entry point, not the coverage ceiling. `idiom coverage --states` shows which viewports, colour schemes, reduced-motion modes, replays, probe and focus sweeps and data states each flow's states were actually reviewed in, and the config change that covers each gap. Configure a flow when you need authenticated surfaces, interaction destinations, error and empty states, product-specific design guidance, durable decisions, or before/after verification:
 
 ```sh
-idiom init --yes          # scaffold PRODUCT.md, DESIGN.md and .idiom/
-idiom init --flows        # draft flows from your routes (real HTML pages only)
-idiom validate home       # after defining .idiom/flows/home.json
-idiom doctor home         # boot the server once and diagnose setup
-idiom check home          # every deterministic finding; records the baseline
-idiom review home         # deterministic + model critique
+idiom init                # scaffold, then hand setup to Claude Code or Codex (recommended)
+idiom init --validate     # setup is done when this prints ready
+idiom check home          # every deterministic finding; records the baseline (idiom review adds model critique)
 ```
+
+`idiom init` launches your coding agent, with consent, on a repository-aware setup prompt (server, seed data from your own fixtures, a first flow) that ends only when `idiom init --validate` prints `ready`; `--print-setup-prompt` prints it for any other agent. By hand: `idiom init --yes`, `idiom init --flows` to draft flows from your routes, then `idiom validate home`.
 
 Known setup-derived URLs, pathnames and standalone route tokens are replaced in saved capture text, including ordinary serialized forms. Navigation and screenshot pixels retain the real page; literal URLs remain recorded exactly. See [capture redaction scope](docs/commands.md#capture) for the conservative matching policy and limits.
 
@@ -157,11 +150,14 @@ Known setup-derived URLs, pathnames and standalone route tokens are replaced in 
 ## Update Idiom
 
 ```sh
-npm install -g @mattskilly/idiom@latest
-idiom --version
+idiom upgrade
 ```
 
-Check [CHANGELOG.md](CHANGELOG.md) for new configuration before updating a pinned project. Then run `idiom upgrade` in each project to update its vendored skills while keeping your local edits. See [Update and roll back](https://idiom.build/docs/update-and-roll-back) for pinning, reports, manual conflicts and rollback.
+For a global npm or bun install, `idiom upgrade` installs the latest release, then updates the current project's vendored skills with it. Other installs print their update command. When a newer release exists, `idiom check`, `review`, `doctor`, `init` and `--version` print the exact update command for your install on stderr, at most one registry check a day. Set `IDIOM_NO_UPDATE_CHECK=1` to turn it off; see [Update notices](docs/commands.md#update-notices). Check [CHANGELOG.md](CHANGELOG.md) for new configuration before updating a pinned project. Run `idiom upgrade` in each project to update its vendored skills while keeping your local edits. See [Update and roll back](https://idiom.build/docs/update-and-roll-back) for pinning, reports, manual conflicts and rollback.
+
+## Data and privacy
+
+Idiom has no telemetry. Captures, reports and decisions stay in your repository. At most once a day it asks the npm registry whether a newer version exists, sending no project data (`IDIOM_NO_UPDATE_CHECK=1` turns it off). It sends screenshots, page excerpts and findings only to the model provider you configure, and only for the optional model steps such as the critique (`--deterministic-only` skips it); otherwise it fetches only what you ask for, such as your app, a Figma frame or a live reference. Details: [data and privacy](docs/architecture.md#data-and-privacy).
 
 ## Local development
 
@@ -182,6 +178,10 @@ bun link
 | [docs/commands.md](docs/commands.md) | Every command, its flags and its output |
 | [docs/configuration.md](docs/configuration.md) | Project file, flows, checks, baselines, Autobuild and the GitHub Action |
 | [docs/rules.md](docs/rules.md) | Every rule: what it catches, why, severity, source, and how to configure or decide it |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Symptom, cause and fix for the common failures |
+| [docs/upgrading.md](docs/upgrading.md) | Update by install kind, roll back, and the action each release requires |
+| [docs/glossary.md](docs/glossary.md) | Idiom's terms, one or two sentences each |
+| [docs/stability.md](docs/stability.md) | What is stable, the interface version, and how changes are announced |
 | [docs/design-compare.md](docs/design-compare.md) | Compare against HTML, Figma, images and live sites; resolve conflicting intent |
 | [docs/mcp.md](docs/mcp.md) | MCP tools and client setup for coding agents |
 | [docs/ranking.md](docs/ranking.md) | How top issues are ranked and grouped |

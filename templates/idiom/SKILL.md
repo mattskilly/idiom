@@ -48,6 +48,7 @@ report the `Timing:` line; don't disable it.
 When `$ARGUMENTS` is `init`, read `init.md` beside this file. Scaffold with
 `idiom init --yes`, mine evidence, capture liked/disliked references, and hand
 `PRODUCT.md` and `DESIGN.md` back. Never overwrite either without approval.
+Setup is done when `idiom init --validate` prints `ready` (exit 0).
 
 ## Explore mode
 
