@@ -27,7 +27,7 @@ try {
     outDir: temporary,
     format: ["esm"],
     platform: "node",
-    target: "node20",
+    target: "node22",
     bundle: true,
     splitting: false,
     sourcemap: false,

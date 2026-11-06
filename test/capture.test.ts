@@ -50,6 +50,7 @@ import { flowSchema } from "../src/schemas/flow.js";
 import { checksConfigSchema, projectSchema } from "../src/schemas/project.js";
 
 import { productionFixture } from "./production-support.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const exampleDirectory = join(import.meta.dirname, "..", "examples", "booking");
 const dataDirectoryPlaceholder = "$" + "{dataDir}";
@@ -1172,7 +1173,7 @@ test("two full captures remain equivalent and ignore prior managed reports in so
     app: { name: "fixture", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node ${JSON.stringify(serverScript)}`,
+      start: fixtureCommand(serverScript),
       readyUrl: `http://127.0.0.1:${port}/`,
       port,
       // Byte-identical artifact trees need the same served origin each run.
@@ -1308,7 +1309,7 @@ test("filtered capture preserves exact manifest-ordered tuple pairs without cros
     app: { name: "fixture", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node ${JSON.stringify(serverScript)}`,
+      start: fixtureCommand(serverScript),
       readyUrl: `http://127.0.0.1:${port}/`,
       port,
       env: { PORT: String(port) },
@@ -1548,7 +1549,7 @@ test("teardown rejection still removes the exact data and staging directories", 
     app: { name: "fixture", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node ${JSON.stringify(serverScript)}`,
+      start: fixtureCommand(serverScript),
       readyUrl: `http://127.0.0.1:${port}/`,
       port,
       env: { PORT: String(port), IGNORE_TERM: "1" },
@@ -1617,7 +1618,7 @@ test("orchestration continues after a failed tuple and releases the server port"
     app: { name: "fixture", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node ${JSON.stringify(serverScript)}`,
+      start: fixtureCommand(serverScript),
       readyUrl: `http://127.0.0.1:${port}/`,
       port,
       env: { PORT: String(port), DATA: dataDirectoryPlaceholder },
@@ -2329,7 +2330,7 @@ test("a published flow captures its synthesized widths and asks for image eviden
     app: { name: "fixture", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node ${JSON.stringify(serverScript)}`,
+      start: fixtureCommand(serverScript),
       readyUrl: `http://127.0.0.1:${port}/`,
       port,
       env: { PORT: String(port) },

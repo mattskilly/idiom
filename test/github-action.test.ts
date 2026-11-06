@@ -19,6 +19,7 @@ import { parse } from "yaml";
 import * as commentHelpers from "../scripts/github-action/comment.mjs";
 // @ts-expect-error Action helpers run directly in Node without package dependencies.
 import * as commonHelpers from "../scripts/github-action/common.mjs";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const { marker, publishResult, renderComment, upsertComment } = commentHelpers;
 const { childEnvironment, evidencePath, gate, validateInputs } = commonHelpers;
@@ -59,7 +60,7 @@ async function graph(temporal = false) {
   const config = JSON.parse(await readFile(configPath, "utf8"));
   config.server = {
     build: "node --check server.mjs",
-    start: "node server.mjs",
+    start: fixtureCommand("server.mjs"),
     port: 3123,
     readyUrl: "http://127.0.0.1:3123",
     env: {},

@@ -7,7 +7,7 @@ description: A fast happy path hides waiting, missing content and failed request
 
 A fast happy path hides waiting, missing content and failed requests. Make those conditions repeatable, check their feedback and keep the evidence through repair.
 
-_For Idiom v0.19.0_
+_For Idiom v0.20.0_
 
 ## Start by looking
 
@@ -33,7 +33,7 @@ This example assumes an application you own with `npm run build` and a Vite-styl
 
 These URLs and selectors are an application fixture contract, not routes or mocks created by Idiom. Keep fixture controls restricted to your test environment. Provide deterministic accounts and data; configure authentication if the app needs it. Confirm each URL manually in a fresh browser. This example needs no setup command because the app selects its fixture from the query parameter; use flow `setup` commands for your own seeding if necessary.
 
-Install Node 20 or newer and initialize from the app repository:
+Install Node 22.12 or newer and initialize from the app repository:
 
 ```sh example=shell
 npm install -g @mattskilly/idiom

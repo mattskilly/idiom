@@ -53,6 +53,7 @@ import {
 import { renderVerificationReport } from "../src/verify/report.js";
 import { runVerify } from "../src/verify/run.js";
 import { parseFindingBlocks, selectFindingTuples } from "../src/verify/spec.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 import {
   artifactV2,
   freePort,
@@ -2573,7 +2574,7 @@ async function verifyRunFixture(): Promise<{
     app: { name: "fixture", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node ${JSON.stringify(serverScript)}`,
+      start: fixtureCommand(serverScript),
       readyUrl: `http://127.0.0.1:${port}/`,
       port,
       env: { PORT: String(port) },

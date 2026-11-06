@@ -5,7 +5,7 @@ description: Install the Idiom CLI, review a running page with no setup, hand th
 
 # Getting started
 
-You need Node 20 or later and an app running locally. The first review takes a few minutes and needs no configuration and no model key.
+You need Node 22.12 or later and an app running locally. The first review takes a few minutes and needs no configuration and no model key.
 
 ## 1. Install
 
@@ -26,7 +26,7 @@ Idiom opens the page at desktop and mobile widths, in light and dark, clicks thr
 
 ## 3. Hand it to your agent
 
-The Claude Code plugin bundles MCP tools, the Idiom skill and reminders after UI edits; in Codex the plugin adds the skill and `codex mcp add` adds the tools. A global CLI install is optional for plugin use. It needs Node 20 or later, npm/npx and the matching Chromium from step 1. The first MCP launch downloads the exact GitHub release named by the plugin.
+The Claude Code plugin bundles MCP tools, the Idiom skill and reminders after UI edits; in Codex the plugin adds the skill and `codex mcp add` adds the tools. A global CLI install is optional for plugin use. It needs Node 22.12 or later, npm/npx and the matching Chromium from step 1. The first MCP launch downloads the exact GitHub release named by the plugin.
 
 In Claude Code:
 
@@ -40,7 +40,7 @@ For Codex, in your shell:
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.19.0/mattskilly-idiom-0.19.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.20.0/mattskilly-idiom-0.20.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.

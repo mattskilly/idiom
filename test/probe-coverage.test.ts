@@ -17,6 +17,7 @@ import {
 } from "../src/report/coverage.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const result = (
   name: string,
@@ -67,7 +68,7 @@ const project = projectSchema.parse({
   app: { name: "Fixture", framework: "other" },
   server: {
     build: "node -e 0",
-    start: "node server.mjs",
+    start: fixtureCommand("server.mjs"),
     readyUrl: "http://127.0.0.1:3000/",
     port: 3000,
     env: {},

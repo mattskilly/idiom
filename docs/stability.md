@@ -131,7 +131,7 @@ The stable fields:
 - **`check`**, a full run's summary: `flow`, `runDirectory`, `reportPath`, `blocking`, and `findings[]` with `id`, `severity`, `category`, `rule` (when the finding came from a rule), `where`, `problem` and `fix[]`.
 - **`run-failure`**, printed instead by `check` and `baseline record|accept` when the run could not happen: `flow` (when one was named) and `failure` with `stage` (`preflight`, `server` or `capture`), `cause`, `hint`, `message` and, when relevant, `paths`.
 - **`init --validate`**: `ready`, `validate.ok`, and `doctor`, which is the `doctor` payload without `interfaceVersion`, or `null`.
-- **`doctor`**: `flow` (when there is one), `ok`, `steps[]` with `id`, `status`, `ms` and optional `detail` and `hint`, and `failure` (the `run-failure` object) when the boot failed.
+- **`doctor`**: `flow` (when there is one), `ok`, `steps[]` with `id`, `status`, `ms` and optional `detail` and `hint`, `leftovers[]` with `pid`, `port`, `command` and `outcome` (`stopped` or `failed`) when doctor found application servers an earlier, killed run left behind, and `failure` (the `run-failure` object) when the boot failed.
 
 `brief list --json` prints a bare array, so it cannot carry `interfaceVersion` without changing its shape. It stays an array and experimental until 1.0.
 

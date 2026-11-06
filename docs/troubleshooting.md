@@ -20,7 +20,7 @@ idiom doctor checkout   # also runs the flow's setup steps
 3. Act on the step that failed:
    - `start` exits: add the missing variable to `server.env`.
    - `port pinned`: read `PORT` in the start command, or set `"fixedPort": true` in `server` for an app that cannot take a port.
-   - `port in use`: stop the other process, or choose a port with `--port <n>` or `IDIOM_PORT`.
+   - `port in use`: stop the other process, or choose a port with `--port <n>` or `IDIOM_PORT`. If it is a server an earlier Idiom run started, see [a server from an earlier run](#port-already-in-use-or-a-server-from-an-earlier-run-is-still-running).
    - `timeout`: raise `server.startupTimeoutMs`, and point `readyUrl` at a page that returns `200` once the app is ready.
 
 ```sh
@@ -28,6 +28,21 @@ idiom doctor checkout --port 4100
 ```
 
 See the [project file](configuration.md#project-file).
+
+## Port already in use, or a server from an earlier run is still running
+
+**Symptom.** A run exits `2` with `server failed to start: port <n> in use — <readyUrl> already answers`, or prints `Stopped a leftover application server (pid <pid>, port <n>) from an earlier run.` on stderr before it starts.
+
+**Cause.** An earlier Idiom run was killed before it could stop the application server it started: a `SIGKILL`, a closed terminal, or a CI or agent timeout. The server kept running and kept its port.
+
+**Fix.** Usually nothing. Idiom records each server it starts in `.idiom/cache/servers/` and removes the record when the server stops. The next `idiom capture`, `check`, `check --gate`, `review`, `verify`, `sweep` or `doctor` in that project stops each recorded server whose run is gone, and prints one line per server. It stops only processes it started, and only while the pid still runs the recorded command, so a pid reused by another program is never touched. `idiom doctor` lists what it found under `leftovers` in its `--json` report.
+
+If a run prints `Could not stop a leftover application server …`, or the port belongs to something Idiom did not start, stop it yourself, or choose another port:
+
+```sh
+lsof -i :<port>          # find the process holding the port
+idiom doctor --port 4100 # or IDIOM_PORT=4100
+```
 
 ## Playwright Chromium is missing or the wrong version
 
@@ -195,6 +210,23 @@ idiom check --gate --reuse-server
 4. Set the budget you can afford with `--budget` or `checks.gate.budgetMs`, and cap the probe with `--probe-budget`.
 
 See [Gate a build](commands.md#gate-a-build) and [Build gate](configuration.md#build-gate).
+
+## Node is too old
+
+**Symptom.** Any `idiom` command or the MCP server exits `2` with `Idiom needs Node 22.12 or newer; this is Node <version>. Install Node 22.12+ (https://nodejs.org) and run again.` An MCP client shows the server failing to start, with that line in its server log.
+
+**Cause.** Idiom requires Node 22.12 because its CLI library (commander) requires it, and 22 is the oldest Node line still maintained; older lines no longer get security fixes. The check runs before anything else loads, so an older Node gets this line instead of a module or syntax error.
+
+**Fix**, in order:
+
+1. Install Node 22.12 or newer from [nodejs.org](https://nodejs.org) or your version manager, and check the version:
+
+```sh
+node --version
+```
+
+2. For the plugin and `npx`, the `node` that matters is the one on the PATH the host launches with. With nvm or volta, set a default of 22.12 or newer, then restart the host.
+3. Run [`idiom doctor`](commands.md#doctor): its first line reports the Node version.
 
 ## Still stuck
 

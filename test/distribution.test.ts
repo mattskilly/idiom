@@ -22,6 +22,10 @@ import { INTERFACE_VERSION } from "../src/interface/version.js";
 import { findingSchema } from "../src/schemas/finding.js";
 import { commit, git } from "./baseline-support.js";
 import { changedFixture } from "./changed-support.js";
+import {
+  fixtureCommand,
+  spawnFixtureServer,
+} from "./support/fixture-server.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = join(import.meta.dirname, "..");
@@ -129,11 +133,26 @@ afterAll(async () => {
   await rm(temporaryDirectory, { recursive: true, force: true });
 });
 
-test("the runtime entry is one self-contained file", async () => {
-  // Releases commit only dist/cli.js, so a code-split bundle would import
-  // chunks that a Git install never receives.
+test("the runtime entry is a launcher with no static imports", async () => {
+  // It checks the Node version before anything else loads, so an old Node
+  // gets a clear message rather than a module or syntax error.
   const entry = await readFile(runtimeEntry, "utf8");
-  expect(entry).not.toMatch(/(?:from|import\()\s*["']\.\.?\//);
+  expect(entry).not.toMatch(/\bfrom\s*["']/);
+  expect(entry).not.toMatch(/^\s*import\s*["']/m);
+  expect(entry).not.toContain("require(");
+  expect(entry.match(/\bimport\(/g)).toHaveLength(1);
+  expect(entry).toContain('import(new URL("./main.js", import.meta.url).href)');
+});
+
+test("the program is one self-contained file", async () => {
+  // Releases commit only dist/cli.js and dist/main.js, so a code-split bundle
+  // would import chunks that a Git install never receives.
+  const program = await readFile(
+    join(dirname(runtimeEntry), "main.js"),
+    "utf8",
+  );
+  expect(program).not.toMatch(/(?:from|import\()\s*["']\.\.?\//);
+  expect(program).not.toMatch(/^#!/);
 });
 
 test("minimal packed payload excludes repository-development inputs", async () => {
@@ -142,6 +161,7 @@ test("minimal packed payload excludes repository-development inputs", async () =
   // not claim that a Git install is pruned to this manifest.
   const files = packedFiles;
   expect(files).toContain("dist/cli.js");
+  expect(files).toContain("dist/main.js");
   expect(files).toContain("templates/project.json");
   expect(files).toContain("templates/autobuild.idiom.toml");
   expect(files).toContain("templates/ab-verify-idiom/SKILL.md");
@@ -333,7 +353,7 @@ test("packed CLI completes documented init, validate, and capture outside the so
         app: { name: "external-application", framework: "other" },
         server: {
           build: "node --check server.mjs",
-          start: "node server.mjs",
+          start: fixtureCommand("server.mjs"),
           readyUrl: `http://127.0.0.1:${port}/`,
           port,
           env: { PORT: String(port) },
@@ -438,13 +458,7 @@ test("packed CLI completes the zero-configuration quick path outside Git", async
     serverPath,
     `import { createServer } from "node:http";\nconst server = createServer((_request, response) => {\n  response.writeHead(200, { "content-type": "text/html" });\n  response.end("<!doctype html><title>Quick</title><main><h1>Quick result</h1><button>Continue</button></main>");\n});\nserver.listen(${port}, "127.0.0.1");\nprocess.on("SIGTERM", () => server.close(() => process.exit(0)));\n`,
   );
-  const server = spawn(process.execPath, [serverPath], {
-    cwd: application,
-    stdio: "ignore",
-  });
-  const exited = new Promise<void>((resolveExit) =>
-    server.once("exit", () => resolveExit()),
-  );
+  const server = await spawnFixtureServer(serverPath, { cwd: application });
   try {
     const target = `http://127.0.0.1:${port}/`;
     let ready = false;
@@ -489,8 +503,7 @@ test("packed CLI completes the zero-configuration quick path outside Git", async
       "## Quick-review limits",
     );
   } finally {
-    if (server.exitCode === null) server.kill("SIGTERM");
-    await exited;
+    await server.stop();
   }
 }, 30_000);
 

@@ -28,7 +28,7 @@ Start from a clean `main` checkout with the intended release commit integrated. 
 - **Interface check.** Run `bun run contract:update`. If `test/contract/interface.json` changed, or `INTERFACE_VERSION` moved since the previous tag, list every change in its diff under an `### Interface` heading in the release's CHANGELOG section, and commit the snapshot. A breaking change names the interface bump and the replacement ([stability](stability.md)). Otherwise the section has no Interface heading.
 - `site/index.html` and the hand-written docs in `site/docs/*.md` (including the two guides) describe exactly this release: the install lines in the landing page, `getting-started.md` and both guides use `npm install -g @mattskilly/idiom`, the `codex mcp add` lines and the guides' "For Idiom" version tags name it, and every user-visible command, rule, default and MCP tool added or changed in its changelog section is reflected, while nothing unreleased is claimed. idiom.build production serves the `release` branch, which only this process moves ([Move idiom.build to the release](#move-idiombuild-to-the-release)); `main` and pull requests deploy as previews. A feature PR may update the site alongside the behaviour it ships, and those changes go live when the release moves `release`. This pass still confirms the site describes exactly this release. The reference pages under idiom.build/docs (commands, rules, configuration, MCP, design comparison) are rendered from `docs/*.md` at build time and need no separate pass. The README (the public GitHub page, carried by the public snapshot) gets the same pass: what Idiom does, how it works and why it helps, accurate to this release.
 
-The current smoke pair is `previous_version="0.18.0"` and `version="0.19.0"`. When preparing the next release, advance both literals — the candidate becomes `version` and the newest released heading becomes `previous_version` — as part of the source commit. The published `v0.6.0` predates embedded provenance and prints a bare version; `v0.7.0` is the first release that prints `<version> (<short source commit>)`.
+The current smoke pair is `previous_version="0.19.0"` and `version="0.20.0"`. When preparing the next release, advance both literals — the candidate becomes `version` and the newest released heading becomes `previous_version` — as part of the source commit. The published `v0.6.0` predates embedded provenance and prints a bare version; `v0.7.0` is the first release that prints `<version> (<short source commit>)`.
 
 Before recording the source, check that `release` carries nothing `main` lacks, so the release push below is a fast-forward:
 
@@ -41,7 +41,7 @@ If the check fails, `release` holds site-only fixes not yet on `main` ([Fixing t
 
 ### Record the source, then commit the distribution
 
-The embedded commit is the checkout HEAD **at build time**. A generated bundle cannot contain the hash of the later commit recording itself. Finish and commit every intended source, version, lockfile, and documentation change first (stage those paths explicitly, leaving `dist/cli.js` for the next commit). Start this sequence with a clean worktree:
+The embedded commit is the checkout HEAD **at build time**. A generated bundle cannot contain the hash of the later commit recording itself. Finish and commit every intended source, version, lockfile, and documentation change first (stage those paths explicitly, leaving `dist/cli.js` and `dist/main.js` for the next commit). Start this sequence with a clean worktree:
 
 ```sh
 build_source_commit="$(git rev-parse --verify HEAD)"
@@ -60,19 +60,19 @@ bun run lint &&
 bun run build
 ```
 
-`bun run test` builds before testing the packed payload. Confirm `node dist/cli.js --version` prints exactly `$expected_display`, `<version> (<short source commit>) · interface <n>`, where `<n>` is `INTERFACE_VERSION` in `src/interface/version.ts`. Review the generated diff, then commit **only** the tracked bundle:
+`bun run test` builds before testing the packed payload. Confirm `node dist/cli.js --version` prints exactly `$expected_display`, `<version> (<short source commit>) · interface <n>`, where `<n>` is `INTERFACE_VERSION` in `src/interface/version.ts`. Review the generated diff, then commit **only** the two tracked distribution files. `dist/cli.js` is the bin, a launcher that checks the Node version with no imports so an old Node gets a clear message, and `dist/main.js` is the program it loads; a release needs both. The first release that ships `dist/main.js` must start tracking it once with `git add -f dist/main.js` before this block:
 
 ```sh
 test "$(node dist/cli.js --version)" = "$expected_display" &&
-git ls-files --error-unmatch dist/cli.js &&
-git add -u -- dist/cli.js &&
+git ls-files --error-unmatch dist/cli.js dist/main.js &&
+git add -u -- dist/cli.js dist/main.js &&
 git commit -m "Build Idiom distribution from ${build_source_commit}" &&
-test "$(git diff --name-only "$build_source_commit" HEAD)" = "dist/cli.js" &&
+test "$(git diff --name-only "$build_source_commit" HEAD)" = "$(printf 'dist/cli.js\ndist/main.js')" &&
 test -z "$(git status --porcelain)" &&
 test "$(node dist/cli.js --version)" = "$expected_display"
 ```
 
-The source-to-distribution diff must contain only `dist/cli.js`. Any further source change restarts the sequence with a new source commit and a rebuilt bundle. Do not rebuild at the distribution commit and expect identical bytes: its HEAD is different.
+The source-to-distribution diff must contain only `dist/cli.js` and `dist/main.js`. Any further source change restarts the sequence with a new source commit and a rebuilt bundle. Do not rebuild at the distribution commit and expect identical bytes: its HEAD is different.
 
 Check reproducibility from the recorded source commit in a detached temporary checkout, using the same locked toolchain and offline dependency tree:
 
@@ -88,6 +88,7 @@ Check reproducibility from the recorded source commit in a detached temporary ch
   ln -s "$release_root/node_modules" "$repro_checkout/node_modules"
   (cd "$repro_checkout" && bun run build)
   cmp "$release_root/dist/cli.js" "$repro_checkout/dist/cli.js"
+  cmp "$release_root/dist/main.js" "$repro_checkout/dist/main.js"
 )
 ```
 
@@ -212,7 +213,7 @@ The tag and GitHub Release above live in the workshop repository. The public rep
   node scripts/public-snapshot.mjs --out "$public_root/idiom"
   cd "$public_root/idiom"
   git add -A
-  git add -f dist/cli.js
+  git add -f dist/cli.js dist/main.js
   git commit -m "Idiom v${version}"
   git tag -a "v${version}" -m "Idiom v${version}"
   # Publish the immutable snapshot/tag without advancing the advertised catalog.
@@ -225,6 +226,7 @@ The tag and GitHub Release above live in the workshop repository. The public rep
   tar -xzf "$tarball" -C "$packed_root"
   node scripts/check-plugins.mjs "$packed_root/package"
   cmp dist/cli.js "$packed_root/package/dist/cli.js"
+  cmp dist/main.js "$packed_root/package/dist/main.js"
   gh release create "v${version}" "$tarball" --repo mattskilly/idiom --verify-tag \
     --title "Idiom v${version}" --notes-file "$release_notes"
   # Prove the unchanged public launcher URL is readable before advertising it.
@@ -362,8 +364,8 @@ Every release after the first must also prove replacement in place. Create anoth
   test "$(bun pm cache)" = "$BUN_INSTALL_CACHE_DIR"
   bun pm cache rm
   cd "$smoke_root/work"
-  previous_version="0.18.0"
-  version="0.19.0"
+  previous_version="0.19.0"
+  version="0.20.0"
   interface_version="1"
   expected_display="$version ($(printf '%s' "$build_source_commit" | cut -c1-7)) · interface $interface_version"
   idiom_bin="$BUN_INSTALL/bin/idiom"
@@ -379,7 +381,7 @@ Every release after the first must also prove replacement in place. Create anoth
       printf 'Verified preceding Idiom %s link at %s.\n' \
         "$previous_version" "$idiom_bin"
       if git ls-remote --exit-code git@github.com:mattskilly/idiom.git "refs/tags/v${version}"; then
-        if bun remove -g idiom && test ! -e "$idiom_bin"; then
+        if bun remove -g @mattskilly/idiom && test ! -e "$idiom_bin"; then
           if bun add -g "git+ssh://git@github.com/mattskilly/idiom.git#v${version}"; then
             candidate_display="$("$idiom_bin" --version)"
             candidate_bare="${candidate_display%% *}"
@@ -471,7 +473,7 @@ Check them all in one pass after `release` has moved, production has deployed an
 
 ```sh
 (
-  X="0.19.0"
+  X="0.20.0"
   gh release view "v$X" --repo mattskilly/idiom-dev --json tagName --jq .tagName
   gh release list --repo mattskilly/idiom --limit 1
   gh release view "v$X" --repo mattskilly/idiom --json assets --jq '.assets[].name'

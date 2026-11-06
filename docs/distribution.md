@@ -50,7 +50,7 @@ The public snapshot procedure in [releases.md](releases.md#publish-the-public-sn
 
 ## Smoke the portable installer without listing anything
 
-The tested Skills CLI version is **1.7.4**, whose npm `engines.node` requires **>=22.20.0**. This is the installer's requirement; Idiom itself requires Node >=20. Consult the [Skills CLI command reference](https://github.com/vercel-labs/skills/blob/main/docs/commands.md) and `npm view skills@1.7.4 engines --json` when changing the pin.
+The tested Skills CLI version is **1.7.4**, whose npm `engines.node` requires **>=22.20.0**. This is the installer's requirement; Idiom itself requires Node >=22.12. Consult the [Skills CLI command reference](https://github.com/vercel-labs/skills/blob/main/docs/commands.md) and `npm view skills@1.7.4 engines --json` when changing the pin.
 
 This recipe installs only from an absolute local directory, into a temporary project for Claude Code and Codex. It disables telemetry and never uses global agent settings:
 

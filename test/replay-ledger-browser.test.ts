@@ -17,6 +17,7 @@ import { loadCaptureRun } from "../src/review/artifacts.js";
 import { buildDeterministicDrafts } from "../src/review/findings.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 /**
  * Replay budget (file-199): three states reached through the same request-
@@ -102,7 +103,7 @@ async function capture(
     app: { name: "Fixture", framework: "other" },
     server: {
       build: "node -e 0",
-      start: "node server.mjs",
+      start: fixtureCommand("server.mjs"),
       readyUrl: `http://127.0.0.1:${port}/`,
       port,
       env: {},

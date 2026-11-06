@@ -2,6 +2,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { flowSchema, isWebFlow } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 export async function toggleProject() {
   const server = createServer();
@@ -15,7 +16,9 @@ export async function toggleProject() {
     app: { name: "Toggle fixture", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node ${JSON.stringify(join(import.meta.dirname, "fixtures/web-flow-steps/server.mjs"))}`,
+      start: fixtureCommand(
+        join(import.meta.dirname, "fixtures/web-flow-steps/server.mjs"),
+      ),
       port,
       readyUrl: `http://127.0.0.1:${port}/`,
       env: { PORT: String(port) },

@@ -14,17 +14,29 @@ import {
   type ProcessDependencies,
   runServerBuild,
   runSetupSteps,
+  serverRegistryFor,
   startServer,
 } from "../capture/process.js";
 import { sourceStatus } from "../capture/resolve.js";
 import { serverFailureHint } from "../capture/server-diagnosis.js";
+import {
+  type LeftoverServer,
+  leftoverServerMessage,
+  reapLeftoverServers,
+} from "../capture/server-registry.js";
 import { IdiomError, RunFailure, type RunFailureJson } from "../errors.js";
+import {
+  MINIMUM_NODE,
+  NODE_UPGRADE_HINT,
+  nodeVersionProblem,
+} from "../node-version.js";
 import { validateForRun } from "../preflight.js";
 import { preflightFindingNameRegistry } from "../review/names.js";
 import { isWebFlow } from "../schemas/flow.js";
 import type { Project } from "../schemas/project.js";
 
 export type DoctorStepId =
+  | "node"
   | "config"
   | "registry"
   | "tree"
@@ -47,15 +59,20 @@ export type DoctorReport = {
   flow?: string | undefined;
   ok: boolean;
   steps: DoctorStep[];
+  /** Servers an earlier, killed run left behind; present only when any were found. */
+  leftovers?: LeftoverServer[] | undefined;
   failure?: RunFailureJson | undefined;
 };
 
 export type DoctorDependencies = {
   process?: ProcessDependencies | undefined;
   inheritedEnvironment?: NodeJS.ProcessEnv | undefined;
+  nodeVersion?: string | undefined;
+  onLeftoverServer?: ((message: string) => void) | undefined;
 };
 
 const STEP_ORDER: DoctorStepId[] = [
+  "node",
   "config",
   "registry",
   "tree",
@@ -85,6 +102,7 @@ export async function runDoctor(options: {
   dependencies?: DoctorDependencies | undefined;
 }): Promise<DoctorReport> {
   const steps: DoctorStep[] = [];
+  let leftovers: LeftoverServer[] = [];
   let failure: RunFailure | undefined;
   const inherited = options.dependencies?.inheritedEnvironment ?? process.env;
   const processDependencies = options.dependencies?.process;
@@ -120,9 +138,35 @@ export async function runDoctor(options: {
       ...(options.flow === undefined ? {} : { flow: options.flow }),
       ok: failure === undefined,
       steps: ordered,
+      ...(leftovers.length === 0 ? {} : { leftovers }),
       ...(failure === undefined ? {} : { failure: failure.failureJson() }),
     };
   };
+
+  // node: the launcher refuses an old Node first; this reports it for in-process callers.
+  const nodeStarted = performance.now();
+  const nodeVersion =
+    options.dependencies?.nodeVersion ?? process.versions.node;
+  const nodeProblem = nodeVersionProblem(nodeVersion);
+  if (nodeProblem !== undefined) {
+    fail(
+      { id: "node", status: "fail", ms: elapsed(nodeStarted) },
+      new RunFailure({
+        stage: "preflight",
+        cause: "node-version",
+        headline: nodeProblem,
+        hint: NODE_UPGRADE_HINT,
+      }),
+    );
+    skipRest(`Node ${MINIMUM_NODE} or newer is required`);
+    return report();
+  }
+  steps.push({
+    id: "node",
+    status: "pass",
+    ms: elapsed(nodeStarted),
+    detail: `Node ${nodeVersion}; Idiom needs Node ${MINIMUM_NODE} or newer`,
+  });
 
   // config
   const config = await timed(() => validateForRun(options));
@@ -139,6 +183,15 @@ export async function runDoctor(options: {
     ms: config.ms,
     detail: `${validated.flows.length} flow(s) valid`,
   });
+
+  // A server an earlier, killed run left on the port is stopped before the
+  // port step probes it.
+  const reaping = serverRegistryFor(processDependencies);
+  if (reaping !== undefined) {
+    leftovers = await reapLeftoverServers(validated.projectDirectory, reaping);
+    for (const leftover of leftovers)
+      options.dependencies?.onLeftoverServer?.(leftoverServerMessage(leftover));
+  }
 
   // registry
   const registry = await timed(() =>

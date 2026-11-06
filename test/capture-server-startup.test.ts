@@ -20,6 +20,7 @@ import { run } from "../src/cli.js";
 import { RUN_FAILURE_EXIT_CODE, RunFailure } from "../src/errors.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
+import { fixtureEvalCommand } from "./support/fixture-server.js";
 
 // The startup failure branches of startServer and the server build failure
 // that precedes it. Real children prove cleanup; fake children pin the exact
@@ -158,7 +159,11 @@ describe("startServer readiness timeout", () => {
     const fetch = rejectingFetch();
     const pending = startServer({
       projectDirectory: process.cwd(),
-      project: project({ start: node(script), port, startupTimeoutMs: 1_000 }),
+      project: project({
+        start: fixtureEvalCommand(script),
+        port,
+        startupTimeoutMs: 1_000,
+      }),
       environment: environment(),
       onOwned: (server) => {
         owned = server;

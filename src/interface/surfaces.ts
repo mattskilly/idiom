@@ -107,6 +107,7 @@ const doctorReportContract = z.looseObject({
   steps: z.array(
     z.looseObject({
       id: z.enum([
+        "node",
         "config",
         "registry",
         "tree",

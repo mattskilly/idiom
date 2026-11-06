@@ -2109,6 +2109,7 @@
                 "id": {
                   "type": "string",
                   "enum": [
+                    "node",
                     "config",
                     "registry",
                     "tree",
@@ -2241,6 +2242,7 @@
                         "id": {
                           "type": "string",
                           "enum": [
+                            "node",
                             "config",
                             "registry",
                             "tree",

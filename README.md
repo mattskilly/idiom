@@ -59,10 +59,10 @@ For Codex, run in your shell:
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.19.0/mattskilly-idiom-0.19.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.20.0/mattskilly-idiom-0.20.0.tgz idiom mcp
 ```
 
-The Claude Code plugin bundles twenty-two MCP tools over stdio, the Idiom skill and UI-edit and stop reminders. In Codex the plugin supplies the skill and `codex mcp add` registers the tools, because Codex starts a plugin's own MCP server in the plugin directory rather than your project. No global Idiom install is needed for the plugin. You need Node 20 or newer, npm/npx and the matching browser: `npx playwright@1.62.1 install chromium`. The first MCP launch downloads the exact GitHub release named by the plugin, independently of the npm registry's current version.
+The Claude Code plugin bundles twenty-two MCP tools over stdio, the Idiom skill and UI-edit and stop reminders. In Codex the plugin supplies the skill and `codex mcp add` registers the tools, because Codex starts a plugin's own MCP server in the plugin directory rather than your project. No global Idiom install is needed for the plugin. You need Node 22.12 or newer, npm/npx and the matching browser: `npx playwright@1.62.1 install chromium`. The first MCP launch downloads the exact GitHub release named by the plugin, independently of the npm registry's current version.
 
 Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom`, rerun the `codex mcp add` line above with the new release (it replaces the entry), and start a new session.
 
@@ -80,14 +80,14 @@ These are Idiom's benchmark fixture pages in `test/fixtures/benchmark/`, a recon
 
 ## Install
 
-You need Node 20 or newer. Install the current release:
+You need Node 22.12 or newer. Install the current release:
 
 ```sh
 npm install -g @mattskilly/idiom
 idiom --version
 ```
 
-`bun add -g @mattskilly/idiom` works too. The version command prints `<version> (<short source commit>) · interface <n>`, for example `0.19.0 (00663e4) · interface 1`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D --save-exact @mattskilly/idiom@0.19.0` or `bun add -d --exact @mattskilly/idiom@0.19.0`. Every release's tarball is also attached to its [GitHub release](https://github.com/mattskilly/idiom/releases).
+`bun add -g @mattskilly/idiom` works too. The version command prints `<version> (<short source commit>) · interface <n>`, for example `0.20.0 (00663e4) · interface 1`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D --save-exact @mattskilly/idiom@0.20.0` or `bun add -d --exact @mattskilly/idiom@0.20.0`. Every release's tarball is also attached to its [GitHub release](https://github.com/mattskilly/idiom/releases).
 
 ### Browser setup
 

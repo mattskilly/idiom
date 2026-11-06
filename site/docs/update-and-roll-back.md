@@ -21,7 +21,7 @@ idiom --version
 For a project dependency, pin an exact version and commit the package manifest and lockfile:
 
 ```sh
-npm install --save-dev --save-exact @mattskilly/idiom@0.19.0
+npm install --save-dev --save-exact @mattskilly/idiom@0.20.0
 npx --no-install idiom --version
 ```
 

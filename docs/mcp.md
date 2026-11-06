@@ -2,13 +2,13 @@
 
 `idiom mcp` exposes twenty-two tools over stdio using the official TypeScript MCP SDK. It works with Claude Code, Codex, Cursor, Claude Desktop and other local MCP clients. No HTTP service or repair agent is required. Only model-enabled `idiom_sweep` needs model credentials, and only Figma references need `FIGMA_TOKEN`; both come from the server's environment, never from tool arguments (see [Credentials](#credentials)).
 
-Install Node 20 or newer and the matching Playwright Chromium browser. Run `npx playwright@1.62.1 install chromium`. The application must be reachable for quick review; configured flows use their normal setup/build/server settings.
+Install Node 22.12 or newer and the matching Playwright Chromium browser. Run `npx playwright@1.62.1 install chromium`. The application must be reachable for quick review; configured flows use their normal setup/build/server settings.
 
 The portable Agent Skill installs with `npx skills add mattskilly/idiom --skill idiom` once the public snapshot contains it. See [distribution and registry preparation](distribution.md) for the prepared manifest and publication prerequisites; this does not announce a live registry listing. The [Claude Code how-to](https://idiom.build/docs/design-qa-for-claude-code) walks through setup and the repair loop.
 
 ## Install the plugin
 
-The plugin includes the MCP server and Idiom skill; Claude Code also includes the UI-edit reminders described below. It needs Node 20 or newer, npm/npx and the matching browser, but no globally installed Idiom. The first launch downloads the exact versioned GitHub release tarball named by the plugin, and MCP initialization reports that release as `serverInfo.version`. It binds to the application's working directory. Codex starts a plugin's MCP servers in the installed plugin directory and passes no project, so the Codex plugin ships only the skill and the server is registered with `codex mcp add`, which Codex starts in each thread's project directory. If any host starts the server inside Idiom's plugin directory, it uses the client's MCP root that contains `.idiom/project.json` (or its first file root) when the client offers roots, and otherwise project tools return an error rather than reading or writing the plugin directory.
+The plugin includes the MCP server and Idiom skill; Claude Code also includes the UI-edit reminders described below. It needs Node 22.12 or newer, npm/npx and the matching browser, but no globally installed Idiom. The first launch downloads the exact versioned GitHub release tarball named by the plugin, and MCP initialization reports that release as `serverInfo.version`. It binds to the application's working directory. Codex starts a plugin's MCP servers in the installed plugin directory and passes no project, so the Codex plugin ships only the skill and the server is registered with `codex mcp add`, which Codex starts in each thread's project directory. If any host starts the server inside Idiom's plugin directory, it uses the client's MCP root that contains `.idiom/project.json` (or its first file root) when the client offers roots, and otherwise project tools return an error rather than reading or writing the plugin directory.
 
 In a Claude Code session:
 
@@ -29,7 +29,7 @@ For Codex (see [plugin packaging and marketplaces](https://developers.openai.com
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.19.0/mattskilly-idiom-0.19.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.20.0/mattskilly-idiom-0.20.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.

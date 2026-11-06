@@ -14,6 +14,7 @@ import { runDeterministicChecks } from "../src/checks/registry.js";
 import { loadCaptureRun } from "../src/review/artifacts.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const serverScript = join(
   import.meta.dirname,
@@ -53,7 +54,7 @@ function portProject(port: number, marker: string, fixedPort = false) {
     app: { name: "port", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node ${JSON.stringify(serverScript)}`,
+      start: fixtureCommand(serverScript),
       readyUrl: `http://127.0.0.1:${port}/`,
       port,
       ...(fixedPort ? { fixedPort: true } : {}),

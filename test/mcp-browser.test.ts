@@ -18,6 +18,7 @@ import type { Finding } from "../src/schemas/finding.js";
 import { baselineProject, commit, git } from "./baseline-support.js";
 import { fixture } from "./benchmark-support.js";
 import { mcpClient, toolData } from "./mcp-support.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 type Ref = { id: string; runId: string };
 type Detail = {
@@ -73,7 +74,7 @@ async function configured(html: string, states = ["editor"]) {
   const config = JSON.parse(await readFile(setup.configPath, "utf8"));
   config.server = {
     build: "node -e 0",
-    start: "node server.mjs",
+    start: fixtureCommand("server.mjs"),
     port: 3299,
     readyUrl: "http://127.0.0.1:3299",
     env: {},

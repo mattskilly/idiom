@@ -30,6 +30,7 @@ import { type Finding, findingSchema } from "../src/schemas/finding.js";
 import { IDIOM_VERSION_DISPLAY } from "../src/version.js";
 
 import { productionFixture } from "./production-support.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 /** Interactive init probes for setup agents; never run the real CLIs here. */
 const unusableAgentProbe = async () => {
@@ -77,7 +78,7 @@ async function captureFixture(
       app: { name: "fixture", framework: "other" },
       server: {
         build: "node -e 0",
-        start: `node ${JSON.stringify(serverScript)}`,
+        start: fixtureCommand(serverScript),
         readyUrl: `http://127.0.0.1:${port}/`,
         port,
         env: { PORT: String(port) },

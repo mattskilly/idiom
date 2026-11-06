@@ -26,7 +26,7 @@ Idiom is a **single private package** named `idiom` in this repository — no wo
 
 Bun's Git installer copies the repository checkout even though `package.json.files` describes a smaller package payload. Runtime does not depend on `src/`, tests, docs, examples, TypeScript/build configuration, or Autobuild files: package metadata, declared runtime dependencies, `templates/`, and `dist/cli.js` are sufficient. The hermetic distribution test proves that minimal boundary with `bun pm pack`; it does not claim that a Git-installed checkout is pruned.
 
-**Node ≥ 20 is the canonical runtime.** Playwright's library API is fully supported on Node, while Bun has recurring edge cases (especially around `@playwright/test`). Idiom uses the **Playwright library API directly, not `@playwright/test`**: Idiom is an orchestrator with its own metadata and artifact lifecycle, not a test suite. Bun installs and links the package but the generated bin entry's shebang launches Node. Bun may also appear inside shelled target-repo commands declared in the flow manifest (`bun run seed:booking`, `bun run --cwd apps/web start`), so the two runtimes never mix in one process.
+**Node ≥ 22.12 is the canonical runtime.** Playwright's library API is fully supported on Node, while Bun has recurring edge cases (especially around `@playwright/test`). Idiom uses the **Playwright library API directly, not `@playwright/test`**: Idiom is an orchestrator with its own metadata and artifact lifecycle, not a test suite. Bun installs and links the package but the generated bin entry's shebang launches Node. Bun may also appear inside shelled target-repo commands declared in the flow manifest (`bun run seed:booking`, `bun run --cwd apps/web start`), so the two runtimes never mix in one process. The bin `dist/cli.js` is a launcher with no imports: it checks `process.versions.node` and on Node older than 22.12 exits 2 with a clear message on stderr, before loading anything else; otherwise it loads the program from `dist/main.js`.
 
 ## Repository layout
 
@@ -413,7 +413,7 @@ No dependency is added to the target's `package.json`: a `file:` path is machine
 bun add -g "git+ssh://git@github.com/mattskilly/idiom.git#vX.Y.Z"
 ```
 
-Replace `X.Y.Z` with the release being installed. This private route requires GitHub access and working SSH authentication. Bun's generated global link targets the tracked `dist/cli.js`; no clone, local build, or wrapper is part of the install. Updating a pinned Git package uses a preflighted `bun remove -g idiom` followed by the same SSH add command with the new tag, with the old tag recorded for rollback. npm publication remains deliberately parked while the commercial posture is unresolved. Maintainer release and credentialed install/update smoke requirements live in [releases.md](releases.md).
+Replace `X.Y.Z` with the release being installed. This private route requires GitHub access and working SSH authentication. Bun's generated global link targets the tracked `dist/cli.js`; no clone, local build, or wrapper is part of the install. Updating a pinned Git package uses a preflighted `bun remove -g @mattskilly/idiom` followed by the same SSH add command with the new tag, with the old tag recorded for rollback. npm publication remains deliberately parked while the commercial posture is unresolved. Maintainer release and credentialed install/update smoke requirements live in [releases.md](releases.md).
 
 The init-managed footprint in a target repository is:
 

@@ -69,6 +69,7 @@ import {
   missing,
   storedBaselineRun,
 } from "./baseline-support.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -1576,7 +1577,9 @@ test("fresh scoped bootstrap captures once, records actual coordinates in the cu
   config.baselines = { directory: "accepted" };
   config.server = {
     build: "node -e 0",
-    start: `node '${join(import.meta.dirname, "fixtures/github-action/server.mjs")}'`,
+    start: fixtureCommand(
+      join(import.meta.dirname, "fixtures/github-action/server.mjs"),
+    ),
     port: 3123,
     readyUrl: "http://127.0.0.1:3123",
     env: {},

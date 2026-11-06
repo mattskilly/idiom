@@ -371,6 +371,7 @@ idiom doctor booking --port 4100 --json
 
 | Step | What it does |
 | --- | --- |
+| `node` | checks that Node is 22.12 or newer; a failure skips every other step |
 | `config` | validates `.idiom/project.json` and the flow manifests; a failure skips every other step |
 | `registry` | resolves finding names from `.idiom/finding-names.json` (and the primary checkout's); divergence from the primary passes, and the next run warns |
 | `tree` | a warning, not a failure, when the tree is dirty or not a Git worktree, because a baseline cannot be recorded then |

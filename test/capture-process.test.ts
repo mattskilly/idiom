@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import {
   mkdir,
   mkdtemp,
@@ -34,6 +35,7 @@ import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
 
 import { productionFixture } from "./production-support.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const temporaryDirectories: string[] = [];
 const fixture = join(import.meta.dirname, "fixtures", "capture");
@@ -182,7 +184,7 @@ test.for(["127.0.0.1", "::1"])(
     const server = await startServer({
       projectDirectory: fixture,
       project: portedProject({
-        start: `node ${shellPath(join(fixture, "server.mjs"))}`,
+        start: fixtureCommand(join(fixture, "server.mjs")),
         readyUrl: loopbackUrl(host, port),
         port,
         startupTimeoutMs: 5_000,
@@ -204,6 +206,73 @@ test.for(["127.0.0.1", "::1"])(
   },
 );
 
+test("a started server is recorded in the project cache until it stops", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-server-record-"));
+  temporaryDirectories.push(directory);
+  const port = await freePort();
+  const command = fixtureCommand(join(fixture, "server.mjs"));
+  const server = await startServer({
+    projectDirectory: directory,
+    project: portedProject({
+      start: command,
+      readyUrl: `http://127.0.0.1:${port}/`,
+      port,
+      startupTimeoutMs: 5_000,
+    }),
+    environment: { ...process.env, PORT: String(port) },
+  });
+  const servers = join(directory, ".idiom", "cache", "servers");
+  try {
+    const pid = server.process.pid as number;
+    expect(await readdir(servers)).toEqual([`${pid}.json`]);
+    const record = JSON.parse(
+      await readFile(join(servers, `${pid}.json`), "utf8"),
+    );
+    expect(record).toMatchObject({
+      version: 1,
+      pid,
+      pgid: pid,
+      port,
+      command,
+      project: directory,
+      owner: { pid: process.pid },
+    });
+    expect(record.process.start).toEqual(expect.any(String));
+    expect(record.process.args).toContain("server.mjs");
+  } finally {
+    await server.stop();
+  }
+  await expect(readdir(servers)).rejects.toThrow();
+});
+
+test("an injected spawn records nothing: a fake child's pid may be a real process", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-server-record-"));
+  temporaryDirectories.push(directory);
+  const port = await freePort();
+  const child = Object.assign(new EventEmitter(), {
+    pid: process.pid,
+    exitCode: null,
+    signalCode: null,
+  });
+  const server = await startServer({
+    projectDirectory: directory,
+    project: portedProject({
+      start: "fake",
+      readyUrl: `http://127.0.0.1:${port}/`,
+      port,
+    }),
+    environment: process.env,
+    dependencies: {
+      spawn: (() => child) as never,
+      fetch: async () => new Response("ready"),
+    },
+  });
+  expect(server.process).toBe(child);
+  await expect(
+    readdir(join(directory, ".idiom", "cache", "servers")),
+  ).rejects.toThrow();
+});
+
 test.for(["127.0.0.1", "::1"])(
   "owned server on %s escalates to a hard kill when SIGTERM is ignored",
   async (host, context) => {
@@ -211,7 +280,7 @@ test.for(["127.0.0.1", "::1"])(
     const server = await startServer({
       projectDirectory: fixture,
       project: portedProject({
-        start: `node ${shellPath(join(fixture, "server.mjs"))}`,
+        start: fixtureCommand(join(fixture, "server.mjs")),
         readyUrl: loopbackUrl(host, port),
         port,
         startupTimeoutMs: 5_000,
@@ -242,7 +311,7 @@ test("a start command that pins its port fails fast with the fix", async () => {
     app: { name: "fixture", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node ${shellPath(join(fixture, "server.mjs"))}`,
+      start: fixtureCommand(join(fixture, "server.mjs")),
       readyUrl: `http://127.0.0.1:${reserved}/`,
       port: reserved,
       env: {},
@@ -1010,7 +1079,9 @@ test.each(["setup", "build"])(
   async (phase) => {
     const f = await productionFixture();
     const controller = new AbortController();
-    const command = `node '${join(import.meta.dirname, "fixtures", "probe-timeouts", "server.mjs")}'`;
+    const command = fixtureCommand(
+      join(import.meta.dirname, "fixtures", "probe-timeouts", "server.mjs"),
+    );
     const environment = { ...process.env, PORT: String(f.project.server.port) };
     const pending =
       phase === "setup"

@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, test } from "vitest";
@@ -6,6 +5,10 @@ import { serverAnswers } from "../src/capture/process.js";
 import { run } from "../src/cli.js";
 import { planGate } from "../src/gate/plan.js";
 import { changedFixture } from "./changed-support.js";
+import {
+  fixtureCommand,
+  spawnFixtureServer,
+} from "./support/fixture-server.js";
 
 async function cli(directory: string, flags: string[]) {
   const out: string[] = [],
@@ -163,16 +166,10 @@ test("reuse-server captures a running server and never starts one", async () => 
   const project = JSON.parse(
     await readFile(join(f.directory, ".idiom/project.json"), "utf8"),
   );
-  const server = spawn(
-    process.execPath,
-    [join(import.meta.dirname, "fixtures/faster-checks/server.mjs")],
+  const server = await spawnFixtureServer(
+    join(import.meta.dirname, "fixtures/faster-checks/server.mjs"),
     {
-      env: {
-        ...process.env,
-        PORT: String(f.port),
-        AUDIT_FILE: join(f.directory, "audit.txt"),
-      },
-      stdio: "ignore",
+      env: { PORT: String(f.port), AUDIT_FILE: join(f.directory, "audit.txt") },
     },
   );
   try {
@@ -210,7 +207,7 @@ test("reuse-server captures a running server and never starts one", async () => 
     expect(output.checks[0].summary.timings.build.status).toBe("reused");
     expect(output.gate.timing.phases.serverStart.status).toBe("reused");
   } finally {
-    server.kill();
+    await server.stop();
     await f.cleanup();
   }
 }, 60_000);
@@ -260,7 +257,7 @@ createServer(async (req, res) => {
   try {
     const path = join(f.directory, ".idiom/project.json");
     const project = JSON.parse(await readFile(path, "utf8"));
-    project.server.start = `node '${join(f.directory, "server.mjs")}'`;
+    project.server.start = fixtureCommand(join(f.directory, "server.mjs"));
     project.checks.probe = { enabled: true, waitMs: 0 };
     await writeFile(path, JSON.stringify(project));
     const base = await f.commit("probe on");

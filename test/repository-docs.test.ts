@@ -27,6 +27,7 @@ type PackageMetadata = {
   description: string;
   dependencies: Record<string, string>;
   bin: { idiom: string };
+  engines: { node: string };
 };
 
 let readme: string;
@@ -415,6 +416,7 @@ test("README distribution commands stay aligned with package metadata", () => {
   const version = packageMetadata.version;
   expect(packageMetadata.name).toBe("@mattskilly/idiom");
   expect(packageMetadata.bin.idiom).toBe("dist/cli.js");
+  expect(packageMetadata.engines.node).toBe(">=22.12");
   expect(readme).toContain("npm install -g @mattskilly/idiom");
   expect(readme).toContain(`@mattskilly/idiom@${version}`);
   expect(readme).toContain("<version> (<short source commit>)");
@@ -587,6 +589,7 @@ test("troubleshooting gives symptom, cause and fix for every required failure", 
     "probe coverage",
     "recapture",
     "--gate",
+    "Node is too old",
   ]) {
     const heading = headings.find((candidate) =>
       candidate.toLowerCase().includes(keyword.toLowerCase()),

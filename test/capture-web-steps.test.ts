@@ -1,4 +1,3 @@
-import { type ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
   appendFile,
@@ -37,11 +36,16 @@ import {
 import { loadCaptureRun } from "../src/review/artifacts.js";
 import { flowSchema, isWebFlow, type WebStep } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
+import {
+  type FixtureServer,
+  fixtureCommand,
+  spawnFixtureServer,
+} from "./support/fixture-server.js";
 
 const fixture = join(import.meta.dirname, "fixtures/web-flow-steps");
 let temporary: string;
 let logFile: string;
-let child: ChildProcess;
+let fixtureServer: FixtureServer | undefined;
 let baseUrl: string;
 let browser: Browser;
 let session: BrowserSession;
@@ -61,7 +65,7 @@ function projectAt(port: number, settleMs = 0) {
     app: { name: "web steps", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node ${JSON.stringify(join(fixture, "server.mjs"))}`,
+      start: fixtureCommand(join(fixture, "server.mjs")),
       port,
       readyUrl: `http://127.0.0.1:${port}/`,
       env: { PORT: String(port), SERVER_LOG: logFile },
@@ -144,19 +148,10 @@ beforeAll(async () => {
   await writeFile(logFile, "ERROR preexisting startup failure\n");
   const port = await freePort();
   baseUrl = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [join(fixture, "server.mjs")], {
-    env: { ...process.env, PORT: String(port), SERVER_LOG: logFile },
-    stdio: "ignore",
+  fixtureServer = await spawnFixtureServer(join(fixture, "server.mjs"), {
+    env: { PORT: String(port), SERVER_LOG: logFile },
+    readyUrl: baseUrl,
   });
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await fetch(baseUrl);
-      break;
-    } catch {
-      if (attempt > 100) throw Error("fixture server did not start");
-      await new Promise((accept) => setTimeout(accept, 25));
-    }
-  }
   browser = await chromium.launch({ headless: true });
   session = await createBrowserLauncher({
     launch: async () => browser,
@@ -165,7 +160,7 @@ beforeAll(async () => {
 }, 20_000);
 afterAll(async () => {
   await session?.close();
-  child?.kill();
+  await fixtureServer?.stop();
   await rm(temporary, { recursive: true, force: true });
 });
 

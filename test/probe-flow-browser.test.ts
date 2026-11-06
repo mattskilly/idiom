@@ -14,6 +14,7 @@ import type { ObservationArtifact } from "../src/checks/types.js";
 import { loadCaptureRun } from "../src/review/artifacts.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 /**
  * Probe clicks per control across states, from the recorded timelines. The
@@ -78,7 +79,7 @@ createServer((req,res)=>{
         app: { name: "Fixture", framework: "other" },
         server: {
           build: "node -e 0",
-          start: "node server.mjs",
+          start: fixtureCommand("server.mjs"),
           readyUrl: `http://127.0.0.1:${port}/`,
           port,
           env: {},
@@ -253,7 +254,7 @@ createServer((req,res)=>{
       app: { name: "Fixture", framework: "other" },
       server: {
         build: "node -e 0",
-        start: "node server.mjs",
+        start: fixtureCommand("server.mjs"),
         readyUrl: `http://127.0.0.1:${port}/`,
         port,
         env: {},

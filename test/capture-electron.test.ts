@@ -15,6 +15,7 @@ import { runCapture } from "../src/capture/run.js";
 import { loadCaptureRun } from "../src/review/artifacts.js";
 import { flowSchema, isElectronFlow } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
+import { fixtureEnvironment } from "./support/fixture-server.js";
 
 const require = createRequire(import.meta.url);
 const electronPath = require("electron") as string;
@@ -349,6 +350,7 @@ test("captures a deterministic Electron fixture with full artifact parity", asyn
         ],
         cwd: ".",
         env: {
+          ...fixtureEnvironment(),
           FIXTURE_PATH: `${dataDirectoryPlaceholder}/fixture.json`,
         },
         timeoutMs: 20_000,
@@ -576,6 +578,7 @@ test.each([0, 1000])(
           executablePath: electronPath,
           args: ["electron.cjs"],
           cwd: join(import.meta.dirname, "fixtures/painted-visibility"),
+          env: fixtureEnvironment(),
         },
         window: { title: "Painted entrance" },
       },

@@ -1,7 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, realpath, rename, rm } from "node:fs/promises";
-import { createConnection } from "node:net";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { IdiomError, RunFailure } from "../errors.js";
@@ -13,6 +12,7 @@ import {
   reservePort,
   serverEnvironment,
 } from "./port.js";
+import { isPortOpen } from "./port-open.js";
 import {
   inputHash,
   openProductionCache,
@@ -25,10 +25,15 @@ import {
   serverFailureHint,
   stderrTail,
 } from "./server-diagnosis.js";
+import {
+  registerServer,
+  type ServerRegistration,
+  type ServerRegistryDependencies,
+} from "./server-registry.js";
 import { type PhaseTiming, skipped } from "./timings.js";
 import type { ProductionBuild } from "./types.js";
 
-export { replacePort };
+export { isPortOpen, replacePort };
 
 const OUTPUT_LIMIT = 8_000;
 const PLACEHOLDER = /\$\{([^}]+)\}/g;
@@ -43,7 +48,23 @@ export type ProcessDependencies = {
   sleep?: (milliseconds: number) => Promise<void>;
   teardownTimeoutMs?: number | undefined;
   monotonicNow?: (() => number) | undefined;
+  /**
+   * The cross-run server registry; false turns it off. An injected `spawn`
+   * without one skips registration: a fake child's pid may be a real process.
+   */
+  serverRegistry?: ServerRegistryDependencies | false | undefined;
 };
+
+/** The registry a run uses, or undefined when it is turned off. */
+export function serverRegistryFor(
+  dependencies: ProcessDependencies | undefined,
+): ServerRegistryDependencies | undefined {
+  const registry = dependencies?.serverRegistry;
+  if (registry === false) return undefined;
+  if (registry === undefined && dependencies?.spawn !== undefined)
+    return undefined;
+  return registry ?? {};
+}
 
 export type SetupResult = {
   capturedStdout: string[];
@@ -228,26 +249,6 @@ export async function runServerBuild(options: {
   return environment;
 }
 
-export async function isPortOpen(
-  port: number,
-  host = "127.0.0.1",
-): Promise<boolean> {
-  return await new Promise<boolean>((accept) => {
-    const socket = createConnection({ host, port });
-    socket.setTimeout(300);
-    socket.once("connect", () => {
-      socket.destroy();
-      accept(true);
-    });
-    const closed = () => {
-      socket.destroy();
-      accept(false);
-    };
-    socket.once("error", closed);
-    socket.once("timeout", closed);
-  });
-}
-
 async function waitForPortRelease(
   port: number,
   host: string,
@@ -388,6 +389,18 @@ export async function startServer(options: {
   child.once("error", (error) => {
     spawnError = error;
   });
+  const registry = serverRegistryFor(options.dependencies);
+  const registration: Promise<ServerRegistration | undefined> =
+    registry === undefined || child.pid === undefined
+      ? Promise.resolve(undefined)
+      : registerServer({
+          projectDirectory: options.projectDirectory,
+          pid: child.pid,
+          port: server.port,
+          host: readyHost,
+          command: server.start,
+          dependencies: registry,
+        });
 
   let stopPromise: Promise<void> | undefined;
   const stop = async () => {
@@ -407,11 +420,13 @@ export async function startServer(options: {
           waitForPortRelease(server.port, readyHost, teardownTimeoutMs),
         ]);
         if (!killExit || !killRelease) {
+          // The record stays, so a later run retries the stop.
           throw new IdiomError(
             `application server did not exit and release port ${server.port} after SIGKILL`,
           );
         }
       }
+      await (await registration)?.remove();
     })();
     return stopPromise;
   };
@@ -476,6 +491,7 @@ export async function startServer(options: {
       }
       await sleep(100);
     }
+    await (await registration)?.refresh();
     return { process: child, output: () => output, stop };
   } catch (error) {
     try {

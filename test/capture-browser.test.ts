@@ -34,6 +34,7 @@ import { loadCaptureRun } from "../src/review/artifacts.js";
 import { screenshotPlacement } from "../src/review/crops.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { checksConfigSchema, projectSchema } from "../src/schemas/project.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const project = projectSchema.parse({
   version: 1,
@@ -117,7 +118,7 @@ test("setup route redaction changes saved text while Chromium sees the private r
       ...project,
       server: {
         build: "node -e 0",
-        start: `node '${script}'`,
+        start: fixtureCommand(script),
         readyUrl: `http://127.0.0.1:${port}/`,
         port,
         env: {},
@@ -893,7 +894,7 @@ test.each([
       app: { name: "token-drift", framework: "other" },
       server: {
         build: "node -e 0",
-        start: `node ${JSON.stringify(join(fixtureDirectory, "server.mjs"))}`,
+        start: fixtureCommand(join(fixtureDirectory, "server.mjs")),
         readyUrl: `http://127.0.0.1:${port}/`,
         port,
         env: { PORT: String(port) },
@@ -1145,7 +1146,7 @@ test("a captured tuple carries no reaction to token normalization", async () => 
     app: { name: "token-drift", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node ${JSON.stringify(join(tokenDriftFixture, "server.mjs"))}`,
+      start: fixtureCommand(join(tokenDriftFixture, "server.mjs")),
       readyUrl: `http://127.0.0.1:${port}/`,
       port,
       env: { PORT: String(port) },
@@ -2045,7 +2046,7 @@ test("captures all invariant tuples, then reviews stored declarations after the 
       ...project,
       server: {
         build: "node -e 0",
-        start: `node '${script}'`,
+        start: fixtureCommand(script),
         readyUrl: `http://127.0.0.1:${port}/`,
         port,
         env: { PORT: String(port) },
@@ -2235,7 +2236,7 @@ test("light/dark capture persists paint and frame evidence that review replays f
       ...project,
       server: {
         build: "node -e 0",
-        start: `node '${script}'`,
+        start: fixtureCommand(script),
         readyUrl: `http://127.0.0.1:${port}/before`,
         port,
         env: { PORT: String(port) },
@@ -2768,7 +2769,7 @@ test("non-HTML captures save usable evidence and replay without document finding
       ...project,
       server: {
         build: "node -e 0",
-        start: "node server.mjs",
+        start: fixtureCommand("server.mjs"),
         readyUrl: `http://127.0.0.1:${port}/`,
         port,
         env: { PORT: String(port) },
@@ -3135,7 +3136,7 @@ test("an expected 404 document and its same-URL script keep distinct request pro
       ...project,
       server: {
         build: "node -e 0",
-        start: `node '${script}'`,
+        start: fixtureCommand(script),
         readyUrl: `http://127.0.0.1:${port}/`,
         port,
         env: { PORT: String(port) },

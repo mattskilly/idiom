@@ -16,6 +16,7 @@ import { findingSchema } from "../src/schemas/finding.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
 import { runVerify } from "../src/verify/run.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 import { artifactV2, freePort, png } from "./verify-support.js";
 
 // Wrap the real loader so every verify load path is observable.
@@ -163,7 +164,7 @@ async function expectedStatusFixture(provenance = false): Promise<{
     app: { name: "fixture", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node ${JSON.stringify(serverScript)}`,
+      start: fixtureCommand(serverScript),
       readyUrl: `http://127.0.0.1:${port}/`,
       port,
       env: { PORT: String(port) },

@@ -114,7 +114,7 @@ const total = (side) =>
   targets.reduce((s, t) => s + (t[side].captureWallMs ?? 0), 0);
 async function sourceIdentity(resultFile) {
   const root = resolve(dirname(resultFile), "../..");
-  const bundle = await readFile(join(root, "dist/cli.js"));
+  const bundle = await readFile(join(root, "dist/main.js"));
   return {
     bundleSha256: createHash("sha256").update(bundle).digest("hex"),
     compiledCommit: /IDIOM_BUILD_COMMIT = true \? "([^"]+)"/.exec(

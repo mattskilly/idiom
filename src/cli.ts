@@ -1,6 +1,3 @@
-#!/usr/bin/env node
-import { realpath } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import {
   Command,
   CommanderError,
@@ -353,9 +350,17 @@ export function createProgram(
       dependencies.capture?.onProbeProgress,
       supplied?.onProbeProgress,
     ]);
+    const leftoverCallbacks = new Set([
+      dependencies.capture?.onLeftoverServer,
+      supplied?.onLeftoverServer,
+    ]);
     return {
       ...dependencies.capture,
       ...supplied,
+      onLeftoverServer: (message) => {
+        for (const callback of leftoverCallbacks) callback?.(message);
+        writeErr(message);
+      },
       onProbeProgress: (event) => {
         for (const callback of callbacks) callback?.(event);
         writeErr(
@@ -1915,11 +1920,15 @@ export function createProgram(
           against: options.against,
           out: options.out,
           refreshDesign: options.refreshDesign,
-          dependencies:
-            dependencies.verify ??
-            (dependencies.capture === undefined
-              ? undefined
-              : { capture: dependencies.capture }),
+          dependencies: dependencies.verify ?? {
+            capture: {
+              ...dependencies.capture,
+              onLeftoverServer: (message: string) => {
+                dependencies.capture?.onLeftoverServer?.(message);
+                writeErr(message);
+              },
+            },
+          },
         });
         writeOut(
           `Verified ${flow}: ${result.outcome} (${result.findingCount} finding(s)) — ${result.reportPath}`,
@@ -2617,6 +2626,11 @@ export function createProgram(
           dependencies: {
             process: dependencies.capture?.process,
             inheritedEnvironment: dependencies.capture?.inheritedEnvironment,
+            // The human report prints these lines itself; --json keeps
+            // stdout to the payload, so they go to stderr.
+            ...(options.json === true
+              ? { onLeftoverServer: (message: string) => writeErr(message) }
+              : {}),
           },
         });
         writeOut(
@@ -2693,25 +2707,4 @@ export async function run(
     await notices.settled();
   }
   return exitCode;
-}
-
-async function isEntryPoint(
-  moduleUrl: string,
-  argvEntry: string | undefined,
-): Promise<boolean> {
-  if (argvEntry === undefined) return false;
-
-  try {
-    const [modulePath, entryPath] = await Promise.all([
-      realpath(fileURLToPath(moduleUrl)),
-      realpath(argvEntry),
-    ]);
-    return modulePath === entryPath;
-  } catch {
-    return false;
-  }
-}
-
-if (await isEntryPoint(import.meta.url, process.argv[1])) {
-  process.exitCode = await run();
 }

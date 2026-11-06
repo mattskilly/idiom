@@ -62,6 +62,10 @@ What you must do after moving past each release, newest first. Everything else i
 
 None.
 
+### v0.20.0
+
+- **Runtime:** Idiom now requires Node 22.12 or newer (the CLI library requires it). On older Node every entry point (CLI, `idiom mcp`, plugin and `npx`) exits 2 with a message naming both versions. Check with `node --version` before updating.
+
 ### v0.19.0
 
 - **Scripts:** `idiom --version` now ends with ` · interface 1`; a script comparing the whole line should take the first word. Every `--json` payload except `brief list` gains a first key, `interfaceVersion`; a test comparing a whole payload should ignore it.

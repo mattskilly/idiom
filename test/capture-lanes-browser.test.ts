@@ -14,6 +14,7 @@ import { buildDeterministicDrafts } from "../src/review/findings.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
 import { fixture } from "./benchmark-support.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 async function files(directory: string, prefix = ""): Promise<string[]> {
   const entries = await readdir(join(directory, prefix), {
@@ -95,7 +96,7 @@ test("capture lanes preserve benchmark evidence, screenshots and finding fingerp
         app: { name: "Fixture", framework: "other" },
         server: {
           build: "node -e 0",
-          start: "node server.mjs",
+          start: fixtureCommand("server.mjs"),
           readyUrl: `http://127.0.0.1:${port}/`,
           port,
           env: {},

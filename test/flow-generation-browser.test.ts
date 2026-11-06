@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
@@ -15,6 +15,10 @@ import { openFlowBrowser } from "../src/flows/browser.js";
 import { discoverFlowRoutes } from "../src/flows/discover.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { validateProjectConfiguration } from "../src/validation.js";
+import {
+  fixtureCommand,
+  spawnFixtureServer,
+} from "./support/fixture-server.js";
 
 const exec = promisify(execFile);
 async function freePort() {
@@ -39,7 +43,7 @@ async function fixture() {
   const raw = JSON.parse(await readFile(file, "utf8"));
   raw.server = {
     build: "node -e 0",
-    start: "node server.mjs",
+    start: fixtureCommand("server.mjs"),
     readyUrl: `http://127.0.0.1:${port}/`,
     port,
     env: {},
@@ -52,23 +56,17 @@ async function fixture() {
   raw.colorSchemes = ["light", "dark"];
   raw.capture.settleMs = 80;
   await writeFile(file, JSON.stringify(raw));
-  const child = spawn(process.execPath, ["server.mjs"], {
+  const server = await spawnFixtureServer("server.mjs", {
     cwd: directory,
-    env: { ...process.env, PORT: String(port) },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  await new Promise<void>((resolve, reject) => {
-    child.stdout.once("data", () => resolve());
-    child.once("error", reject);
-    child.once("exit", (code) => reject(new Error(`fixture exited ${code}`)));
+    env: { PORT: String(port) },
+    readyUrl: `http://127.0.0.1:${port}/`,
   });
   return {
     directory,
     port,
     origin: `http://127.0.0.1:${port}`,
     close: async () => {
-      child.kill();
-      await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      await server.stop();
       await rm(directory, { recursive: true, force: true });
     },
   };

@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { reservePort } from "../src/capture/port.js";
 import { initProject } from "../src/commands/init.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const exec = promisify(execFile);
 export async function changedFixture(
@@ -48,7 +49,9 @@ export async function changedFixture(
       app: { name: "Changed fixture", framework: "nextjs" },
       server: {
         build: "node -e 0",
-        start: `node '${join(import.meta.dirname, "fixtures/faster-checks/server.mjs")}'`,
+        start: fixtureCommand(
+          join(import.meta.dirname, "fixtures/faster-checks/server.mjs"),
+        ),
         port,
         readyUrl: `http://127.0.0.1:${port}/ready`,
         env: { PORT: String(port), AUDIT_FILE: join(directory, "audit.txt") },

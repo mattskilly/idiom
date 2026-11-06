@@ -1,13 +1,16 @@
 import { readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { productionFixture } from "./production-support.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 export async function productFixture(directories: string[]) {
   const { directory, project } = await productionFixture();
   directories.push(directory);
   for (const name of await readdir(join(directory, ".idiom/flows")))
     await unlink(join(directory, ".idiom/flows", name));
-  project.server.start = `node '${join(import.meta.dirname, "fixtures/sweep-all/server.mjs")}'`;
+  project.server.start = fixtureCommand(
+    join(import.meta.dirname, "fixtures/sweep-all/server.mjs"),
+  );
   project.capture.settleMs = 0;
   project.viewports = [
     { name: "desktop", width: 800, height: 600 },

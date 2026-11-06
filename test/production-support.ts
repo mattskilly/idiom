@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { initProject } from "../src/commands/init.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 export async function productionFixture(
   env: Record<string, string> = {},
@@ -42,7 +43,7 @@ export async function productionFixture(
     app: { name: "Production fixture", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node '${join(scripts, "server.mjs")}' development`,
+      start: fixtureCommand(join(scripts, "server.mjs"), ["development"]),
       readyUrl: `http://127.0.0.1:${port}/`,
       port,
       env: environment,
@@ -50,7 +51,7 @@ export async function productionFixture(
       production: {
         reuseBuild,
         build: `node '${join(scripts, "build.mjs")}'`,
-        start: `node '${join(scripts, "server.mjs")}' production`,
+        start: fixtureCommand(join(scripts, "server.mjs"), ["production"]),
         distDir: "production-output",
         env: environment,
       },

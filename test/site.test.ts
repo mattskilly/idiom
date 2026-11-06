@@ -450,7 +450,7 @@ describe("landing-page copy follows the shipped command surface", () => {
   test("the version pin forces a re-audit, and marketplace and CLI installs stay current", () => {
     // Bump this literal deliberately at every release; the page must be
     // re-read against the shipped CLI each time.
-    expect(packageJson.version).toBe("0.19.0");
+    expect(packageJson.version).toBe("0.20.0");
     expect(source).toContain("npm install -g @mattskilly/idiom");
     // The CLI installs from npm; the Codex MCP launcher pins the GitHub
     // release tarball, which must name the current version.

@@ -29,6 +29,7 @@ import { loadRunTuples } from "../src/review/artifacts.js";
 import { checkpointLineageStatus } from "../src/review/catalog.js";
 import { validateProject } from "../src/validation.js";
 import { parseFindingBlocks } from "../src/verify/spec.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const execute = promisify(execFile);
 const directories: string[] = [];
@@ -58,7 +59,7 @@ async function fixture(mode = "all", count = 2) {
       app: { name: "fix fixture", framework: "other" },
       server: {
         build: "node -e 0",
-        start: `node ${JSON.stringify(join(fixtureRoot, "server.mjs"))}`,
+        start: fixtureCommand(join(fixtureRoot, "server.mjs")),
         readyUrl: `http://127.0.0.1:${port}`,
         port,
         env: { PORT: String(port) },

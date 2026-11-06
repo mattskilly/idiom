@@ -312,6 +312,7 @@ test.skipIf(!snapshot)(
     const allowed = [
       ...manifests,
       "dist/cli.js",
+      "dist/main.js",
       "plugins/claude/hooks/hooks.json",
       "plugins/claude/skills/idiom/SKILL.md",
       "skills/idiom/SKILL.md",

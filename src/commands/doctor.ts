@@ -1,3 +1,4 @@
+import { leftoverServerMessage } from "../capture/server-registry.js";
 import type { DoctorReport, DoctorStep } from "../doctor/run.js";
 
 export { type DoctorReport, runDoctor } from "../doctor/run.js";
@@ -15,6 +16,8 @@ export function renderDoctorReport(report: DoctorReport): string {
   const lines = [
     `idiom doctor ${subject}: ${report.failure === undefined ? "ok" : report.failure.message}`,
   ];
+  for (const leftover of report.leftovers ?? [])
+    lines.push(leftoverServerMessage(leftover));
   for (const step of report.steps) {
     lines.push(
       `${MARK[step.status]}  ${step.id.padEnd(width)}  ${`${step.ms}ms`.padStart(7)}  ${step.detail ?? ""}`.trimEnd(),

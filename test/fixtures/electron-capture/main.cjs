@@ -1,3 +1,5 @@
+// Exit with the test process that launched this fixture (test/support/fixture-lifeline.cjs).
+if (process.env.FIXTURE_LIFELINE) require(process.env.FIXTURE_LIFELINE);
 const { readFile } = require("node:fs/promises");
 const { join } = require("node:path");
 const { app, BrowserWindow } = require("electron");

@@ -19,6 +19,7 @@ import { loadRunRecord } from "../src/capture/run-record.js";
 import { run } from "../src/cli.js";
 import { initProject } from "../src/commands/init.js";
 import { productionFixture } from "./production-support.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const git = promisify(execFile);
 test("scoped CLI check captures and probes only one requested coordinate", async () => {
@@ -37,7 +38,9 @@ test("scoped CLI check captures and probes only one requested coordinate", async
       app: { name: "Scope fixture", framework: "other" },
       server: {
         build: "node -e 0",
-        start: `node '${join(import.meta.dirname, "fixtures", "faster-checks", "server.mjs")}'`,
+        start: fixtureCommand(
+          join(import.meta.dirname, "fixtures", "faster-checks", "server.mjs"),
+        ),
         port,
         readyUrl: `http://127.0.0.1:${port}`,
         env: { PORT: String(port), AUDIT_FILE: audit },

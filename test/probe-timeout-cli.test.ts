@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { expect, test } from "vitest";
 import { isPortOpen } from "../src/capture/process.js";
 import { productionFixture } from "./production-support.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const fixtureScript = join(
   import.meta.dirname,
@@ -58,7 +59,7 @@ test("built CLI exits after a whole-capture timeout, releases the server port an
       server: {
         ...f.project.server,
         fixedPort: true,
-        start: `node '${fixtureScript}'`,
+        start: fixtureCommand(fixtureScript),
       },
       capture: { ...f.project.capture, maxMinutes: 0.045 },
     };
@@ -96,7 +97,7 @@ test("multi-state check JSON stays parseable while live progress precedes the re
   try {
     const project = {
       ...f.project,
-      server: { ...f.project.server, start: `node '${fixtureScript}'` },
+      server: { ...f.project.server, start: fixtureCommand(fixtureScript) },
       capture: { ...f.project.capture, settleMs: 0, maxMinutes: 0.4 },
       checks: {
         probe: {

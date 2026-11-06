@@ -10,6 +10,7 @@ import { initProject } from "../src/commands/init.js";
 import { loadCaptureRun } from "../src/review/artifacts.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const BUDGET_REASONS =
   /flow budget share|state budget|nested-menu budget|held replay reserve|not completed in any state|probe budget|flow probe time exhausted/;
@@ -58,7 +59,7 @@ async function capturedFixture(
     app: { name: "Fixture", framework: "other" },
     server: {
       build: "node -e 0",
-      start: `node '${script}'`,
+      start: fixtureCommand(script),
       readyUrl: `http://127.0.0.1:${port}/`,
       port,
       env: { PORT: String(port) },

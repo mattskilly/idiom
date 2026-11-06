@@ -51,6 +51,7 @@ import {
 import { runSystemLearning } from "../src/system/learn/run.js";
 import type { DesignToken } from "../src/system/learn/schema.js";
 import { runSystem } from "../src/system/run.js";
+import { fixtureCommand } from "./support/fixture-server.js";
 
 const roots: string[] = [];
 const fixtures = join(import.meta.dirname, "fixtures", "system-learning");
@@ -537,7 +538,7 @@ for (const family of ["tailwind-v3", "tailwind-v4", "css-variables", "dtcg"])
     const raw = JSON.parse(await readFile(path, "utf8"));
     raw.server = {
       build: "true",
-      start: "node server.cjs",
+      start: fixtureCommand("server.cjs"),
       readyUrl: "http://127.0.0.1:3000/",
       port: 3000,
       env: {},

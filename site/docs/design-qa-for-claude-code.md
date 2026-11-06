@@ -7,7 +7,7 @@ description: Give your coding agent a repeatable UI review: capture the intended
 
 Give your coding agent a repeatable UI review: capture the intended states, inspect the findings, repair the source and verify the same evidence.
 
-_For Idiom v0.19.0_
+_For Idiom v0.20.0_
 
 ## Start by looking
 
@@ -26,7 +26,7 @@ Repeat a **check–fix–verify** cycle after source edits. A check producing a 
 
 **Use the local CLI and a real browser.**
 
-Install Node 20 or newer, then Idiom and its matching Playwright Chromium. The browser pin below matches this release's package metadata.
+Install Node 22.12 or newer, then Idiom and its matching Playwright Chromium. The browser pin below matches this release's package metadata.
 
 ```sh example=shell
 npm install -g @mattskilly/idiom
@@ -144,7 +144,7 @@ In a Claude Code session:
 /plugin install idiom@idiom
 ```
 
-The plugin supplies MCP, the conversational `/idiom:idiom` skill and reminders together. It needs Node 20 or newer, npm/npx and the matching Chromium shown above. You can use it without a global CLI install. Its first MCP launch downloads the exact GitHub release named by the plugin; the server inherits your application's working directory.
+The plugin supplies MCP, the conversational `/idiom:idiom` skill and reminders together. It needs Node 22.12 or newer, npm/npx and the matching Chromium shown above. You can use it without a global CLI install. Its first MCP launch downloads the exact GitHub release named by the plugin; the server inherits your application's working directory.
 
 Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom`, rerun the `codex mcp add` line above with the new release (it replaces the entry), and start a new session.
 
@@ -153,7 +153,7 @@ In Codex, the plugin supplies the portable skill and one more line adds the MCP 
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.19.0/mattskilly-idiom-0.19.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.20.0/mattskilly-idiom-0.20.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.

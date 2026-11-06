@@ -1,8 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { isPortOpen } from "../src/capture/process.js";
+import { serversDirectory } from "../src/capture/server-registry.js";
 import { run } from "../src/cli.js";
 import { renderDoctorReport, runDoctor } from "../src/commands/doctor.js";
 import type { DoctorReport } from "../src/doctor/run.js";
@@ -134,4 +135,71 @@ test("MCP idiom_doctor returns the structured report", async () => {
   );
   expect(report.ok).toBe(true);
   expect(report.steps.map((step) => step.id)).toContain("shutdown");
+});
+
+test("doctor stops a leftover server first and reports it in JSON, text and stderr", async () => {
+  const { directory } = await passing();
+  const fresh = await runDoctor({ flow: "home", cwd: directory });
+  expect(fresh).not.toHaveProperty("leftovers");
+  const identity = { start: "Mon Nov  3 10:00:00 2026", args: "node x" };
+  const leftover = async () => {
+    await mkdir(serversDirectory(directory), { recursive: true });
+    await writeFile(
+      join(serversDirectory(directory), "4321.json"),
+      JSON.stringify({
+        version: 1,
+        pid: 4321,
+        pgid: 4321,
+        port: 3107,
+        host: "127.0.0.1",
+        command: "node x",
+        project: directory,
+        startedAt: "2026-11-03T10:00:00.000Z",
+        process: identity,
+        owner: { pid: 999, start: "gone" },
+      }),
+    );
+    const table = new Map([[4321, identity]]);
+    return {
+      inspect: async (pid: number) => table.get(pid),
+      kill: (pid: number) => {
+        table.delete(Math.abs(pid));
+      },
+      isPortOpen: async () => false,
+      sleep: async () => undefined,
+    };
+  };
+  const message =
+    "Stopped a leftover application server (pid 4321, port 3107) from an earlier run.";
+
+  const messages: string[] = [];
+  const report = await runDoctor({
+    flow: "home",
+    cwd: directory,
+    dependencies: {
+      process: { serverRegistry: await leftover() },
+      onLeftoverServer: (line) => messages.push(line),
+    },
+  });
+  expect(report.ok).toBe(true);
+  expect(report.leftovers).toEqual([
+    { pid: 4321, port: 3107, command: "node x", outcome: "stopped" },
+  ]);
+  expect(messages).toEqual([message]);
+  expect(renderDoctorReport(report).split("\n")[1]).toBe(message);
+
+  // --json keeps stdout to the payload; the line goes to stderr.
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  expect(
+    await run(["node", "idiom", "doctor", "home", "--json"], {
+      cwd: directory,
+      stdout: (line) => stdout.push(line),
+      stderr: (line) => stderr.push(line),
+      capture: { process: { serverRegistry: await leftover() } },
+    }),
+  ).toBe(0);
+  expect(JSON.parse(stdout.join("")).leftovers).toHaveLength(1);
+  expect(stdout.join("")).not.toContain("Stopped a leftover");
+  expect(stderr.join("")).toContain(message);
 });

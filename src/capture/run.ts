@@ -70,6 +70,7 @@ import {
   runServerBuild,
   runSetupSteps,
   serverAnswers,
+  serverRegistryFor,
   startServer,
 } from "./process.js";
 import { createReplayLedger, type ReplayLedger } from "./replay-ledger.js";
@@ -86,6 +87,10 @@ import {
   probeCoordinates,
   resolveCaptureScope,
 } from "./scope.js";
+import {
+  leftoverServerMessage,
+  reapLeftoverServers,
+} from "./server-registry.js";
 import { mergeTimelines, withTimelineIds } from "./timeline.js";
 import { type ControlTiming, skipped, slowestControls } from "./timings.js";
 import type {
@@ -113,6 +118,8 @@ const PROBE_MIN_ROUND_MS = 10_000;
 export type CaptureDependencies = CaptureLifetime & {
   browserLauncher?: BrowserLauncher | undefined;
   onProbeProgress?: ((event: ProbeProgress) => void) | undefined;
+  /** One line per server an earlier, killed run left behind and this run stopped. */
+  onLeftoverServer?: ((message: string) => void) | undefined;
   electronLauncher?: ElectronLauncher;
   process?: ProcessDependencies;
   inheritedEnvironment?: NodeJS.ProcessEnv;
@@ -612,6 +619,16 @@ async function captureOwned(
   options: CaptureOptions,
   owner: CaptureOwnership,
 ): Promise<CaptureRunResult> {
+  const registry = serverRegistryFor(options.dependencies?.process);
+  if (registry !== undefined) {
+    owner.stage("leftover servers");
+    for (const leftover of await reapLeftoverServers(
+      options.projectDirectory,
+      registry,
+    ))
+      options.dependencies?.onLeftoverServer?.(leftoverServerMessage(leftover));
+    owner.check();
+  }
   const selection = resolveCaptureScope(options);
   const selectedTuples = selection.selected;
   const briefChecks = await loadBriefChecks(options.projectDirectory);

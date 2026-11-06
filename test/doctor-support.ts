@@ -2,6 +2,10 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  fixtureCommand,
+  fixtureEvalCommand,
+} from "./support/fixture-server.js";
 
 export const SERVER = resolve("test/fixtures/capture/server.mjs");
 
@@ -64,7 +68,7 @@ export async function passingProject(directories: string[]) {
   return {
     port,
     directory: await doctorProject(
-      { start: `node ${SERVER}` },
+      { start: fixtureCommand(SERVER) },
       port,
       directories,
     ),
@@ -78,7 +82,7 @@ export async function neverReadyProject(directories: string[]) {
     port,
     directory: await doctorProject(
       {
-        start: `node -e ${JSON.stringify("setInterval(() => {}, 1000)")}`,
+        start: fixtureEvalCommand("setInterval(() => {}, 1000)"),
         startupTimeoutMs: 1_500,
       },
       port,
