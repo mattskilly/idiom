@@ -1,0 +1,21 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Loading indicator cases</title>
+<style>[role=progressbar]{width:100px;height:10px;background:#abc}.spinner,.decorative{width:30px;height:30px;border:4px solid #ddd;border-top-color:#346;animation:rotate 1s infinite linear}.skeleton{width:160px;height:100px;background:#abc}@keyframes rotate{to{transform:rotate(360deg)}}</style>
+<div id="spinner" class="spinner"></div>
+<div id="skeleton" class="skeleton"></div>
+<div id="busy" aria-busy="true">Loading content</div>
+<div id="progress" role="progressbar" aria-label="Progress"></div>
+<progress id="native"></progress>
+<progress id="determinate-native" value=".5"></progress>
+<div id="determinate" role="progressbar" aria-valuenow="40">40 percent</div>
+<div id="decorative" class="decorative" aria-label="Rotating decoration"></div>
+<div id="not-busy" aria-busy="false">Ready</div>
+<div id="resolves" aria-busy="true">Content</div>
+<div id="removed" class="spinner"></div>
+<div id="hidden-later" class="spinner"></div>
+<div id="replacement" class="spinner"></div>
+<div id="loaded-skeleton" class="chakra-skeleton" data-loaded>Real content</div>
+<div id="loaded-media-skeleton" class="skeleton"><img alt="Loaded" width="40" height="40" src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="></div>
+<div id="false-skeleton" data-skeleton="false" style="width:160px;height:100px;background:#abc"></div>
+<div id="labelled-skeleton" class="skeleton"><span style="position:absolute;width:1px;height:1px;overflow:hidden">Loading…</span></div>
+<div id="nested" aria-busy="true"><div class="spinner"></div><div class="skeleton"></div></div>
+</html>

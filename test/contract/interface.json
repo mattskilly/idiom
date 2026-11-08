@@ -156,6 +156,27 @@
       ]
     },
     {
+      "path": "bisect",
+      "status": "experimental",
+      "arguments": [
+        {
+          "name": "finding",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        }
+      ]
+    },
+    {
       "path": "brief",
       "status": "experimental",
       "arguments": [
@@ -180,6 +201,43 @@
           "takesValue": false,
           "valueOptional": false,
           "mandatory": false,
+          "negate": false
+        }
+      ]
+    },
+    {
+      "path": "brief attach",
+      "status": "experimental",
+      "arguments": [
+        {
+          "name": "slug",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "long": "--capture",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--ticket",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": true,
           "negate": false
         }
       ]
@@ -213,6 +271,43 @@
         },
         {
           "long": "--option",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": true,
+          "negate": false
+        }
+      ]
+    },
+    {
+      "path": "brief export",
+      "status": "experimental",
+      "arguments": [
+        {
+          "name": "slug",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "long": "--capture",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--out",
           "short": null,
           "takesValue": true,
           "valueOptional": false,
@@ -409,6 +504,14 @@
           "negate": false
         },
         {
+          "long": "--ref",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
           "long": "--refresh-design",
           "short": null,
           "takesValue": false,
@@ -502,6 +605,14 @@
           "negate": false
         },
         {
+          "long": "--deferred",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
           "long": "--emit-tickets",
           "short": null,
           "takesValue": true,
@@ -566,6 +677,14 @@
           "negate": false
         },
         {
+          "long": "--plan-only",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
           "long": "--port",
           "short": null,
           "takesValue": true,
@@ -585,6 +704,14 @@
           "long": "--prod",
           "short": null,
           "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--ref",
+          "short": null,
+          "takesValue": true,
           "valueOptional": false,
           "mandatory": false,
           "negate": false
@@ -746,7 +873,13 @@
     {
       "path": "decide",
       "status": "stable",
-      "arguments": [],
+      "arguments": [
+        {
+          "name": "finding",
+          "required": false,
+          "variadic": false
+        }
+      ],
       "options": [
         {
           "long": "--accept",
@@ -757,7 +890,63 @@
           "negate": false
         },
         {
+          "long": "--ack",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--add-step",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--build",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--candidate",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
           "long": "--choose",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--decision",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--drift",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--escalation",
           "short": null,
           "takesValue": true,
           "valueOptional": false,
@@ -781,7 +970,39 @@
           "negate": false
         },
         {
+          "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
           "long": "--list",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--no-rule",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": true
+        },
+        {
+          "long": "--note",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--pending",
           "short": null,
           "takesValue": false,
           "valueOptional": false,
@@ -806,6 +1027,38 @@
         },
         {
           "long": "--scope",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--token",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--unack",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--until",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--wording",
           "short": null,
           "takesValue": true,
           "valueOptional": false,
@@ -854,6 +1107,35 @@
         },
         {
           "long": "--viewport",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        }
+      ]
+    },
+    {
+      "path": "digest",
+      "status": "experimental",
+      "arguments": [
+        {
+          "name": "flow",
+          "required": false,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--since",
           "short": null,
           "takesValue": true,
           "valueOptional": false,
@@ -1040,6 +1322,22 @@
           "negate": false
         },
         {
+          "long": "--design-review",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--dry-run",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
           "long": "--flow",
           "short": null,
           "takesValue": true,
@@ -1056,7 +1354,23 @@
           "negate": false
         },
         {
+          "long": "--git-hook",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
           "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--nightly",
           "short": null,
           "takesValue": false,
           "valueOptional": false,
@@ -1080,6 +1394,14 @@
           "negate": false
         },
         {
+          "long": "--skip-wiring",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
           "long": "--surface",
           "short": null,
           "takesValue": true,
@@ -1089,6 +1411,14 @@
         },
         {
           "long": "--validate",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--wire",
           "short": null,
           "takesValue": false,
           "valueOptional": false,
@@ -1126,11 +1456,35 @@
       "arguments": [
         {
           "name": "observation",
-          "required": true,
+          "required": false,
           "variadic": false
         }
       ],
       "options": [
+        {
+          "long": "--by",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--covered",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--fixture",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
         {
           "long": "--flow",
           "short": null,
@@ -1149,6 +1503,30 @@
         },
         {
           "long": "--from-brief",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--list",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--out",
           "short": null,
           "takesValue": true,
           "valueOptional": false,
@@ -1210,6 +1588,91 @@
       "status": "stable",
       "arguments": [],
       "options": []
+    },
+    {
+      "path": "nightly",
+      "status": "experimental",
+      "arguments": [
+        {
+          "name": "flows",
+          "required": false,
+          "variadic": true
+        }
+      ],
+      "options": [
+        {
+          "long": "--deferred",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--dry-run",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--label",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--out",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--print-schedule",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--probe-budget",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--severity",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--tracker",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        }
+      ]
     },
     {
       "path": "quick",
@@ -1845,7 +2308,9 @@
   "exitCodes": {
     "ok": 0,
     "failed": 1,
-    "run-failure": 2
+    "run-failure": 2,
+    "deferred": 3,
+    "decision-needed": 4
   },
   "json": [
     {
@@ -1859,8 +2324,23 @@
       "status": "experimental"
     },
     {
+      "id": "bisect",
+      "command": "bisect",
+      "status": "experimental"
+    },
+    {
+      "id": "brief attach",
+      "command": "brief attach",
+      "status": "experimental"
+    },
+    {
       "id": "brief decide",
       "command": "brief decide",
+      "status": "experimental"
+    },
+    {
+      "id": "brief export",
+      "command": "brief export",
       "status": "experimental"
     },
     {
@@ -1919,6 +2399,172 @@
           "reportPath": {
             "type": "string"
           },
+          "verdict": {
+            "type": "string",
+            "const": "deferred"
+          },
+          "timedOutTuples": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string"
+                },
+                "viewport": {
+                  "type": "string"
+                },
+                "colorScheme": {
+                  "type": "string",
+                  "enum": [
+                    "light",
+                    "dark"
+                  ]
+                }
+              },
+              "required": [
+                "state",
+                "viewport",
+                "colorScheme"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "decisionNeeded": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "reference-conflict",
+                    "unruled",
+                    "scaleCluster"
+                  ]
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "fingerprint": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "findingIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "flow": {
+                  "type": "string"
+                },
+                "runDirectory": {
+                  "type": "string"
+                },
+                "artifact": {
+                  "type": "string"
+                },
+                "question": {
+                  "type": "string"
+                },
+                "coordinates": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string"
+                      },
+                      "viewport": {
+                        "type": "string"
+                      },
+                      "colorScheme": {
+                        "type": "string",
+                        "enum": [
+                          "light",
+                          "dark"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "viewport"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "missingCropEvidence": {
+                  "type": "boolean"
+                },
+                "citations": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "args": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "input": {
+                        "type": "string",
+                        "enum": [
+                          "wording",
+                          "reason"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "args"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "key",
+                "fingerprint",
+                "id",
+                "flow",
+                "runDirectory",
+                "artifact",
+                "question",
+                "coordinates",
+                "evidence",
+                "missingCropEvidence",
+                "citations",
+                "options"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "decisionQuestion": {
+            "type": "string"
+          },
           "blocking": {
             "type": "number"
           },
@@ -1935,7 +2581,8 @@
                   "enum": [
                     "blocker",
                     "major",
-                    "minor"
+                    "minor",
+                    "info"
                   ]
                 },
                 "category": {
@@ -1992,6 +2639,8 @@
                     "touch-reachability",
                     "liveness",
                     "media-fill",
+                    "visual-blank",
+                    "loading-stuck",
                     "collection-actions",
                     "font-loading",
                     "broken-link",
@@ -2012,6 +2661,9 @@
                     "selection-outline",
                     "disabled-highlight",
                     "brief-mismatch",
+                    "popover-dismissal",
+                    "focus-return",
+                    "spacing-target",
                     "hierarchy",
                     "density",
                     "brand-alignment",
@@ -2020,7 +2672,8 @@
                     "spec-mismatch",
                     "direction-drift",
                     "offer-change",
-                    "unsupported-claim"
+                    "unsupported-claim",
+                    "detached-flyout"
                   ]
                 },
                 "rule": {
@@ -2085,6 +2738,172 @@
     {
       "id": "coverage --states",
       "command": "coverage",
+      "status": "experimental"
+    },
+    {
+      "id": "decide --list",
+      "command": "decide",
+      "status": "experimental"
+    },
+    {
+      "id": "decide --pending",
+      "command": "decide",
+      "status": "stable-additive",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "interfaceVersion": {
+            "type": "number",
+            "const": 1
+          },
+          "decisionNeeded": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "reference-conflict",
+                    "unruled",
+                    "scaleCluster"
+                  ]
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "fingerprint": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "findingIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "flow": {
+                  "type": "string"
+                },
+                "runDirectory": {
+                  "type": "string"
+                },
+                "artifact": {
+                  "type": "string"
+                },
+                "question": {
+                  "type": "string"
+                },
+                "coordinates": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string"
+                      },
+                      "viewport": {
+                        "type": "string"
+                      },
+                      "colorScheme": {
+                        "type": "string",
+                        "enum": [
+                          "light",
+                          "dark"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "viewport"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "missingCropEvidence": {
+                  "type": "boolean"
+                },
+                "citations": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "args": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "input": {
+                        "type": "string",
+                        "enum": [
+                          "wording",
+                          "reason"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "args"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "key",
+                "fingerprint",
+                "id",
+                "flow",
+                "runDirectory",
+                "artifact",
+                "question",
+                "coordinates",
+                "evidence",
+                "missingCropEvidence",
+                "citations",
+                "options"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "decisionQuestion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "interfaceVersion",
+          "decisionNeeded",
+          "decisionQuestion"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    {
+      "id": "digest",
+      "command": "digest",
       "status": "experimental"
     },
     {
@@ -2180,6 +2999,83 @@
               "cause",
               "hint",
               "message"
+            ],
+            "additionalProperties": {}
+          },
+          "surfaces": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "type": "string"
+              },
+              "initialized": {
+                "type": "boolean"
+              },
+              "notice": {
+                "type": "string"
+              },
+              "ms": {
+                "type": "number"
+              },
+              "entries": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "enum": [
+                        "autobuild-gate",
+                        "autobuild-verifier",
+                        "autobuild-plan",
+                        "autobuild-implement",
+                        "autobuild-code-review",
+                        "github",
+                        "agents",
+                        "claude",
+                        "cursor",
+                        "claude-plugin",
+                        "codex-mcp",
+                        "git-hook"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "wired",
+                        "missing",
+                        "stale",
+                        "not-applicable"
+                      ]
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "fix": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "status",
+                    "detail"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "required": [
+              "root",
+              "initialized",
+              "ms",
+              "entries"
             ],
             "additionalProperties": {}
           },
@@ -2315,6 +3211,83 @@
                       "message"
                     ],
                     "additionalProperties": {}
+                  },
+                  "surfaces": {
+                    "type": "object",
+                    "properties": {
+                      "root": {
+                        "type": "string"
+                      },
+                      "initialized": {
+                        "type": "boolean"
+                      },
+                      "notice": {
+                        "type": "string"
+                      },
+                      "ms": {
+                        "type": "number"
+                      },
+                      "entries": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "enum": [
+                                "autobuild-gate",
+                                "autobuild-verifier",
+                                "autobuild-plan",
+                                "autobuild-implement",
+                                "autobuild-code-review",
+                                "github",
+                                "agents",
+                                "claude",
+                                "cursor",
+                                "claude-plugin",
+                                "codex-mcp",
+                                "git-hook"
+                              ]
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "wired",
+                                "missing",
+                                "stale",
+                                "not-applicable"
+                              ]
+                            },
+                            "path": {
+                              "type": "string"
+                            },
+                            "detail": {
+                              "type": "string"
+                            },
+                            "fix": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "label",
+                            "status",
+                            "detail"
+                          ],
+                          "additionalProperties": {}
+                        }
+                      }
+                    },
+                    "required": [
+                      "root",
+                      "initialized",
+                      "ms",
+                      "entries"
+                    ],
+                    "additionalProperties": {}
                   }
                 },
                 "required": [
@@ -2327,6 +3300,83 @@
                 "type": "null"
               }
             ]
+          },
+          "surfaces": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "type": "string"
+              },
+              "initialized": {
+                "type": "boolean"
+              },
+              "notice": {
+                "type": "string"
+              },
+              "ms": {
+                "type": "number"
+              },
+              "entries": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "enum": [
+                        "autobuild-gate",
+                        "autobuild-verifier",
+                        "autobuild-plan",
+                        "autobuild-implement",
+                        "autobuild-code-review",
+                        "github",
+                        "agents",
+                        "claude",
+                        "cursor",
+                        "claude-plugin",
+                        "codex-mcp",
+                        "git-hook"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "wired",
+                        "missing",
+                        "stale",
+                        "not-applicable"
+                      ]
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "fix": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "status",
+                    "detail"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "required": [
+              "root",
+              "initialized",
+              "ms",
+              "entries"
+            ],
+            "additionalProperties": {}
           }
         },
         "required": [
@@ -2337,6 +3387,16 @@
         ],
         "additionalProperties": {}
       }
+    },
+    {
+      "id": "learn list",
+      "command": "learn",
+      "status": "experimental"
+    },
+    {
+      "id": "nightly",
+      "command": "nightly",
+      "status": "experimental"
     },
     {
       "id": "review",
@@ -2551,6 +3611,8 @@
                                 "touch-reachability",
                                 "liveness",
                                 "media-fill",
+                                "visual-blank",
+                                "loading-stuck",
                                 "collection-actions",
                                 "font-loading",
                                 "broken-link",
@@ -2571,6 +3633,9 @@
                                 "selection-outline",
                                 "disabled-highlight",
                                 "brief-mismatch",
+                                "popover-dismissal",
+                                "focus-return",
+                                "spacing-target",
                                 "hierarchy",
                                 "density",
                                 "brand-alignment",
@@ -2579,7 +3644,8 @@
                                 "spec-mismatch",
                                 "direction-drift",
                                 "offer-change",
-                                "unsupported-claim"
+                                "unsupported-claim",
+                                "detached-flyout"
                               ]
                             },
                             "rule": {
@@ -2590,7 +3656,8 @@
                               "enum": [
                                 "blocker",
                                 "major",
-                                "minor"
+                                "minor",
+                                "info"
                               ]
                             },
                             "selector": {
@@ -2656,88 +3723,349 @@
       "status": "stable-additive",
       "schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "properties": {
-          "at": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
-          },
-          "commit": {
-            "type": "string"
-          },
-          "findingId": {
-            "type": "string"
-          },
-          "fingerprint": {
-            "type": "string"
-          },
-          "decision": {
-            "type": "string",
-            "enum": [
-              "accept",
-              "reject"
-            ]
-          },
-          "scope": {
-            "default": "instance",
-            "type": "string",
-            "enum": [
-              "instance",
-              "rule"
-            ]
-          },
-          "reason": {
-            "type": "string"
-          },
-          "actor": {
-            "default": "human",
-            "type": "string"
-          },
-          "designChoice": {
+        "anyOf": [
+          {
             "type": "object",
             "properties": {
-              "flow": {
+              "at": {
                 "type": "string",
-                "minLength": 1
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
               },
-              "state": {
-                "type": "string",
-                "minLength": 1
+              "commit": {
+                "type": "string"
               },
-              "colorScheme": {
+              "findingId": {
+                "type": "string"
+              },
+              "fingerprint": {
+                "type": "string"
+              },
+              "decision": {
                 "type": "string",
                 "enum": [
-                  "light",
-                  "dark"
+                  "accept",
+                  "reject"
                 ]
               },
-              "decisionKey": {
+              "scope": {
+                "default": "instance",
                 "type": "string",
-                "minLength": 1
+                "enum": [
+                  "instance",
+                  "rule"
+                ]
               },
-              "reference": {
-                "type": "string",
-                "minLength": 1
+              "reason": {
+                "type": "string"
+              },
+              "actor": {
+                "default": "human",
+                "type": "string"
+              },
+              "provenance": {
+                "type": "object",
+                "properties": {
+                  "build": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "escalation": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "build"
+                ],
+                "additionalProperties": false
+              },
+              "designChoice": {
+                "type": "object",
+                "properties": {
+                  "flow": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "state": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "colorScheme": {
+                    "type": "string",
+                    "enum": [
+                      "light",
+                      "dark"
+                    ]
+                  },
+                  "decisionKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reference": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "flow",
+                  "state",
+                  "decisionKey",
+                  "reference"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
-              "flow",
-              "state",
-              "decisionKey",
+              "at",
+              "commit",
+              "findingId",
+              "fingerprint",
+              "decision"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+              },
+              "commit": {
+                "type": "string"
+              },
+              "findingId": {
+                "type": "string"
+              },
+              "fingerprint": {
+                "type": "string"
+              },
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "acknowledge",
+                  "unacknowledge"
+                ]
+              },
+              "reference": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "until": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "note": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "blocker",
+                      "major",
+                      "minor",
+                      "info"
+                    ]
+                  },
+                  "rule": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "severity",
+                  "category"
+                ],
+                "additionalProperties": false
+              },
+              "actor": {
+                "default": "human",
+                "type": "string"
+              }
+            },
+            "required": [
+              "at",
+              "commit",
+              "findingId",
+              "fingerprint",
+              "decision",
               "reference"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+              },
+              "commit": {
+                "type": "string"
+              },
+              "findingId": {
+                "type": "string"
+              },
+              "fingerprint": {
+                "type": "string"
+              },
+              "decision": {
+                "type": "string",
+                "const": "ruling"
+              },
+              "actor": {
+                "default": "human",
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resolution": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^ruling-[1-9]\\d*$"
+                  },
+                  "fingerprint": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "choiceKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "rule",
+                      "no-rule"
+                    ]
+                  },
+                  "wording": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "recordedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "scale": {
+                    "type": "object",
+                    "properties": {
+                      "answer": {
+                        "type": "string",
+                        "enum": [
+                          "add-step",
+                          "drift"
+                        ]
+                      },
+                      "property": {
+                        "type": "string",
+                        "enum": [
+                          "spacing:padding",
+                          "spacing:margin",
+                          "spacing:gap",
+                          "height",
+                          "radius",
+                          "border"
+                        ]
+                      },
+                      "value": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "context": {
+                        "type": "object",
+                        "properties": {
+                          "landmark": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "component": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "viewport": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "landmark",
+                          "component",
+                          "viewport"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "token": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+                      }
+                    },
+                    "required": [
+                      "answer",
+                      "property",
+                      "value",
+                      "context"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "id",
+                  "fingerprint",
+                  "choiceKey",
+                  "outcome",
+                  "recordedAt"
+                ],
+                "additionalProperties": false
+              },
+              "provenance": {
+                "type": "object",
+                "properties": {
+                  "build": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "escalation": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "build"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "at",
+              "commit",
+              "findingId",
+              "fingerprint",
+              "decision",
+              "reason",
+              "resolution"
+            ],
+            "additionalProperties": false
           }
-        },
-        "required": [
-          "at",
-          "commit",
-          "findingId",
-          "fingerprint",
-          "decision"
-        ],
-        "additionalProperties": false
+        ]
       }
     },
     {
@@ -3086,6 +4414,8 @@
                 "touch-reachability",
                 "liveness",
                 "media-fill",
+                "visual-blank",
+                "loading-stuck",
                 "collection-actions",
                 "font-loading",
                 "broken-link",
@@ -3106,6 +4436,9 @@
                 "selection-outline",
                 "disabled-highlight",
                 "brief-mismatch",
+                "popover-dismissal",
+                "focus-return",
+                "spacing-target",
                 "hierarchy",
                 "density",
                 "brand-alignment",
@@ -3114,7 +4447,8 @@
                 "spec-mismatch",
                 "direction-drift",
                 "offer-change",
-                "unsupported-claim"
+                "unsupported-claim",
+                "detached-flyout"
               ]
             },
             "severity": {
@@ -3122,7 +4456,8 @@
               "enum": [
                 "blocker",
                 "major",
-                "minor"
+                "minor",
+                "info"
               ]
             },
             "confidence": {
@@ -3652,6 +4987,9 @@
                   "type": "string"
                 },
                 "consoleExcerpt": {
+                  "type": "string"
+                },
+                "serverLogExcerpt": {
                   "type": "string"
                 },
                 "axeNodes": {
@@ -4221,6 +5559,31 @@
                 "verified-fixed",
                 "verify-failed"
               ]
+            },
+            "acknowledgement": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                },
+                "until": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reference",
+                "at"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -4620,6 +5983,13 @@
               "hideWebdriver": {
                 "type": "boolean"
               },
+              "explicitDismiss": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
               "target": {
                 "type": "object",
                 "properties": {
@@ -4844,6 +6214,11 @@
                     "description": {
                       "type": "string"
                     },
+                    "screenshotTimeoutMs": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
                     "steps": {
                       "default": [],
                       "type": "array",
@@ -4951,6 +6326,14 @@
                     },
                     "settleMs": {
                       "type": "number"
+                    },
+                    "loading": {
+                      "type": "boolean"
+                    },
+                    "loadingSettleMs": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "viewports": {
                       "minItems": 1,
@@ -5485,6 +6868,13 @@
               "hideWebdriver": {
                 "type": "boolean"
               },
+              "explicitDismiss": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
               "kind": {
                 "type": "string",
                 "enum": [
@@ -5727,6 +7117,11 @@
                     },
                     "description": {
                       "type": "string"
+                    },
+                    "screenshotTimeoutMs": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "url": {
                       "type": "string"
@@ -6072,6 +7467,14 @@
                     },
                     "settleMs": {
                       "type": "number"
+                    },
+                    "loading": {
+                      "type": "boolean"
+                    },
+                    "loadingSettleMs": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "viewports": {
                       "minItems": 1,
@@ -6941,6 +8344,15 @@
                 "default": 250,
                 "type": "number"
               },
+              "hostPressureThreshold": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "maxFullPageHeight": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
               "animationSettleMs": {
                 "default": 1500,
                 "type": "number",
@@ -7040,11 +8452,14 @@
               "directory": {
                 "type": "string",
                 "minLength": 1
+              },
+              "ignoreDirty": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
-            "required": [
-              "directory"
-            ],
             "additionalProperties": false
           },
           "agent": {
@@ -7063,158 +8478,6 @@
             "additionalProperties": false
           },
           "checks": {
-            "default": {
-              "siblingChrome": {
-                "regions": []
-              },
-              "explanation": "default",
-              "minGap": 3,
-              "adjacentGap": {
-                "regions": [],
-                "indicatorMax": 16
-              },
-              "centeringTolerance": 1.5,
-              "components": [],
-              "copy": {
-                "glossary": [],
-                "retired": [],
-                "jargon": [],
-                "schemaWords": [],
-                "properNouns": []
-              },
-              "glyphAllow": [],
-              "errorPatterns": [],
-              "selectedState": {
-                "minColorDelta": 24
-              },
-              "probe": {
-                "enabled": true,
-                "everywhere": false,
-                "respectControlIntent": false,
-                "skip": [],
-                "maxControls": 80,
-                "waitMs": 350,
-                "controlTimeoutMs": 5000,
-                "stateTimeoutMs": 60000
-              },
-              "disguisedControl": {
-                "placeholderPatterns": [],
-                "ignore": []
-              },
-              "freshState": {
-                "historyNames": [],
-                "historySelectors": [],
-                "unsavedPatterns": [],
-                "unsavedSelectors": []
-              },
-              "mirrored": [],
-              "motion": {
-                "maxMs": 150,
-                "durations": [],
-                "selectors": [],
-                "minExtentPx": 24
-              },
-              "fieldGroups": {
-                "inner": 4,
-                "between": 12
-              },
-              "scales": {
-                "spacing": [],
-                "controlHeights": [],
-                "radius": {
-                  "control": [],
-                  "card": [],
-                  "panel": [],
-                  "chip": []
-                },
-                "border": {
-                  "divider": [],
-                  "control": []
-                },
-                "roles": {
-                  "control": [],
-                  "card": [],
-                  "panel": [],
-                  "chip": [],
-                  "divider": []
-                },
-                "suggestAfter": 5
-              },
-              "luminanceParity": {
-                "primarySelectors": [],
-                "ignore": []
-              },
-              "frame": {
-                "minLuminanceDelta": 0.05
-              },
-              "alarm": {
-                "colors": [],
-                "brand": [],
-                "ignore": []
-              },
-              "naming": {
-                "surfaces": {}
-              },
-              "progressWithinMs": 1000,
-              "loading": {
-                "delayMs": 1500
-              },
-              "failure": {
-                "mode": "status",
-                "status": 500,
-                "feedbackWithinMs": 2000
-              },
-              "emptyState": {
-                "regions": [],
-                "auto": true,
-                "ignore": []
-              },
-              "mediaFill": {
-                "auto": true,
-                "bandThreshold": 0.2,
-                "tolerance": 8,
-                "ignore": []
-              },
-              "collections": [],
-              "fonts": {
-                "enabled": true
-              },
-              "links": {
-                "enabled": true,
-                "external": false,
-                "timeoutMs": 5000,
-                "budgetMs": 30000,
-                "concurrency": 4,
-                "ignore": []
-              },
-              "focusVisible": {
-                "enabled": true,
-                "ignore": []
-              },
-              "lineLength": {
-                "enabled": true,
-                "max": 90
-              },
-              "orphanWord": {
-                "enabled": true,
-                "maxChars": 7
-              },
-              "nestedBorder": {
-                "enabled": true
-              },
-              "images": {
-                "enabled": true,
-                "distortionTolerance": 0.03
-              },
-              "layoutShift": {
-                "enabled": true,
-                "max": 0.1
-              },
-              "interactionShift": {
-                "enabled": true,
-                "minDistance": 4
-              }
-            },
             "type": "object",
             "properties": {
               "shellVisibility": {
@@ -7302,7 +8565,6 @@
                 "exclusiveMinimum": 0
               },
               "components": {
-                "default": [],
                 "type": "array",
                 "items": {
                   "type": "object",
@@ -7324,25 +8586,17 @@
                       "exclusiveMinimum": 0
                     },
                     "tolerance": {
-                      "default": {
-                        "ratio": 0.15,
-                        "px": 1,
-                        "mode": "tighter"
-                      },
                       "type": "object",
                       "properties": {
                         "ratio": {
-                          "default": 0.25,
                           "type": "number",
                           "minimum": 0
                         },
                         "px": {
-                          "default": 4,
                           "type": "number",
                           "minimum": 0
                         },
                         "mode": {
-                          "default": "looser",
                           "type": "string",
                           "enum": [
                             "tighter",
@@ -7354,12 +8608,119 @@
                     }
                   },
                   "required": [
-                    "name",
-                    "selector",
-                    "width",
-                    "height"
+                    "selector"
                   ],
                   "additionalProperties": false
+                }
+              },
+              "spacingTargets": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "between": {
+                          "type": "array",
+                          "prefixItems": [
+                            {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          ]
+                        },
+                        "gap": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "axis": {
+                          "default": "vertical",
+                          "type": "string",
+                          "enum": [
+                            "vertical",
+                            "horizontal"
+                          ]
+                        },
+                        "tolerance": {
+                          "type": "object",
+                          "properties": {
+                            "ratio": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "px": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "tighter",
+                                "looser"
+                              ]
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "between",
+                        "gap"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "within": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "gap": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "axis": {
+                          "default": "vertical",
+                          "type": "string",
+                          "enum": [
+                            "vertical",
+                            "horizontal"
+                          ]
+                        },
+                        "tolerance": {
+                          "type": "object",
+                          "properties": {
+                            "ratio": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "px": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "tighter",
+                                "looser"
+                              ]
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "within",
+                        "gap"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
                 }
               },
               "copy": {
@@ -8492,6 +9853,36 @@
                 },
                 "additionalProperties": false
               },
+              "visualBlank": {
+                "default": {},
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "swatchSelectors": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "loadingStuck": {
+                "default": {},
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
               "mediaFill": {
                 "default": {},
                 "type": "object",
@@ -8849,6 +10240,45 @@
           "updateCheck": {
             "type": "boolean"
           },
+          "attribution": {
+            "type": "object",
+            "properties": {
+              "ticketPattern": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "ticketPattern"
+            ],
+            "additionalProperties": false
+          },
+          "nightly": {
+            "type": "object",
+            "properties": {
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "blocker",
+                  "major",
+                  "minor"
+                ]
+              },
+              "labels": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]*$"
+                }
+              },
+              "out": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          },
           "model": {
             "type": "object",
             "properties": {
@@ -8999,6 +10429,8 @@
                         "touch-reachability",
                         "liveness",
                         "media-fill",
+                        "visual-blank",
+                        "loading-stuck",
                         "collection-actions",
                         "font-loading",
                         "broken-link",
@@ -9019,6 +10451,9 @@
                         "selection-outline",
                         "disabled-highlight",
                         "brief-mismatch",
+                        "popover-dismissal",
+                        "focus-return",
+                        "spacing-target",
                         "hierarchy",
                         "density",
                         "brand-alignment",
@@ -9027,7 +10462,8 @@
                         "spec-mismatch",
                         "direction-drift",
                         "offer-change",
-                        "unsupported-claim"
+                        "unsupported-claim",
+                        "detached-flyout"
                       ]
                     },
                     "flow": {
@@ -9057,7 +10493,8 @@
                   "enum": [
                     "blocker",
                     "major",
-                    "minor"
+                    "minor",
+                    "info"
                   ]
                 },
                 "reason": {
@@ -9136,6 +10573,43 @@
         }
       },
       {
+        "name": "idiom_brief_attach",
+        "status": "experimental",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "slug": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "description": "A decided brief's slug"
+            },
+            "ticket": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+              "description": "Autobuild ticket id. Attaching runs only ab ticket attach <id> design; it never moves the ticket's state"
+            },
+            "capture": {
+              "description": "Capture the asserted states now",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "slug",
+            "ticket"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": false,
+          "openWorldHint": true
+        }
+      },
+      {
         "name": "idiom_brief_decide",
         "status": "experimental",
         "inputSchema": {
@@ -9157,11 +10631,53 @@
               "description": "Who decided (default requester)",
               "type": "string",
               "minLength": 1
+            },
+            "ticket": {
+              "description": "Autobuild ticket id. Attaching runs only ab ticket attach <id> design; it never moves the ticket's state",
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
             }
           },
           "required": [
             "slug",
             "option"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": false,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "idiom_brief_export",
+        "status": "experimental",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "slug": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "description": "A decided brief's slug"
+            },
+            "out": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Export directory, inside the project"
+            },
+            "capture": {
+              "description": "Capture the asserted states now",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "slug",
+            "out"
           ],
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": false
@@ -9431,10 +10947,21 @@
               "enum": [
                 "accept",
                 "reject",
+                "acknowledge",
+                "unacknowledge",
                 "add-step",
                 "drift"
               ],
-              "description": "Explicit human judgment: accept/reject a finding, add-step/drift a design system question"
+              "description": "Explicit human judgment: accept/reject a finding, acknowledge/unacknowledge one tracked elsewhere, add-step/drift a design system question"
+            },
+            "reference": {
+              "description": "acknowledge only: where the finding is tracked (a ticket id or URL)",
+              "type": "string",
+              "minLength": 1
+            },
+            "until": {
+              "description": "acknowledge only: the last day (YYYY-MM-DD) the acknowledgement holds",
+              "type": "string"
             },
             "token": {
               "description": "add-step only: token name; defaults to the suggestion",
@@ -9869,6 +11396,7 @@
     "dead-affordance",
     "dead-control",
     "design-drift",
+    "detached-flyout",
     "dialog-shell",
     "disabled-highlight",
     "disguised-control",
@@ -9879,6 +11407,7 @@
     "error-state-missing",
     "error-text",
     "field-group",
+    "focus-return",
     "focus-visible",
     "font-loading",
     "frame",
@@ -9893,6 +11422,7 @@
     "line-length",
     "liveness",
     "loading-state-missing",
+    "loading-stuck",
     "luminance-parity",
     "media-fill",
     "mirrored-control",
@@ -9904,6 +11434,7 @@
     "overflow-clip",
     "page-content",
     "parent-selection",
+    "popover-dismissal",
     "primary-region",
     "progress-affordance",
     "published-budget",
@@ -9915,11 +11446,13 @@
     "shell-visibility",
     "sibling-chrome",
     "spacing-rhythm",
+    "spacing-target",
     "target-size",
     "text-centering",
     "token-drift",
     "touch-reachability",
     "unexplained-control",
+    "visual-blank",
     "word-break"
   ]
 }

@@ -195,6 +195,7 @@ async function patternReference(
  */
 export async function runAdvisoryReview(options: {
   projectDirectory: string;
+  stateProjectDirectory?: string | undefined;
   runDirectory: string;
   project: Project;
   flow: WebFlow & { content: { patterns: ContentPattern[] } };
@@ -228,6 +229,7 @@ export async function runAdvisoryReview(options: {
     try {
       const context = await buildCritiqueContext({
         projectDirectory: options.projectDirectory,
+        stateProjectDirectory: options.stateProjectDirectory,
         runDirectory: options.runDirectory,
         project: options.project,
         flow: options.flow,

@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { type Browser, chromium } from "playwright";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { LATE_CONTENT_WINDOW_MS } from "../src/capture/effect-window.js";
 import { scrollbarShift } from "../src/checks/interaction-shift.js";
 import { signalChecks } from "../src/checks/registry.js";
 import { scaleQuestions } from "../src/checks/scale-conformance.js";
@@ -991,29 +992,43 @@ test("interaction shift: results arriving 700ms after the click are a late shift
 
 test("interaction shift: a slow beacon, keepalive fetch and analytics request nothing awaits do not extend the click's window", async () => {
   // Non-GET beacons are blocked by the probe policy; the GETs are what would
-  // otherwise hold the late-content window open.
+  // otherwise hold the late-content window open. They are held until the
+  // review returns, so a window that waited for them would run to its whole
+  // late-content bound with them still pending. Measuring against that bound,
+  // not a fixed number of milliseconds, keeps the check true on a busy host.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   const routes = async (page: import("playwright").Page) => {
     await page.route(/\/(?:collect|_vercel\/insights)/, async (route) => {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await held;
       await route.fulfill({ status: 204 }).catch(() => undefined);
     });
   };
-  const { findings, tuples } = await reviewStates(
-    browser,
-    [
-      {
-        state: "editor",
-        html: await fixture("interaction-shift-exclusions/beacon.html"),
-      },
-    ],
-    { probe: true, routes },
-  );
-  expect(shifts(findings)).toEqual([]);
-  const click = tuples
-    .flatMap((tuple) => tuple.timelines?.actions ?? [])
-    .find((action) => action.source === "probe-click");
-  expect(click?.requests.length).toBeGreaterThan(0);
-  expect(click?.durationMs).toBeLessThan(150 + 300);
+  try {
+    const { findings, tuples } = await reviewStates(
+      browser,
+      [
+        {
+          state: "editor",
+          html: await fixture("interaction-shift-exclusions/beacon.html"),
+        },
+      ],
+      { probe: true, routes },
+    );
+    expect(shifts(findings)).toEqual([]);
+    const click = tuples
+      .flatMap((tuple) => tuple.timelines?.actions ?? [])
+      .find((action) => action.source === "probe-click");
+    expect(click?.requests.length).toBeGreaterThan(0);
+    expect(
+      click?.requests.filter((request) => request.outcome === "pending").length,
+    ).toBeGreaterThan(0);
+    expect(click?.durationMs).toBeLessThan(LATE_CONTENT_WINDOW_MS);
+  } finally {
+    release();
+  }
 }, 60_000);
 
 test("interaction shift: real scrollbars remain measured while their findings are withheld", async () => {

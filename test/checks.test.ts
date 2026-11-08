@@ -2335,3 +2335,90 @@ test("a declared 200 expectation capturing 404 remains an expectation-status blo
     }),
   );
 });
+
+describe("one-axis component comparisons", () => {
+  test.each([
+    { actual: 48, tolerance: { px: 8 }, fails: false },
+    { actual: 64, tolerance: { px: 8 }, fails: false },
+    { actual: 47.999, tolerance: { px: 8 }, fails: true },
+    { actual: 64.001, tolerance: { px: 8 }, fails: true },
+    { actual: 82, tolerance: { px: 8 }, fails: true },
+    { actual: 105, tolerance: { px: 8 }, fails: true },
+    { actual: 70, tolerance: { ratio: 0.25 }, fails: false },
+    { actual: 70.001, tolerance: { ratio: 0.25 }, fails: true },
+    { actual: 56, tolerance: { px: 0 }, fails: false },
+    { actual: 56.001, tolerance: { px: 0 }, fails: true },
+    { actual: 70, tolerance: {}, fails: false },
+    { actual: 70.001, tolerance: {}, fails: true },
+    { actual: 60, tolerance: { mode: "tighter" }, fails: false },
+    { actual: 60.001, tolerance: { mode: "tighter" }, fails: true },
+    { actual: 70, tolerance: { ratio: 0.25, px: 4 }, fails: false },
+    {
+      actual: 60.001,
+      tolerance: { ratio: 0.25, px: 4, mode: "tighter" },
+      fails: true,
+    },
+    { actual: 57, fails: false },
+    { actual: 57.001, fails: true },
+  ])(
+    "height target %j ignores measured width",
+    ({ actual, tolerance, fails }) => {
+      const component = checksConfigSchema.parse({
+        components: [
+          {
+            selector: ".tile",
+            height: 56,
+            ...(tolerance ? { tolerance } : {}),
+          },
+        ],
+      }).components[0];
+      if (!component) throw new Error("expected component");
+      const observation = v2Observations([]);
+      if (observation.version !== 2) throw new Error("expected V2");
+      observation.components = [
+        {
+          ...component,
+          rects: [
+            { selector: "#tile", x: 0, y: 0, width: 900, height: actual },
+          ],
+        },
+      ];
+      const persisted = observationArtifactSchema.parse(
+        JSON.parse(JSON.stringify(observation)),
+      );
+      const result = runDeterministicChecks([
+        tuple({ observations: persisted }),
+      ]).candidates.filter(
+        ({ candidate }) => candidate.category === "component-size",
+      );
+      expect(result).toHaveLength(fails ? 1 : 0);
+      if (fails) {
+        expect(result[0]?.candidate.explanation).toContain(
+          `${Math.round(actual * 10) / 10}px high`,
+        );
+        expect(result[0]?.candidate.explanation).toContain("56px high (±");
+      }
+    },
+  );
+  test("width-only targets check width while ignoring height", () => {
+    const observation = v2Observations([]);
+    if (observation.version !== 2) throw new Error("expected V2");
+    observation.components = [
+      {
+        name: "tile",
+        selector: ".tile",
+        width: 56,
+        tolerance: { ratio: 0, px: 8 },
+        rects: [{ selector: "#tile", x: 0, y: 0, width: 65, height: 900 }],
+      },
+    ];
+    const result = runDeterministicChecks([
+      tuple({ observations: observation }),
+    ]).candidates.filter(
+      ({ candidate }) => candidate.category === "component-size",
+    );
+    expect(result[0]?.candidate.explanation).toContain(
+      "65px wide; the design specifies 56px wide (±8px)",
+    );
+  });
+});

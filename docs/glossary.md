@@ -58,6 +58,10 @@ A design-system question Idiom found recurring across states, published as `ruli
 
 Your accept or reject of a finding, recorded with `idiom decide` in `.idiom/decisions.jsonl` and committed, so a settled finding stays settled. See [decide](commands.md#decide).
 
+## Acknowledgement
+
+A finding you mark as a real problem tracked elsewhere, with `idiom decide <finding> --ack <reference>`. It stays visible in reports but stops counting toward `--fail-on` and as new, until it lapses: you remove it, its date passes, its local tracker ticket is done, or the finding changes materially. See [Reject, accept or acknowledge](commands.md#reject-accept-or-acknowledge).
+
 ## Baseline
 
 The findings recorded for a flow at a clean commit. Later checks compare against it and fail only on new findings. See [Baselines](configuration.md#baselines).

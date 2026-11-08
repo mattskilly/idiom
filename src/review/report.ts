@@ -1,5 +1,11 @@
 import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  introductionKey,
+  type RecordedIntroduction,
+} from "../attribution/record.js";
+import { appearedLine } from "../attribution/render.js";
+import { tupleCoordinateKey } from "../baseline/coordinate.js";
 import type { ProductionBuild } from "../capture/types.js";
 import { coverageStatusText, paintedCoverageText } from "../checks/painted.js";
 import type { CheckCoverage, CheckTuple } from "../checks/types.js";
@@ -13,6 +19,7 @@ import {
   truncatedReferencesSentence,
 } from "../critique/reference-bound.js";
 import type { CritiqueEvidenceLimits } from "../critique/types.js";
+import type { AcknowledgementLapse } from "../decisions/acknowledgements.js";
 import { tupleDesigns } from "../design/evidence.js";
 import type { DesignDescriptor } from "../design/types.js";
 import {
@@ -20,6 +27,10 @@ import {
   acceptanceText,
   basisDescription,
 } from "../findings/presentation.js";
+import {
+  type HumanFoundSummary,
+  humanFoundLine,
+} from "../learn/misses-summary.js";
 import {
   type ReportCoverage,
   renderCoverageMarkdown,
@@ -314,6 +325,8 @@ export const MATERIAL_DECISION_NOTE =
   "Actionable findings above are recorded in findings.json and can be passed to `idiom decide --finding <id>`.";
 
 export function renderReport(options: {
+  humanFound?: HumanFoundSummary | undefined;
+  now?: Date | undefined;
   flow: string;
   commit: string;
   build?: ProductionBuild | undefined;
@@ -338,6 +351,8 @@ export function renderReport(options: {
   deferred?: Finding[] | undefined;
   /** Deferred ids `idiom decide --finding` accepts; absent means all are report-only. */
   deferredDecisionTargets?: ReadonlySet<string> | undefined;
+  /** Acknowledgements on this run's findings that no longer hold. */
+  acknowledgementLapses?: AcknowledgementLapse[] | undefined;
   groups?: FindingGroup[] | undefined;
   severityOverrides?:
     | Array<{
@@ -347,6 +362,8 @@ export function renderReport(options: {
         effective: Finding["severity"];
       }>
     | undefined;
+  /** `check` only: first-seen ranges of this run's new findings, by introductionKey. */
+  introductions?: ReadonlyMap<string, RecordedIntroduction> | undefined;
 }): string {
   const axisAware = options.tuples.some((tuple) => tuple.colorSchemeAxis);
   const truncatedReferencesLines =
@@ -378,6 +395,9 @@ export function renderReport(options: {
   const lines = [
     `# ${heading} review: ${options.flow}`,
     "",
+    ...(options.humanFound
+      ? [humanFoundLine(options.humanFound, options.now ?? new Date()), ""]
+      : []),
     options.outcome.kind === "quick"
       ? `Source commit: \`${options.commit}\` (live URL capture; no Git source identity)`
       : `Captured commit: \`${options.commit}\``,
@@ -385,6 +405,7 @@ export function renderReport(options: {
       ? []
       : [`Production build: \`${options.build.id}\``]),
     "",
+    ...(options.reportCoverage?.runDiagnostics ?? []).map(text),
     `${options.findings.length} actionable finding${options.findings.length === 1 ? "" : "s"}. Each finding is reported independently; no aggregate rating is produced.`,
     "",
   ];
@@ -395,7 +416,7 @@ export function renderReport(options: {
     ]),
   );
   if (options.reportCoverage !== undefined) {
-    lines.push(renderCoverageMarkdown(options.reportCoverage), "");
+    lines.push(renderCoverageMarkdown(options.reportCoverage, false), "");
   }
   if (options.outcome.kind === "quick") {
     lines.push(
@@ -566,7 +587,12 @@ export function renderReport(options: {
             (tuple.colorSchemeAxis ? tuple.colorScheme : undefined),
       );
       if (findings.length === 0) {
-        lines.push("No findings.", "");
+        lines.push(
+          tuple.failure?.hostDeferred
+            ? "Review deferred for this coordinate."
+            : "No findings.",
+          "",
+        );
         continue;
       }
       for (const finding of findings) {
@@ -576,6 +602,10 @@ export function renderReport(options: {
         lines.push(
           `#### ${finding.id}: ${finding.category} (${finding.severity})`,
           "",
+          ...(finding.acknowledgement === undefined
+            ? []
+            : [acknowledgementMarkdown(finding.acknowledgement), ""]),
+          ...introductionMarkdown(finding, options.introductions),
           ...(finding.evidence.designDrift
             ? [
                 driftLine(finding.evidence.designDrift),
@@ -631,6 +661,13 @@ export function renderReport(options: {
               finding.evidence.consoleExcerpt,
             ),
           );
+        if (finding.evidence.serverLogExcerpt !== undefined)
+          lines.push(
+            ...fencedEvidence(
+              "Server log (around the request):",
+              finding.evidence.serverLogExcerpt,
+            ),
+          );
         if (finding.evidence.domSnippet !== undefined)
           lines.push(
             ...fencedEvidence(
@@ -674,6 +711,12 @@ export function renderReport(options: {
         else lines.push("Verification: manual confirmation is required.", "");
       }
     }
+  }
+  if ((options.acknowledgementLapses?.length ?? 0) > 0) {
+    lines.push("## Acknowledgements", "");
+    for (const lapse of options.acknowledgementLapses ?? [])
+      lines.push(`- ${text(lapse.message)}`);
+    lines.push("");
   }
   lines.push("## Suppressed findings", "");
   lines.push("Suppressed by prior decision or project rule:", "");
@@ -732,7 +775,7 @@ export function renderReport(options: {
           ? `Decision target: \`idiom decide --finding ${finding.id}\``
           : "Report-only: not an `idiom decide --finding` target";
       lines.push(
-        `- ${finding.id} (${finding.severity}) — ${decisionLabel} — Layer: ${finding.layer}${finding.basisDetails?.kind === "judged" && finding.basisDetails.confidence !== undefined ? ` · Confidence: ${finding.basisDetails.confidence}` : ""} — ${text(finding.flow)} / ${text(finding.state)} / ${text(finding.viewport)}${finding.colorScheme === undefined ? "" : ` / ${finding.colorScheme}`}${finding.combination === undefined ? "" : ` [${text(finding.combination)}]`} — ${text(basisDescription(finding))} — ${text(finding.explanation)}${severityOverride === undefined ? "" : ` — Severity override: ${severityOverride.original} -> ${severityOverride.effective} by rule ${text(severityOverride.override.id)} (${text(severityOverride.override.reason)})`}`,
+        `- ${finding.id} (${finding.severity})${finding.acknowledgement === undefined ? "" : ` — ${acknowledgementMarkdown(finding.acknowledgement)}`} — ${decisionLabel} — Layer: ${finding.layer}${finding.basisDetails?.kind === "judged" && finding.basisDetails.confidence !== undefined ? ` · Confidence: ${finding.basisDetails.confidence}` : ""} — ${text(finding.flow)} / ${text(finding.state)} / ${text(finding.viewport)}${finding.colorScheme === undefined ? "" : ` / ${finding.colorScheme}`}${finding.combination === undefined ? "" : ` [${text(finding.combination)}]`} — ${text(basisDescription(finding))} — ${text(finding.explanation)}${severityOverride === undefined ? "" : ` — Severity override: ${severityOverride.original} -> ${severityOverride.effective} by rule ${text(severityOverride.override.id)} (${text(severityOverride.override.reason)})`}`,
       );
       if (finding.evidence.designDrift)
         lines.push(
@@ -791,6 +834,39 @@ export function renderReport(options: {
     lines.push(...quickLimitsMarkdown(options.outcome.targets));
   }
   return `${lines.join("\n")}\n`;
+}
+
+/** Shown on an acknowledged finding: visible, but not counted. */
+export function acknowledgementLabel(
+  acknowledgement: NonNullable<Finding["acknowledgement"]>,
+): string {
+  return `acknowledged (${acknowledgement.reference})${acknowledgement.until === undefined ? "" : ` until ${acknowledgement.until}`}`;
+}
+
+/** The first-seen line of a new finding, from check's attribution. */
+export function findingIntroduction(
+  finding: Finding,
+  introductions: ReadonlyMap<string, RecordedIntroduction> | undefined,
+): RecordedIntroduction | undefined {
+  return introductions?.get(
+    introductionKey(tupleCoordinateKey(finding), finding.fingerprint),
+  );
+}
+
+function introductionMarkdown(
+  finding: Finding,
+  introductions: ReadonlyMap<string, RecordedIntroduction> | undefined,
+): string[] {
+  const introduction = findingIntroduction(finding, introductions);
+  return introduction === undefined
+    ? []
+    : [text(appearedLine(introduction)), ""];
+}
+
+function acknowledgementMarkdown(
+  acknowledgement: NonNullable<Finding["acknowledgement"]>,
+): string {
+  return `**Acknowledged (${text(acknowledgement.reference)})**${acknowledgement.until === undefined ? "" : ` until ${acknowledgement.until}`} — not counted toward --fail-on or as new${acknowledgement.note === undefined ? "" : `. Note: ${text(acknowledgement.note)}`}`;
 }
 
 export async function writeReport(

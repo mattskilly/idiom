@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { assertCompleteRun, isCompleteRun } from "../capture/run-lifecycle.js";
 import { resolveStoredRun } from "../review/artifacts.js";
 
 export type StateCapture = {
@@ -80,6 +81,8 @@ export async function findStateCapture(options: {
       : [options.from];
   for (const runId of runs) {
     const runDirectory = resolveStoredRun(options.projectDirectory, runId);
+    if (options.from !== undefined) await assertCompleteRun(runDirectory);
+    if (!(await isCompleteRun(runDirectory))) continue;
     const stateDirectory = join(runDirectory, options.state);
     const present = await directories(stateDirectory);
     const ordered = [

@@ -1,43 +1,49 @@
 import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { isCompleteRun } from "../capture/run-lifecycle.js";
 import { IdiomError } from "../errors.js";
 import type { UnruledDecision } from "../schemas/ruling.js";
 import { type GitTopology, primaryCheckout } from "../verify/baseline.js";
 import { readUnruledDecisions } from "./artifacts.js";
-import { parseRulingBlocks } from "./law.js";
+import { readEffectiveLaw } from "./effective.js";
 
 async function locate(
   projectDirectories: string[],
   id: string,
 ): Promise<UnruledDecision> {
+  const runs = new Map<string, string>();
   for (const projectDirectory of projectDirectories) {
     const reports = join(projectDirectory, ".idiom", "reports");
     let entries: Dirent<string>[];
     try {
-      entries = (await readdir(reports, { withFileTypes: true }))
-        .filter((entry) => entry.isDirectory())
-        .sort((left, right) => right.name.localeCompare(left.name));
+      entries = await readdir(reports, { withFileTypes: true });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") entries = [];
-      else throw error;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
     }
-    for (const entry of entries) {
-      try {
-        const match = (
-          await readUnruledDecisions(join(reports, entry.name))
-        ).find((decision) => decision.id === id);
-        if (match !== undefined) return match;
-      } catch (error) {
-        const path = join(reports, entry.name, "unruled-decisions.json");
-        try {
-          await readFile(path);
-        } catch (readError) {
-          if ((readError as NodeJS.ErrnoException).code === "ENOENT") continue;
-        }
-        throw error;
-      }
+    for (const entry of entries)
+      if (
+        entry.isDirectory() &&
+        !entry.name.startsWith(".") &&
+        !runs.has(entry.name) &&
+        (await isCompleteRun(join(reports, entry.name)))
+      )
+        runs.set(entry.name, join(reports, entry.name));
+  }
+  for (const [, directory] of [...runs].sort(([a], [b]) =>
+    b.localeCompare(a),
+  )) {
+    try {
+      await readFile(join(directory, "unruled-decisions.json"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
     }
+    const match = (await readUnruledDecisions(directory)).find(
+      (decision) => decision.id === id,
+    );
+    if (match) return match;
   }
   throw new IdiomError(`unknown unruled decision ${JSON.stringify(id)}`);
 }
@@ -47,6 +53,7 @@ export async function lookupUnruledDecision(options: {
   designPath: string;
   id: string;
   gitTopology?: GitTopology | undefined;
+  allowResolved?: boolean | undefined;
 }): Promise<UnruledDecision> {
   let primary: string | undefined;
   try {
@@ -65,8 +72,12 @@ export async function lookupUnruledDecision(options: {
     [options.projectDirectory, ...(primary === undefined ? [] : [primary])],
     options.id,
   );
-  const law = parseRulingBlocks(await readFile(options.designPath, "utf8"));
+  const law = await readEffectiveLaw(
+    options.designPath,
+    options.projectDirectory,
+  );
   if (
+    !options.allowResolved &&
     law.resolutions.some(
       (resolution) =>
         resolution.id === decision.id ||

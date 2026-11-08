@@ -16,6 +16,7 @@ import { mergeMotion } from "../src/capture/motion.js";
 import { probeControls } from "../src/capture/probe.js";
 import { createProbeLedger } from "../src/capture/probe-ledger.js";
 import {
+  dismissalProbeOptions,
   revealedObserver,
   revealedProbeOptions,
 } from "../src/capture/revealed.js";
@@ -98,6 +99,8 @@ export type ReviewOptions = {
   url?: string;
   /** Wait this long after load, as capture's settle does. */
   settleMs?: number;
+  /** The flow's `explicitDismiss`, passed to the dismissal probe. */
+  explicitDismiss?: string[];
   /** Run the keyboard focus sweep (also on whenever `probe` is true). */
   focusSweep?: boolean;
   /** Check observed links with this checker, as web capture does. */
@@ -240,6 +243,7 @@ export async function reviewStates(
             shell: options.shell,
             floatingOverlays: settings.shellVisibility?.floatingOverlays,
             components: settings.components,
+            spacingTargets: settings.spacingTargets,
             inferredComponents,
             invariants: effectiveInvariants(
               {
@@ -340,6 +344,7 @@ export async function reviewStates(
                 marks: checkMarks(settings),
               }),
             ),
+            ...dismissalProbeOptions(settings.probe, options.explicitDismiss),
             motionSelectors: settings.motion.selectors,
             motionMinExtentPx: settings.motion.minExtentPx,
             reducedMotion: options.reducedMotion !== false,

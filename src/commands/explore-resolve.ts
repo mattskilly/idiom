@@ -5,6 +5,7 @@ import {
   selectColorSchemes,
   selectViewports,
 } from "../capture/resolve.js";
+import { isCompleteRun } from "../capture/run-lifecycle.js";
 import type { CheckTuple } from "../checks/types.js";
 import { IdiomError } from "../errors.js";
 import { loadExplorationRun } from "../explore/artifacts.js";
@@ -50,6 +51,11 @@ async function assertLegacySteeringIsUnambiguous(
   }
   const target = normalizeExplorationKey(question);
   for (const entry of entries) {
+    if (
+      entry.startsWith(".") ||
+      !(await isCompleteRun(join(projectDirectory, ".idiom", "reports", entry)))
+    )
+      continue;
     try {
       const decisions = await readUnruledDecisions(
         join(projectDirectory, ".idiom", "reports", entry),

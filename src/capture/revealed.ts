@@ -43,3 +43,15 @@ export function revealedProbeOptions(
     maxRevealed: settings.maxRevealed ?? DEFAULT_MAX_REVEALED,
   };
 }
+
+/**
+ * Probe options for the dismissal pass: on with disclosures
+ * (`checks.probe.disclosures`), exempting the flow's `explicitDismiss`.
+ */
+export function dismissalProbeOptions(
+  settings: { disclosures?: boolean | undefined },
+  explicit?: string[] | undefined,
+): Pick<ProbeOptions, "dismissal"> {
+  if (settings.disclosures === false) return {};
+  return { dismissal: { explicit: explicit ?? [] } };
+}

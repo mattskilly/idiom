@@ -112,7 +112,7 @@ test("upstream additions, removals, kept local extras and rollback restore suppo
   expect(report.files.map((file) => file.action)).toEqual([
     "current",
     "removed",
-    "installed",
+    "adopted",
   ]);
   expect((await tree(root))[aux]).toBeUndefined();
   expect((await metadata(root)).files["idiom/init.md"]).toBeUndefined();
@@ -120,7 +120,7 @@ test("upstream additions, removals, kept local extras and rollback restore suppo
     (await runUpgrade(root, distribution("1.0.0"))).files.map(
       (file) => file.action,
     ),
-  ).toEqual(["current", "installed", "removed"]);
+  ).toEqual(["current", "adopted", "removed"]);
   await put(root, aux, "custom");
   expect(
     (await runUpgrade(root, next)).files.find((file) => file.path === aux)
@@ -397,7 +397,7 @@ test("real offline history adopts legacy copies and reports honest candidate rel
   expect(report.files.some((file) => file.previous.kind === "candidates")).toBe(
     true,
   );
-  expect(report.files.some((file) => file.skill === "ab-verify-idiom")).toBe(
+  expect(report.files.some((file) => file.skill === "idiom-verify")).toBe(
     false,
   );
 });
@@ -443,23 +443,23 @@ test("verifier is opt-in, tracked missing verifier restores, both skills merge",
   const dist = distribution("1.0.0");
   const verifier = distribution(
     "1.0.0",
-    { "SKILL.md": skill(original, "ab-verify-idiom") },
-    "ab-verify-idiom",
+    { "SKILL.md": skill(original, "idiom-verify") },
+    "idiom-verify",
   );
-  dist.skills["ab-verify-idiom"] = verifier.skills["ab-verify-idiom"] ?? {};
+  dist.skills["idiom-verify"] = verifier.skills["idiom-verify"] ?? {};
   await put(root, "autobuild.toml", "detected=true");
   expect((await runUpgrade(root, dist)).files).toHaveLength(2);
   await put(
     root,
-    ".agents/skills/ab-verify-idiom/SKILL.md",
-    skill(original, "ab-verify-idiom"),
+    ".agents/skills/idiom-verify/SKILL.md",
+    skill(original, "idiom-verify"),
   );
   await runUpgrade(root, dist);
   const { rm } = await import("node:fs/promises");
-  await rm(join(root, ".agents/skills/ab-verify-idiom"), { recursive: true });
+  await rm(join(root, ".agents/skills/idiom-verify"), { recursive: true });
   expect(
     (await runUpgrade(root, dist)).files.find(
-      (file) => file.skill === "ab-verify-idiom",
+      (file) => file.skill === "idiom-verify",
     )?.action,
   ).toBe("adopted");
 });
@@ -608,7 +608,7 @@ test("retiring a whole unedited skill removes only its owned discovery link and 
   expect((await runUpgrade(root, distribution("2.0.0", {}))).files).toEqual([]);
 });
 
-test.each(["idiom", "ab-verify-idiom"] as const)(
+test.each(["idiom", "idiom-verify"] as const)(
   "%s retains customization through clean and resolved upgrades",
   async (name) => {
     const root = await temporary();
@@ -618,8 +618,7 @@ test.each(["idiom", "ab-verify-idiom"] as const)(
       { "SKILL.md": skill(original, name), "support.md": "old support" },
       name,
     );
-    if (name === "ab-verify-idiom")
-      await put(root, path, skill(original, name));
+    if (name === "idiom-verify") await put(root, path, skill(original, name));
     await runUpgrade(root, first);
     await put(root, path, skill(original.replace("alpha", "custom"), name));
     const second = distribution(
@@ -690,4 +689,159 @@ test("tracked support filenames never inherit entries from the incoming object p
   expect(
     report.files.find((file) => file.path.endsWith("/constructor"))?.action,
   ).toBe("removed");
+});
+
+test("a first install reports installed for every file and skill", async () => {
+  const root = await temporary();
+  const report = await runUpgrade(root);
+  expect(report.files.map((file) => file.action)).toEqual([
+    "installed",
+    "installed",
+  ]);
+  expect(report.skills.map(({ name, outcome }) => ({ name, outcome }))).toEqual(
+    [{ name: "idiom", outcome: "installed" }],
+  );
+});
+
+test("a legacy install adopts a support file its catalog release lacked", async () => {
+  const root = await temporary();
+  await put(root, live, skill());
+  const history = {
+    schema: 1 as const,
+    releases: [
+      {
+        version: "0.9.0",
+        tag: "v0.9.0",
+        tagObject: "",
+        commit: "",
+        files: { "idiom/SKILL.md": digest(skill()) },
+      },
+    ],
+  };
+  const report = await upgradeSkills(
+    { projectDirectory: root, agent: false },
+    { distribution: distribution("2.0.0"), history },
+  );
+  expect(report.files.find((file) => file.path === aux)?.action).toBe(
+    "adopted",
+  );
+  expect(report.skills[0]).toMatchObject({ name: "idiom", outcome: "adopted" });
+});
+
+test("a missing file the prior catalog release already had stays installed", async () => {
+  const root = await temporary();
+  await put(root, live, skill());
+  const history = {
+    schema: 1 as const,
+    releases: [
+      {
+        version: "0.9.0",
+        tag: "v0.9.0",
+        tagObject: "",
+        commit: "",
+        files: {
+          "idiom/SKILL.md": digest(skill()),
+          "idiom/init.md": digest("old"),
+        },
+      },
+    ],
+  };
+  const report = await upgradeSkills(
+    { projectDirectory: root, agent: false },
+    { distribution: distribution("2.0.0"), history },
+  );
+  expect(report.files.find((file) => file.path === aux)?.action).toBe(
+    "installed",
+  );
+});
+
+test("the rollup reflects a write-phase conflict", async () => {
+  const root = await temporary();
+  await runUpgrade(root);
+  const report = await runUpgrade(
+    root,
+    distribution("2.0.0", files(original.replace("zeta", "updated"))),
+    {},
+    {
+      apply: {
+        beforeRename: async (path) => {
+          if (path === pristinePath("idiom/SKILL.md"))
+            throw new Error("injected write failure");
+        },
+      },
+    },
+  );
+  expect(report.files[0]?.action).toBe("conflicted");
+  expect(report.files[0]?.conflictText).toBeUndefined();
+  expect(report.skills[0]?.outcome).toBe("conflicted");
+});
+
+test.each([false, true])(
+  "overlapping edits carry labelled diff3 conflict text without touching the live file (dry run %s)",
+  async (dryRun) => {
+    const root = await temporary();
+    await runUpgrade(root);
+    const edited = skill(original.replace("gamma", "local gamma"));
+    await put(root, live, edited);
+    const report = await runUpgrade(
+      root,
+      distribution("2.0.0", files(original.replace("gamma", "upstream gamma"))),
+      { agent: false, dryRun },
+    );
+    const main = report.files[0];
+    expect(main?.action).toBe("conflicted");
+    expect(main?.conflictText).toContain(
+      "<<<<<<< local .agents/skills/idiom/SKILL.md\nlocal gamma\n||||||| base pristine 1.0.0\ngamma\n=======\nupstream gamma\n>>>>>>> incoming 2.0.0\n",
+    );
+    expect(main?.conflictText).not.toContain("idiom-local-");
+    expect(await read(root, live)).toBe(edited);
+    expect(report.skills[0]?.outcome).toBe("conflicted");
+  },
+);
+
+test("conflict text widens its markers past literal marker lines", async () => {
+  const root = await temporary();
+  const body = "=======\nalpha\nbeta\n";
+  await runUpgrade(root, distribution("1.0.0", files(body)));
+  await put(root, live, skill(body.replace("beta", "local")));
+  const report = await runUpgrade(
+    root,
+    distribution("2.0.0", files(body.replace("beta", "upstream"))),
+    { agent: false },
+  );
+  expect(report.files[0]?.conflictText).toContain(
+    "<<<<<<<< local .agents/skills/idiom/SKILL.md\n",
+  );
+  expect(report.files[0]?.conflictText).toContain("\n========\n");
+});
+
+test("the skills option restricts processing to the named skills", async () => {
+  const root = await temporary();
+  const verifier = distribution(
+    "1.0.0",
+    { "SKILL.md": skill(original, "idiom-verify") },
+    "idiom-verify",
+  );
+  const both = {
+    version: "1.0.0",
+    skills: { ...distribution("1.0.0").skills, ...verifier.skills },
+  };
+  await put(
+    root,
+    ".agents/skills/idiom-verify/SKILL.md",
+    skill(original, "idiom-verify"),
+  );
+  const report = await upgradeSkills(
+    { projectDirectory: root, agent: false, skills: ["idiom-verify"] },
+    { distribution: both, history: { schema: 1, releases: [] } },
+  );
+  expect(report.files.every((file) => file.skill === "idiom-verify")).toBe(
+    true,
+  );
+  expect(report.skills.map((summary) => summary.name)).toEqual([
+    "idiom-verify",
+  ]);
+  const after = await tree(root);
+  expect(after[".agents/skills/idiom"]).toBeUndefined();
+  expect(after[".claude/skills/idiom"]).toBeUndefined();
 });

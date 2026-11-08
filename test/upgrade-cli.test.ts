@@ -59,8 +59,59 @@ test("JSON report is complete before exit 1 and no-agent never creates a model",
     pristinePath: ".agents/skills/.idiom-pristine/idiom/init.md",
     incomingPath: "/installed/templates/idiom/init.md",
   });
+  expect(report.files[1].conflictText).toContain(">>>>>>> incoming 2.0.0");
+  expect(report.skills).toMatchObject([
+    { name: "idiom", outcome: "conflicted" },
+  ]);
+  expect(report.skills[0].files).toHaveLength(2);
   expect(stderr).not.toHaveBeenCalled();
   expect(createResolver).not.toHaveBeenCalled();
+});
+test("text output previews a conflict, labelled as not written to disk", async () => {
+  const root = await temporary();
+  await runUpgrade(root);
+  await put(root, ".agents/skills/idiom/init.md", "local\n");
+  const stdout = vi.fn();
+  expect(
+    await run(["node", "idiom", "--project", root, "upgrade", "--no-agent"], {
+      stdout,
+      upgrade: {
+        distribution: distribution("2.0.0", {
+          "SKILL.md": skill(),
+          "init.md": "upstream\n",
+        }),
+        history: { schema: 1, releases: [] },
+      },
+    }),
+  ).toBe(1);
+  const text = stdout.mock.calls.flat().join("");
+  expect(text).toContain("idiom: conflicted (1 file)\n  current:");
+  expect(text).toContain(
+    "    conflict (not written to disk; the live file is unchanged):\n      <<<<<<< local .agents/skills/idiom/init.md\n      local\n",
+  );
+  expect(text).toContain("      >>>>>>> incoming 2.0.0");
+  expect(await read(root, ".agents/skills/idiom/init.md")).toBe("local\n");
+});
+test("the conflict preview stops at 80 lines and points to the three paths", async () => {
+  const root = await temporary();
+  const report = await runUpgrade(root, distribution("1.0.0"), {
+    dryRun: true,
+  });
+  const target = report.skills[0]?.files[1];
+  if (!target) throw new Error("missing file");
+  target.action = "conflicted";
+  target.incomingPath = "/installed/templates/idiom/init.md";
+  target.conflictText = `${Array.from({ length: 100 }, (_, index) => `line ${index}`).join("\n")}\n`;
+  const lines = renderUpgrade(report).split("\n");
+  const start = lines.indexOf(
+    "    conflict (not written to disk; the live file is unchanged):",
+  );
+  expect(lines.slice(start + 1, start + 81)).toEqual(
+    Array.from({ length: 80 }, (_, index) => `      line ${index}`),
+  );
+  expect(lines[start + 81]).toBe(
+    "      … 20 more lines not shown; compare .agents/skills/idiom/init.md, .agents/skills/.idiom-pristine/idiom/init.md and /installed/templates/idiom/init.md",
+  );
 });
 test("dry-run resolves initialized ancestors and leaves a complete project tree untouched", async () => {
   const root = await temporary();
@@ -97,9 +148,11 @@ test("explicit relative project wins and uninitialized fallback works without co
   expect(report.projectDirectory).toBe(nested);
   expect(report.files.every((file) => file.action === "installed")).toBe(true);
   expect(renderUpgrade(report)).toContain("unknown → 1.0.0");
-  expect(renderUpgrade(report)).toContain(
-    "installed: .agents/skills/idiom/SKILL.md",
-  );
+  expect(renderUpgrade(report).split("\n").slice(1, 4)).toEqual([
+    "idiom: installed (2 files)",
+    "  installed: .agents/skills/idiom/SKILL.md",
+    "  installed: .agents/skills/idiom/init.md",
+  ]);
   const stdout = vi.fn();
   expect(
     await run(["node", "idiom", "upgrade", "--no-agent"], {
@@ -328,3 +381,77 @@ test("the handed-off child merges skills and reports the update", async () => {
   expect(seams.fetch).not.toHaveBeenCalled();
   expect(seams.handoff).not.toHaveBeenCalled();
 });
+
+test.each(["json", "dry-run", "decline", "accept"])(
+  "real upgrade CLI %s handles gate previews without implicit consent",
+  async (mode) => {
+    const root = await temporary();
+    await initProject({ project: root, yes: true });
+    const original = "[verify]\nsteps=[]\n";
+    await put(root, "autobuild.toml", original);
+    const before = await tree(root);
+    let stdout = "";
+    const confirm = vi.fn(
+      async (
+        _request: import("../src/confirmation.js").InitConfirmationRequest,
+      ) => mode === "accept",
+    );
+    expect(
+      await run(
+        [
+          "node",
+          "idiom",
+          "upgrade",
+          "--project",
+          root,
+          "--no-self-update",
+          "--no-agent",
+          ...(mode === "json" ? ["--json"] : []),
+          ...(mode === "dry-run" ? ["--dry-run"] : []),
+        ],
+        {
+          stdout: (value) => {
+            stdout += value;
+          },
+          stderr: () => {},
+          confirm,
+        },
+      ),
+    ).toBe(0);
+    if (mode === "accept") {
+      expect(await read(root, "autobuild.toml")).toContain("--deferred warn");
+      expect(stdout).toContain("+++ b/autobuild.toml");
+      confirm.mockClear();
+      await run(
+        [
+          "node",
+          "idiom",
+          "upgrade",
+          "--project",
+          root,
+          "--no-self-update",
+          "--no-agent",
+        ],
+        { stdout: () => {}, stderr: () => {}, confirm },
+      );
+      expect(
+        confirm.mock.calls.some(
+          ([request]) => request?.kind === "offer-autobuild-wiring",
+        ),
+      ).toBe(false);
+    } else {
+      expect(await tree(root)).toEqual(before);
+      if (mode === "json")
+        expect(JSON.parse(stdout).autobuild).toMatchObject({
+          kind: "available-noninteractive",
+          diff: expect.stringContaining("idiom-check"),
+        });
+      if (mode === "json" || mode === "dry-run")
+        expect(confirm).not.toHaveBeenCalled();
+    }
+    // The agent gate recipe needs the shared verifier skill; only consent installs it.
+    const skill = (await tree(root))[".agents/skills/idiom-verify/SKILL.md"];
+    if (mode === "accept") expect(skill).toContain("name: idiom-verify");
+    else expect(skill).toBeUndefined();
+  },
+);

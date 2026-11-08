@@ -1,4 +1,4 @@
-export type SkillName = "idiom" | "ab-verify-idiom";
+export type SkillName = "idiom" | "idiom-verify";
 export type DistributionFile = { content: string; incomingPath: string };
 export type Distribution = {
   version: string;
@@ -32,12 +32,22 @@ export type FileOutcome = {
   incomingPath: string | null;
   needsResolution: boolean;
   reason?: string;
+  /** Diff3 merge text for an overlap; never written to disk. */
+  conflictText?: string;
+};
+export type SkillSummary = {
+  name: SkillName;
+  outcome: Outcome;
+  files: FileOutcome[];
 };
 export type UpgradeReport = {
+  autobuild?: import("../autobuild/setup.js").AutobuildSetupOutcome;
   projectDirectory: string;
   installedVersion: string;
   previous: PreviousVersion | { kind: "mixed"; versions: PreviousVersion[] };
   dryRun: boolean;
   files: FileOutcome[];
+  /** One rollup per participating skill; empty when none participated. */
+  skills: SkillSummary[];
   discoveryConflicts: { path: string; reason: string }[];
 };

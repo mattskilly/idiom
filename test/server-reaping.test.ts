@@ -86,6 +86,14 @@ async function commit(directory: string) {
   );
 }
 
+/** Reaping now follows run-record creation; a failing setup step ends the run just after it. */
+async function stopAfterReaping(directory: string) {
+  const path = join(directory, ".idiom", "flows", "home.json");
+  const flow = JSON.parse(await readFile(path, "utf8"));
+  flow.setup = [{ run: 'node -e "process.exit(7)"' }];
+  await writeFile(path, JSON.stringify(flow));
+}
+
 async function records(directory: string): Promise<string[]> {
   try {
     return await readdir(serversDirectory(directory));
@@ -185,6 +193,8 @@ test("capture reaps leftovers first and reports each through onLeftoverServer", 
   const table = new Map([[4321, identity]]);
   const messages: string[] = [];
   const signals: Array<[number, string]> = [];
+  await stopAfterReaping(directory);
+  await commit(directory);
   await expect(
     runCapture({
       projectDirectory: directory,
@@ -214,12 +224,9 @@ test("capture reaps leftovers first and reports each through onLeftoverServer", 
             sleep: async () => undefined,
           },
         },
-        snapshotSource: async () => {
-          throw new Error("stop after reaping");
-        },
       },
     }),
-  ).rejects.toThrow("stop after reaping");
+  ).rejects.toThrow("setup");
   expect(signals).toEqual([[-4321, "SIGTERM"]]);
   expect(messages).toEqual([
     "Stopped a leftover application server (pid 4321, port 3107) from an earlier run.",
@@ -234,6 +241,7 @@ test("check --json reports a stopped leftover on stderr, never stdout", async ()
     port,
     directories,
   );
+  await stopAfterReaping(directory);
   await commit(directory);
   const identity = { start: "Mon Nov  3 10:00:00 2026", args: "node x" };
   await mkdir(serversDirectory(directory), { recursive: true });
@@ -269,9 +277,6 @@ test("check --json reports a stopped leftover on stderr, never stdout", async ()
           isPortOpen: async () => false,
           sleep: async () => undefined,
         },
-      },
-      snapshotSource: async () => {
-        throw new Error("stop after reaping");
       },
     },
   }).catch(() => undefined);

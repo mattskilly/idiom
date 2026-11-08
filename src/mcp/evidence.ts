@@ -1,4 +1,5 @@
 import { evidencePath } from "../artifact-path.js";
+import { assertCompleteRun } from "../capture/run-lifecycle.js";
 
 export { evidencePath } from "../artifact-path.js";
 
@@ -437,6 +438,7 @@ export class EvidenceStore {
       throw new IdiomError(`Unknown flow ${flow}.`);
     const reports = join(validated.projectDirectory, ".idiom", "reports");
     const runDirectory = join(reports, runId);
+    await assertCompleteRun(runDirectory);
     await evidencePath(reports, `${runId}/findings.json`);
     const originals = findingSchema
       .array()

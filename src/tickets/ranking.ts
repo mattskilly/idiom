@@ -1,6 +1,6 @@
 import { tupleCoordinateKey } from "../baseline/coordinate.js";
 import type { CatalogFinding } from "../review/catalog.js";
-import { findingScore } from "../review/presentation-order.js";
+import { findingRank } from "../review/presentation-order.js";
 import { affectedCounts, comparePriority } from "../review/ranking.js";
 import type { FindingCluster } from "./cluster.js";
 
@@ -18,16 +18,19 @@ export function rankClusters(
           tupleCoordinateKey(member.record.finding),
         ),
       );
-      const ranks = cluster.members.map((member) => ({
-        severity: member.record.finding.severity,
-        score:
-          scores?.get(member.id) ??
-          findingScore(member.record.finding, undefined, counts),
-      }));
+      const ranks = cluster.members.map((member) => {
+        const rank = findingRank(member.record.finding, undefined, counts);
+        return {
+          severity: member.record.finding.severity,
+          impact: rank.impact,
+          score: scores?.get(member.id) ?? rank.score,
+        };
+      });
       const severity = [...ranks].sort(comparePriority)[0]?.severity ?? "minor";
       return {
         cluster,
         severity,
+        impact: Math.max(...ranks.map((rank) => rank.impact)),
         score: Math.max(...ranks.map((rank) => rank.score)),
       };
     })
@@ -44,7 +47,7 @@ export function rankTicketRecords(records: CatalogFinding[]): CatalogFinding[] {
     .map((record) => ({
       record,
       severity: record.finding.severity,
-      score: findingScore(record.finding),
+      ...findingRank(record.finding),
     }))
     .sort(comparePriority)
     .map((item) => item.record);

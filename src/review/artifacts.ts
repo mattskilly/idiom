@@ -11,7 +11,15 @@ import {
   expectedStatusByState,
   selectColorSchemes,
 } from "../capture/resolve.js";
-import { loadRunRecord } from "../capture/run-record.js";
+import {
+  assertCompleteRun,
+  completeRunNames,
+} from "../capture/run-lifecycle.js";
+import {
+  loadRunRecord,
+  timeoutDiagnosticSchema,
+} from "../capture/run-record.js";
+import type { ServerLogLine } from "../capture/server-log.js";
 import type {
   ConsoleRecord,
   ExpectationMismatch,
@@ -20,6 +28,7 @@ import type {
 import {
   actionTimelineArtifactSchema,
   observationArtifactSchema,
+  screenshotGeometrySchema,
 } from "../checks/artifact-schema.js";
 import { filmstripManifestSchema } from "../checks/filmstrip-schema.js";
 import type { CheckTuple } from "../checks/types.js";
@@ -101,7 +110,12 @@ type StoredMetadata = {
       }
     | { kind: "unresolved"; declaration: unknown };
   expectations: { mismatches: ExpectationMismatch[] };
-  failure: { stage: string; message: string } | null;
+  screenshot?: import("../checks/types.js").ScreenshotGeometry | undefined;
+  failure: {
+    stage: string;
+    message: string;
+    timeout?: import("../capture/types.js").TimeoutDiagnostic;
+  } | null;
   platform?: { platform: string; architecture: string; release: string };
   browserVersion?: string;
 };
@@ -196,6 +210,8 @@ function metadata(value: unknown, path: string): StoredMetadata {
       typeof raw.consoleProvenance !== "boolean") ||
     ("documentUrl" in raw && typeof raw.documentUrl !== "string") ||
     ("url" in raw && !validStoredUrl(raw.url)) ||
+    ("screenshot" in raw &&
+      !screenshotGeometrySchema.safeParse(raw.screenshot).success) ||
     !Array.isArray(item.expectations?.mismatches) ||
     (item.platform !== undefined &&
       (typeof item.platform.platform !== "string" ||
@@ -206,7 +222,9 @@ function metadata(value: unknown, path: string): StoredMetadata {
     !(
       item.failure === null ||
       (typeof item.failure?.stage === "string" &&
-        typeof item.failure.message === "string")
+        typeof item.failure.message === "string" &&
+        (item.failure.timeout === undefined ||
+          timeoutDiagnosticSchema.safeParse(item.failure.timeout).success))
     )
   ) {
     throw new IdiomError(`invalid metadata in ${path}`);
@@ -227,17 +245,62 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+const optionalOf = (
+  value: Record<string, unknown>,
+  key: string,
+  type: "string" | "number",
+) => !(key in value) || typeof value[key] === type;
+
 function validConsoleRequest(value: unknown): boolean {
   if (value === null || typeof value !== "object") return false;
   const request = value as Record<string, unknown>;
   return (
     typeof request.resourceType === "string" &&
     request.resourceType.length > 0 &&
-    typeof request.mainFrame === "boolean"
+    typeof request.mainFrame === "boolean" &&
+    optionalOf(request, "method", "string") &&
+    optionalOf(request, "url", "string") &&
+    optionalOf(request, "status", "number") &&
+    optionalOf(request, "at", "number") &&
+    optionalOf(request, "endAt", "number")
   );
 }
 
-function parseConsole(source: string, path: string): ConsoleRecord[] {
+function validConsoleCsp(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  const csp = value as Record<string, unknown>;
+  return (
+    typeof csp.directive === "string" &&
+    typeof csp.violatedDirective === "string" &&
+    typeof csp.blocked === "string" &&
+    typeof csp.documentUrl === "string" &&
+    optionalOf(csp, "element", "string") &&
+    optionalOf(csp, "frame", "string") &&
+    optionalOf(csp, "sample", "string") &&
+    optionalOf(csp, "sourceFile", "string") &&
+    optionalOf(csp, "lineNumber", "number") &&
+    optionalOf(csp, "columnNumber", "number")
+  );
+}
+
+/** One line of a run's `server.log`: `<ISO time> <stdout|stderr> <text>`. */
+export function parseServerLog(source: string): ServerLogLine[] {
+  const lines: ServerLogLine[] = [];
+  for (const line of source.split(/\r?\n/)) {
+    const match = /^(\S+) (stdout|stderr) (.*)$/.exec(line);
+    if (match === null) continue;
+    const at = Date.parse(match[1] ?? "");
+    if (Number.isNaN(at)) continue;
+    lines.push({
+      at,
+      stream: match[2] as ServerLogLine["stream"],
+      text: match[3] ?? "",
+    });
+  }
+  return lines;
+}
+
+export function parseConsole(source: string, path: string): ConsoleRecord[] {
   return source
     .split(/\r?\n/)
     .filter(Boolean)
@@ -259,7 +322,17 @@ function parseConsole(source: string, path: string): ConsoleRecord[] {
           !validConsoleRequest(record.request)
         ) {
           throw new Error(
-            "request must be { resourceType: string, mainFrame: boolean }",
+            "request must be { resourceType: string, mainFrame: boolean } with optional string method and url and numeric status, at and endAt",
+          );
+        }
+        if (
+          record !== null &&
+          typeof record === "object" &&
+          "csp" in record &&
+          !validConsoleCsp(record.csp)
+        ) {
+          throw new Error(
+            "csp must be { directive: string, violatedDirective: string, blocked: string, documentUrl: string, … }",
           );
         }
         return record;
@@ -390,19 +463,9 @@ export async function findLatestCapture(options: {
 export async function storedRunsNewestFirst(
   reports: string,
 ): Promise<string[]> {
-  let entries: Dirent[];
-  try {
-    entries = await readdir(reports, { withFileTypes: true });
-  } catch {
-    entries = [];
-  }
-  return entries
-    .filter(
-      (entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}T/.test(entry.name),
-    )
-    .map((entry) => entry.name)
-    .sort()
-    .reverse();
+  return (await completeRunNames(reports)).filter((name) =>
+    /^\d{4}-\d{2}-\d{2}T/.test(name),
+  );
 }
 
 /**
@@ -508,6 +571,7 @@ export async function loadCaptureRun(options: {
   record?: import("../capture/run-record.js").RunRecord | undefined;
 }> {
   const runDirectory = resolve(options.runDirectory);
+  await assertCompleteRun(runDirectory);
   let stateEntries: Dirent[];
   try {
     stateEntries = await readdir(runDirectory, { withFileTypes: true });
@@ -543,6 +607,10 @@ export async function loadCaptureRun(options: {
       throw new IdiomError(`invalid production build in ${buildPath}`);
     runBuild = value;
   }
+  const serverLogPath = join(runDirectory, "server.log");
+  const serverLog = (await exists(serverLogPath))
+    ? parseServerLog(await readFile(serverLogPath, "utf8"))
+    : undefined;
   const tupleDirectories: string[] = [];
   for (const state of stateEntries
     .filter((entry) => entry.isDirectory())
@@ -785,6 +853,10 @@ export async function loadCaptureRun(options: {
           ? []
           : parseConsole(await readFile(consolePath, "utf8"), consolePath),
       consoleAvailable: consolePath !== undefined,
+      ...(serverLog === undefined ? {} : { serverLog }),
+      ...(typeof record.documentUrl === "string"
+        ? { documentUrl: record.documentUrl }
+        : {}),
       ...(record.consoleProvenance === true ? { consoleProvenance: true } : {}),
       ...(typeof record.status === "number" &&
       expectedStatus !== undefined &&
@@ -801,7 +873,22 @@ export async function loadCaptureRun(options: {
           }
         : {}),
       mismatches: record.expectations.mismatches,
-      ...(record.failure === null ? {} : { failure: record.failure }),
+      ...(record.screenshot === undefined
+        ? {}
+        : {
+            screenshotGeometry: record.screenshot,
+          }),
+      ...(record.failure === null
+        ? {}
+        : {
+            failure: {
+              stage: record.failure.stage,
+              message: record.failure.message,
+              ...(record.failure.timeout
+                ? { timeout: record.failure.timeout }
+                : {}),
+            },
+          }),
       ...(record.platform === undefined || record.browserVersion === undefined
         ? {}
         : {
@@ -880,6 +967,29 @@ export async function loadCaptureRun(options: {
           Number.MAX_SAFE_INTEGER) ||
       (left.colorScheme ?? "light").localeCompare(right.colorScheme ?? "light"),
   );
+  for (const tuple of tuples) {
+    const retry = runRecord?.retries?.find(
+      (retry) =>
+        captureTupleKey(retry) ===
+        captureTupleKey({
+          ...tuple,
+          colorScheme: tuple.colorScheme ?? "light",
+        }),
+    );
+    if (
+      tuple.failure?.timeout &&
+      retry?.outcome === "timed-out" &&
+      runRecord?.deferredTuples?.some(
+        (coordinate) =>
+          captureTupleKey(coordinate) ===
+          captureTupleKey({
+            ...tuple,
+            colorScheme: tuple.colorScheme ?? "light",
+          }),
+      )
+    )
+      tuple.failure = { ...tuple.failure, hostDeferred: true };
+  }
   return {
     tuples,
     collapsedTupleKeys,
@@ -958,7 +1068,7 @@ async function attachPublished(
 ): Promise<void> {
   const maxDiffRatio = flow.budget?.maxDiffRatio;
   const directory = baselineDirectory(
-    validated.projectDirectory,
+    validated.stateProjectDirectory ?? validated.projectDirectory,
     validated.project,
   );
   for (const tuple of tuples) {

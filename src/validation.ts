@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import type { ZodIssue, ZodType } from "zod";
+import { validateDirtyPolicy } from "./baseline/dirty-policy.js";
 import { selectColorSchemes } from "./capture/resolve.js";
 import { mergeCopyPolicy } from "./copy-policy.js";
 import { IdiomError } from "./errors.js";
@@ -20,6 +21,7 @@ import {
 } from "./schemas/project.js";
 
 export type ProjectContext = {
+  stateProjectDirectory?: string | undefined;
   projectDirectory: string;
   project: Project;
   rules: Rules;
@@ -292,6 +294,7 @@ export async function validateNamedFlow(
       `requested flow ${JSON.stringify(flow)} does not match the manifest id ${JSON.stringify(record?.flow.id)}`,
     );
   }
+  await validateDirtyPolicy({ ...context, flows: [record] });
   return record;
 }
 
@@ -304,7 +307,9 @@ export async function validateProject(options: {
   const flows = await loadFlows(context, options.flow);
   if (context.project.surfaces.length > 0)
     await loadDeclaredSurfaceFlows(context);
-  return { ...context, flows };
+  const validated = { ...context, flows };
+  await validateDirtyPolicy(validated);
+  return validated;
 }
 
 export async function validateProjectConfiguration(options: {

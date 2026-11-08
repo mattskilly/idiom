@@ -1,0 +1,10 @@
+<!doctype html>
+<title>One card with two corner actions</title>
+<style>
+  body { margin: 24px; font: 16px Arial; }
+  .card { position: relative; width: 240px; height: 200px; }
+  .card > a { display: block; width: 240px; height: 200px; background: #eee; }
+  button { position: absolute; top: 4px; right: 4px; width: 40px; height: 40px; }
+  #more { right: 52px; }
+</style>
+<div class="card" id="card"><a href="/feature" id="feature">Feature</a><button id="like" aria-label="Like">♡</button><button id="more" aria-label="More">⋯</button></div>

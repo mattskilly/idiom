@@ -49,10 +49,12 @@ export const gitAncestry: GitAncestry = {
 export async function selectBaselineRecord(options: {
   projectDirectory: string;
   file: BaselineFile;
+  comparisonCommit?: string | undefined;
   git?: GitAncestry | undefined;
 }) {
   const git = options.git ?? gitAncestry;
-  const head = await git.head(options.projectDirectory);
+  const head =
+    options.comparisonCommit ?? (await git.head(options.projectDirectory));
   const reachable = [];
   for (const record of options.file.records) {
     const ancestor = await git.isAncestor(

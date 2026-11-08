@@ -10,6 +10,10 @@ import {
   renderCoverageMarkdown,
 } from "../report/coverage.js";
 import type { AttachmentManifest } from "./attachments.js";
+import {
+  type DesignAssetVerification,
+  designAssetMarkdown,
+} from "./design-assets.js";
 import type { VerificationEvaluation } from "./evaluate.js";
 import { TEXT_BOUNDARY } from "./profile.js";
 
@@ -47,7 +51,7 @@ function pairSuppressionText(evaluation: VerificationEvaluation): string[] {
     : ["### Pair-level text suppression", "", ...lines, ""];
 }
 
-export function renderVerificationReport(options: {
+type VerificationReportOptions = {
   flow: string;
   baselineRunId: string;
   currentRunA: string;
@@ -57,18 +61,37 @@ export function renderVerificationReport(options: {
   noFindings?: boolean | undefined;
   diagnostic?: string | undefined;
   reportCoverage?: ReportCoverage | undefined;
-}): string {
+  /** The pinned design asset's own pass; a text section, never an attachment. */
+  designAssets?: DesignAssetVerification | undefined;
+};
+
+export function renderVerificationReport(
+  options: VerificationReportOptions,
+): string {
+  const body = renderVerificationBody(options);
+  if (options.designAssets === undefined) return body;
+  return `${body.trimEnd()}\n\n${designAssetMarkdown(options.designAssets).join("\n")}`;
+}
+
+function renderVerificationBody(options: VerificationReportOptions): string {
   if (options.noFindings === true) {
+    const assets = options.designAssets;
     return `${[
       `# Verification: ${options.flow}`,
       "",
-      "Outcome: **not applicable — no embedded findings**.",
+      assets === undefined
+        ? "Outcome: **not applicable — no embedded findings**."
+        : `Outcome: **${assets.passed ? "passed" : "failed"}** — no embedded findings; the pinned design asset was checked.`,
       "",
       ...(options.reportCoverage === undefined
         ? []
         : [renderCoverageMarkdown(options.reportCoverage), ""]),
-      "No setup, build, server, browser, provider, or external API was invoked.",
-      "",
+      ...(assets === undefined
+        ? [
+            "No setup, build, server, browser, provider, or external API was invoked.",
+            "",
+          ]
+        : []),
     ].join("\n")}\n`;
   }
   const evaluation = options.evaluation;

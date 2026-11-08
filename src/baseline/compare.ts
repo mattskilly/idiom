@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { readDesignAssets } from "../brief/design-asset.js";
 import { projectChecksConfig } from "../checks/project-config.js";
 import { IdiomError } from "../errors.js";
 import { loadRunTuples } from "../review/artifacts.js";
@@ -36,6 +37,8 @@ export function compareToBaseline(options: {
   currentTupleKeys: ReadonlySet<string>;
   liveOccurrences: Finding[];
   currentConfigHash: string;
+  /** Findings that are new whatever the baseline holds: a pinned contract's. */
+  alwaysNew?: ((finding: Finding) => boolean) | undefined;
 }) {
   const baseline = identitySets(
     options.record.tuples.map((tuple) => ({
@@ -59,7 +62,8 @@ export function compareToBaseline(options: {
     );
     const ids =
       candidate === undefined ? [finding.fingerprint] : identities(candidate);
-    (ids.some((id) => baseline.get(key)?.has(id))
+    (options.alwaysNew?.(finding) !== true &&
+    ids.some((id) => baseline.get(key)?.has(id))
       ? preExisting
       : newFindings
     ).push(finding);
@@ -97,12 +101,16 @@ export async function resolveRunBaseline(options: {
   baselineFile?: string | undefined;
   cwd?: string | undefined;
   git?: GitAncestry | undefined;
+  comparisonCommit?: string | undefined;
 }) {
   const { validated, flow } = options;
   const path =
     options.baselineFile === undefined
       ? baselinePath(
-          baselineDirectory(validated.projectDirectory, validated.project),
+          baselineDirectory(
+            validated.stateProjectDirectory ?? validated.projectDirectory,
+            validated.project,
+          ),
           flow.id,
         )
       : resolve(options.cwd ?? process.cwd(), options.baselineFile);
@@ -118,6 +126,7 @@ export async function resolveRunBaseline(options: {
           projectDirectory: validated.projectDirectory,
           file,
           git: options.git,
+          comparisonCommit: options.comparisonCommit,
         });
   return { path, selected };
 }
@@ -130,6 +139,7 @@ export async function compareRunToBaseline(options: {
   cwd?: string | undefined;
   liveOccurrences: Finding[];
   git?: GitAncestry | undefined;
+  comparisonCommit?: string | undefined;
 }) {
   const { validated, flow } = options;
   const { path, selected } = await resolveRunBaseline(options);
@@ -138,7 +148,14 @@ export async function compareRunToBaseline(options: {
       `no recorded baseline for "${flow.id}" reachable from HEAD in ${path}; run \`idiom baseline record ${flow.id}\` on main and commit it (a shallow clone may need the baseline commit fetched)`,
     );
   const loaded = await loadRunTuples(validated, flow, options.runDirectory);
+  // A design asset's mismatches always block, even when a baseline recorded
+  // before the brief already holds them.
+  const pinned = (await readDesignAssets(validated.projectDirectory)).map(
+    (brief) => `idiom:brief-mismatch:${brief.slug}:`,
+  );
   const comparison = compareToBaseline({
+    alwaysNew: (finding) =>
+      pinned.some((prefix) => finding.rule?.startsWith(prefix) === true),
     record: selected.record,
     currentCandidates: deterministicCandidateRecords({
       tuples: loaded.tuples,

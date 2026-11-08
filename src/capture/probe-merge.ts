@@ -90,9 +90,16 @@ export function mergePlannedProbe(options: {
       continue;
     }
     const owner = cached.state === state;
-    const { elapsedMs, timings, replayRequired, revealed, ...result } =
-      cached.result;
-    // A revealed state is checked once: on the row of the state that opened it.
+    const {
+      elapsedMs,
+      timings,
+      replayRequired,
+      revealed,
+      dismissal,
+      ...result
+    } = cached.result;
+    // A revealed state and a dismissal are checked once: on the row of the
+    // state that opened them.
     artifact.results[position] = {
       ...result,
       selector: candidate.selector,
@@ -101,7 +108,7 @@ export function mergePlannedProbe(options: {
       repeated: candidate.repeated ? true : undefined,
       persistent: true,
       ...(owner
-        ? { elapsedMs, timings, replayRequired, revealed }
+        ? { elapsedMs, timings, replayRequired, revealed, dismissal }
         : { reusedFrom: cached.state }),
     };
     // Nested items finished anywhere fill this state's unfinished rows.
@@ -122,6 +129,7 @@ export function mergePlannedProbe(options: {
               timings: undefined,
               replayRequired: undefined,
               revealed: undefined,
+              dismissal: undefined,
               reusedFrom: source,
             };
       const open = artifact.results.findIndex(same);
@@ -194,6 +202,13 @@ export function accumulateProbeRound(
   );
   return {
     ...previous,
+    ...(next.stateReachTimeout || previous.stateReachTimeout
+      ? {
+          stateReachTimeout: next.stateReachTimeout,
+          status: next.status,
+          reason: next.reason,
+        }
+      : {}),
     results,
     ...(selection ? { selectionTrials: selection } : {}),
     ...(explanations ? { explanations } : {}),

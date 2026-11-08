@@ -197,6 +197,8 @@ test("fixture delta reports exactly one new, one fixed and one pre-existing thro
     expect(renderCheckSummary(summary)).toContain(heading);
   const reviewed = await review(project);
   expect(reviewed.comparison).toEqual({
+    acknowledgedFindings: [],
+    acknowledgementLapses: [],
     currentJudged: [],
     findings: summary.findings,
     fixed: summary.fixed,
@@ -1483,25 +1485,48 @@ test("accept infers only a sole flow and out/file overrides bypass a nearer acce
   expect(explicit.findings).toHaveLength(1);
 }, 60_000);
 
-test.each([
-  { name: "dirty", dirty: true },
-  { name: "failed", failure: { stage: "navigation", message: "failed" } },
-])(
-  "automatic baseline rejects $name capture evidence without a record",
-  async ({ name, ...tuple }) => {
-    const { project, commit: sha } = await setup();
-    await storedBaselineRun(project, "initial", sha, [tuple]);
-    await expect(
-      checkCommand({ project, flow: "studio", from: "initial" }),
-    ).rejects.toThrow(/clean tree|successful capture/);
-    expect(
-      await readBaselineFile(
-        baselinePath(join(project, ".idiom/baselines"), "studio"),
-      ),
-    ).toBeUndefined();
-  },
-  60_000,
-);
+test("automatic baseline rejects dirty capture evidence without a record", async () => {
+  const { project, commit: sha } = await setup();
+  await storedBaselineRun(project, "initial", sha, [{ dirty: true }]);
+  await expect(
+    checkCommand({ project, flow: "studio", from: "initial" }),
+  ).rejects.toThrow(/clean tree/);
+  expect(
+    await readBaselineFile(
+      baselinePath(join(project, ".idiom/baselines"), "studio"),
+    ),
+  ).toBeUndefined();
+}, 60_000);
+
+test("a failed tuple reports the review but records no automatic baseline", async () => {
+  const { project, commit: sha } = await setup();
+  await storedBaselineRun(project, "initial", sha, [
+    { failure: { stage: "navigation", message: "failed" } },
+  ]);
+  const summary = await checkCommand({
+    project,
+    flow: "studio",
+    from: "initial",
+  });
+  expect(summary.baselineRecorded).toBeUndefined();
+  expect(summary.captureFailures).toEqual([
+    {
+      state: "editor",
+      viewport: "desktop",
+      colorScheme: "light",
+      stage: "navigation",
+      message: "failed",
+    },
+  ]);
+  expect(summary.baselineNotRecorded?.message).toBe(
+    "Baseline not recorded: 1 of 1 tuples failed (editor/desktop/light). Findings for the other 0 are above.",
+  );
+  expect(
+    await readBaselineFile(
+      baselinePath(join(project, ".idiom/baselines"), "studio"),
+    ),
+  ).toBeUndefined();
+}, 60_000);
 
 test("automatic baseline rejects a historical capture while manual record preserves its original commit", async () => {
   const { project, commit: sha } = await setup();
@@ -1622,7 +1647,8 @@ test("fresh scoped bootstrap captures once, records actual coordinates in the cu
     },
   );
   expect(code).toBe(0);
-  expect(captures).toBe(1);
+  // One capture takes initial and final source snapshots.
+  expect(captures).toBe(2);
   const summary = JSON.parse(stdout);
   expect(summary.baselineRecorded).toMatchObject({
     commit: sha,
@@ -1698,9 +1724,19 @@ test("automatic published baseline and acceptance copy pixel evidence, including
 test("missing selected capture coordinates and shallow baseline ancestry cannot initialize a replacement", async () => {
   const { project, commit: original } = await setup({ mobile: true });
   await storedBaselineRun(project, "incomplete", original);
-  await expect(
-    checkCommand({ project, flow: "studio", from: "incomplete" }),
-  ).rejects.toThrow("successful capture");
+  const incomplete = await checkCommand({
+    project,
+    flow: "studio",
+    from: "incomplete",
+  });
+  expect(incomplete.baselineNotRecorded).toMatchObject({
+    failed: 1,
+    total: 2,
+    successful: 1,
+    coordinates: [
+      { state: "editor", viewport: "mobile", colorScheme: "light" },
+    ],
+  });
   const path = baselinePath(join(project, ".idiom/baselines"), "studio");
   expect(await readBaselineFile(path)).toBeUndefined();
   await writeBaselineRecord(path, "studio", baselineRecord(original));
@@ -1804,4 +1840,168 @@ test("review refuses an unusable finding-name registry before it captures", asyn
   expect(stored).toBeInstanceOf(IdiomError);
   expect(stored).not.toBeInstanceOf(RunFailure);
   expect((stored as Error).message).toContain("finding-name registry");
+}, 60_000);
+
+test("an acknowledged finding is listed but never gates, until its ticket is done or it is unacknowledged", async () => {
+  const { project, commit: sha } = await setup({ required: ["#a", "#b"] });
+  await storedBaselineRun(project, "initial", sha, [
+    { mismatches: [missing("#a")] },
+  ]);
+  await record(project);
+  await storedBaselineRun(project, "later", sha, [
+    { mismatches: [missing("#a"), missing("#b")] },
+  ]);
+  const before = await check(project);
+  expect(before.findings).toHaveLength(1);
+  expect(before.preExisting).toBe(1);
+  expect(
+    (await cli(project, "check", "later", ["--fail-on", "minor"])).code,
+  ).toBe(1);
+  const fresh = before.findings[0]?.id as string;
+  const existing = before.preExistingFindings?.[0]?.id as string;
+  await decideCommand({ project, finding: fresh, ack: "file-1592" });
+  await decideCommand({
+    project,
+    finding: existing,
+    ack: "ABC-123",
+    note: "Tracked in Jira",
+  });
+
+  const acknowledged = await check(project);
+  expect(acknowledged.findings).toEqual([]);
+  expect(acknowledged.blocking).toBe(0);
+  // Acknowledged is neither new, pre-existing nor fixed.
+  expect(acknowledged.preExisting).toBe(0);
+  expect(acknowledged.fixed).toEqual([]);
+  expect(
+    acknowledged.acknowledgedFindings?.map((finding) => [
+      finding.id,
+      finding.acknowledged,
+    ]),
+  ).toEqual(
+    expect.arrayContaining([
+      [fresh, { reference: "file-1592" }],
+      [existing, { reference: "ABC-123" }],
+    ]),
+  );
+  expect(acknowledged.acknowledgementLapses).toEqual([]);
+  const passing = await cli(project, "check", "later", ["--fail-on", "minor"]);
+  expect(passing.code).toBe(0);
+  expect(passing.out).toContain("Acknowledged (not counted): 2");
+  expect(passing.out).toContain(`- ${fresh} [`);
+  expect(passing.out).toContain("acknowledged (file-1592)");
+  const report = await readFile(acknowledged.reportPath, "utf8");
+  expect(report).toContain("**Acknowledged (file-1592)**");
+  expect(report).toContain("Note: Tracked in Jira");
+  const reviewed = await review(project);
+  expect(reviewed.comparison?.findings).toEqual([]);
+  expect(reviewed.comparison?.acknowledgedFindings).toHaveLength(2);
+
+  // Full mode excludes it the same way.
+  const full = await checkCommand({
+    all: true,
+    project,
+    flow: "studio",
+    from: "later",
+  });
+  expect(full.findings).toEqual([]);
+  expect(full.acknowledgedFindings).toHaveLength(2);
+
+  // The local tracker ticket reaches done: it counts again, and check says why.
+  await mkdir(join(project, ".autobuild", "tickets", "done"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(project, ".autobuild", "tickets", "done", "file-1592.md"),
+    "# Done\n",
+  );
+  const done = await cli(project, "check", "later", ["--fail-on", "minor"]);
+  expect(done.code).toBe(1);
+  expect(done.out).toContain(
+    `${fresh} was acknowledged for file-1592, which is now done; it counts again.`,
+  );
+  expect(done.out).toContain("Acknowledged (not counted): 1");
+  const lapsed = await check(project);
+  expect(lapsed.findings.map((finding) => finding.id)).toEqual([fresh]);
+  expect(lapsed.acknowledgementLapses).toMatchObject([
+    { findingId: fresh, reason: "ticket-done" },
+  ]);
+  expect(await readFile(lapsed.reportPath, "utf8")).toContain(
+    "## Acknowledgements",
+  );
+
+  // Unacknowledged: the baseline finding is pre-existing again.
+  await decideCommand({
+    project,
+    finding: existing,
+    unack: true,
+    dependencies: { now: () => new Date("2026-11-06T12:00:00.000Z") },
+  });
+  const removed = await check(project);
+  expect(removed.preExisting).toBe(1);
+  expect(removed.acknowledgedFindings).toEqual([]);
+  expect(removed.acknowledgementLapses?.map((lapse) => lapse.message)).toEqual(
+    expect.arrayContaining([
+      `${existing} was acknowledged for ABC-123 and unacknowledged on 2026-11-06; it counts again.`,
+    ]),
+  );
+}, 60_000);
+
+test("ambiguous card info survives summaries, reports and baseline comparison without blocking", async () => {
+  const { project, commit: sha } = await setup();
+  const markup = await readFile(
+    new URL(
+      "./fixtures/interaction-geometry/ambiguous-cards.html",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  await storedBaselineRun(project, "initial", sha, [{ html: markup }]);
+  const ordinary = await checkCommand({
+    project,
+    flow: "studio",
+    from: "initial",
+    all: true,
+  });
+  expect(ordinary.blocking).toBe(0);
+  expect(
+    ordinary.groups?.filter((group) => group.severity === "info"),
+  ).toHaveLength(1);
+  expect(
+    ordinary.findings.filter((finding) => finding.severity === "info"),
+  ).toHaveLength(1);
+  expect(renderCheckSummary(ordinary)).toContain("info");
+  const material = JSON.parse(
+    await readFile(join(ordinary.runDirectory, "findings.json"), "utf8"),
+  ) as Finding[];
+  expect(
+    material.filter((finding) => finding.severity === "info"),
+  ).toHaveLength(1);
+  const report = await readFile(ordinary.reportPath, "utf8");
+  expect(report).toContain("info");
+  await record(project);
+  const before = await check(project, "initial");
+  expect(before.blocking).toBe(0);
+  expect(
+    before.preExistingFindings?.some((finding) => finding.severity === "info"),
+  ).toBe(true);
+  await storedBaselineRun(project, "later", sha, [
+    {
+      html: markup.replace(
+        ".cards {",
+        ".card a { pointer-events:none; } .cards {",
+      ),
+    },
+  ]);
+  const after = await check(project);
+  expect(after.blocking).toBe(0);
+  expect(after.fixed?.some((finding) => finding.severity === "info")).toBe(
+    true,
+  );
+  expect(
+    (await cli(project, "check", "initial", ["--fail-on", "minor"])).code,
+  ).toBe(0);
+  expect(
+    (await cli(project, "check", "initial", ["--fail-on", "info"])).code,
+  ).not.toBe(0);
 }, 60_000);

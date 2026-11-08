@@ -373,6 +373,8 @@ test("page review honors the project fallback unless a provider is explicit", as
         model: "project-model",
         fallback: { provider: "codex", model: "fallback-model" },
       },
+      // Provider fallback is measured apart from the independent loading window.
+      checks: { loadingStuck: { enabled: false } },
     }),
   );
   const calls: Array<{ provider: string; model: string }> = [];

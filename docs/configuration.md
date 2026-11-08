@@ -16,12 +16,14 @@ Every top-level area of `.idiom/project.json`, its purpose and the default to kn
 | `colorSchemes` | Colour schemes to capture | `capture.colorScheme` only | [Capture settings](#capture-settings) |
 | `capture` | Locale, scheme, motion, timing and filmstrips | light, reduced motion, 30-minute budget, 4 lanes | [Capture settings](#capture-settings) |
 | `design` | PRODUCT.md, DESIGN.md and design tokens | `PRODUCT.md`, `DESIGN.md`; no tokens file | [token-drift](rules.md#token-drift) |
-| `baselines` | Where recorded baselines live | `.idiom/baselines` | [Baselines](#baselines) |
+| `baselines` | Baseline directory and safe dirty-path exclusions | `.idiom/baselines` | [Baselines](#baselines) |
 | `agent` | Claude Code UI-edit reminders | Plugin reminders on; built-in UI file patterns | [Claude Code reminders](mcp.md#claude-code-reminders) |
 | `checks` | Per-check settings, the probe and the build gate | Most rules on; probe on for web flows | [Checks](#checks) |
 | `coverage` | Routes `idiom coverage` leaves out | None excluded | [Coverage](#coverage) |
 | `brief` | Reference products and brief template | No references | [Briefs](#briefs) |
 | `findingNames` | Whether a worktree consults the primary's names | Shared with the primary checkout | [Finding names](#finding-names) |
+| `attribution` | Ticket-id pattern for a new finding's likely cause | `[A-Z]+-\d+` or `file-\d+` | [Attribution](#attribution) |
+| `nightly` | What `idiom nightly` files: severity, labels, proposal directory | `major`, `["idiom"]`, `.idiom/reports/nightly` | [Nightly](#nightly) |
 | `updateCheck` | The once-a-day check for a newer release | On | [Update check](#update-check) |
 | `model` | Provider, model and fallback for the optional critique | Required; `claude-code` in new projects, at most 5 findings, no fallback | [review](commands.md#review) |
 
@@ -61,6 +63,12 @@ the defaulted field); their capture, review, verify, and report behavior stays
 unchanged and flows need no `surface` field.
 
 ### Capture settings
+
+`capture.hostPressureThreshold` is an optional finite positive ratio, default **1.5**. A run records host load at start/end and logical cores. Pressure means either 1-minute load divided by cores is strictly above this ratio, or the app's ready URL ends strictly more than **10 times** slower than its successful start measurement. Ready measurements use the effective server address, HTTP 200 and a 2-second deadline; failed/unsupported signals are unavailable, not zero. Electron has no HTTP ready measurement. Persistent navigation/readiness timeouts on a busy host defer `check` with exit 3; see [commands](commands.md#exit-codes-and-setup-failures).
+
+`capture.maxFullPageHeight` is an optional positive integer in **CSS px**, default **16000**. Full-page screenshots capture at most this height, including tiled captures at device scale 2. The document is not resized; reports name cropped states and record original height as `croppedFromHeight`. Elements beyond the image have no screenshot crop. Viewport-only screenshots are unchanged.
+
+Each web or Electron state may set `screenshotTimeoutMs`, an optional positive integer in **milliseconds**, default **30000**. It controls the tuple screenshot and diagnostic full-page screenshot, with one allowance shared across tiles. Navigation retries do not double it. Operational pressure/deadline settings do not change successful finding identities; explicitly changing the height cap changes image evidence identity.
 
 Web capture records filmstrips by default. Configure them under `capture`:
 
@@ -295,7 +303,7 @@ Many screens are one interaction away from a state you already capture. A web st
 ]
 ```
 
-Exactly one of `url`, `urlFrom` and `from` is required. Chains may be several hops long (`named` from `versions` from `empty`) and may be declared in any order; an unknown id or a cycle fails `idiom validate` at `states[i].from`. A chained state inherits the root's URL source, every ancestor's `steps` (root first) and their `health.allow` rules; it does not inherit `expect`, `mask`, `settleMs`, `viewports`, `focus`, `probe`, `fresh`, `data` or `invariants`, so each state is judged on its own declaration. Every tuple still starts from a fresh browser context, and the probe's restoration replays the whole chain. A failing step names the state that declared it and the chain, for example `Step 1 (click) of "empty" reaching versions from empty: …`; steps of states without `from` keep the plain `Step 1 (click): …` form. Report coverage and `idiom coverage` show chained states as `versions from empty`, and capture metadata records `state.from` (the ancestors, nearest first). Toggles and `toggleStates` accept chained states as bases.
+Exactly one of `url`, `urlFrom` and `from` is required. Chains may be several hops long (`named` from `versions` from `empty`) and may be declared in any order; an unknown id or a cycle fails `idiom validate` at `states[i].from`. A chained state inherits the root's URL source, every ancestor's `steps` (root first) and their `health.allow` rules; it does not inherit `expect`, `mask`, `settleMs`, `loading`, `loadingSettleMs`, `viewports`, `focus`, `probe`, `fresh`, `data` or `invariants`, so each state is judged on its own declaration. Every tuple still starts from a fresh browser context, and the probe's restoration replays the whole chain. A failing step names the state that declared it and the chain, for example `Step 1 (click) of "empty" reaching versions from empty: …`; steps of states without `from` keep the plain `Step 1 (click): …` form. Report coverage and `idiom coverage` show chained states as `versions from empty`, and capture metadata records `state.from` (the ancestors, nearest first). Toggles and `toggleStates` accept chained states as bases.
 
 States that should share persistent chrome, such as the panels behind each rail button, can declare siblings for `sibling-chrome`. `siblingGroup: "<name>"` groups states across the whole run, including other flows; `group: "<label>"` groups states within the same flow. A state declares one or the other, not both (`idiom validate` reports `states[i].group`); Electron states accept both fields too. Toggle combinations inherit their base's declaration, while a state reached with `from` keeps only its own. Declarations are recorded in capture metadata (`state.siblingGroup` / `state.group`), so recapture after adding them. Groups are never inferred.
 
@@ -351,6 +359,54 @@ Changes to region selectors or `emptyState.ignore` require a recapture. Progress
 thresholds can rejudge stored timings; if the stored window is too short, coverage
 asks for a recapture. Earlier captures show empty-state as unavailable and
 progress-affordance as skipped until recaptured with marked steps.
+
+### Capture opened drawers, dialogs and menus
+
+A closed overlay contributes no visible contents to a capture. Name the opened
+states explicitly. This complete web flow opens each overlay independently:
+
+```json
+{
+  "id": "editor",
+  "title": "Home editor overlays",
+  "intent": ["Editing controls stay usable with their panels open."],
+  "target": { "kind": "web" },
+  "setup": [],
+  "viewports": ["desktop"],
+  "states": [
+    {
+      "id": "edit-home", "description": "Home editor", "url": "/editor/home",
+      "expect": { "selectorPresent": ["[data-testid=editor]"] }
+    },
+    {
+      "id": "edit-home+brand-drawer", "description": "Brand drawer open",
+      "from": "edit-home",
+      "steps": [{ "action": "click", "selector": "[data-testid=open-brand]" }],
+      "expect": { "selectorPresent": ["[data-testid=brand-drawer]"] }
+    },
+    {
+      "id": "edit-home+dialog", "description": "Publish dialog open",
+      "from": "edit-home",
+      "steps": [{ "action": "click", "selector": "[data-testid=open-publish]" }],
+      "expect": { "selectorPresent": ["[data-testid=publish-dialog]"] }
+    },
+    {
+      "id": "edit-home+menu", "description": "Page menu open",
+      "from": "edit-home",
+      "steps": [{ "action": "click", "selector": "[data-testid=open-page-menu]" }],
+      "expect": { "selectorPresent": ["[data-testid=page-menu]"] }
+    }
+  ]
+}
+```
+
+Replace these stable selectors and the URL with your app's. Each `from` replays
+`edit-home` independently; the dialog does not depend on the drawer being open,
+and the menu does not depend on the dialog. Every named state receives every
+deterministic check, including component sizes and spacing targets. A disclosure
+opened by the interaction probe receives the narrower revealed-state geometry,
+gap, overlap and native-control checks. Use [toggles](#capture-panel-combinations)
+when you need combinations of several open panels.
 
 ### Capture panel combinations
 
@@ -468,7 +524,7 @@ Besides the original ten checks, `check` and `review` run additional checks buil
 | `dead-affordance` | "View terms", "Learn more" and similar link-like text that is not a link; `href="#"` placeholders at minor severity |
 | `adjacent-gap` | neighbouring controls closer than `checks.minGap`, including a focused field's ring (with its `outline-offset`), and bordered shapes that close within the same parent group or row; findings name the shared parent |
 | `text-centering` | single-line labels in chips, buttons and badges sitting off their box's vertical centre (painted text only; single glyphs such as + − × use their ink box) |
-| `component-size` | named components rendering outside their declared size, or a size stated in DESIGN.md |
+| `component-size` | components rendering outside their declared width, height or both, or a size stated in DESIGN.md |
 | `copy-lint` | camelCase or dotted token names in copy, stutter ("On primary on primary"), sibling labels cased two ways (except declared `copy.properNouns` and `data-idiom-name` items in a list or grid), mixed locale spelling (`en-GB`, `en-US`, `en-CA`, `en-AU`), glossary terms, opt-in retired terms and jargon |
 | `glyph-icon` | Unicode glyphs (`▾ ◉ ▣ ×`) standing in for icons inside controls |
 | `error-text` | engineering failures on screen: "Renderer failed", stack traces, `[object Object]`, raw JSON |
@@ -516,6 +572,7 @@ Besides the original ten checks, `check` and `review` run additional checks buil
 | `loading-state-missing` | on by default (needs the probe): an action whose result waits on a fetch/XHR request but shows no pending feedback within `checks.progressWithinMs` while the probe holds the response for `checks.loading.delayMs`; client-side route changes that leave the main content empty or unchanged |
 | `double-submit` | on by default (needs the probe): a trigger left enabled while its POST/PUT/PATCH/DELETE is pending, where a second activation issues a duplicate (observed and aborted, never sent) |
 | `nested-border` | on by default (`checks.nestedBorder`): a bordered box hugging one differently shaped bordered child within 4px |
+| `spacing-target` | ordered border-box gaps outside declared spacing targets |
 
 Every rule, with why it matters, its severity, its source and how to configure or decide it, is listed in [rules.md](rules.md).
 
@@ -674,9 +731,9 @@ Set `checks.copy.locale` to `en-GB`, `en-US`, `en-CA` or `en-AU` for explicit sp
 
 `element-overlap` reuses browser hit tests across intersecting boxes, keeps menus and dialogs separate from the content beneath them, and avoids repeating narrow-viewport overlap findings. `clipped-text` measures text lines against clipping boxes and reports the owner, overflow and kind of cut; intentional ellipses, line clamps, scrollable content and peeking carousel cards are excluded. `field-group` follows labels to their controls and helper/status text: `checks.fieldGroups.inner` sets the minimum space inside each group (default 4px), and `.between` sets the minimum between groups (default 12px, at least `inner`). These measurements are stored with captures for offline review; older captures show unavailable coverage until recaptured.
 
-`checks.components` compares each rendered component with its declared width and height. When `tolerance` is omitted, each dimension's allowance is the **smaller of 15% of that declared dimension and 1px** (`min(dimension * 0.15, 1)`). An 8×8px declaration allows ±1px: 12×12px is reported, while 8.5×8.5px passes. A 4×20px declaration allows ±0.6px in width and ±1px in height. Both undersize and oversize count; a difference exactly equal to the allowance passes. Findings print the applied pixel allowance for each axis.
+`checks.components` compares every rendered match with its declared width, height or both. At least one positive finite dimension is required. `name` is optional and defaults to the selector. An omitted dimension is not checked. When `tolerance` is omitted, each dimension's allowance is the **smaller of 15% of that declared dimension and 1px** (`min(dimension * 0.15, 1)`). An 8×8px declaration allows ±1px: 12×12px is reported, while 8.5×8.5px passes. A 4×20px declaration allows ±0.6px in width and ±1px in height. Both undersize and oversize count; a difference exactly equal to the allowance passes. Findings print the applied pixel allowance for each axis.
 
-An explicitly supplied `tolerance` object keeps the earlier defaults: omitted numeric fields become `ratio: 0.25` and `px: 4`, and omitted `mode` becomes `"looser"`. Thus `"tolerance": {}` allows the **larger** of 25% and 4px, and `"tolerance": { "px": 2 }` allows the larger of 25% and 2px. Set `mode: "tighter"` to use the smaller allowance; mode alone keeps the explicit object's 25%/4px defaults. For example, these component declarations choose both policies explicitly:
+For existing two-axis declarations, an explicitly supplied `tolerance` object keeps the earlier defaults: omitted numeric fields become `ratio: 0.25` and `px: 4`, and omitted `mode` becomes `"looser"`. Thus `"tolerance": {}` allows the **larger** of 25% and 4px, and `"tolerance": { "px": 2 }` allows the larger of 25% and 2px. Set `mode: "tighter"` to use the smaller allowance; mode alone keeps the explicit object's 25%/4px defaults. For example, these component declarations choose both policies explicitly:
 
 ```json
 [
@@ -687,7 +744,80 @@ An explicitly supplied `tolerance` object keeps the earlier defaults: omitted nu
 ]
 ```
 
+For one-axis declarations, a lone `px` or `ratio` tolerance is the sole allowance;
+no second unit is added. Ratio means the absolute target multiplied by the ratio.
+With both numbers, `mode` chooses the smaller (`"tighter"`) or larger (`"looser"`,
+the default). Omitted tolerance still means min(15%, 1px). An explicitly empty
+or mode-only object retains the historical 25%/4px defaults.
+
+```json
+[
+  { "selector": ".add-tile", "height": 56, "tolerance": { "px": 8 } },
+  { "name": "sidebar", "selector": ".sidebar", "width": 280, "tolerance": { "ratio": 0.05 } }
+]
+```
+
+The tile passes at heights from 48px through 64px, inclusive, whatever its width.
+
 Captures record the selected tolerance policy for offline review. Older captures without `mode` keep the larger-of policy with their stored numbers; recapture to adopt the new omitted default.
+
+### Declare spacing targets
+
+`checks.spacingTargets` defaults to `[]`. Declare an ordered pair or the gap
+between consecutive visible direct element children of each matched container:
+
+```json
+{
+  "checks": {
+    "spacingTargets": [
+      { "between": [".field-group-a", ".field-group-b"], "gap": 8,
+        "axis": "vertical", "tolerance": { "px": 2 } },
+      { "within": ".field-groups", "gap": 8 },
+      { "between": [".icon", ".label"], "gap": 0,
+        "axis": "horizontal", "tolerance": { "px": 0 } }
+    ]
+  }
+}
+```
+
+`axis` defaults to `vertical`; `horizontal` measures left-to-right instead.
+A vertical gap is `second.y - (first.y + first.height)`; horizontal uses `x`
+and `width`. These are signed border-box gaps in CSS pixels, independent of
+CSS `gap`, margins and padding. Overlap or reversed visual order yields a
+negative gap. Targets and tolerance numbers must be finite and nonnegative;
+zero gaps and zero tolerance are allowed. Tolerance uses the one-axis policy
+above, except omitted/empty/mode-only tolerance defaults to 1px. A ratio of
+0.25 on an 8px target allows ±2px; on a zero target it allows 0px. With both
+units, `mode` defaults to `looser`. Raw measurements are compared inclusively:
+8±2 passes at 6 and 10; only diagnostic numbers are rounded.
+
+`between` requires exactly one visible match per selector, in declaration
+order. Missing, hidden-only, ambiguous or invalid CSS selectors produce
+unavailable coverage rather than a pass. `within` measures every visible
+container separately, using only direct `container.children` in DOM order:
+text nodes, grandchildren and hidden or zero-size children are excluded.
+Rendered boxes with visible, nonzero-opacity ancestors count even offscreen.
+A missing container or one with fewer than two visible children is
+unmeasurable. Other containers and pairs still produce their findings.
+
+Failures use `idiom:spacing-target`, major by default. Configure severity using
+the existing `.idiom/rules.json` policy:
+
+```json
+{
+  "version": 1,
+  "overrides": [{ "id": "spacing-minor", "match": { "rule": "idiom:spacing-target" },
+    "action": "severity", "severity": "minor", "reason": "Low-impact layout" }]
+}
+```
+
+Capture stores declarations, concrete selector identities and unrounded boxes
+before interaction probing. Offline review uses that saved evidence even if
+project targets later change. Older captures without spacing evidence report
+unavailable coverage with a recapture reason; a captured empty list is
+not applicable. Recapture to apply new or changed targets.
+
+### Infer component sizes from design prose
 
 Without any declaration, sizes stated in the project's design file (`design.designFile`, `DESIGN.md` by default) next to a name are inferred: "override dots … about 8px" (both axes, for round things such as dots, avatars, swatches, indicators and icons), "chips 24px high" (height only), "panels 280px wide" (width only) and "cards 320×200px". Token tables and type scales ("Spacing steps are 4px and 8px", "Body text is 13px") are ignored, as are fenced blocks. Capture resolves each inferred name to a selector, preferring the class token whose words contain the name in order (`bp-override-dot` for "override dot") and falling back to `aria-label` words, and judges it with the default tolerance. A one-axis statement checks only that axis. Findings cite the line ("inferred from DESIGN.md:12"); `idiom context` lists the inferred sizes, and report coverage shows the selector each one matched, or that nothing matched. An explicit `checks.components` entry with the same name, or with the resolved selector, wins. To stop an inference, reword the sentence or declare the component explicitly. Electron captures do not infer components.
 
@@ -857,6 +987,8 @@ The interaction probe is on by default for web flows, and it clicks things. Turn
 
 The probe opens disclosures and checks what they reveal. Every `<details>` summary, `aria-haspopup` control and `aria-expanded` control it reaches is a disclosure. When one opens, the probe finds what it revealed (its `aria-controls` target, its open `<details>`, a newly opened region, or a newly visible positioned element near the trigger), probes that surface's controls as nested items even when it is a plain positioned `div`, and observes the revealed page in place. A nested item one step below a disclosure that switches it into a new mode (a new field appears or a surface opens, without navigating) is observed the same way, named `<disclosure> › <item>`. The geometry, gap, overlap and native-control checks then run on each revealed state ([rules](rules.md)). `checks.probe.disclosures` (default `true`) turns the revealed observations off; `checks.probe.maxRevealed` (default **12**, `0` records none) caps them per state, and the rest are recorded unavailable with the reason `revealed-state limit (checks.probe.maxRevealed)`. A revealed observation runs inside the control's own attempt (or the nested-menu) budget and takes at most 3 seconds; one that runs out of time is recorded unavailable and never turns the control into a timeout. A revealed state is observed once, at the state that opened it; reused results do not carry it.
 
+When what a click opens is an overlay (a popover, menu, listbox or dialog, not an in-flow panel), the probe also tests how it closes: Escape, a click on an empty point outside it, and a click into a visible same-origin iframe, for the [`popover-dismissal`](rules.md#popover-dismissal) and [`focus-return`](rules.md#focus-return) checks. The pass runs with `checks.probe.disclosures`, inside each control's budget, for at most 12 overlays per state; tests that run out of budget are reported as not reached in probe coverage. A flow's `explicitDismiss` selectors name modals that need an explicit action, so they are not clicked outside ([flow manifest](schemas.md)).
+
 Disclosures the probe never opened are listed by `idiom coverage` (text and `--json`), `idiom coverage --states` and the report's coverage section, with the reason (not reached, skipped, timed out, or no probe at that state). A disclosure counts as opened when the probe completed a click on it or any captured state shows it open. Captures from before the inventory say so instead of passing.
 
 The probe never clicks a control whose click is a no-op by design: a selected tab or option (`aria-selected="true"`), a checked radio or menu radio (`aria-checked="true"`, a `:checked` radio or its label) and the current item (`aria-current`). Their hover and focus are still sampled for tooltips. Switches and checkboxes toggle, so they are still clicked. Set `checks.probe.respectControlIntent` to `true` to also skip pressed toggles (`aria-pressed`), any other `aria-checked`/`aria-selected` control and drag handles, before sampling. It defaults to `false` and has no effect when probing is off.
@@ -909,6 +1041,22 @@ A baseline is recorded only from a clean tree. `check` (when it would record the
 
 Git-ignored paths never count either. Untracked files that are not ignored do count, and so does the baseline directory itself: commit a recorded baseline before the next run records again.
 
+For repositories with a busy ticket tracker, exclude its changes explicitly:
+
+```json
+{
+  "baselines": { "ignoreDirty": ["tickets/**", ".ab/**"] }
+}
+```
+
+Both `directory` and `ignoreDirty` are optional. Omitting `directory` retains `.idiom/baselines`; omitting `ignoreDirty` or setting it to `[]` preserves normal cleanliness rules. Patterns match normalized paths **relative to the Git repository root**, including when the Idiom project is nested in a monorepo. Supported syntax is `*` (within a segment), `?` (one character), and `**` (whole path segments, with `**/` matching zero or more directories). Absolute paths, parent traversal, negation, braces, extglobs, root aliases and repository-wide wildcard forms are refused.
+
+`idiom validate` rejects patterns whose union excludes the entire tracked/untracked nonignored file inventory, or which overlap discoverable application inputs. Protected inputs include project/flow configuration, local design/token/reference files, manifests, lockfiles, compiler/framework configuration, conventional source/asset trees, route/layout modules and their local dependencies, literal build/setup inputs, local package scripts (including nested `--cwd`, `--prefix` and `-C` invocations), Electron entrypoints and discoverable symlink targets. A declared input directory protects future descendants as well. Errors name `baselines.ignoreDirty[index]`, the offending pattern, an input and why it is protected. Validation reads scripts without executing them. Arbitrary shell execution, dynamically constructed paths and remote dependencies cannot be exhaustively inferred: keep exclusions limited to files the application does not consume.
+
+The same policy governs preflight, provenance and the final source snapshot after runtime teardown. `run.json` and tuple metadata retain `source.ignoredDirtyPaths`, a sorted audit of excluded dirty paths seen at either snapshot (including an empty array for an opted-in run). A rename is clean only if both old and new paths are excluded. Nonexcluded dirt at either snapshot keeps `source.dirty` true. If the source HEAD changes during capture, the initial commit remains the recorded identity, `source.changedDuringCapture` is true and baseline recording refuses. These are snapshots, not a continuous filesystem monitor. Older run records remain readable.
+
+To isolate capture from changes or merges in the invoking checkout, use [`capture` or `check --ref HEAD~1`](commands.md#capture-a-fixed-commit). Reports and baseline records still land in the invoking project.
+
 ## Finding names
 
 In a linked Git worktree, finding names union `.idiom/finding-names.json` with the primary checkout's, so a worktree keeps the names main already gave its findings. When the two disagree, this checkout's names win and the run prints one warning line (see [finding names](commands.md#review)). A throwaway worktree that should not consult the primary at all can opt out:
@@ -920,6 +1068,34 @@ In a linked Git worktree, finding names union `.idiom/finding-names.json` with t
 ```
 
 The `--isolated-registry` flag on `check`, `review` and `baseline record|accept` does the same for one run and overrides the key.
+
+## Attribution
+
+When `check` ties a new finding to the commit that likely introduced it ([commands.md](commands.md#where-a-new-finding-came-from)), it shows any ticket id named in that commit's subject or body (a merge's pull request title included). The default pattern matches keys like `ABC-123` and local tracker ids like `file-263`. To use your tracker's form instead, set a regular expression; it replaces the default:
+
+```json
+{
+  "attribution": { "ticketPattern": "#\\d+" }
+}
+```
+
+Every distinct match is recorded, in order; the first is shown. The default `[A-Z]+-\d+|file-\d+` also matches strings such as `UTF-8`. A pattern that does not compile fails validation.
+
+## Nightly
+
+[`idiom nightly`](commands.md#nightly) files each new finding cluster at or above a severity as a triage ticket. Its flags override these:
+
+```json
+{
+  "nightly": {
+    "severity": "major",
+    "labels": ["idiom", "design-qa"],
+    "out": ".idiom/reports/nightly"
+  }
+}
+```
+
+`severity` is `blocker`, `major` (default) or `minor`. `labels` are added to every ticket (default `["idiom"]`), each starting with a letter or digit and using only letters, digits, `:`, `.`, `_` and `-`; the first is the label nightly lists to recover what it filed when `.idiom/filed-tickets.json` is missing, so keep it stable. Each finding's category is added as a label too. `out` is where proposals go without autobuild, relative to the project. Commit `.idiom/filed-tickets.json` after a run.
 
 ## Update check
 
@@ -984,31 +1160,87 @@ A glob starting with `/` matches the route; any other matches the project-relati
 
 ## Autobuild
 
-Add the command under the existing `[commands]` table, append `"idiom-check"` to the existing `[verify].steps` array, and add the verify table:
+For the implementing caller after a failed check: Fix the top three findings in rank order (function before appearance), re-run, and stop after three rounds, reporting what remains. One round is one repair batch followed by one check; the initial check is not a repair round. Stop earlier when nothing remains. Repair only within the caller's authorization; remaining blocking findings still withhold completion and do not permit suppressions. The verify agent runs once and deposits its verdict; this does not change the pipeline retry policy.
+
+When Autobuild's vendored phase skills exist, `idiom init` and `idiom init --wire` also offer three independent rows: `autobuild-plan`, `autobuild-implement`, and `autobuild-code-review`. Each appends a short marked `## Idiom` section to the corresponding canonical `.agents/skills/ab-<role>/SKILL.md`:
+
+- Plan: for UI tickets, read `idiom context` and any Idiom design export in `.ab/assets/design/`, and name the checks the implementation should pass.
+- Implement: for UI work, run `idiom check --changed --fail-on major` before finishing, inspect and fix findings within the authorized change, or record why the check or repair could not be completed and what remains.
+- Code review: when the ticket includes an Idiom design asset, compare the change with its criteria and cite mismatches in the normal review.
+
+These rows are discovered independently of `autobuild.toml`; missing skills are never installed. At an interactive prompt they start selected, show exact diffs, and can each be deselected. One final confirmation applies all selected wiring together. An interactive `--dry-run` previews the offer without writing. Bare `--yes`, report-only invocations, and noninteractive dry runs do not install new skill sections. Reruns preserve current sections byte-for-byte and can refresh older managed sections; `--skip-wiring autobuild-plan`, `--skip-wiring autobuild-implement`, and `--skip-wiring autobuild-code-review` always leave their respective files unchanged.
+
+To remove a section, delete its complete `<!-- idiom:wiring:autobuild-plan:begin -->` / `<!-- idiom:wiring:autobuild-plan:end -->` pair and everything between, including the section's following newline. Substitute `autobuild-implement` or `autobuild-code-review` for the other roles. Preserve all surrounding phase instructions and frontmatter. A source without a final newline gains a separator newline on installation; removal can leave that newline. A later interactive run may offer removed sections again; bare `--yes` does not restore them.
+
+`idiom doctor` reports each role as `wired` (current section), `missing` (installed skill without the section), `stale` (older section, malformed markers, invalid identity or unsafe/unreadable path), or `not-applicable` (absent skill). It recommends selecting the row in `idiom init --wire`, or repairing invalid files by hand first.
+
+Commit the live skill changes so every agent shares them. Idiom never edits `.agents/skills/.ab-pristine/`: Autobuild owns that baseline and three-way merges pristine × local live skill × incoming defaults during `ab upgrade`, advancing pristine to the incoming bytes. The isolated sections survive independent upstream edits. Overlapping upstream edits can still produce ordinary Autobuild merge conflicts; inspect its upgrade report and resolve them normally.
+
+Interactive `idiom init` (as the `autobuild-gate` row of its [wiring plan](commands.md#wire-agents-ci-hooks-and-autobuild)) and `idiom upgrade` detect `autobuild.toml` and offer the gate as the default integration, with an exact diff and confirmation. Gate setup installs `.agents/skills/idiom-verify/SKILL.md`, its `.claude/skills/idiom-verify` discovery link and pristine provenance within the same exact-diff consent and rollback boundary; flow discovery remains optional. To wire it manually, add the command under the existing `[commands]` table, append `"idiom-check"` to the existing `[verify].steps` array, and add the verify table:
 
 ```toml
 [commands]
-idiom-check = "idiom check --gate --fail-on major"
+idiom-check = "idiom check --gate --fail-on major --deferred warn"
 
 [verify.idiom-check]
-kind = "check"
-command = "idiom-check"
+kind = "agent"
+skill = "idiom-verify"
 ```
 
-The gate checks only what the build changed, within `checks.gate.budgetMs`, and skips at once when no UI file changed. Run the full check on a schedule (nightly CI or cron) for complete coverage: `idiom check studio-lab --since-baseline --fail-on major`. If the gate is slow, its last stderr line (`Timing: …; slowest: …`) says where the time went.
+The step has no `paths` filter: the gate detects UI changes itself. `--deferred warn` prints a busy-host warning for incomplete coverage and allows an otherwise passing check to exit zero; genuine findings still fail the severity gate and inability to run still exits 2. JSON retains its deferred verdict and coordinates.
+
+The gate checks only what the build changed, within `checks.gate.budgetMs`, and skips at once when no UI file changed. Run the full check on a schedule (nightly CI or cron) for complete coverage: `idiom nightly` checks every flow since its baseline and files new findings into the tracker's triage. If the gate is slow, its last stderr line (`Timing: …; slowest: …`) says where the time went. Keep the managed command canonical; shell wrappers are custom wiring and are protected. The scheduled digest recipe is in [commands.md](commands.md#run-in-autobuild).
+
+The skill selects its gate or offline branch from the current logical verify
+step in `.ab/context.json` and the parsed repository TOML. On exit 4 it deposits
+a question snapshot and report, then ends with one `ab escalate` carrying their
+exact artifact revisions. Each question includes its finding, crop/evidence paths,
+reference values/citations, options and exact `idiom decide` commands. Mixed
+ordinary failures retain a fail verdict and disclose the questions.
+
+Guidance resumes the same step. The verifier matches `.ab/guidance.json` to the
+saved snapshot and applies only explicit choices and reasons through validated
+argument arrays with build/escalation provenance. Ambiguous answers ask for
+clarification. It immediately commits only decision memory and resulting finding
+names, then re-checks once. Because that changes the pinned verification HEAD,
+it returns a fail report requesting normal implementation/review re-entry and
+verification on the resulting head, even when that informative check passes.
+This one-cycle persistence/revalidation handoff lets later builds use committed
+memory without asking the resolved question again. The verifier never repairs
+product code. The offline branch keeps its independent skip and paired-evidence
+contract and runs no additional gate.
+
+Managed old check recipes migrate in place to this agent recipe, preserving step
+order, `always`, `afterReconcile` and comments. Custom commands are never rewritten;
+noninteractive init/upgrade only reports available setup. Edited skills retain
+normal upgrade protection. Manual wiring must install the skill as well.
+
+Finding verification is separate and optional. The same installed skill is reused. Select `autobuild-verifier` in init's wiring plan if the project uses Idiom-originated tickets; init then offers actual detected flows by name. The selected flow supplies `[commands].idiom-verify`; the `verify.idiom` agent step uses `skill = "idiom-verify"` and project UI/source, manifest and design/product paths. If narrower paths cannot be established, the preview explains the conservative `"**"` fallback. This step may skip specs without embedded findings unless the build carries an Idiom design asset; the gate covers ordinary UI builds.
+
+Existing installs of the legacy `ab-verify-idiom` skill are offered a migration with the gate: the directory, discovery link and pristine ownership move to `idiom-verify`, and live skill references change without renaming logical steps or discarding local edits. Both-name or ownership conflicts require manual recovery. Declining the preview changes none of those destinations.
+
+**Design assets.** `idiom brief attach <slug> --ticket <id>` pins a decided brief to a ticket as its `design` asset ([brief.md](brief.md#attach-to-an-autobuild-ticket)). In that build, the gate adds every state the asset asserts and does not skip for "no UI changes"; the verifier captures and judges those states even when the spec embeds no findings, and the `idiom-verify` skill does not skip; and the asset's `brief-mismatch` findings always block, even when a recorded baseline already holds them.
+
+To make tickets labelled `design-review` wait for a person before merging, `idiom init --wire --design-review` adds a marked `[[landing]]` rule (`label = "design-review"`, `mode = "consent"`) before your other landing rules. It is off by default.
 
 ## GitHub Action
 
-Copy this into `.github/workflows/idiom.yml`, changing `studio-lab` and the setup command for your app:
+When `.github/workflows/` exists, `idiom init` writes `.github/workflows/idiom.yml` for you: this Action on pull requests (first flow), plus a full check of every flow on pushes to the default branch and an optional nightly job (`--nightly`) that runs `idiom nightly --tracker directory`, keeping `.idiom/filed-tickets.json` between runs with `actions/cache` so each night proposes only new findings. See [commands.md](commands.md#wire-agents-ci-hooks-and-autobuild); `idiom init --wire --dry-run` shows the exact file. To write a workflow by hand instead, copy this into `.github/workflows/idiom.yml`, changing the setup command for your app:
 
 ```yaml
 name: Idiom
-on: pull_request
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
 permissions:
   contents: read
   pull-requests: write
+  checks: write
 concurrency:
-  group: idiom-${{ github.event.pull_request.number }}
+  group: idiom-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   regression:
@@ -1016,31 +1248,38 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: mattskilly/idiom@main
         with:
-          flow: studio-lab
           project: .
           setup-command: npm ci
           fail-on: major
           version: latest
 ```
 
-The root `action.yml` installs the published `@mattskilly/idiom` CLI and its matching Chromium, captures the actual PR merge base and head in separate worktrees, forces a private merge-base baseline even when head contains a newer accepted record, and runs `idiom compare` for before/after evidence. A flow missing at the merge base fails explicitly. The caller checkout is preserved. Only the check's new deterministic findings decide the severity gate; pixel changes supply evidence.
+The root `action.yml` installs the published `@mattskilly/idiom` CLI. It first runs the gate's plan (`idiom check --gate --plan-only`) in a worktree at head, before installing Chromium or running your setup command. For a pull request or push it then captures the base and head in separate worktrees, forces a private baseline at the base even when head contains a newer accepted record, and runs `idiom compare` for before/after evidence. A flow missing at the base fails explicitly. The caller checkout is preserved. Only the check's new deterministic findings decide the severity gate; pixel changes supply evidence.
 
-`@main` is a moving example; pin a released tag containing this Action or an immutable public snapshot commit for stable consumption. Set `version` to a matching published npm version containing `--baseline-file` and baseline `--out`; the original 0.8.0 package predates these options. Release the Action snapshot and compatible npm package together using [the release procedure](releases.md).
+**No UI, no cost.** When every changed file is non-UI by the gate's rules (docs, tests, CI, lockfiles, server-only modules on a complete import graph, and your `checks.gate.nonUi` globs; see [commands.md](commands.md#gate-a-build)), the Action prints `no UI changes since <base>; skipped` and exits 0 without installing browsers, running setup or capturing anything. The job summary says the same.
 
-`project` names a directory beneath the repo root, for example `apps/web`. `setup-command` is an explicit shell script run independently at each revision's repository root. It defaults to `npm ci`. For Bun or pnpm, install that runtime in a preceding workflow step and set the command to `bun install --frozen-lockfile` or `pnpm install --frozen-lockfile`. Commit the app's `.idiom` config and flow at both revisions. The Action supplies Node 24; it does not install your app's other package manager.
+**Which flows.** With a `flow` input, the Action checks that flow (and still skips a change with no UI). Without one, it checks every flow the change affects according to the gate's plan, or every flow on a scheduled run. Each flow gets its own section in the comment and job summary, and its own directory in the evidence artifact; the artifact's root `index.html` links them.
+
+**Events.** `pull_request` compares the PR's merge base with its head. `push` compares the previous commit on the branch (`event.before`) with the pushed commit; a new branch, or a force push whose previous commit is gone, compares with the parent commit instead. A push has no PR to comment on, so the job summary is the report. `schedule` checks every flow at the scheduled commit against the newest recorded baseline (`idiom check <flow> --since-baseline`), with no before capture. Commit one with `idiom baseline record <flow>` first; without it the scheduled run fails with that hint. Any other event fails with `this action supports pull_request, push and schedule events`.
+
+**Busy runners.** When a capture or check exits 3 (the runner was too busy to finish; see [exit codes](commands.md#exit-codes-and-setup-failures)), that flow is deferred, not failed. The Action creates a neutral `Idiom` check run on the head commit with the reason. That needs `checks: write`; without it the Action prints a warning instead, and the run still passes. Failing findings in the other flows still fail the run.
+
+`@main` is a moving example; pin a released tag containing this Action or an immutable public snapshot commit for stable consumption. Set `version` to a matching published npm version containing `--baseline-file` and baseline `--out`; the original 0.8.0 package predates these options. The no-UI skip and flow selection need `check --gate --plan-only`, in releases after 0.20.0. With an older `version` and a `flow` input the Action checks that flow without the skip and says so; without a `flow` input it fails and names the version it needs. Release the Action snapshot and compatible npm package together using [the release procedure](releases.md).
+
+`project` names a directory beneath the repo root, for example `apps/web`. `setup-command` is an explicit shell script run once at each revision's repository root, after planning, and shared by every flow. It defaults to `npm ci`. For Bun or pnpm, install that runtime in a preceding workflow step and set the command to `bun install --frozen-lockfile` or `pnpm install --frozen-lockfile`. Commit the app's `.idiom` config and flow at both revisions. The Action supplies Node 24; it does not install your app's other package manager.
 
 One marked bot comment is created or updated on reruns, including clean results. It groups new findings into **Blocks merge** (measured/observed findings at or above `fail-on`), **Should fix** (remaining measured/observed findings) and **Opportunities** (judged suggestions and unanswered design-system questions). Each tier shows its full count, expands the first three entries with Problem, Fix, evidence filenames and Done when, and collapses the rest. With `never`, even blockers remain visible under Should fix. Questions count once per decision, regardless of occurrences. The Action check remains deterministic and requires no model credentials; optional judged data is presented when supplied.
 
 The comment and job summary contain crop/filmstrip filenames and the existing authenticated artifact download link. Actual thumbnails and full before/after evidence appear in the downloaded `index.html`: timeline findings prefer contact sheets, other findings use crops, and missing/partial evidence and static fallbacks are labelled. The full HTML preserves all issues and diagnostics; the comment has a 55,000 UTF-8 byte ceiling and directs overflow to it. Artifacts require GitHub login and expire after 14 days (or earlier removal/repository policy); artifact URLs are downloads, not inline image hosts. Evidence stays on GitHub.
 
-On `synchronize` pushes the Action also sets up and captures at most one previous revision (`event.before`), checks it against the same merge base, and rechecks the already captured current revision against a private previous-head baseline. **Resolved** separates fixes since that previous push from fixes since the merge base, with both commit labels and before/after files. This reproduces the preceding revision rather than retaining an earlier workflow run's exact pixels. Surviving regressions still gate against the merge base; this adds no cumulative cross-run state. Reruns reproduce the same event comparison. Missing local history, force pushes without ancestor history, stale checks, uncovered tuples or historical setup/check/compare failures produce resolution-evidence notices without failing a clean current check. Full fix-history presentation requires the matching candidate npm package that includes summary finding fingerprints; older packages report that detail unavailable instead of guessing. No remote history fetch, image host, additional permission or credential is introduced.
+On pull request `synchronize` events the Action also sets up and captures at most one previous revision (`event.before`), checks it against the same merge base, and rechecks the already captured current revision against a private previous-head baseline. **Resolved** separates fixes since that previous push from fixes since the merge base, with both commit labels and before/after files. This reproduces the preceding revision rather than retaining an earlier workflow run's exact pixels. Surviving regressions still gate against the merge base; this adds no cumulative cross-run state. Reruns reproduce the same event comparison. Missing local history, force pushes without ancestor history, stale checks, uncovered tuples or historical setup/check/compare failures produce resolution-evidence notices without failing a clean current check. Full fix-history presentation requires the matching candidate npm package that includes summary finding fingerprints; older packages report that detail unavailable instead of guessing. No remote history fetch, image host, additional permission or credential is introduced.
 
-`fail-on` accepts `blocker`, `major` (default), `minor` or `never`. Operational failures still fail with `never`. Upload and comment publication precede the final gate. Fork PR tokens can be read-only: unavailable comments produce a warning while artifacts, the job summary and finding gate remain. Ordinary writable-token publication errors fail the action. Keep this on `pull_request`; do not run untrusted PR setup via `pull_request_target`. Outputs are `baseline-sha`, `new-findings` and `artifact-url`.
+`fail-on` accepts `blocker`, `major` (default), `minor` or `never`. Operational failures still fail with `never`. Upload and comment publication precede the final gate. Fork PR tokens can be read-only: unavailable comments produce a warning while artifacts, the job summary and finding gate remain. Ordinary writable-token publication errors fail the action. Use `pull_request` for pull requests; do not run untrusted PR setup via `pull_request_target`. Outputs are `outcome` (`skipped`, `deferred`, `checked` or `error`), `baseline-sha` (empty on schedule), `new-findings` (summed over flows) and `artifact-url`.
 
 
 ## Design comparison
@@ -1216,3 +1455,23 @@ Failure recovery checks are major and enabled by default when probing runs:
 ```
 
 Use `network` to simulate a failed connection (the configured status is retained but ignored). Status mode accepts integer HTTP error statuses 400–599. The positive integer deadline is measured after each injected failure. Failure replays share the loading replay's reach/restore work and probe budget, including quick's per-page allowance, with a six-action cap per state. Only response-gated fetch/XHR actions qualify. Matched requests terminate locally, while other requests retain the probe guard. A handled failure or visible usable retry suppresses both rules. Disable probing to omit replay; earlier captures need recapture for failure evidence.
+
+## Blank media and loading that persists
+
+`idiom:visual-blank` and `idiom:loading-stuck` launch at minor severity and are on by default for web and Electron state captures. Blank media is checked independently of gallery size and load errors. Screenshots measure every interior pixel in 16-level RGB buckets; one bucket must cover at least 99.5% to count as one colour. A two-colour illustration can pass. The minimum layout size is 120 × 80 CSS px. Near-zero opacity (at most 1%), near-total opaque covers (98% alpha over 99.5% of visible area), and a video without a poster or painted frame are also blank reasons. Border, padding and a 2 CSS px edge inset are excluded. Masks intersecting a media crop exclude it from judgment. Unsupported geometry and crops disclose measurement limits.
+
+```json
+{ "checks": { "visualBlank": { "enabled": true, "swatchSelectors": [".palette .chip", "[data-colour-swatch]"] }, "loadingStuck": { "enabled": true } } }
+```
+
+Swatch selectors resolve against elements and their wrappers during capture. An accessible name or role description explicitly identifying a colour, color or swatch also exempts decorative solid swatches.
+
+```json
+{ "id": "preview", "description": "Ready previews", "url": "/previews", "expect": {}, "settleMs": 250, "loadingSettleMs": 5000 }
+```
+
+Primary navigation reaches DOM readiness without waiting for every image or iframe request to finish. All declared readiness steps still run. Loading observation starts after those steps, overlaps visual settle and animation settling, and awaits only the remainder of its window before the final observations and screenshot. The default normal state may therefore cost up to five additional seconds. `loadingSettleMs` is a finite positive integer in milliseconds, independent of `settleMs`. A late indicator has only its actual observed age, and hiding, removal, value acquisition or replacement terminates an interval.
+
+Use `"loading": true` on a state deliberately showing loading feedback. This skips the added loading wait and exempts only `loading-stuck`; blank media is still inspected. Disable either rule with its `enabled: false` setting. Design-reference-only captures and non-HTML documents skip these collectors. Ordinary state evidence freezes before action probes and slow/failure replays. Saved evidence supports offline review; old captures report unavailable coverage. An acceptance cannot be proven by masking/exempting media, omitting the original target's measurement, shortening the loading window or changing the intentional-loading declaration.
+
+The local precision sweep records two false positives on the same intentionally solid brand artwork in the gallery fixtures. It has no colour-swatch semantics; no exemption was added to hide it. Both rules remain minor. See `docs/field-test/blank-media.json` for the complete route/coordinate matrix.

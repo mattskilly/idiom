@@ -4,12 +4,18 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { initProject } from "../src/commands/init.js";
 import {
+  appendAcknowledgement,
   appendDecision,
   decisionViews,
   isFingerprintSuppressed,
+  readAcknowledgements,
   readDecisionLog,
+  readDecisionLogEntries,
   ruleRejection,
 } from "../src/decisions/log.js";
+import { readDecisions } from "../src/decisions/read.js";
+import { fileFormats } from "../src/interface/surfaces.js";
+import { lineageDecision } from "../src/review/lifecycle.js";
 import { decisionSchema } from "../src/schemas/decision.js";
 import { findingSchema } from "../src/schemas/finding.js";
 
@@ -203,4 +209,100 @@ test("malformed logs are line-numbered and cannot be extended", async () => {
   expect(await readFile(path, "utf8")).toBe(
     '{"decision":"reject"}\nnot-json\n',
   );
+});
+
+test("acknowledgement lines round-trip, and judgment readers return judgments only", async () => {
+  const directory = await project();
+  const judged = await appendDecision({
+    projectDirectory: directory,
+    finding: finding("finding-2", "other"),
+    decision: "reject",
+    scope: "instance",
+    now: () => new Date("2026-11-06T10:00:00.000Z"),
+  });
+  const acknowledged = await appendAcknowledgement({
+    projectDirectory: directory,
+    finding: { ...finding(), id: "finding-1" },
+    kind: "acknowledge",
+    reference: "ABC-123",
+    note: "Tracked in Jira",
+    evidence: {
+      severity: "major",
+      rule: "idiom:target-size",
+      category: "target-size",
+    },
+    now: () => new Date("2026-11-06T11:00:00.000Z"),
+  });
+  const removed = await appendAcknowledgement({
+    projectDirectory: directory,
+    finding: { ...finding(), id: "finding-1" },
+    kind: "unacknowledge",
+    reference: "ABC-123",
+    now: () => new Date("2026-11-06T12:00:00.000Z"),
+  });
+  expect(await readDecisionLogEntries(directory)).toEqual([
+    judged.record,
+    acknowledged.record,
+    removed.record,
+  ]);
+  expect(await readDecisionLog(directory)).toEqual([judged.record]);
+  expect(await readDecisions(directory)).toEqual([judged.record]);
+  expect(await readAcknowledgements(directory)).toEqual([
+    acknowledged.record,
+    removed.record,
+  ]);
+  // A lineage with only an acknowledgement has no judgment.
+  expect(
+    lineageDecision(
+      {
+        ids: ["finding-1"],
+        fingerprints: ["fingerprint"],
+      } as Parameters<typeof lineageDecision>[0],
+      await readDecisionLog(directory),
+    ),
+  ).toBeUndefined();
+  const surface = fileFormats.find((candidate) => candidate.id === "decisions");
+  expect(surface?.schema?.safeParse(judged.record).success).toBe(true);
+  expect(surface?.schema?.safeParse(acknowledged.record).success).toBe(true);
+});
+
+test("malformed acknowledgement lines are line-numbered by their own shape", async () => {
+  const directory = await project();
+  const path = join(directory, ".idiom", "decisions.jsonl");
+  const base = {
+    at: "2026-11-06T12:00:00.000Z",
+    commit: "abc123",
+    findingId: "finding-1",
+    fingerprint: "fingerprint",
+    actor: "human",
+  };
+  for (const [line, message] of [
+    [
+      {
+        ...base,
+        decision: "acknowledge",
+        evidence: { severity: "major", category: "contrast" },
+      },
+      "reference",
+    ],
+    [{ ...base, decision: "acknowledge", reference: "ABC-1" }, "evidence"],
+    [
+      {
+        ...base,
+        decision: "acknowledge",
+        reference: "ABC-1",
+        until: "2026-02-30",
+        evidence: { severity: "major", category: "contrast" },
+      },
+      "until",
+    ],
+  ] as const) {
+    await writeFile(path, `${JSON.stringify(line)}\n`);
+    await expect(readDecisionLog(directory)).rejects.toThrow(
+      new RegExp(`line 1: .*${message}`),
+    );
+    await expect(readDecisions(directory)).rejects.toThrow(
+      new RegExp(`decisions.jsonl:1: .*${message}`),
+    );
+  }
 });

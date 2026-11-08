@@ -234,6 +234,7 @@ const webStateSchema = z
     design: designDeclarationSchema.optional(),
     id: z.string(),
     description: z.string(),
+    screenshotTimeoutMs: z.number().int().positive().optional(),
     url: z.string().optional(),
     // Another state in this flow to load (its URL and steps) before `steps`.
     from: nonblank.optional(),
@@ -249,6 +250,8 @@ const webStateSchema = z
     }),
     mask: z.array(z.string()).default([]),
     settleMs: z.number().optional(),
+    loading: z.boolean().optional(),
+    loadingSettleMs: z.number().int().positive().optional(),
     viewports: z.array(z.string()).min(1).optional(),
     focus: z.string().trim().min(1).optional(),
     probe: z.boolean().optional(),
@@ -413,10 +416,13 @@ const electronStateSchema = z
     design: designDeclarationSchema.optional(),
     id: z.string(),
     description: z.string(),
+    screenshotTimeoutMs: z.number().int().positive().optional(),
     steps: z.array(electronStepSchema).default([]),
     expect: sharedExpectationSchema,
     mask: z.array(z.string()).default([]),
     settleMs: z.number().optional(),
+    loading: z.boolean().optional(),
+    loadingSettleMs: z.number().int().positive().optional(),
     viewports: z.array(z.string()).min(1).optional(),
     focus: z.string().trim().min(1).optional(),
     probe: z.boolean().optional(),
@@ -482,6 +488,11 @@ const flowFields = {
    * that turn motion off under automation. Overrides capture.hideWebdriver.
    */
   hideWebdriver: z.boolean().optional(),
+  /**
+   * Selectors of modal dialogs that intentionally need an explicit action:
+   * the dismissal probe does not click outside them (Escape is still tested).
+   */
+  explicitDismiss: z.array(nonblank).optional(),
 };
 
 const routeSchema = z

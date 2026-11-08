@@ -14,7 +14,13 @@ export const INTERFACE_VERSION = 1;
  * - `run-failure`: the run could not happen (a refused precondition, a server that
  *   never became ready, or a capture that could not start).
  */
-export const EXIT_CODES = { ok: 0, failed: 1, "run-failure": 2 } as const;
+export const EXIT_CODES = {
+  ok: 0,
+  failed: 1,
+  "run-failure": 2,
+  deferred: 3,
+  "decision-needed": 4,
+} as const;
 
 /**
  * Serialises a `--json` payload with `interfaceVersion` as its first key.

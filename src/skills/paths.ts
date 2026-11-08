@@ -80,7 +80,11 @@ export async function unchanged(
       throw new Error(`${path || root} changed during upgrade`);
   }
 }
-export type Write = { path: string; content: string | undefined };
+export type Write = {
+  path: string;
+  content: string | undefined;
+  mode?: number;
+};
 export type ApplyDependencies = {
   beforeRename?: (path: string) => Promise<void>;
 };
@@ -137,7 +141,7 @@ export async function applyWrites(
         await stage(
           write.path,
           write.content,
-          state.kind === "file" ? state.mode : undefined,
+          state.kind === "file" ? state.mode : write.mode,
         );
     }
     for (const write of writes) {

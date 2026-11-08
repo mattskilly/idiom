@@ -128,3 +128,59 @@ test("latest skips a newer partial run and legacy missing records remain readabl
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("optional host and retry records validate consistency without changing legacy records", () => {
+  const value = record();
+  const tuple = value.selected[0];
+  if (!tuple) throw new Error("missing coordinate");
+  expect(runRecordSchema.parse(value).host).toBeUndefined();
+  value.host = {
+    loadStart: [64, 0, 0],
+    loadEnd: [1, 0, 0],
+    coreCount: 11,
+    threshold: 1.5,
+    readyStartMs: null,
+    readyEndMs: null,
+    pressureReasons: ["load"],
+  };
+  value.retries = [
+    {
+      ...tuple,
+      phase: "capture",
+      firstTimeout: { kind: "navigation", timeoutMs: 30000 },
+      doubledDeadlineMs: 60000,
+      outcome: "timed-out",
+    },
+  ];
+  value.retryCount = 1;
+  value.deferredTuples = [tuple];
+  expect(runRecordSchema.safeParse(value).success).toBe(true);
+  expect(runRecordSchema.safeParse({ ...value, retryCount: 2 }).success).toBe(
+    false,
+  );
+  expect(
+    runRecordSchema.safeParse({
+      ...value,
+      retries: [...value.retries, ...value.retries],
+      retryCount: 2,
+    }).success,
+  ).toBe(false);
+  expect(
+    runRecordSchema.safeParse({
+      ...value,
+      retries: [{ ...value.retries[0], outcome: "passed" }],
+    }).success,
+  ).toBe(false);
+  expect(
+    runRecordSchema.safeParse({
+      ...value,
+      host: { ...value.host, pressureReasons: [] },
+    }).success,
+  ).toBe(false);
+  expect(
+    runRecordSchema.safeParse({
+      ...value,
+      host: { ...value.host, loadStart: [-1, 0, 0] },
+    }).success,
+  ).toBe(false);
+});

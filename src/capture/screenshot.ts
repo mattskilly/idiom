@@ -1,4 +1,4 @@
-import type { Page } from "playwright";
+import { errors, type Page } from "playwright";
 import { PNG } from "pngjs";
 import type { Rect, ScreenshotGeometry } from "../checks/types.js";
 
@@ -65,7 +65,19 @@ export async function fullPageSize(
 export async function captureScreenshot(
   page: Page,
   options: ScreenshotOptions,
+  policy: { maxFullPageHeight?: number | undefined } = {},
 ): Promise<CapturedScreenshot> {
+  const deadline = performance.now() + (options?.timeout ?? 30000);
+  const shot = (extra: ScreenshotOptions = {}) => {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0)
+      throw new errors.TimeoutError("screenshot allowance expired");
+    return page.screenshot({
+      ...options,
+      ...extra,
+      timeout: Math.max(1, Math.ceil(remaining)),
+    });
+  };
   const [{ scale, innerWidth, innerHeight }, size] = await Promise.all([
     page.evaluate(() => ({
       scale: window.devicePixelRatio,
@@ -76,7 +88,7 @@ export async function captureScreenshot(
   ]);
   if (options?.fullPage !== true)
     return {
-      buffer: await page.screenshot(options),
+      buffer: await shot(),
       geometry: {
         strategy: "viewport",
         scale,
@@ -84,7 +96,12 @@ export async function captureScreenshot(
         height: innerHeight,
       },
     };
-  const { width, height } = size;
+  const { width } = size;
+  const height = Math.min(size.height, policy.maxFullPageHeight ?? 16000);
+  const crop = height < size.height ? { croppedFromHeight: size.height } : {};
+  const clip =
+    height < size.height ? { clip: { x: 0, y: 0, width, height } } : {};
+  const fullShot = () => shot(clip);
   // Pathologically large pages would need more memory to stitch than the
   // single shot is worth; they keep the single shot and its known
   // blank-below-the-limit trade-off.
@@ -93,8 +110,8 @@ export async function captureScreenshot(
     width * scale * height * scale * 4 > MAX_STITCH_BYTES
   )
     return {
-      buffer: await page.screenshot(options),
-      geometry: { strategy: "full-page", scale, width, height },
+      buffer: await fullShot(),
+      geometry: { strategy: "full-page", scale, width, height, ...crop },
     };
   // Wider than the limit is not tiled horizontally; the spec covers height.
   const tile = tileHeightCss(scale);
@@ -102,8 +119,7 @@ export async function captureScreenshot(
   let tiles = 0;
   for (let y = 0; y < height; y += tile) {
     const image = PNG.sync.read(
-      await page.screenshot({
-        ...options,
+      await shot({
         clip: { x: 0, y, width, height: Math.min(tile, height - y) },
       }),
     );
@@ -120,12 +136,12 @@ export async function captureScreenshot(
   }
   if (output === undefined)
     return {
-      buffer: await page.screenshot(options),
-      geometry: { strategy: "full-page", scale, width, height },
+      buffer: await fullShot(),
+      geometry: { strategy: "full-page", scale, width, height, ...crop },
     };
   return {
     buffer: PNG.sync.write(output),
-    geometry: { strategy: "tiled", scale, width, height, tiles },
+    geometry: { strategy: "tiled", scale, width, height, tiles, ...crop },
   };
 }
 
@@ -198,7 +214,10 @@ export async function withScreenshotGeometry(
   const drift =
     observed === undefined || geometry.strategy === "viewport"
       ? undefined
-      : screenshotDrift(observed, geometry);
+      : screenshotDrift(observed, {
+          width: geometry.width,
+          height: geometry.croppedFromHeight ?? geometry.height,
+        });
   if (drift === undefined) return geometry;
   return {
     ...geometry,

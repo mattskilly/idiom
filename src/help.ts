@@ -33,6 +33,8 @@ export const HELP_GROUPS: readonly {
     title: "Daily loop",
     commands: [
       "check",
+      "digest",
+      "nightly",
       "review",
       "fix",
       "verify",
@@ -45,7 +47,7 @@ export const HELP_GROUPS: readonly {
   { title: "Briefs", commands: ["brief"] },
   {
     title: "Explore and inspect",
-    commands: ["quick", "sweep", "coverage", "explore", "system"],
+    commands: ["quick", "sweep", "coverage", "explore", "bisect", "system"],
   },
   {
     title: "Agents and integration",
@@ -88,6 +90,7 @@ export const COMMAND_EXAMPLES: Record<
     "idiom decide --list",
     "idiom decide --finding finding-3 --accept",
     'idiom decide --finding finding-3 --reject --scope rule --reason "intentional brand colour"',
+    'idiom decide finding-12 --ack ABC-123 --note "Tracked in Jira"',
   ],
   brief: [
     'idiom brief triage "<request>"',

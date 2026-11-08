@@ -247,6 +247,9 @@ function markdownTwin(page) {
 
 const themeScript = `<script>try{var t=localStorage.getItem("idiom-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>`;
 const toggle = `<button class="theme-toggle" type="button" aria-label="Switch to dark theme" title="Switch to dark theme"><svg class="moon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13.5 9.6A5.6 5.6 0 0 1 6.4 2.5a5.6 5.6 0 1 0 7.1 7.1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><svg class="sun" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button>`;
+// Collapse the docs menu on narrow screens as soon as it is parsed: closing it
+// from the end of a long page moved the content after it had painted.
+const menuScript = `<script>if(window.matchMedia("(max-width: 900px)").matches)document.currentScript.previousElementSibling.open=false</script>`;
 const behaviour = `<script>
 (function () {
   var root = document.documentElement, button = document.querySelector(".theme-toggle");
@@ -266,7 +269,6 @@ const behaviour = `<script>
   system.addEventListener("change", label);
   label();
   var menu = document.querySelector(".docs-menu");
-  if (menu && window.matchMedia("(max-width: 900px)").matches) menu.open = false;
   // Search: titles and headings from /docs/search.json, fetched on first use.
   var box = document.querySelector(".search input"), list = document.querySelector(".search .results"), index;
   function load() { return index || (index = fetch("/docs/search.json").then(function (r) { return r.json(); })); }
@@ -364,6 +366,7 @@ ${themeScript}
 <header class="top"><a class="wordmark" href="/">idiom</a><a class="meta" href="/docs">Docs</a><nav aria-label="Site"><a href="/">Home</a><a href="${repository}">GitHub</a></nav>${toggle}</header>
 <div class="docs-grid">
 <details class="docs-menu" open><summary>Menu</summary><div class="search" role="search"><input type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off" spellcheck="false"><kbd aria-hidden="true">/</kbd><ul class="results" hidden></ul></div><nav class="sidebar" aria-label="Docs">${sidebar(page, titles)}</nav></details>
+${menuScript}
 <main id="main" class="prose">
 <p class="crumb">${page.group} · ${escapeHtml(page.title)}</p>
 ${html}

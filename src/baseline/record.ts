@@ -61,12 +61,83 @@ async function recordPixelBaselines(
   return written.size;
 }
 
+export type CaptureFailure = import("../capture/scope.js").Coordinate & {
+  stage: string;
+  message: string;
+  hostDeferred?: boolean | undefined;
+};
+
+/** Shared automatic-baseline evidence guard, in selected matrix order. */
+export function captureCompleteness(
+  loaded: Pick<
+    Awaited<ReturnType<typeof loadRunTuples>>,
+    "tuples" | "expectedTupleKeys" | "record"
+  >,
+  colorScheme: "light" | "dark",
+): { failures: CaptureFailure[]; total: number } {
+  const byKey = new Map(
+    loaded.tuples.map((tuple) => [
+      captureTupleKey({
+        ...tuple,
+        colorScheme: tuple.colorScheme ?? colorScheme,
+      }),
+      tuple,
+    ]),
+  );
+  const keys =
+    loaded.record?.selected.map(captureTupleKey) ?? loaded.expectedTupleKeys;
+  const failures: CaptureFailure[] = [];
+  for (const key of new Set(keys)) {
+    const tuple = byKey.get(key);
+    const [state, viewport, scheme] = key.split("\0");
+    if (!tuple || tuple.failure || !tuple.screenshotPath)
+      failures.push({
+        state: state!,
+        viewport: viewport!,
+        colorScheme: scheme as "light" | "dark",
+        stage: tuple?.failure?.stage ?? "capture",
+        message:
+          tuple?.failure?.message ??
+          (tuple ? "screenshot missing" : "tuple missing"),
+        ...(tuple?.failure?.hostDeferred ? { hostDeferred: true } : {}),
+      });
+  }
+  return { failures, total: new Set(keys).size };
+}
+export type BaselineNotRecorded = {
+  failed: number;
+  total: number;
+  successful: number;
+  coordinates: import("../capture/scope.js").Coordinate[];
+  message: string;
+};
+export function baselineGapDiagnostic(
+  failures: CaptureFailure[],
+  total: number,
+): BaselineNotRecorded {
+  const failed = failures.length;
+  const successful = total - failed;
+  const coordinates = failures.map(({ state, viewport, colorScheme }) => ({
+    state,
+    viewport,
+    colorScheme,
+  }));
+  return {
+    failed,
+    total,
+    successful,
+    coordinates,
+    message: `Baseline not recorded: ${failed} of ${total} tuples failed (${coordinates.map((tuple) => `${tuple.state}/${tuple.viewport}/${tuple.colorScheme}`).join(", ")}). Findings for the other ${successful} are above.`,
+  };
+}
+
 export async function recordBaseline(options: {
   validated: ValidationResult;
   flow: Flow;
   runDirectory: string;
   out?: string | undefined;
   requireHead?: boolean | undefined;
+  expectedCommit?: string | undefined;
 }) {
   const { validated, flow, runDirectory } = options;
   const loaded = await loadRunTuples(validated, flow, runDirectory);
@@ -91,27 +162,17 @@ export async function recordBaseline(options: {
       "baseline record needs a capture with a valid Git commit; capture a committed tree first",
     );
   if (options.requireHead === true) {
-    const head = await gitAncestry.head(validated.projectDirectory);
+    const head =
+      options.expectedCommit ??
+      (await gitAncestry.head(validated.projectDirectory));
     if (loaded.commit !== head)
       throw new IdiomError(
         "automatic baseline needs a capture of clean HEAD; commit or stash, then capture HEAD and run check again, or inspect with --all",
       );
-    const captured = new Set(
-      loaded.tuples.map((tuple) =>
-        captureTupleKey({
-          ...tuple,
-          colorScheme:
-            tuple.colorScheme ?? validated.project.capture.colorScheme,
-        }),
-      ),
-    );
     if (
-      loaded.expectedTupleKeys.some((key) => !captured.has(key)) ||
       loaded.tuples.length === 0 ||
-      loaded.tuples.some(
-        (tuple) =>
-          tuple.failure !== undefined || tuple.screenshotPath === undefined,
-      )
+      captureCompleteness(loaded, validated.project.capture.colorScheme)
+        .failures.length > 0
     )
       throw new IdiomError(
         "automatic baseline needs a successful capture; fix capture failures and retry, or inspect with --all",
@@ -142,7 +203,10 @@ export async function recordBaseline(options: {
   const configHash = checksConfigHash(validated.project.checks);
   const path = baselinePath(
     options.out ??
-      baselineDirectory(validated.projectDirectory, validated.project),
+      baselineDirectory(
+        validated.stateProjectDirectory ?? validated.projectDirectory,
+        validated.project,
+      ),
     flow.id,
   );
   const { replaced } = await writeBaselineRecord(path, flow.id, {
@@ -154,7 +218,10 @@ export async function recordBaseline(options: {
   });
   const pixelDirectory = pixelBaselineDirectory(
     options.out ??
-      baselineDirectory(validated.projectDirectory, validated.project),
+      baselineDirectory(
+        validated.stateProjectDirectory ?? validated.projectDirectory,
+        validated.project,
+      ),
     flow.id,
   );
   const pixelCount = isPublishedFlow(flow)

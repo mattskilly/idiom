@@ -1,6 +1,6 @@
 # Rules
 
-Presentation lists rank by severity first (BLOCKER, MAJOR, MINOR), then prominence as measured by the existing salience × prominence score within each tier. Scoring, rule severities and finding identity are unchanged; see [ranking](ranking.md).
+Presentation lists rank by severity first (BLOCKER, MAJOR, MINOR, INFO), then by impact, then prominence as measured by the existing salience × prominence score within each tier. Scoring, rule severities and finding identity are unchanged; see [Ranking](#ranking) and [ranking](ranking.md).
 
 Findings have three bases: **measured** means a deterministic rule with its measurement; **observed** means an action, timeline or probe with timing and result; **judged** means model critique, with stated confidence when supplied. Treat judged findings as suggestions. Severity gates count measured and observed findings by default; `--fail-on-judged` includes judged suggestions at the selected severity threshold. Suppression, severity overrides and independent configured published budgets keep their existing behavior.
 
@@ -9,11 +9,13 @@ Deterministic findings retain readable Done when text and an executable `accepta
 
 A rule, or check, is a deterministic judgement over the evidence Idiom captured for one state, viewport and colour scheme: the DOM, computed styles and geometry, the screenshot, the axe-core results, the console, and what the interaction probe saw. The same evidence always gives the same findings, so `idiom review <flow> --from <runId> --deterministic-only` re-judges a stored run offline, and `idiom check` gates on it.
 
-Each finding has one of three severities:
+Each finding has one of four severities:
 
 - **blocker**: the state did not render as declared, or a published page broke its hard budget. Nothing else about the state can be trusted until it is fixed.
 - **major**: a defect people will hit, such as an unreadable label, a dead control or a broken link. `idiom check` fails on major and above by default (`--fail-on major`).
 - **minor**: craft debt that is worth fixing but does not block, such as an off-scale value or a lonely last word.
+
+- **info**: informational evidence, ranked below minor. It cannot trip existing severity gates and is omitted from digest alerts.
 
 State coverage is reported next to rule coverage. `idiom coverage --states`, each flow review report and `idiom check` say which viewports, colour schemes, reduced-motion modes, network replays (slow and failure), interactions (probe reach, focus sweep) and declared data states each state was observed in by the latest capture, and the config or flow change that covers each missing one. It measures what was reviewed, not quality. A dimension that cannot apply (no requests to replay, no controls to probe, no data states declared) is not applicable and never counts towards the percentage.
 
@@ -28,6 +30,20 @@ Coverage reports distinct elements skipped as not painted for each rule and tupl
 Configure checks under `checks.*` in `.idiom/project.json`; every field is optional, and [configuration.md](configuration.md#checks) has the full reference. Some checks are opt-in and do nothing until their block is present.
 
 Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `--reject` dismisses that occurrence, and `--reject --scope rule` suppresses it in every later run. To change a finding's severity or suppress it by category, flow, state or rule, add an override to `.idiom/rules.json` (see [Rules](configuration.md#rules)). Questions a review cannot settle on its own arrive as `ruling-N` decisions, which `idiom ruling` records in `DESIGN.md`.
+
+## Ranking
+
+Top issues, the report, `sweep`, tickets and `idiom digest` share one deterministic order: severity first; within a severity, impact tier; within each tier, the salience × prominence score; then each list's own stable tie-break.
+
+A finding is in the higher **impact** tier when any of these holds, and in the lower tier only when none does, which is exactly a single-state cosmetic finding:
+
+- **states**: it appears in two or more states;
+- **viewports**: it appears at two or more viewports;
+- **primary**: its element is a recorded primary action, or sits above the fold in the page's primary region (`<main>` or a marked primary region), at any coordinate where it appears;
+- **interactive**: its element is an interactive control (a link, button, input or other focusable control);
+- **broken**: its rule reports broken behaviour or obstructed content (salience 9 in the [ranking table](ranking.md#salience)).
+
+The tier never crosses severities: a minor finding on every state still ranks below any major. `check --json` reports each issue's `impact` (1 or 0) and `impactReasons`.
 
 ## Checks
 
@@ -89,11 +105,11 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `console-error`
 
-- **Catches:** `console.error` calls and uncaught page errors recorded during capture, grouped by message and location.
+- **Catches:** `console.error` calls and uncaught page errors recorded during capture, grouped by message and location. A failed sub-resource is named by its request instead, for example `GET /preview/123?thumbnail=1 returned 500`, with the values of secret-named query keys (`token`, `api_key`, `client_secret` and the like) redacted. When Idiom started the server, a 5xx finding attaches up to 20 lines of the run's `server.log`, from 2 s before the request started to 2 s after its response ended. A Content Security Policy violation names the directive, the blocked resource or `inline`, the offending element, and the owner iframe when it happened inside a frame such as a srcdoc preview. A frame that runs no script at all (`sandbox` without `allow-scripts`) cannot report the element, so its finding keeps the browser's own message.
 - **Why it matters:** Errors in the console usually mean something on screen is missing or broken, even when it looks fine.
 - **Severity:** major.
 - **Source:** Craft convention: a declared state should render without runtime errors.
-- **Configure or decide:** A flow's or state's `health.allow.console` patterns exempt expected messages, for route and page states as well as step states. Idiom's own capture scripts never run in sandboxed (opaque-origin) frames such as a `sandbox` srcdoc preview, so they add no errors of their own. For a state that declares a non-200 status, only the main-frame document's own load error is ignored (matched against the final document URL after redirects, ignoring any fragment). A subresource that fails with the same URL and status is still reported. Other findings are decided with `idiom decide` or a `.idiom/rules.json` override.
+- **Configure or decide:** A flow's or state's `health.allow.console` patterns exempt expected messages, for route and page states as well as step states. Idiom's own capture scripts add no errors of their own: the only one that runs in sandboxed (opaque-origin) frames such as a `sandbox` srcdoc preview is the CSP listener, which only listens and reports. For a state that declares a non-200 status, only the main-frame document's own load error is ignored (matched against the final document URL after redirects, ignoring any fragment). A subresource that fails with the same URL and status is still reported. Other findings are decided with `idiom decide` or a `.idiom/rules.json` override.
 
 ### `missing-state`
 
@@ -129,7 +145,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `adjacent-gap`
 
-- **Catches:** Neighbouring controls closer than the minimum gap, including a focused field's ring, and bordered shapes that touch inside the same parent. Keycap glyph groups (⌘ K) and the contents of illustrations or static, non-selectable mock-ups with no controls are not compared.
+- **Catches:** Neighbouring controls closer than the minimum gap, including a focused field's ring, and bordered shapes that touch inside the same parent. Targets (and descendants) controlled by collapsed `aria-expanded="false"` triggers, opacity-zero or visibility-hidden subtrees, and transforms that move a subtree fully outside the viewport are excluded. Partially visible transforms and ordinary below-fold content stay eligible. Keycap glyph groups (⌘ K) and the contents of illustrations or static, non-selectable mock-ups with no controls are not compared.
 - **Why it matters:** Controls jammed together look like one control and are easy to mis-hit.
 - **Severity:** major when they touch or overlap (gap of 0.5px or less); minor otherwise.
 - **Source:** Craft convention: separate controls need visible separation.
@@ -145,7 +161,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `dead-control`
 
-- **Catches:** Enabled buttons that change nothing observable when the probe clicks them. A request counts only when the click itself started it and either something visible follows or the request would change data (POST, PUT, PATCH or DELETE); background polling, analytics and keepalive traffic never excuse a control, and the finding lists them as "only background requests observed".
+- **Catches:** Enabled buttons that change nothing observable when the probe clicks them. Real disclosure mutations, including delayed openings in Radix popper wrappers, count as effects; tooltip-only and transient focus/hover changes do not. A request counts only when the click itself started it and either something visible follows or the request would change data (POST, PUT, PATCH or DELETE); background polling, analytics and keepalive traffic never excuse a control, and the finding lists them as "only background requests observed".
 - **Why it matters:** A button that does nothing looks like a broken product.
 - **Severity:** major.
 - **Source:** Craft convention: every enabled control should have an effect.
@@ -161,7 +177,7 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 ### `component-size`
 
-- **Catches:** Named components rendering outside their declared width or height, or a size stated next to a name in `DESIGN.md`.
+- **Catches:** Components rendering outside an explicit width, height or both (names optional), or a size stated next to a name in `DESIGN.md`.
 - **Why it matters:** Components that grow or shrink unexpectedly break the layout around them.
 - **Severity:** minor.
 - **Source:** Craft convention: components should render at their declared size.
@@ -267,9 +283,9 @@ Decide a finding with `idiom decide`: `--accept` marks it as work worth doing, `
 
 - **Catches:** Controls or text in the same layer whose boxes intersect, including partly visible elements, with both selectors and the overlap size (`idiom:elements-overlap`). The deliberate exception to keeping layers apart is `idiom:popover-covers-control`: an open overlay (a menu, listbox, popover, non-modal dialog, or a disclosure's positioned content) whose box covers a visible, enabled field outside it, or the control that opened it beyond a 4px anchor-edge allowance, confirmed by sampling the covered area with the browser's hit test. Tooltips and modal dialogs are excluded.
 - **Why it matters:** Overlapping elements hide each other and can make controls unclickable.
-- **Severity:** major when a control is involved or the overlap covers at least a quarter of the smaller element; minor otherwise, and always minor when no hit-test point could confirm it (below the fold, geometry only). A popover over a field is major when the hit test confirms it; over its own trigger, or geometry only, minor.
+- **Severity:** major when a control is involved or the overlap covers at least a quarter of the smaller element; minor otherwise, and always minor when no hit-test point could confirm it (below the fold, geometry only). Ambiguous card actions produce one info finding per repeated card group, with an affected-card count. Confirmed obstructions retain their severity. A popover over a field is major when the hit test confirms it; over its own trigger, or geometry only, minor.
 - **Source:** Craft convention: elements in one layer should not collide.
-- **Configure or decide:** No settings; menus, dialogs, tooltips (including chart-library tooltip layers) and pointer-events:none overlays are kept apart from content beneath them. A card's corner action is not an overlap: a control absolutely positioned inside the link that covers its card (at least 80% of it), and on top of that link where a pointer reaches it. A control stacked under the link, or over another card's link, still is. Findings are decided with `idiom decide`.
+- **Configure or decide:** No settings; menus, dialogs, tooltips (including chart-library tooltip layers) and pointer-events:none overlays are kept apart from content beneath them. A subsidiary action over its own card link is intentional when both belong to the same local card and pointer samples reach the action and the link outside it. This includes grid stacking, partial-cover links and actions extending past their own link edge. A control stacked under the link, or over another card's link, still is. Findings are decided with `idiom decide`.
 
 ### `clipped-text`
 
@@ -283,7 +299,7 @@ The carousel-peek exemption examines only ancestors strictly inside the actual c
 
 ### `field-group`
 
-- **Catches:** Label, control and helper text stacks that touch, and too little space between separate field groups.
+- **Catches:** Label, control and helper text stacks that touch, and too little space between separate field groups. Inner label gaps use text-node client rectangles, including nested and multiline captions, rather than tall line boxes; helper and between-group measurements keep their layout rectangles. Older artifacts without text geometry retain their previous results.
 - **Why it matters:** Cramped form groups make it unclear which label belongs to which field.
 - **Severity:** major when parts touch (0.5px or less); minor otherwise.
 - **Source:** Craft convention: related form parts sit together, separate groups sit apart.
@@ -445,6 +461,22 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 - **Source:** Craft convention: gallery media fills its frame.
 - **Configure or decide:** On by default; `checks.mediaFill` sets `bandThreshold` (0.2), `tolerance` (8), `ignore`, and `auto: false` turns it off; decide findings with `idiom decide`.
 
+### `visual-blank`
+
+- **Catches:** `idiom:visual-blank`: visible media at least 120 × 80 CSS px whose screenshot interior has a dominant quantized colour covering at least 99.5%, effective opacity at most 1%, a rectangular cover with at least 98% alpha over at least 99.5% of the visible area, or a video without a poster or painted frame. Includes lone images, pictures, canvases, iframe previews, background images and empty skeleton/media placeholders.
+- **Why it matters:** A preview can remain a tinted box without producing a load error.
+- **Severity:** minor, including multiple affected surfaces.
+- **Source:** Original Idiom screenshot measurement and fixtures authored for blank media; 16-level RGB buckets over every interior pixel, excluding border, padding and a 2 CSS px edge inset.
+- **Configure or decide:** On by default; `checks.visualBlank.enabled: false` disables it. `checks.visualBlank.swatchSelectors` exempts colour swatches, including matching wrappers; accessible names or role descriptions identifying a colour/swatch also exempt them. Mask intersections and unavailable crops cannot prove a blank or an acceptance. Old captures disclose unavailable coverage; recapture to measure, or decide findings with `idiom decide`.
+
+### `loading-stuck`
+
+- **Catches:** `idiom:loading-stuck`: a visible spinner, skeleton, busy region or indeterminate progress indicator continuously active for the state's ready-relative loading window (default 5000 ms), with its observed duration. Replaced nodes and separate intervals never add together.
+- **Why it matters:** Feedback that never resolves can leave a page unusable while appearing to load normally.
+- **Severity:** minor.
+- **Source:** Original Idiom continuous observation and authored timing fixtures; monotonic interval ages, mutation tracking and 50 ms visibility sampling.
+- **Configure or decide:** On by default; `checks.loadingStuck.enabled: false` disables the added scan/wait. A state may set positive integer `loadingSettleMs` independently of visual `settleMs`, or `loading: true` to declare intentional loading. Readiness means DOM-ready navigation plus all declared steps; the window overlaps existing settle/animation waits. Determinate progress and decorative rotating icons pass. Old or shortened/missing observations cannot prove acceptance; decide findings with `idiom decide`.
+
 ### `collection-actions`
 
 - **Catches:** Declared collections of user-created objects whose items do not offer open, rename or delete from the item, its menu or its context menu.
@@ -605,3 +637,35 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 - **Severity:** major.
 - **Source:** Project declaration: the assertions on a decided brief's acceptance criteria.
 - **Configure or decide:** Add assertions to criteria in `.idiom/briefs/<slug>.json` with `idiom brief record`; decide findings with `idiom decide`; re-decide or supersede the brief to change the contract. Changing an assertion reopens the findings decided against it; an unchanged assertion keeps its decisions. Recapture after recording a brief so its selectors are measured.
+
+### `popover-dismissal`
+
+- **Catches:** A popover, menu or dialog the probe opened that stays open after Escape, after a click on an empty, non-interactive point outside it and its trigger, or after a click inside a visible same-origin or `srcdoc` iframe on the page (`idiom:popover-not-dismissed`). The probe tests what a click opens through `aria-expanded`, `aria-controls` or `aria-haspopup`, and native `popover` and `<dialog>` openings; it presses Escape first, then clicks outside, then clicks into the iframe, reopening the panel between tests. Only overlays are tested: a panel in the top layer, positioned (`absolute` or `fixed`), or with a `menu`, `listbox`, `dialog` or `alertdialog` role. An in-flow panel that pushes content down, such as an accordion section, is not a popover and is not tested, and neither is `<details>`. An iframe-click failure names the iframe. Alert dialogs (`role="alertdialog"`), dialogs matching the flow's `explicitDismiss`, and `<dialog closedby="none">` or `closedby="closerequest"` are exempt from the outside and iframe clicks, not from Escape. Cross-origin iframes, hover-opened menus and touch gestures are not tested.
+- **Why it matters:** A panel that ignores clicks elsewhere or Escape traps people: it covers the page until they find its own trigger again. Clicks into an embedded canvas or preview are the easiest to miss, because the parent page never sees them.
+- **Severity:** major.
+- **Source:** WAI-ARIA Authoring Practices menu button and dialog patterns (Escape closes); craft convention for closing on outside clicks.
+- **Configure or decide:** Needs the interaction probe (`checks.probe`, on by default) with disclosures on (`checks.probe`'s `disclosures`). Mark modals that intentionally need an explicit action with the flow's `explicitDismiss` selectors. At most 12 overlays per state are tested, inside each control's probe budget; the rest are reported as not reached in probe coverage. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `focus-return`
+
+- **Catches:** Escape closed a popover, menu or dialog the probe opened, but focus did not return to the control that opened it (`idiom:focus-not-returned`): it went to the page body or to an unrelated element. Focus counts as returned when it is on the trigger, on an element that references the panel through `aria-controls` or `aria-owns`, or anywhere but the body when the trigger itself is gone. When focus was neither on the trigger nor in the panel before Escape, the probe focuses the trigger first, as a keyboard user's focus would be.
+- **Why it matters:** Keyboard and screen-reader users lose their place and have to tab from the top of the page again.
+- **Severity:** minor.
+- **Source:** WCAG 2.2 success criterion 2.4.3 Focus Order; WAI-ARIA Authoring Practices menu button and dialog patterns.
+- **Configure or decide:** Measured by the same dismissal pass as `popover-dismissal`: needs `checks.probe` with disclosures on, and shares its limit and budget. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `spacing-target`
+
+- **Catches:** Ordered border-box gaps outside an authored target and its inclusive tolerance, between two selectors or consecutive visible direct children within each container.
+- **Why it matters:** A layout can drift from intended spacing while remaining internally consistent.
+- **Severity:** major by default; configurable through project rule overrides.
+- **Source:** Project declaration: explicit spacing targets measured at capture time.
+- **Configure or decide:** Declare `checks.spacingTargets`; override `idiom:spacing-target` in `.idiom/rules.json` or use `idiom decide`. Missing, invalid or ambiguous matches disclose unavailable coverage; recapture older evidence or after changing targets.
+
+### `detached-flyout`
+
+- **Catches:** A successfully opened disclosure panel whose nearest edge is strictly more than 24px from its trigger. Distance is Euclidean for diagonal separation; touching or overlapping rectangles have zero separation. The finding includes the measured pixel distance and nested disclosure name.
+- **Why it matters:** A panel far from its opener is hard to associate with the action that revealed it.
+- **Severity:** minor.
+- **Source:** Craft convention: disclosure content stays near its trigger.
+- **Configure or decide:** Needs successful interaction-probe geometry, captured while the panel is open. Recapture stored runs without this evidence; missing or timed-out geometry is unavailable, not a passing measurement. The 24px threshold is fixed; decide findings with `idiom decide` or override them in `.idiom/rules.json`.

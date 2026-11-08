@@ -243,7 +243,15 @@ test.each(["flag", "environment", "fixedPort"] as const)(
 );
 
 test("clean production flows and scoped reruns reuse one build with fresh setup and current clients", async () => {
-  const f = await productionFixture({}, true);
+  const fixture = await productionFixture({}, true);
+  // Build reuse is measured apart from the independent loading window.
+  const f = {
+    ...fixture,
+    project: {
+      ...fixture.project,
+      checks: { ...fixture.project.checks, loadingStuck: { enabled: false } },
+    },
+  };
   try {
     expect((await snapshotSource(f.directory)).dirty).toBe(false);
     const first = await runCapture({

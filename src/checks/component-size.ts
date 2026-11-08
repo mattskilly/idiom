@@ -15,25 +15,48 @@ export const componentSizeCheck: DeterministicCheck = {
     for (const component of observation.components) {
       if (component.unresolved === true || component.rects.length === 0)
         continue;
-      const axis = component.inferred?.axis;
+      const axis =
+        component.inferred?.axis ??
+        (component.width === undefined
+          ? "height"
+          : component.height === undefined
+            ? "width"
+            : undefined);
       // Mode-less historical captures keep their original larger allowance.
-      const allowWidth = numericAllowance(component.width, component.tolerance);
+      const allowWidth = numericAllowance(
+        component.width ?? 0,
+        component.tolerance,
+      );
       const allowHeight = numericAllowance(
-        component.height,
+        component.height ?? 0,
         component.tolerance,
       );
       const off = component.rects.filter(
         (rect) =>
-          (axis !== "height" &&
+          (component.width !== undefined &&
+            axis !== "height" &&
             Math.abs(rect.width - component.width) > allowWidth) ||
-          (axis !== "width" &&
+          (component.height !== undefined &&
+            axis !== "width" &&
             Math.abs(rect.height - component.height) > allowHeight),
       );
       const first = off[0];
       if (first === undefined) continue;
+      const displayAxis =
+        component.width === undefined
+          ? "height"
+          : component.height === undefined
+            ? "width"
+            : undefined;
       const sizes = [
         ...new Set(
-          off.map((rect) => `${round(rect.width)}×${round(rect.height)}`),
+          off.map((rect) =>
+            displayAxis === "height"
+              ? `${round(rect.height)}px high`
+              : displayAxis === "width"
+                ? `${round(rect.width)}px wide`
+                : `${round(rect.width)}×${round(rect.height)}`,
+          ),
         ),
       ];
       const specified =
@@ -57,7 +80,7 @@ export const componentSizeCheck: DeterministicCheck = {
         severity: "minor",
         rule: "idiom:component-size-mismatch",
         selectorHint: first.selector,
-        explanation: `${off.length} of ${component.rects.length} "${component.name}" elements render at ${sizes.join(", ")}px; the design specifies ${specified}${source}.`,
+        explanation: `${off.length} of ${component.rects.length} "${component.name}" elements render at ${sizes.join(", ")}${displayAxis === undefined ? "px" : ""}; the design specifies ${specified}${source}.`,
         acceptance: [
           `Every "${component.name}" (${component.selector}) renders within tolerance of ${target}.`,
         ],

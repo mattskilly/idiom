@@ -123,6 +123,8 @@ export type BriefPlan = {
   request: string;
   triageId?: string | undefined;
   noDecision?: true | undefined;
+  inventoryInstructions: string[];
+  stateChecklist: string[];
   questions: Array<{ question: string; check: string[] }>;
   references: Record<string, Array<{ name: string; note: string }>>;
   referencesNote?: string | undefined;
@@ -175,6 +177,11 @@ export function briefRecordShape(options: {
     title: "<short title, at most 120 characters>",
     request: options.request,
     decision: "<the design question being decided>",
+    screenQuestion:
+      "<optional: the one question the screen answers, in one line>",
+    inventory: [
+      "<optional: real objects and realistic counts, ranges, units or sizes>",
+    ],
     requestNamedIdea: "<true if the request proposed its own solution>",
     ...(options.triage === undefined
       ? {}
@@ -260,6 +267,22 @@ export function buildBriefPlan(options: {
     request: options.request,
     ...(options.triage === undefined ? {} : { triageId: options.triage.id }),
     ...(noDecision ? { noDecision: true as const } : {}),
+    inventoryInstructions: [
+      "Before considering options, state the one question the screen answers in one line (optional screenQuestion in the record).",
+      "Inventory the real objects and magnitudes the screen shows: counts, ranges, units and sizes (optional inventory in the record). Gather facts; when unknown, say so rather than fabricate numbers.",
+    ],
+    stateChecklist: [
+      "Build every block's empty, zero, loading and error states. Empty and zero are distinct; loading does not replace error.",
+      "Build every row or item's hover, selected, focus and disabled states.",
+      "Declare important cases as named flow states so Idiom captures them, including opened drawers, dialogs and menus. The editor base state must also be declared for this opened-state example:",
+      JSON.stringify({
+        id: "editor+menu",
+        description: "Page menu open",
+        from: "editor",
+        steps: [{ action: "click", selector: "[data-testid=open-menu]" }],
+        expect: { selectorPresent: ["[data-testid=page-menu]"] },
+      }),
+    ],
     questions: questions.map((question) => ({
       question,
       check: checks.map((check) => check.check),
@@ -306,6 +329,12 @@ export function renderBriefPlan(plan: BriefPlan): string {
     `Request: ${plan.request}`,
     ...(plan.triageId === undefined ? [] : [`Triage id: ${plan.triageId}`]),
     `Budget: about ${plan.budget.minutes} minutes and ${plan.budget.searches.min}–${plan.budget.searches.max} searches. Stop when it runs out and record what you have.`,
+    "## Inventory before options",
+    plan.inventoryInstructions
+      .map((instruction) => `- ${instruction}`)
+      .join("\n"),
+    "## Build every state",
+    plan.stateChecklist.map((instruction) => `- ${instruction}`).join("\n"),
     "## Rules",
     plan.rules.map((rule) => `- ${rule}`).join("\n"),
     "## Open questions",

@@ -12,6 +12,7 @@ type VisibilityDom = {
   painted(element: Element): PaintedFact;
   /** Why spacing rules skip it: in a subtree the user cannot see or reach. */
   excluded(element: Element): string | undefined;
+  adjacentGapExcluded(element: Element): string | undefined;
   measure(element: Element, within?: Element): VisibilityGeometry;
   extent(element: Element, stop: Element): Rect | undefined;
   client(element: Element): Rect;
@@ -363,7 +364,62 @@ export function installVisibilityDom(
     }
     return undefined;
   };
+  // This set belongs to this observation pass, never to a previous menu state.
+  const collapsedTargets = new Set<Element>();
+  for (const trigger of document.querySelectorAll(
+    '[aria-expanded="false"][aria-controls]',
+  ))
+    for (const id of (trigger.getAttribute("aria-controls") ?? "").split(
+      /\s+/,
+    )) {
+      const target = document.getElementById(id);
+      if (target) collapsedTargets.add(target);
+    }
+  const adjacentGapExcluded = (element: Element): string | undefined => {
+    let dx = 0;
+    let dy = 0;
+    for (
+      let current: Element | null = element;
+      current;
+      current = current.parentElement
+    ) {
+      if (collapsedTargets.has(current)) return "collapsed-controls-target";
+      const style = getComputedStyle(current);
+      if (Number(style.opacity) === 0) return "opacity-zero";
+      if (["hidden", "collapse"].includes(style.visibility))
+        return "visibility-hidden";
+      if (style.transform !== "none") {
+        const matrix = new DOMMatrixReadOnly(style.transform);
+        dx += matrix.m41;
+        dy += matrix.m42;
+      }
+      if (style.translate && style.translate !== "none") {
+        const parts = style.translate.split(/\s+/);
+        const offset = (value: string, extent: number) =>
+          (Number.parseFloat(value) || 0) *
+          (value.endsWith("%") ? extent / 100 : 1);
+        const rect = current.getBoundingClientRect();
+        dx += offset(parts[0] ?? "0", rect.width);
+        dy += offset(parts[1] ?? "0", rect.height);
+      }
+    }
+    const rect = element.getBoundingClientRect();
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = document.documentElement.clientHeight;
+    const intersectsX = (x: number) => x < viewportWidth && x + rect.width > 0;
+    const intersectsY = (y: number) =>
+      y < viewportHeight && y + rect.height > 0;
+    // A containing-block transform, or an ordinary below-fold box, supplies
+    // no evidence that the transform hid the element.
+    if (
+      (dx !== 0 && !intersectsX(rect.x) && intersectsX(rect.x - dx)) ||
+      (dy !== 0 && !intersectsY(rect.y) && intersectsY(rect.y - dy))
+    )
+      return "transformed-offscreen";
+    return undefined;
+  };
   window.__idiomVisibility = {
+    adjacentGapExcluded,
     painted,
     excluded,
     measure,

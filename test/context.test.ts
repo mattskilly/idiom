@@ -1259,3 +1259,107 @@ test("component sizes stated in DESIGN.md appear in the craft checks, and explic
   expect(explicit).not.toContain('"chip" renders 24px high');
   expect(explicit).toContain("inferred from DESIGN.md:3");
 });
+
+test("context renders explicit one-axis sizes and authored spacing intent", async () => {
+  const { craftCheckEntries } = await import("../src/context/brief.js");
+  const { checksConfigSchema } = await import("../src/schemas/project.js");
+  const output = craftCheckEntries(
+    checksConfigSchema.parse({
+      components: [
+        { selector: ".tile", height: 56, tolerance: { px: 8 } },
+        { selector: ".panel", width: 280 },
+      ],
+      spacingTargets: [
+        { between: [".a", ".b"], gap: 8 },
+        { within: ".groups", gap: 12 },
+      ],
+    }),
+  )
+    .flat()
+    .join("\n");
+  expect(output).toContain('".tile" (.tile) renders at 56px high');
+  expect(output).toContain('".panel" (.panel) renders at 280px wide');
+  expect(output).toContain("Between .a and .b: vertical border-box gap 8px");
+  expect(output).toContain(
+    "Within .groups, consecutive visible direct children in DOM order",
+  );
+  expect(output).not.toContain("undefined");
+});
+
+test.each([
+  [undefined, false, false],
+  ["app", false, false],
+  ["published", false, true],
+  ["app", true, true],
+  [undefined, true, true],
+] as const)(
+  "Craft checks select guidance for kind %s with page profile %s",
+  async (kind, pageProfile, pageGuidance) => {
+    const directory = await project();
+    await writeFlow(directory, "screen", {
+      ...(flowManifest("screen") as object),
+      ...(kind === undefined ? {} : { kind }),
+      ...(kind === "published" ? { pages: ["/"] } : {}),
+    });
+    await writeFlow(directory, "unrelated", "{ broken");
+    const configPath = join(directory, ".idiom/project.json");
+    if (pageProfile) {
+      const config = JSON.parse(await readFile(configPath, "utf8"));
+      config.checks = { ...config.checks, page: {} };
+      await writeFile(configPath, JSON.stringify(config));
+    }
+    const get = async (flow?: string) =>
+      section(
+        await contextCommand({
+          project: directory,
+          flow,
+          dependencies: { gitTopology: topology(undefined) },
+        }),
+        "Craft checks",
+      );
+    const appTopics = [
+      "colour on data and status",
+      "numbers prominent through type",
+      "at most one status mark",
+      "small minority of rows",
+      "Right-align numerical columns",
+      "tabular figures",
+      "chips on one line",
+      "queues needing action",
+      "empty section's frame",
+      "empty-state",
+      "scrollbars, selection, caret and focus rings",
+      "idiom:focus-not-visible",
+      "every disclosure",
+      "one meaning",
+    ];
+    const pageTopics = [
+      "each page section a clear heading",
+      "heading-structure",
+      "shared content gutters",
+      "idiom:band-content-edge",
+      "no blank spacer bands",
+    ];
+    const assertKind = (craft: string, page: boolean) => {
+      for (const topic of page ? pageTopics : appTopics)
+        expect(craft).toContain(topic);
+      for (const topic of page ? appTopics : pageTopics)
+        expect(craft).not.toContain(topic);
+      expect(craft).toContain("Every enabled button");
+    };
+    assertKind(await get("screen"), pageGuidance);
+    assertKind(await get(), pageProfile);
+    // Oversized prose must preserve whole guidance entries and the byte ceiling.
+    await writeFile(
+      join(directory, "PRODUCT.md"),
+      "long product prose\n".repeat(1500),
+    );
+    const output = await contextCommand({
+      project: directory,
+      flow: "screen",
+      dependencies: { gitTopology: topology(undefined) },
+    });
+    expect(Buffer.byteLength(output)).toBeLessThanOrEqual(BRIEF_BYTE_CEILING);
+    assertKind(section(output, "Craft checks"), pageGuidance);
+  },
+);

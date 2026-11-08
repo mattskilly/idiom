@@ -14,6 +14,8 @@ export type ProductionBuild = { kind: "production"; id: string };
 export type SourceIdentity = {
   commit: string;
   dirty: boolean;
+  ignoredDirtyPaths?: string[] | undefined;
+  changedDuringCapture?: boolean | undefined;
 };
 
 export type SelectedViewport = Project["viewports"][number];
@@ -70,7 +72,40 @@ export type ConsoleRecord = {
   healthAllowed?: boolean;
   location?: { url: string; lineNumber: number; columnNumber: number };
   /** Network provenance for browser resource-load records; absent for script-originated records and older captures. */
-  request?: { resourceType: string; mainFrame: boolean } | undefined;
+  request?: ConsoleRequest | undefined;
+  /** The Content Security Policy violation behind this record, when one was observed. */
+  csp?: CspViolation | undefined;
+};
+
+export type ConsoleRequest = {
+  resourceType: string;
+  mainFrame: boolean;
+  method?: string | undefined;
+  /** The request URL with secret-named query values redacted. */
+  url?: string | undefined;
+  /** Absent when the request failed without a response. */
+  status?: number | undefined;
+  /** Epoch ms the request started. */
+  at?: number | undefined;
+  /** Epoch ms the response ended. */
+  endAt?: number | undefined;
+};
+
+export type CspViolation = {
+  /** The effective directive, e.g. `style-src-attr`. */
+  directive: string;
+  violatedDirective: string;
+  /** `inline`, `eval`, or the blocked URL with secret query values redacted. */
+  blocked: string;
+  /** The offending element's selector within its frame. */
+  element?: string | undefined;
+  /** The owner iframe's selector, for violations inside a child frame. */
+  frame?: string | undefined;
+  sample?: string | undefined;
+  sourceFile?: string | undefined;
+  lineNumber?: number | undefined;
+  columnNumber?: number | undefined;
+  documentUrl: string;
 };
 
 export type TupleCapture = {
@@ -109,7 +144,18 @@ export type TupleFailureStage =
   | "screenshot"
   | "console";
 
+export type TimeoutDiagnostic = {
+  kind: "navigation" | "readiness";
+  timeoutMs: number;
+};
+export type AttemptTimeouts = {
+  navigation: number;
+  readiness: number;
+  quiet: number;
+};
+
 export type TupleFailure = {
+  timeout?: TimeoutDiagnostic | undefined;
   ok: false;
   probeMs?: number | undefined;
   stage: TupleFailureStage;
@@ -139,6 +185,8 @@ export type FilmstripRequest = CaptureTupleSelection & {
 };
 
 export type BrowserTuple = CaptureHooks & {
+  timeoutFactor?: number | undefined;
+  timeouts?: Partial<AttemptTimeouts> | undefined;
   filmstripBudget?: import("./filmstrips.js").FilmstripBudget | undefined;
   filmstripRequests?: FilmstripRequest[] | undefined;
   designReference?: import("../design/source.js").DesignSource | undefined;
@@ -156,6 +204,8 @@ export type BrowserTuple = CaptureHooks & {
   navigationUrl: string;
   /** Flow-resolved `hideWebdriver`; falls back to `capture.hideWebdriver`. */
   hideWebdriver?: boolean | undefined;
+  /** Flow `explicitDismiss`: modals the dismissal probe does not click outside. */
+  explicitDismiss?: string[] | undefined;
   health?: import("./web-steps.js").ResolvedWebHealth | undefined;
   tokens?: TokenDeclarations | undefined;
   /** Component sizes inferred from DESIGN.md, resolved to selectors in observe. */

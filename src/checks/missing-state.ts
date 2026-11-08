@@ -10,7 +10,7 @@ export const missingStateCheck: DeterministicCheck = {
   id: "missing-state",
   run({ tuple }) {
     const candidates: FindingCandidate[] = [];
-    if (tuple.failure !== undefined) {
+    if (tuple.failure !== undefined && tuple.failure.hostDeferred !== true) {
       candidates.push({
         category: this.id,
         severity: "blocker",

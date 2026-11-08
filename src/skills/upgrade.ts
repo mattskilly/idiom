@@ -11,12 +11,15 @@ import {
   skillNames,
 } from "./distribution.js";
 import {
+  type Merge,
   type MergeRunner,
   mergeText,
   reconstruct,
+  renderConflictText,
   skillIdentity,
   validateFile,
 } from "./merge.js";
+import { renamedIdentity } from "./migrate-verifier.js";
 import {
   type ApplyDependencies,
   applyWrites,
@@ -36,6 +39,7 @@ import {
   type Resolver,
   type ResolverDependencies,
 } from "./resolver.js";
+import { rollupSkills } from "./rollup.js";
 import type {
   Distribution,
   FileOutcome,
@@ -88,12 +92,28 @@ export async function upgradeSkills(
     projectDirectory: string;
     dryRun?: boolean | undefined;
     agent?: boolean | undefined;
+    /** Restrict the run to these skills; every skill when omitted. */
+    skills?: SkillName[] | undefined;
   },
   dependencies: UpgradeDependencies = {},
 ): Promise<UpgradeReport> {
   const root = options.projectDirectory;
   const distribution = dependencies.distribution ?? (await readDistribution());
-  const history = dependencies.history ?? (await readHistory());
+  const rawHistory = dependencies.history ?? (await readHistory());
+  // Historical catalog bytes and keys remain immutable on disk. Resolve the
+  // renamed identity at the lookup boundary for prior-file participation.
+  const history = {
+    ...rawHistory,
+    releases: rawHistory.releases.map((release) => ({
+      ...release,
+      files: Object.fromEntries(
+        Object.entries(release.files).map(([key, hash]) => [
+          key.replace(/^ab-verify-idiom\//, "idiom-verify/"),
+          hash,
+        ]),
+      ),
+    })),
+  };
   const manifestSnapshot = new Map<string, string>();
   let manifest: PristineManifest = { schema: 1, files: {} };
   let manifestError: string | undefined;
@@ -108,6 +128,7 @@ export async function upgradeSkills(
     previous: unknown,
     dryRun: options.dryRun === true,
     files: [],
+    skills: [],
     discoveryConflicts: [],
   };
   const decisions: Decision[] = [];
@@ -116,7 +137,9 @@ export async function upgradeSkills(
     { snapshots: Map<string, string>; missing: boolean }
   >();
   let resolver: Resolver | undefined;
-  for (const skill of skillNames) {
+  for (const skill of skillNames.filter(
+    (name) => !options.skills || options.skills.includes(name),
+  )) {
     const incomingFiles = distribution.skills[skill] ?? {};
     const tracked = Object.keys(manifest.files).filter((key) =>
       key.startsWith(`${skill}/`),
@@ -125,6 +148,7 @@ export async function upgradeSkills(
     let protectedReason: string | undefined;
     let canonicalAbsent = false;
     let identity: string | undefined;
+    let mainContent: string | undefined;
     try {
       const directory = await inspect(
         root,
@@ -132,7 +156,7 @@ export async function upgradeSkills(
         skillSnapshots,
       );
       canonicalAbsent = directory.kind === "absent";
-      if (skill === "ab-verify-idiom" && canonicalAbsent && !tracked.length)
+      if (skill === "idiom-verify" && canonicalAbsent && !tracked.length)
         continue;
       if (directory.kind !== "absent" && directory.kind !== "directory")
         protectedReason = "Canonical skill path is a protected entry";
@@ -143,6 +167,7 @@ export async function upgradeSkills(
           skillSnapshots,
         );
         if (main.kind === "file") {
+          mainContent = main.content;
           identity = skillIdentity(main.content);
           if (identity !== skill)
             protectedReason = "Different or invalid skill frontmatter identity";
@@ -176,6 +201,37 @@ export async function upgradeSkills(
         reason: sanitizeCritiqueDiagnostic(error),
       });
     }
+    // The template set this install came from: provenance versions, or for an
+    // untracked legacy install, releases whose SKILL.md matches exactly. A
+    // missing file outside that set is new upstream, so it is adopted.
+    const priorVersions = new Set(
+      tracked.map((key) => manifest.files[key]?.version as string),
+    );
+    if (
+      !priorVersions.size &&
+      !tracked.length &&
+      identity === skill &&
+      mainContent !== undefined
+    ) {
+      const mainDigest = digest(mainContent);
+      for (const release of history.releases)
+        if (release.files[`${skill}/SKILL.md`] === mainDigest)
+          priorVersions.add(release.version);
+    }
+    const catalogReleases = history.releases.filter((release) =>
+      priorVersions.has(release.version),
+    );
+    const priorKeys = new Set(
+      catalogReleases.length
+        ? catalogReleases.flatMap((release) =>
+            Object.keys(release.files).filter((key) =>
+              key.startsWith(`${skill}/`),
+            ),
+          )
+        : priorVersions.size
+          ? tracked
+          : [],
+    );
     const names = [
       ...new Set([
         ...Object.keys(incomingFiles),
@@ -203,6 +259,8 @@ export async function upgradeSkills(
       const snapshots = new Map(skillSnapshots);
       for (const [path, value] of manifestSnapshot) snapshots.set(path, value);
       const decision: Decision = { outcome, key, snapshots };
+      let merge: Merge | undefined;
+      let baseLabel = "released template";
       report.files.push(outcome);
       decisions.push(decision);
       if (protectedReason) {
@@ -232,7 +290,11 @@ export async function upgradeSkills(
             throw new Error(
               "Pristine bytes are missing or fail their recorded digest",
             );
-          base = stored.content;
+          base =
+            skill === "idiom-verify"
+              ? renamedIdentity(stored.content)
+              : stored.content;
+          baseLabel = `pristine ${provenance.version}`;
         } else if (stored.kind !== "absent")
           throw new Error("Pristine bytes have no valid ownership record");
         const local = live.kind === "file" ? live.content : undefined;
@@ -262,7 +324,10 @@ export async function upgradeSkills(
         }
         decision.baseline = incoming.content;
         if (local === undefined) {
-          outcome.action = base === undefined ? "installed" : "adopted";
+          outcome.action =
+            base !== undefined || (priorKeys.size > 0 && !priorKeys.has(key))
+              ? "adopted"
+              : "installed";
           decision.content = incoming.content;
         } else if (local === incoming.content || base === incoming.content) {
           outcome.action = "current";
@@ -272,7 +337,7 @@ export async function upgradeSkills(
         } else {
           // A base-less unknown file already failed above. Git is needed only
           // for true divergence, never for byte-equal adoption or init.
-          const merge = await mergeText(
+          merge = await mergeText(
             base as string,
             local,
             incoming.content,
@@ -314,6 +379,12 @@ export async function upgradeSkills(
         delete decision.content;
         delete decision.baseline;
         delete decision.retire;
+        if (merge?.conflicts.length)
+          outcome.conflictText = renderConflictText(merge, {
+            local: outcome.path,
+            base: baseLabel,
+            incoming: distribution.version,
+          });
       }
     }
     // Identity establishes ownership only with provenance or exact known bytes.
@@ -328,6 +399,7 @@ export async function upgradeSkills(
   }
   report.files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   report.previous = previousSummary(report.files);
+  report.skills = rollupSkills(report.files);
   if (options.dryRun) return report;
   // Decisions and resolver calls finish before any project write. Recheck all
   // relevant original inputs; update expectations only for our own writes.
@@ -431,5 +503,7 @@ export async function upgradeSkills(
       });
     }
   }
+  // The write and link phases can still turn a file conflicted.
+  report.skills = rollupSkills(report.files);
   return report;
 }

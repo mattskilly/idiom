@@ -11,7 +11,8 @@ export const learnedKinds = [
 /**
  * One line of `.idiom/learned.jsonl`: a human-found miss and the rule or
  * configuration it became, with the capture it was observed on so the next
- * review can be checked against it.
+ * review can be checked against it. Optional coverage marks retain the human's
+ * rule or fixture reference without adding another log entry.
  */
 export const learnedEntrySchema = z
   .object({
@@ -38,6 +39,13 @@ export const learnedEntrySchema = z
         runId: z.string().trim().min(1),
         viewport: z.string().trim().min(1),
         screenshot: z.string().trim().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    covered: z
+      .object({
+        by: z.string().trim().min(1),
+        at: z.string().datetime({ offset: true }),
       })
       .strict()
       .optional(),

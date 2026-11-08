@@ -91,9 +91,12 @@ createServer(async (req,res)=>{res.setHeader('content-type','text/html');res.end
   );
   const flowPath = join(setup.project, ".idiom/flows/studio.json");
   const flow = JSON.parse(await readFile(flowPath, "utf8"));
-  flow.states.forEach((state: { id: string; url: string }) => {
-    state.url = state.id === "other" ? "/other" : "/";
-  });
+  flow.states.forEach(
+    (state: { id: string; url: string; loadingSettleMs?: number }) => {
+      state.loadingSettleMs = 50;
+      state.url = state.id === "other" ? "/other" : "/";
+    },
+  );
   await writeFile(flowPath, JSON.stringify(flow));
   await commit(setup.project, "MCP application");
   const session = await mcpClient({ project: setup.project });
@@ -428,7 +431,7 @@ test("baseline bootstrap, exact fix prompt and calibrated full-flow handoff pres
     }),
   );
   expect(noOp.passed).toBe(false);
-  expect(noOp.verdicts[0]?.status).toBe("reproduced");
+  expect(noOp.verdicts[0]?.status, JSON.stringify(noOp)).toBe("reproduced");
   await writeFile(join(project, "page.html"), page(48));
   await writeFile(join(project, "other.html"), page(48));
   await client.callTool({
@@ -558,7 +561,7 @@ test("baseline bootstrap, exact fix prompt and calibrated full-flow handoff pres
   expect(missingEvidence.isError).toBe(true);
 }, 180000);
 
-test("stored capture failures remain actionable before automatic baseline bootstrap", async () => {
+test("stored capture failures stay actionable and skip automatic baseline bootstrap", async () => {
   const { project } = await configured(page(48));
   const session = await mcpClient({
     project,
@@ -585,14 +588,17 @@ test("stored capture failures remain actionable before automatic baseline bootst
     name: "idiom_check",
     arguments: { flow: "studio" },
   })) as CallToolResult;
-  expect(response.isError).toBe(true);
+  // A completed review with failed tuples is a normal result, never a
+  // baseline, and never acknowledged as a successful check.
+  expect(response.isError).toBeFalsy();
   await expect(
     readFile(join(project, ".idiom/agent-hooks/state.json")),
   ).rejects.toThrow();
+  expect(JSON.stringify(response.content)).toContain("Baseline not recorded:");
   expect(JSON.stringify(response.content)).toContain(
-    "npx playwright install chromium",
+    "playwright install chromium",
   );
-  expect(JSON.stringify(response.content)).toContain("report.html");
+  expect(JSON.stringify(response.content)).toContain("report.md");
   expect(
     toolData<{ flows: unknown[] }>(
       await session.client.callTool({ name: "idiom_flows", arguments: {} }),

@@ -154,7 +154,13 @@ export function surfaceGeometry(tuple: CheckTuple): SurfaceGeometry {
     components: (observation.components ?? []).map((component) => ({
       name: component.name,
       selector: component.selector,
-      expected: `${component.width}×${component.height}`,
+      expected:
+        component.width === undefined || component.inferred?.axis === "height"
+          ? `${component.height}px high`
+          : component.height === undefined ||
+              component.inferred?.axis === "width"
+            ? `${component.width}px wide`
+            : `${component.width}×${component.height}`,
       rendered: component.rects.map(size),
     })),
   };

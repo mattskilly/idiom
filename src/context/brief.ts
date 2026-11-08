@@ -33,7 +33,7 @@ import {
   trackerRootsFor,
 } from "../review/lifecycle.js";
 import { compareFindingNames } from "../review/names.js";
-import { parseRulingBlocks } from "../rulings/law.js";
+import { effectiveLaw } from "../rulings/effective.js";
 import type { Decision } from "../schemas/decision.js";
 import type { ChecksSettings } from "../schemas/project.js";
 import type { RuleOverride, Rules } from "../schemas/rules.js";
@@ -68,6 +68,7 @@ export type BriefAcceptedWork = {
 
 export type DesignBrief = {
   flow: string | undefined;
+  flowKind?: "app" | "published" | undefined;
   design: string;
   rulings: RulingResolution[];
   product: string;
@@ -159,14 +160,16 @@ export async function collectDesignBrief(options: {
   dependencies?: ContextDependencies | undefined;
 }): Promise<DesignBrief> {
   const context = await loadProjectContext(options);
-  if (options.flow !== undefined)
-    await validateNamedFlow(context, options.flow);
+  const selected =
+    options.flow === undefined
+      ? undefined
+      : await validateNamedFlow(context, options.flow);
 
   const designSource = await requiredDocument(
     join(context.projectDirectory, context.project.design.designFile),
     context.project.design.designFile,
   );
-  const parsedLaw = parseRulingBlocks(designSource);
+  const parsedLaw = await effectiveLaw(designSource, context.projectDirectory);
   const product = await requiredDocument(
     join(context.projectDirectory, context.project.design.productFile),
     context.project.design.productFile,
@@ -210,6 +213,12 @@ export async function collectDesignBrief(options: {
 
   return {
     flow: options.flow,
+    ...(selected === undefined
+      ? {}
+      : {
+          flowKind:
+            ("kind" in selected.flow ? selected.flow.kind : undefined) ?? "app",
+        }),
     ...(decidedBriefs.length === 0 ? {} : { decidedBriefs }),
     design: parsedLaw.prose,
     rulings: parsedLaw.resolutions,
@@ -366,12 +375,13 @@ function rulingEntry(ruling: RulingResolution): string[] {
 }
 
 /**
- * What `idiom check` will reject, phrased as instructions for whoever is
+ * Preventive guidance, with rule labels where checks exist, for whoever is
  * writing the UI. Values come from the project's own configuration.
  */
 export function craftCheckEntries(
   checks: ChecksSettings,
   inferred: InferredComponent[] = [],
+  flowKind?: "app" | "published",
 ): string[][] {
   const entries = [
     "- Every icon-only or single-glyph control (?, ⋮, ×, a bare icon) has a visible tooltip on hover and focus and an accessible name that says what it does; a disabled one says why.",
@@ -392,9 +402,20 @@ export function craftCheckEntries(
     entries.push([
       `- The page frame (${checks.frame.selector}) stands apart from what surrounds it: a fill at least ${checks.frame.minLuminanceDelta} luminance away, a visible border, or a shadow.`,
     ]);
-  for (const component of checks.components)
+  for (const component of checks.components) {
+    const size =
+      component.width === undefined
+        ? `${component.height}px high`
+        : component.height === undefined
+          ? `${component.width}px wide`
+          : `${component.width}×${component.height}px`;
     entries.push([
-      `- "${component.name}" (${component.selector}) renders at ${component.width}×${component.height}px (±the ${component.tolerance.mode === "tighter" ? "smaller" : "larger"} of ${Math.round(component.tolerance.ratio * 100)}% and ${component.tolerance.px}px per dimension).`,
+      `- "${component.name}" (${component.selector}) renders at ${size} (±the ${component.tolerance.mode === "tighter" ? "smaller" : "larger"} of ${Math.round(component.tolerance.ratio * 100)}% and ${component.tolerance.px}px per dimension).`,
+    ]);
+  }
+  for (const target of checks.spacingTargets)
+    entries.push([
+      `- ${"between" in target ? `Between ${target.between.join(" and ")}` : `Within ${target.within}, consecutive visible direct children in DOM order`}: ${target.axis} border-box gap ${target.gap}px (±the ${target.tolerance.mode === "tighter" ? "smaller" : "larger"} of ${target.tolerance.ratio * 100}% and ${target.tolerance.px}px).`,
     ]);
   for (const component of inferred) {
     const size =
@@ -419,6 +440,26 @@ export function craftCheckEntries(
     ]);
   if (checks.copy.locale !== undefined)
     entries.push([`- Spell in ${checks.copy.locale}.`]);
+  const guidance =
+    flowKind === "published" || checks.page !== undefined
+      ? [
+          "- Give each page section a clear heading; heading-structure checks one visible h1 and no skipped heading levels.",
+          "- Keep an even page frame with shared content gutters; idiom:band-content-edge checks configured band-edge alignment.",
+          "- Leave no blank spacer bands between page sections.",
+        ]
+      : [
+          "- Put colour on data and status; keep routine chrome neutral.",
+          "- Make key numbers prominent through type rather than icon tiles.",
+          "- Show at most one status mark per row; use filled badges on only a small minority of rows.",
+          "- Right-align numerical columns and use tabular figures.",
+          "- Keep chips on one line and prevent them shrinking.",
+          "- Show navigation counts only for queues needing action.",
+          "- Keep an empty section's frame and give it an explanation or next step, never an empty bordered strip; empty-state checks the explanation or next step, not frame retention.",
+          "- Style scrollbars, selection, caret and focus rings from the tokens; idiom:focus-not-visible checks visible keyboard focus, not token use on every browser surface.",
+          "- Give every disclosure a visible indicator whose direction or appearance follows its expanded state.",
+          "- Use each icon for one meaning throughout the product.",
+        ];
+  entries.push(...guidance.map((line) => [line]));
   entries.push([
     "- After any UI change, run `idiom check <flow>` and fix every blocker and major finding before calling the work done.",
   ]);
@@ -483,7 +524,11 @@ function buildSections(brief: DesignBrief): Section[] {
             title: "Craft checks",
             priority: 1,
             markers: [],
-            entries: craftCheckEntries(brief.checks, brief.inferredComponents),
+            entries: craftCheckEntries(
+              brief.checks,
+              brief.inferredComponents,
+              brief.flowKind,
+            ),
             emptyText: "",
             unit: "entries" as const,
             spaced: false,

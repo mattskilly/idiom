@@ -1,7 +1,14 @@
 import { leftoverServerMessage } from "../capture/server-registry.js";
 import type { DoctorReport, DoctorStep } from "../doctor/run.js";
+import { renderSurfaces } from "../doctor/surfaces.js";
 
 export { type DoctorReport, runDoctor } from "../doctor/run.js";
+export {
+  inspectSurfaces,
+  renderSurfaces,
+  type SurfaceEntry,
+  type SurfacesReport,
+} from "../doctor/surfaces.js";
 
 const MARK: Record<DoctorStep["status"], string> = {
   pass: "✓",
@@ -28,5 +35,7 @@ export function renderDoctorReport(report: DoctorReport): string {
     )
       lines.push(`   ${"".padEnd(width)}  fix: ${step.hint}`);
   }
+  if (report.surfaces !== undefined)
+    lines.push("", ...renderSurfaces(report.surfaces));
   return `${lines.join("\n")}\n`;
 }

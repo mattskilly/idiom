@@ -240,12 +240,18 @@ test("plan reads a stored triage by id", async () => {
   expect(plan.code).toBe(0);
   const printed = JSON.parse(plan.stdout);
   expect(printed.triageId).toBe(id);
+  expect(printed.inventoryInstructions.join(" ")).toContain(
+    "real objects and magnitudes",
+  );
+  expect(printed.stateChecklist.join(" ")).toContain("editor+menu");
   expect(printed.request).toBe("add a pin to every tile");
   expect(
     printed.questions.map((q: { question: string }) => q.question),
   ).toEqual(verdict.questions);
   const text = await idiom(directory, ["brief", "plan", id], { invoke });
   expect(text.stdout).toMatch(/^# Research plan\n/);
+  expect(text.stdout).toContain("## Inventory before options");
+  expect(text.stdout).toContain("## Build every state");
   const missing = await idiom(directory, [
     "brief",
     "plan",
@@ -859,4 +865,37 @@ test("a linked brief that does not exist warns as missing-brief", async () => {
     reason: "missing-brief",
     briefs: [{ source: "link", slug: "no-such-brief", status: "missing" }],
   });
+});
+
+test("CLI record and decide retain optional screen inventory", async () => {
+  const directory = await temporary(true);
+  const inventory = {
+    screenQuestion: "What needs action?",
+    inventory: ["12 items"],
+  };
+  await writeFile(
+    join(directory, "brief.json"),
+    JSON.stringify({ ...JSON.parse(fixtureText), ...inventory }),
+  );
+  expect(
+    (await idiom(directory, ["brief", "record", "brief.json", "--json"])).code,
+  ).toBe(0);
+  expect(
+    (
+      await idiom(directory, [
+        "brief",
+        "decide",
+        "pinned-group-in-the-add-drawer",
+        "--option",
+        "corner-pin",
+      ])
+    ).code,
+  ).toBe(0);
+  const base = join(directory, ".idiom/briefs/pinned-group-in-the-add-drawer");
+  expect(JSON.parse(await readFile(`${base}.json`, "utf8"))).toMatchObject(
+    inventory,
+  );
+  expect(await readFile(`${base}.md`, "utf8")).toContain(
+    "**Screen question:** What needs action?",
+  );
 });

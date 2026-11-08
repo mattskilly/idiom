@@ -5,6 +5,7 @@ import {
   type ObservedElementV2,
 } from "../checks/types.js";
 import type { Finding } from "../schemas/finding.js";
+import { severityRank as sharedSeverityRank } from "../schemas/severity.js";
 
 /** Fixed presentation policy; additions to the category schema require a value. */
 export const categorySalience = {
@@ -59,6 +60,8 @@ export const categorySalience = {
   "touch-reachability": 4,
   liveness: 9,
   "media-fill": 4,
+  "visual-blank": 4,
+  "loading-stuck": 4,
   "collection-actions": 4,
   "font-loading": 4,
   "broken-link": 4,
@@ -79,6 +82,10 @@ export const categorySalience = {
   "selection-outline": 9,
   "disabled-highlight": 7,
   "brief-mismatch": 4,
+  "popover-dismissal": 9,
+  "focus-return": 7,
+  "spacing-target": 7,
+  "detached-flyout": 4,
   hierarchy: 4,
   density: 4,
   "brand-alignment": 4,
@@ -235,7 +242,42 @@ export function affectedCounts(
       [...places].map((key) => context?.get(key)?.state ?? key.split("/")[0]),
     ).size,
     places: places.size,
+    viewports: viewportCount(places),
   };
+}
+
+/** Distinct viewport names: the second segment of each coordinate key. */
+function viewportCount(coordinates: Iterable<string>): number {
+  return new Set(
+    [...coordinates].map((key) => key.split("#")[0]?.split("/")[1] ?? key),
+  ).size;
+}
+
+/**
+ * Why a finding is not a single-state cosmetic one. Within a severity, any
+ * reason puts it in the higher impact tier (docs/rules.md, Ranking).
+ */
+export type ImpactReason =
+  | "states"
+  | "viewports"
+  | "primary"
+  | "interactive"
+  | "broken";
+
+export function impactReasons(input: {
+  states: number;
+  viewports: number;
+  primary: boolean;
+  interactive: boolean;
+  salience: number;
+}): ImpactReason[] {
+  return [
+    ...(input.states >= 2 ? (["states"] as const) : []),
+    ...(input.viewports >= 2 ? (["viewports"] as const) : []),
+    ...(input.primary ? (["primary"] as const) : []),
+    ...(input.interactive ? (["interactive"] as const) : []),
+    ...(input.salience === 9 ? (["broken"] as const) : []),
+  ];
 }
 export function scoreGroup(
   group: {
@@ -244,20 +286,24 @@ export function scoreGroup(
     selector?: string | undefined;
     coordinates: string[];
   },
-  counts: { states: number; places: number },
+  counts: { states: number; places: number; viewports?: number | undefined },
   context?: IssueRankingContext,
 ) {
+  const { states, places } = counts;
   let explanation: RankingExplanation = {
     selector: group.selector,
     areaRatio: 0,
     aboveFold: false,
     primaryRegion: false,
     primaryAction: false,
-    ...counts,
+    states,
+    places,
     geometryAvailable: false,
   };
   let base = 1;
   let primaryAction = false;
+  let inPrimaryRegion = false;
+  let interactive = false;
   for (const coordinate of new Set(group.coordinates)) {
     const tuple = context?.get(coordinate);
     const target =
@@ -265,6 +311,7 @@ export function scoreGroup(
         ? undefined
         : tuple?.elements.get(group.selector);
     primaryAction ||= target?.signals?.paint?.primaryAction === true;
+    interactive ||= target?.interactive === true;
     if (!tuple || !target?.visible) continue;
     const { width, height } = tuple.viewport;
     const rect = target.rect;
@@ -298,6 +345,7 @@ export function scoreGroup(
           tuple.primaryRegions.has(selector),
         ));
     const action = aboveFold && target.signals?.paint?.primaryAction === true;
+    inPrimaryRegion ||= primaryRegion;
     const candidate = aboveFold
       ? 1 + Math.sqrt(areaRatio) + 0.5 + 0.5 * Number(primaryRegion || action)
       : 1;
@@ -313,7 +361,8 @@ export function scoreGroup(
         aboveFold,
         primaryRegion,
         primaryAction: action,
-        ...counts,
+        states,
+        places,
         geometryAvailable: true,
       };
     }
@@ -323,23 +372,40 @@ export function scoreGroup(
     0.25 * Math.min(1, Math.log2(Math.max(1, counts.states)) / 3) +
     0.25 * Math.min(1, Math.log2(Math.max(1, counts.places)) / 6);
   const salience = salienceFor(group.category, group.rule);
+  const reasons = impactReasons({
+    states: counts.states,
+    viewports: counts.viewports ?? viewportCount(group.coordinates),
+    primary: primaryAction || inPrimaryRegion,
+    interactive,
+    salience,
+  });
   return {
     salience,
     prominence,
     score: salience * prominence,
     explanation,
     primaryAction,
+    impact: reasons.length > 0 ? (1 as const) : (0 as const),
+    impactReasons: reasons,
   };
 }
 
-/** Priority of completed presentation items; callers retain their own final tie-break. */
-export function comparePriority(
-  left: { severity: Finding["severity"]; score: number },
-  right: { severity: Finding["severity"]; score: number },
-): number {
-  const severity = { blocker: 0, major: 1, minor: 2 };
+type Prioritized = {
+  severity: Finding["severity"];
+  /** 1 when any impact reason holds; missing is neutral (sorts as 1). */
+  impact?: number | undefined;
+  score: number;
+};
+
+/**
+ * Priority of completed presentation items: severity, then impact tier, then
+ * score. Callers retain their own final tie-break.
+ */
+export function comparePriority(left: Prioritized, right: Prioritized): number {
+  const severity = sharedSeverityRank;
   return (
     severity[left.severity] - severity[right.severity] ||
+    (right.impact ?? 1) - (left.impact ?? 1) ||
     right.score - left.score
   );
 }

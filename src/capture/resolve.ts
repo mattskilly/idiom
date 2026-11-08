@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { dirtyMatchers } from "../baseline/dirty-policy.js";
 import { IdiomError } from "../errors.js";
 import { type Flow, isWebFlow } from "../schemas/flow.js";
 import type { Project } from "../schemas/project.js";
@@ -49,18 +50,23 @@ export const IDIOM_RUN_WRITTEN_PATHS = [
 export async function snapshotSource(
   projectDirectory: string,
   options: {
+    ignoreDirty?: readonly string[] | undefined;
     excludedPaths?: string[] | undefined;
     explicitOutputPath?: string | undefined;
   } = {},
 ): Promise<SourceIdentity> {
-  const { commit, dirty } = await sourceStatus(projectDirectory, options);
-  return { commit, dirty };
+  const { dirtyPaths: _paths, ...source } = await sourceStatus(
+    projectDirectory,
+    options,
+  );
+  return source;
 }
 
 /** Source identity plus every path that makes the tree dirty. */
 export async function sourceStatus(
   projectDirectory: string,
   options: {
+    ignoreDirty?: readonly string[] | undefined;
     excludedPaths?: string[] | undefined;
     explicitOutputPath?: string | undefined;
   } = {},
@@ -162,6 +168,13 @@ export async function sourceStatus(
       excludedDirectories.some(
         (directory) => path === directory || path.startsWith(`${directory}/`),
       ) || pathIsStagingResidue(path);
+    const ignored = new Set<string>();
+    const matchers = dirtyMatchers(options.ignoreDirty ?? []);
+    const userExcluded = (path: string) => {
+      const matches = matchers.some((pattern) => pattern.test(path));
+      if (matches) ignored.add(path);
+      return matches;
+    };
     const records = status.split("\0").filter((record) => record.length > 0);
     const dirtyPaths: string[] = [];
     for (let index = 0; index < records.length; index += 1) {
@@ -175,12 +188,18 @@ export async function sourceStatus(
         index += 1;
       }
       // A rename or copy is reported by its destination.
-      if (!paths.every(pathIsExcluded)) dirtyPaths.push(paths[0] as string);
+      const excluded = paths.map(
+        (path) => userExcluded(path) || pathIsExcluded(path),
+      );
+      if (!excluded.every(Boolean)) dirtyPaths.push(paths[0] as string);
     }
     return {
       commit: commit.trim(),
       dirty: dirtyPaths.length > 0,
       dirtyPaths,
+      ...(options.ignoreDirty?.length
+        ? { ignoredDirtyPaths: [...ignored].sort() }
+        : {}),
     };
   } catch (error) {
     if (error instanceof IdiomError) throw error;

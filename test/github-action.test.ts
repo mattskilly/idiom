@@ -133,11 +133,11 @@ async function graph(temporal = false) {
   return { project, temporary, baseline, head: finalHead, event, shared };
 }
 
-test("Action runs the built CLI at a diverging merge base, preserves the checkout, stages actual crops/composites, and ignores head acceptance", async () => {
+test("Action without a flow input plans the affected flow, runs the built CLI at a diverging merge base, preserves the checkout, stages actual crops/composites, and ignores head acceptance", async () => {
   const context = await graph();
   const beforeStatus = await git(context.project, "status", "--porcelain");
   const result = await runAction({
-    inputs,
+    inputs: { ...inputs, flow: "" },
     event: context.event,
     cwd: context.project,
     temporary: context.temporary,
@@ -151,28 +151,41 @@ test("Action runs the built CLI at a diverging merge base, preserves the checkou
     },
   });
   expect(result.result.operationalErrors).toEqual([]);
+  expect(result.result.plannedFlows).toEqual(["studio"]);
+  expect(result.result.plan).toContain("idiom check --gate");
+  const entry = result.result.flows[0];
+  const flowEvidence = join(result.evidence, "studio");
+  expect(entry.flow).toBe("studio");
   const outputs = await readFile(join(context.temporary, "outputs"), "utf8");
   expect(outputs).toContain(`baseline-sha=${context.baseline}`);
   expect(outputs).toContain("new-findings=1");
+  expect(outputs).toContain("outcome=checked");
   expect(outputs).toContain(`evidence-directory=${result.evidence}`);
   expect(
     await readFile(join(result.evidence, "diagnostics.log"), "utf8"),
   ).not.toContain("private-token");
   expect(result.result.baseline).toBe(context.baseline);
   expect(result.result.baseline).not.toBe(context.event.pull_request.base.sha);
-  expect(result.result.summary.findings).toHaveLength(1);
-  expect(result.result.summary.preExistingFindings).toHaveLength(1);
-  expect(result.result.summary.findings[0].selector).toBe("#regression");
-  expect(result.result.crops).toHaveLength(1);
-  expect(result.result.crops[0].label).toBe("Element crop");
-  expect(result.result.composites).toHaveLength(1);
-  for (const entry of [...result.result.crops, ...result.result.composites])
+  expect(entry.summary.findings).toHaveLength(1);
+  expect(entry.summary.preExistingFindings).toHaveLength(1);
+  expect(entry.summary.findings[0].selector).toBe("#regression");
+  expect(entry.crops).toHaveLength(1);
+  expect(entry.crops[0].label).toBe("Element crop");
+  expect(entry.composites).toHaveLength(1);
+  for (const item of [...entry.crops, ...entry.composites])
     expect(
-      PNG.sync.read(await readFile(join(result.evidence, entry.path))).width,
+      PNG.sync.read(await readFile(join(flowEvidence, item.path))).width,
     ).toBeGreaterThan(0);
-  const index = await readFile(join(result.evidence, "index.html"), "utf8");
-  expect(index).toContain(`src="${result.result.crops[0].path}"`);
-  expect(index).toContain(`src="${result.result.composites[0].path}"`);
+  const index = await readFile(join(flowEvidence, "index.html"), "utf8");
+  expect(index).toContain('href="../result.json"');
+  expect(
+    await readFile(join(flowEvidence, "comparison.json"), "utf8"),
+  ).toContain(context.baseline);
+  expect(await readFile(join(result.evidence, "index.html"), "utf8")).toContain(
+    'href="studio/index.html"',
+  );
+  expect(index).toContain(`src="${entry.crops[0].path}"`);
+  expect(index).toContain(`src="${entry.composites[0].path}"`);
   expect(await git(context.project, "rev-parse", "HEAD")).toBe(
     context.event.pull_request.base.sha,
   );
@@ -196,7 +209,10 @@ test("Action runs the built CLI at a diverging merge base, preserves the checkou
 test("Action operational errors survive never: missing history/flow, setup and capture/compare/JSON failures", async () => {
   const context = await graph();
   const cases = [
-    { options: { inputs: { ...inputs, flow: "missing" } }, match: /ENOENT/ },
+    {
+      options: { inputs: { ...inputs, flow: "missing" } },
+      match: /missing\.json/,
+    },
     {
       options: {
         event: {
@@ -236,10 +252,12 @@ test("Action operational errors survive never: missing history/flow, setup and c
       cli: [process.execPath, wrapper],
     });
     if (mode === "compare") {
-      expect(result.crops).toHaveLength(1);
+      const [entry] = result.flows;
+      expect(entry.crops).toHaveLength(1);
       expect(
-        PNG.sync.read(await readFile(join(evidence, result.crops[0].path)))
-          .width,
+        PNG.sync.read(
+          await readFile(join(evidence, "studio", entry.crops[0].path)),
+        ).width,
       ).toBeGreaterThan(0);
     }
     expect(result.operationalErrors.length).toBeGreaterThan(0);
@@ -264,6 +282,194 @@ test("Action operational errors survive never: missing history/flow, setup and c
     cli,
   });
   expect(result.operationalErrors.join("\n")).toContain("fetch-depth: 0");
+}, 60_000);
+
+async function branchCommit(
+  project: string,
+  from: string,
+  path: string,
+  content: string,
+) {
+  await git(project, "checkout", "-q", "--detach", from);
+  await mkdir(dirname(join(project, path)), { recursive: true });
+  await writeFile(join(project, path), content);
+  const sha = await commit(project, `change ${path}`);
+  await git(project, "checkout", "-q", "main");
+  return sha;
+}
+
+test("a backend-only change skips before browsers, setup or capture", async () => {
+  const context = await graph();
+  const head = await branchCommit(
+    context.project,
+    context.head,
+    "docs/notes.md",
+    "# Backend notes\n",
+  );
+  let browsers = 0;
+  const marker = join(context.temporary, "setup-ran");
+  const { result, evidence } = await runAction({
+    inputs: { ...inputs, flow: "", setup: `touch '${marker}'` },
+    event: {
+      pull_request: {
+        number: 43,
+        base: { sha: context.head, repo: { full_name: "owner/repo" } },
+        head: { sha: head, repo: { full_name: "owner/repo" } },
+      },
+    },
+    cwd: context.project,
+    temporary: context.temporary,
+    cli,
+    installBrowsers: async () => {
+      browsers += 1;
+    },
+    env: { ...process.env, GITHUB_OUTPUT: join(context.temporary, "out") },
+  });
+  expect(result.operationalErrors).toEqual([]);
+  expect(result.skipped.line).toMatch(
+    /^no UI changes since [0-9a-f]{12}; skipped$/,
+  );
+  expect(browsers).toBe(0);
+  await expect(readFile(marker)).rejects.toThrow();
+  const log = await readFile(join(evidence, "diagnostics.log"), "utf8");
+  expect(log).toContain("--plan-only");
+  expect(log).not.toMatch(/ capture /);
+  expect(result.flows).toEqual([]);
+  expect(gate(result)).toMatchObject({ skipped: result.skipped });
+  expect(await readFile(join(context.temporary, "out"), "utf8")).toContain(
+    "outcome=skipped",
+  );
+  expect(
+    await git(context.project, "worktree", "list", "--porcelain"),
+  ).not.toContain("scratch");
+}, 60_000);
+
+test("push compares the previous commit on the branch, falling back to the parent for a new branch", async () => {
+  const context = await graph();
+  const pushed = await runAction({
+    inputs: { ...inputs, flow: "" },
+    event: { before: context.baseline, after: context.head },
+    cwd: context.project,
+    temporary: context.temporary,
+    cli,
+    env: { ...process.env, GITHUB_EVENT_NAME: "push" },
+  });
+  expect(pushed.result.operationalErrors).toEqual([]);
+  expect(pushed.result.mode).toBe("push");
+  expect(pushed.result.baseline).toBe(context.baseline);
+  expect(pushed.result.pr).toBeUndefined();
+  expect(pushed.result.flows[0].summary.findings).toHaveLength(1);
+  expect(pushed.result.flows[0].previousHead).toBeUndefined();
+  expect(() => gate(pushed.result)).toThrow("1 new finding");
+  expect(renderComment(pushed.result, artifact)).toContain(
+    `previous commit: ${context.baseline}`,
+  );
+  const created = await runAction({
+    inputs,
+    event: { before: "0".repeat(40), after: context.head },
+    cwd: context.project,
+    temporary: context.temporary,
+    cli,
+    env: { ...process.env, GITHUB_EVENT_NAME: "push" },
+  });
+  expect(created.result.operationalErrors).toEqual([]);
+  expect(created.result.baseline).toBe(
+    await git(context.project, "rev-parse", `${context.head}^`),
+  );
+}, 120_000);
+
+test("schedule checks every flow once against the newest recorded baseline", async () => {
+  const context = await graph();
+  const env = {
+    ...process.env,
+    GITHUB_EVENT_NAME: "schedule",
+    GITHUB_SHA: context.head,
+    GITHUB_OUTPUT: join(context.temporary, "out"),
+  };
+  const options = {
+    inputs: { ...inputs, flow: "" },
+    event: {},
+    cwd: context.project,
+    temporary: context.temporary,
+    cli,
+    env,
+  };
+  const { result, evidence } = await runAction(options);
+  expect(result.operationalErrors).toEqual([]);
+  expect(result.mode).toBe("schedule");
+  expect(result.baseline).toBeUndefined();
+  expect(result.plannedFlows).toEqual(["studio"]);
+  const [entry] = result.flows;
+  expect(entry.summary.baseline.commit).toBe(
+    await git(context.project, "rev-parse", `${context.head}^`),
+  );
+  expect(entry.comparison).toBeUndefined();
+  const log = await readFile(join(evidence, "diagnostics.log"), "utf8");
+  expect(log.match(/ capture studio /g)).toHaveLength(1);
+  expect(log).not.toContain("scratch/before");
+  expect(() => gate(result)).not.toThrow();
+  expect(await readFile(join(context.temporary, "out"), "utf8")).toContain(
+    "baseline-sha=\n",
+  );
+  expect(renderComment(result, artifact)).toContain("recorded baseline");
+  await rm(join(context.temporary, "shared-baselines"), {
+    recursive: true,
+    force: true,
+  });
+  const missing = await runAction(options);
+  expect(missing.result.operationalErrors.join("\n")).toContain(
+    "idiom baseline record",
+  );
+}, 120_000);
+
+test("an unsupported event is an operational error", async () => {
+  const context = await graph();
+  const { result } = await runAction({
+    inputs,
+    event: context.event,
+    cwd: context.project,
+    temporary: context.temporary,
+    cli,
+    env: { ...process.env, GITHUB_EVENT_NAME: "workflow_dispatch" },
+  });
+  expect(result.operationalErrors).toEqual([
+    "this action supports pull_request, push and schedule events",
+  ]);
+  expect(() => gate(result)).toThrow();
+}, 60_000);
+
+test("a busy host defers the flow as neutral; an idiom without --plan-only still checks a named flow", async () => {
+  const context = await graph();
+  const wrapper = join(context.temporary, "busy.mjs");
+  await writeFile(
+    wrapper,
+    `import { spawnSync } from 'node:child_process'; const args=process.argv.slice(2); if (args.includes('--plan-only')) { console.error("error: unknown option '--plan-only'"); process.exit(1); } if (args[0]==='check') { console.log(JSON.stringify({ verdict: 'deferred', timedOutTuples: [{ state: 'editor', viewport: 'desktop', colorScheme: 'light' }] })); process.exit(3); } const r=spawnSync(${JSON.stringify(process.execPath)}, [${JSON.stringify(cli[1])},...args], {stdio:'inherit'}); process.exit(r.status ?? 1);`,
+  );
+  const options = {
+    event: context.event,
+    cwd: context.project,
+    temporary: context.temporary,
+    cli: [process.execPath, wrapper],
+    env: { ...process.env, GITHUB_OUTPUT: join(context.temporary, "out") },
+  };
+  const { result } = await runAction({ ...options, inputs });
+  expect(result.operationalErrors).toEqual([]);
+  expect(result.notices.join()).toContain("lacks --plan-only");
+  expect(result.flows[0].deferred.reason).toBe(
+    "host busy: 1 tuple(s) timed out (editor/desktop/light)",
+  );
+  expect(gate(result).deferred).toEqual([
+    { flow: "studio", reason: result.flows[0].deferred.reason },
+  ]);
+  expect(await readFile(join(context.temporary, "out"), "utf8")).toContain(
+    "outcome=deferred",
+  );
+  expect(renderComment(result, artifact)).toContain("Deferred studio");
+  const flowless = await runAction({
+    ...options,
+    inputs: { ...inputs, flow: "" },
+  });
+  expect(flowless.result.operationalErrors.join()).toContain("newer than");
 }, 60_000);
 
 const summary = {
@@ -487,6 +693,16 @@ test("Action metadata uses action_path, environment inputs and upload → commen
     expect(step.run).not.toContain("${{ inputs.");
   }
   expect(steps.at(-1).run).toContain("gate");
+  expect(action.inputs.flow.required).toBe(false);
+  expect(action.inputs.flow.default).toBe("");
+  expect(action.outputs.outcome.value).toBe(
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: Literal GitHub expression contract.
+    "${{ steps.run.outputs.outcome }}",
+  );
+  expect(steps[2].with.name).toBe(
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: Literal GitHub expression contract.
+    "idiom-${{ github.event.pull_request.number || github.event_name }}-${{ github.run_id }}-${{ github.run_attempt }}",
+  );
   expect(action.outputs["artifact-url"].value).toBe(
     // biome-ignore lint/suspicious/noTemplateCurlyInString: Literal GitHub expression contract.
     "${{ steps.upload.outputs.artifact-url }}",
@@ -562,18 +778,18 @@ test("a real synchronize fix updates the same comment, stages temporal before/af
   const failed = await runAction({ ...options, event: context.event });
   expect(failed.result.operationalErrors).toEqual([]);
   expect(() => gate(failed.result)).toThrow();
-  const temporal = failed.result.summary.findings.find(
+  const temporal = failed.result.flows[0].summary.findings.find(
     (finding: { timeline?: unknown }) => finding.timeline,
   );
   expect(temporal).toBeDefined();
   expect(temporal.fingerprint).toBeTruthy();
   const firstIndex = await readFile(
-    join(failed.evidence, "index.html"),
+    join(failed.evidence, "studio/index.html"),
     "utf8",
   );
   expect(firstIndex).toContain('src="filmstrips/current/');
   expect(renderComment(failed.result, artifact)).toContain(
-    "filmstrips/current/",
+    "studio/filmstrips/current/",
   );
   expect(renderComment(failed.result, artifact)).not.toContain("![");
   let managed: ReturnType<typeof bot> | undefined;
@@ -620,19 +836,19 @@ test("a real synchronize fix updates the same comment, stages temporal before/af
   };
   const fixed = await runAction({ ...options, event });
   expect(fixed.result.operationalErrors).toEqual([]);
-  expect(fixed.result.resolutionNotices).toEqual([]);
+  expect(fixed.result.flows[0].resolutionNotices).toEqual([]);
   expect(() => gate(fixed.result)).not.toThrow();
   expect(
-    fixed.result.summary.findings.some(
+    fixed.result.flows[0].summary.findings.some(
       (finding: { selector: string }) => finding.selector === "#regression",
     ),
   ).toBe(true);
   expect(
-    fixed.result.summary.preExistingFindings.some(
+    fixed.result.flows[0].summary.preExistingFindings.some(
       (finding: { selector: string }) => finding.selector === "#existing",
     ),
   ).toBe(true);
-  const resolved = fixed.result.resolved.find(
+  const resolved = fixed.result.flows[0].resolved.find(
     (entry: { fingerprint: string }) =>
       entry.fingerprint === temporal.fingerprint,
   );
@@ -644,15 +860,21 @@ test("a real synchronize fix updates the same comment, stages temporal before/af
   expect(resolved.after.images[0].label).toBe("Settled tuple screenshot");
   expect(resolved.after.reasons.join()).toContain("not a filmstrip");
   expect(
-    fixed.result.resolved.every(
+    fixed.result.flows[0].resolved.every(
       (entry: { fingerprint: string }) =>
-        entry.fingerprint !== fixed.result.summary.findings[0].fingerprint,
+        entry.fingerprint !==
+        fixed.result.flows[0].summary.findings[0].fingerprint,
     ),
   ).toBe(true);
-  const index = await readFile(join(fixed.evidence, "index.html"), "utf8");
+  const index = await readFile(
+    join(fixed.evidence, "studio/index.html"),
+    "utf8",
+  );
   for (const match of index.matchAll(/src="([^"]+)"/g))
     expect(
-      PNG.sync.read(await readFile(join(fixed.evidence, match[1] ?? ""))).width,
+      PNG.sync.read(
+        await readFile(join(fixed.evidence, "studio", match[1] ?? "")),
+      ).width,
     ).toBeGreaterThan(0);
   await publishResult({
     resultFile: fixed.resultFile,
@@ -665,9 +887,9 @@ test("a real synchronize fix updates the same comment, stages temporal before/af
   });
   expect(writes.map((write) => write.method)).toEqual(["POST", "PATCH"]);
   expect(writes[1]?.url).toContain("/issues/comments/321");
-  expect(writes[0]?.body).not.toContain("### Blocks merge (0)");
-  expect(writes[1]?.body).toContain("### Blocks merge (0)");
-  expect(writes[1]?.body).toContain("### Should fix (1)");
+  expect(writes[0]?.body).not.toContain("#### Blocks merge (0)");
+  expect(writes[1]?.body).toContain("#### Blocks merge (0)");
+  expect(writes[1]?.body).toContain("#### Should fix (1)");
   expect(writes[1]?.body).toContain("since previous push");
   expect(writes[1]?.body).toContain(context.head);
   expect(await git(context.project, "status", "--porcelain")).toBe(

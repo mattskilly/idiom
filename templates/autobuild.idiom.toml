@@ -1,15 +1,18 @@
-# Copy these entries into the target repository's autobuild.toml.
-# Also append "idiom" at the desired position in that repository's existing
-# [verify].steps array; this template intentionally does not replace the array.
-
+# Append "idiom-check" to the existing [verify].steps array.
 [commands]
-idiom-verify = "idiom verify booking --spec .ab/spec.md --out .ab/idiom"
+idiom-check = "idiom check --gate --fail-on major --deferred warn"
 
-[verify.idiom]
+[verify.idiom-check]
 kind = "agent"
-skill = "ab-verify-idiom"
-paths = ["apps/web/**", ".idiom/**", "PRODUCT.md", "DESIGN.md", "packages/design/**"]
+skill = "idiom-verify"
+# No paths: the gate detects UI changes itself. Busy hosts warn; run errors fail.
+# Optional finding verification is offered separately for Idiom-originated tickets.
 
+# For authorized repairs by the implementing caller:
+# Fix the top three findings in rank order (function before appearance), re-run, and stop after three rounds, reporting what remains.
+# One round is one repair batch followed by one check; the initial check is not a repair round. Stop earlier when nothing remains. Repair only within the caller's authorization; remaining blocking findings still withhold completion and do not permit suppressions.
+# The verifier runs once; the pipeline retry policy is unchanged.
+#
 # In builds, gate with idiom check --gate: it checks only the states the
 # change affects, at one viewport and scheme unless responsive or theme styles
 # changed, probes only controls that render differently, fits a time budget
@@ -17,25 +20,19 @@ paths = ["apps/web/**", ".idiom/**", "PRODUCT.md", "DESIGN.md", "packages/design
 # "no UI changes since <base>; skipped" when nothing the UI uses changed.
 # It prints its plan and estimate first and ends with a Timing: line. If it is
 # slow, read that line (or pass --budget); do not remove the step.
-# Add under the existing [commands] table:
-# idiom-check = "idiom check --gate --fail-on major"
-# Append "idiom-check" to the existing [verify].steps array, then add:
-# [verify.idiom-check]
-# kind = "check"
-# command = "idiom-check"
 # Set "server": { "reuse": true } in .idiom/project.json (or pass
 # --reuse-server) when a dev server is already running at server.readyUrl.
 #
 # Full coverage moves to a scheduled run (nightly CI or cron), which also
 # refreshes the timing history and probe fingerprints the gate plans from:
-#   idiom check booking --since-baseline --fail-on major
+#   idiom check <flow> --since-baseline --fail-on major
 # Initialize it with a clean HEAD check and commit .idiom/baselines; use
-# idiom baseline accept booking after intentional changes.
+# idiom baseline accept <flow> after intentional changes.
 
 # Optional before/after composites for any two stored captures (for example
 # the build's capture against one taken at the merge base):
-#   idiom compare booking --from <after-run> --against <before-run> --out .ab/idiom-compare
-# Its attachments.json and before-after.md follow the exact ab-verify-idiom
+#   idiom compare <flow> --from <after-run> --against <before-run> --out .ab/idiom-compare
+# Its attachments.json and before-after.md follow the exact idiom-verify
 # contract (idiom-before-after-NNN composites, then the idiom-verify-report
 # report), so deposit each composite and then the report with --attach the same
 # way. Use its own --out so it never replaces the verify output in .ab/idiom.

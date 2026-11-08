@@ -2987,23 +2987,29 @@ test("no-finding verification publishes not-applicable output without capture or
   ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-test("Autobuild templates keep the literal verify command byte-identical and distinct attachment kinds", async () => {
+test("Autobuild templates separate the gate from the configured verifier and retain distinct attachment kinds", async () => {
   const root = join(import.meta.dirname, "..");
   const skill = await readFile(
-    join(root, "templates", "ab-verify-idiom", "SKILL.md"),
+    join(root, "templates", "idiom-verify", "SKILL.md"),
     "utf8",
   );
   const config = await readFile(
     join(root, "templates", "autobuild.idiom.toml"),
     "utf8",
   );
-  const command = "idiom verify booking --spec .ab/spec.md --out .ab/idiom";
+  const command = "idiom verify <flow> --spec .ab/spec.md --out .ab/idiom";
   expect(
     skill.match(
       new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
     ),
   ).toHaveLength(1);
-  expect(config).toContain(`idiom-verify = "${command}"`);
+  expect(config).toContain(
+    'idiom-check = "idiom check --gate --fail-on major --deferred warn"',
+  );
+  expect(skill).toContain(
+    "Read and parse the repository’s actual".replace("’", "'"),
+  );
+  expect(skill).toContain("autobuild.toml");
   expect(skill).toContain(
     "idiom-before-after-$" + '{ordinal.toString().padStart(3, "0")}',
   );
@@ -3012,10 +3018,10 @@ test("Autobuild templates keep the literal verify command byte-identical and dis
 
 test("the Autobuild verifier clears stale output and attaches paired evidence on failure", async () => {
   const skill = await readFile(
-    join(import.meta.dirname, "..", "templates", "ab-verify-idiom", "SKILL.md"),
+    join(import.meta.dirname, "..", "templates", "idiom-verify", "SKILL.md"),
     "utf8",
   );
-  const command = "idiom verify booking --spec .ab/spec.md --out .ab/idiom";
+  const command = "idiom verify <flow> --spec .ab/spec.md --out .ab/idiom";
   const clear = skill.indexOf("rm -rf .ab/idiom`");
   expect(clear).toBeGreaterThan(-1);
   expect(clear).toBeLessThan(skill.indexOf(command));
@@ -3342,4 +3348,92 @@ test("static acceptance cannot pass because an unmeasured selector disappeared",
       config,
     }).status,
   ).toBe("passed");
+});
+
+test("a pinned brief mismatch fails verification even when the embedded finding is fixed", async () => {
+  const { projectDirectory, baselineDirectory, spec } =
+    await verifyRunFixture();
+  const asset = join(
+    projectDirectory,
+    ".ab",
+    "assets",
+    "design",
+    "card-height",
+  );
+  await mkdir(asset, { recursive: true });
+  await writeFile(
+    join(asset, "criteria.json"),
+    JSON.stringify({
+      format: "idiom-design-asset",
+      version: 1,
+      brief: {
+        slug: "card-height",
+        title: "Card height",
+        decision: "Keep height",
+        chosenOption: "keep",
+        chosenTitle: "Keep",
+        decidedBy: "requester",
+      },
+      criteria: [
+        {
+          index: 0,
+          kind: "geometry",
+          statement: "Card is 56px tall",
+          assertions: [
+            {
+              flow: "booking",
+              state: "confirmed",
+              selector: "main",
+              height: 56,
+            },
+          ],
+          rules: [],
+        },
+      ],
+      screenshots: [],
+    }),
+  );
+  const launcher = browserWithText("After");
+  const result = await runVerify({
+    project: projectDirectory,
+    flow: "booking",
+    spec,
+    against: baselineDirectory,
+    out: join(projectDirectory, ".idiom", "reports", "asset-verified"),
+    dependencies: {
+      gitTopology: async () => undefined,
+      capture: {
+        inheritedEnvironment: { PATH: process.env.PATH },
+        snapshotSource: async () => ({ commit: "def456", dirty: false }),
+        browserLauncher: async (...args) => {
+          const browser = await launcher(...args);
+          return {
+            ...browser,
+            async capture(tuple) {
+              const result = await browser.capture(tuple);
+              if (result.observations?.version === 2)
+                result.observations.selectorMarks = [
+                  { purpose: "brief", selector: "main", matches: ["main"] },
+                ];
+              return result;
+            },
+          };
+        },
+      },
+    },
+  });
+  expect(result.verdicts?.every((verdict) => verdict.status === "fixed")).toBe(
+    true,
+  );
+  expect(result).toMatchObject({
+    outcome: "failed",
+    passed: false,
+    designAssets: {
+      passed: false,
+      briefs: [{ slug: "card-height", mismatched: 1 }],
+    },
+  });
+  expect(result.causes.join(" ")).toContain(
+    'Brief "Card height" (card-height, design asset card-height), criterion',
+  );
 });

@@ -4,6 +4,7 @@ import {
   referenceImageLimitIssue,
   sniffImageMediaType,
 } from "../references/limits.js";
+import { findingSeveritySchema } from "../schemas/severity.js";
 import { LIMITS } from "./config.js";
 import { HostedError } from "./errors.js";
 import { publicUrl } from "./ssrf.js";
@@ -26,7 +27,7 @@ export const reportSchema = z
         z
           .object({
             title: text,
-            severity: z.enum(["blocker", "major", "minor"]),
+            severity: findingSeveritySchema,
             detail: text,
             assets: z.array(z.string().regex(assetName)).max(8),
           })

@@ -329,3 +329,143 @@ test("the flow target never changes captured-settings identity or the default ch
       }).success,
     ).toBe(false);
 });
+
+const dismissal = (
+  status: NonNullable<ProbeResult["dismissal"]>["status"],
+  reason?: string,
+): ProbeResult["dismissal"] => ({
+  trigger: "#open",
+  root: "#panel",
+  kind: "popup",
+  status,
+  ...(reason === undefined ? {} : { reason }),
+  tests: [],
+});
+
+test("dismissal counts tested and not-reached overlays with the top reason", () => {
+  const budget = "probe budget (no time left in the control's budget)";
+  const coverage = computeProbeCoverage({
+    tuples: [
+      tuple("home", [
+        result("a", { dismissal: dismissal("tested") }),
+        result("b", { dismissal: dismissal("partial", budget) }),
+        result("c", { dismissal: dismissal("not-reached", budget) }),
+        result("d", {
+          dismissal: dismissal("not-reached", "dismissal limit (12 per state)"),
+        }),
+        result("e", { dismissal: dismissal("not-applicable") }),
+        result("f", { dismissal: dismissal("tested"), reusedFrom: "menu" }),
+      ]),
+      tuple("menu", [result("plain")]),
+    ],
+  });
+  expect(coverage?.states[0]?.dismissal).toEqual({
+    tested: 2,
+    notReached: 3,
+    topNotReached: { reason: "probe budget", count: 2 },
+  });
+  expect(coverage?.states[1]?.dismissal).toBeUndefined();
+  expect(coverage?.totals).toMatchObject({
+    dismissalTested: 2,
+    dismissalNotReached: 3,
+  });
+  if (!coverage) throw new Error("no coverage");
+  const lines = probeCoverageLines(coverage);
+  expect(lines.header).toContain("; dismissal: 2 tested, 3 not reached");
+  expect(lines.states[0]).toContain(
+    '; dismissal: 2 tested, 3 not reached ("probe budget" ×2)',
+  );
+  expect(lines.states[1]).not.toContain("dismissal");
+});
+
+test("coverage without dismissal data prints no dismissal suffix", () => {
+  const coverage = computeProbeCoverage({ tuples: [tuple("home", ten(0))] });
+  expect(coverage?.totals.dismissalTested).toBeUndefined();
+  if (!coverage) throw new Error("no coverage");
+  const lines = probeCoverageLines(coverage);
+  expect(lines.header).not.toContain("dismissal");
+});
+
+test("state timeouts give idle-host advice, including failures before observations", () => {
+  const failed = {
+    state: "unreached",
+    viewport: "desktop",
+    colorScheme: "light" as const,
+    failure: {
+      stage: "step",
+      message: "expired",
+      timeout: { kind: "readiness" as const, timeoutMs: 20000 },
+    },
+  };
+  const stateTimeout = tuple("slow", [
+    notReached("control", "flow budget share"),
+  ]);
+  if (
+    stateTimeout.observations?.version === 2 &&
+    stateTimeout.observations.probe
+  )
+    stateTimeout.observations.probe.stateReachTimeout = {
+      kind: "navigation",
+      timeoutMs: 60000,
+    };
+  const coverage = computeProbeCoverage({
+    tuples: [failed, stateTimeout],
+    intended: [
+      { state: "unreached", viewport: "desktop", colorScheme: "light" },
+    ],
+    flowBudgetMs: 400000,
+  });
+  if (!coverage) throw new Error("missing coverage");
+  const lines = probeCoverageLines(coverage);
+  expect(lines.states).toContain(
+    "Probe produced no evidence for unreached: the state timed out. Re-run on an idle host.",
+  );
+  expect(lines.states).toContain(
+    "Probe produced no evidence for slow: the state timed out. Re-run on an idle host.",
+  );
+  expect(lines.warning).toBeUndefined();
+  expect(coverage.totals.candidates).toBe(1);
+  const mixed = computeProbeCoverage({
+    tuples: [failed, stateTimeout, tuple("budget", ten(5))],
+    intended: [
+      { state: "unreached", viewport: "desktop", colorScheme: "light" },
+    ],
+    flowBudgetMs: 400000,
+  });
+  expect(mixed?.warning).toContain("5 of 10");
+  expect(mixed?.warning).toContain("Raise checks.probe.flowBudgetMs");
+});
+
+test("operational pressure and screenshot deadlines keep legacy identities; an explicit cap changes evidence", () => {
+  const legacy = capturePredicateIdentity(project, flow);
+  expect(
+    capturePredicateIdentity(
+      projectSchema.parse({
+        ...project,
+        capture: { ...project.capture, hostPressureThreshold: 2 },
+      }),
+      flow,
+    ),
+  ).toBe(legacy);
+  expect(
+    capturePredicateIdentity(
+      project,
+      flowSchema.parse({
+        ...flow,
+        states: flow.states.map((state) => ({
+          ...state,
+          screenshotTimeoutMs: 90000,
+        })),
+      }),
+    ),
+  ).toBe(legacy);
+  expect(
+    capturePredicateIdentity(
+      projectSchema.parse({
+        ...project,
+        capture: { ...project.capture, maxFullPageHeight: 1000 },
+      }),
+      flow,
+    ),
+  ).not.toBe(legacy);
+});

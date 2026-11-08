@@ -515,3 +515,61 @@ test("strict artifacts accept optional new evidence and legacy v2; config defaul
     checksConfigSchema.safeParse({ fieldGroups: { typo: 1 } }).success,
   ).toBe(false);
 });
+
+test("ambiguous card overlaps aggregate by group with stable identity without absorbing obstructions", () => {
+  const elements = ["a1", "b1", "a2", "b2", "buried", "cover"].map((id) =>
+    element({ selector: `#${id}`, outOfFlow: true }),
+  );
+  const pair = (a: string, b: string, card?: string): OverlapObservation => ({
+    a: `#${a}`,
+    b: `#${b}`,
+    kinds: ["interactive", "interactive"],
+    rect: { x: 0, y: 0, width: 20, height: 20 },
+    partial: [],
+    samples: 9,
+    hits: 9,
+    ...(card
+      ? {
+          cardAction: {
+            card,
+            group: "#gallery | article.card",
+            status: "ambiguous" as const,
+          },
+        }
+      : {}),
+  });
+  const pairs = [
+    pair("a1", "b1", "#card1"),
+    pair("a2", "b2", "#card2"),
+    pair("buried", "cover"),
+  ];
+  const forward = run(
+    elementOverlapCheck,
+    tupleOf(elements, { overlaps: pairs }),
+  ).candidates;
+  const backward = run(
+    elementOverlapCheck,
+    tupleOf(elements, { overlaps: [...pairs].reverse() }),
+  ).candidates;
+  expect(forward).toHaveLength(2);
+  const info = forward.find((candidate) => candidate.severity === "info");
+  expect(info?.verification.params).toMatchObject({
+    group: "#gallery | article.card",
+    affectedCards: 2,
+  });
+  expect(
+    backward.find((candidate) => candidate.severity === "info")
+      ?.fingerprintHint,
+  ).toBe(info?.fingerprintHint);
+  expect(
+    forward.find((candidate) => candidate.severity === "major")?.selectorHint,
+  ).toContain("#buried");
+  // Removing optional metadata replays the legacy confirmed overlap result.
+  const legacy = pairs.map(({ cardAction: _cardAction, ...pair }) => pair);
+  expect(
+    run(
+      elementOverlapCheck,
+      tupleOf(elements, { overlaps: legacy }),
+    ).candidates.map((candidate) => candidate.severity),
+  ).toEqual(["major", "major", "major"]);
+});

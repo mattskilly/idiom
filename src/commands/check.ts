@@ -1,19 +1,31 @@
 import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import {
   beginCheckRecording,
   completeCheckRecording,
 } from "../agent/check-state.js";
 import { resolveRunBaseline } from "../baseline/compare.js";
-import { recordBaseline } from "../baseline/record.js";
-import { renderBaselineComparison } from "../baseline/render.js";
+import {
+  type BaselineNotRecorded,
+  baselineGapDiagnostic,
+  type CaptureFailure,
+  captureCompleteness,
+  recordBaseline,
+} from "../baseline/record.js";
+import {
+  acknowledgementLines,
+  renderBaselineComparison,
+} from "../baseline/render.js";
 import {
   type BaselineComparisonSummary,
   displayPath,
+  isGateOpen,
   type SummaryFinding,
   summarizeBaselineComparison,
   summarizeFinding,
 } from "../baseline/summary.js";
+import type { CaptureExecutionContext } from "../capture/execution-context.js";
+import { withRefWorktree } from "../capture/ref-worktree.js";
 import type { CaptureScope } from "../capture/scope.js";
 import { type CheckTiming, checkTiming } from "../capture/timings.js";
 import type { ProductionBuild } from "../capture/types.js";
@@ -25,9 +37,24 @@ import {
   type FlowStateCoverage,
   stateCoverageLine,
 } from "../coverage/states.js";
+import type { AcknowledgementLapse } from "../decisions/acknowledgements.js";
+import { pendingForRun } from "../decisions/pending.js";
+import { decisionQuestion } from "../decisions/question.js";
+import {
+  buildDigestRecord,
+  digestInputs,
+  writeDigestRecord,
+} from "../digest/record.js";
 import { IdiomError, RunFailure } from "../errors.js";
 import { acceptanceText, basisDescription } from "../findings/presentation.js";
+import {
+  findingsMissEvidence,
+  type HumanFoundSummary,
+  humanFoundLine,
+  summarizeMisses,
+} from "../learn/misses.js";
 import { loadRunTuples, resolveStoredRun } from "../review/artifacts.js";
+import type { CatalogFinding } from "../review/catalog.js";
 import { describeSpread, isRepeated } from "../review/groups.js";
 import {
   type CheckIssue,
@@ -35,6 +62,8 @@ import {
   collapseIssues,
 } from "../review/issues.js";
 import { type CheckGroup, projectIssueSummary } from "../review/summary.js";
+import type { PendingDecision } from "../schemas/pending-decision.js";
+import { severityRank as sharedSeverityRank } from "../schemas/severity.js";
 
 export type { CheckGroup } from "../review/summary.js";
 
@@ -52,10 +81,17 @@ import {
   emitClusterTickets,
   renderClusterTicketsResult,
 } from "../tickets/emit.js";
-import { validateProject } from "../validation.js";
+import { type ValidationResult, validateProject } from "../validation.js";
 import { deterministicFingerprintSet } from "../verify/evaluate.js";
 
 export type CheckSummary = PaintedCoverageReport & {
+  decisionNeeded?: PendingDecision[] | undefined;
+  decisionQuestion?: string | undefined;
+  humanFound?: HumanFoundSummary | undefined;
+  captureFailures?: CaptureFailure[] | undefined;
+  baselineNotRecorded?: BaselineNotRecorded | undefined;
+  verdict?: "deferred" | undefined;
+  timedOutTuples?: import("../capture/scope.js").Coordinate[] | undefined;
   scope?: import("../capture/run-record.js").RunRecord | undefined;
   timings?: import("../capture/timings.js").RunTimings | undefined;
   /** Wall clock and per-phase breakdown; the CLI's last `Timing:` line. */
@@ -87,6 +123,14 @@ export type CheckSummary = PaintedCoverageReport & {
   designSystemQuestions?: CheckDesignSystemQuestion[] | undefined;
   /** One line when the primary checkout's finding names diverged. */
   findingNameWarning?: string | undefined;
+  /** Open findings tracked elsewhere: listed, never counted or gated. */
+  acknowledgedFindings?: SummaryFinding[] | undefined;
+  /** Acknowledgements that no longer hold; those findings count again. */
+  acknowledgementLapses?: AcknowledgementLapse[] | undefined;
+  /** One line when this run's digest.json could not be written. */
+  digestWarning?: string | undefined;
+  /** One line when this run's attribution.json could not be written. */
+  attributionWarning?: string | undefined;
 };
 
 export type CheckDesignSystemQuestion = {
@@ -119,7 +163,7 @@ export type CheckAdvisory = {
   }>;
 };
 
-const order = { blocker: 0, major: 1, minor: 2 } as const;
+const order = sharedSeverityRank;
 
 /**
  * The agent loop: capture, run every deterministic check, and print what to
@@ -127,6 +171,10 @@ const order = { blocker: 0, major: 1, minor: 2 } as const;
  * agent can run it after every UI change instead of waiting for a gate.
  */
 export type CheckOptions = {
+  ref?: string | undefined;
+  changed?: true | string | undefined;
+  gate?: boolean | undefined;
+  executionContext?: CaptureExecutionContext | undefined;
   flow: string;
   project?: string | undefined;
   cwd?: string | undefined;
@@ -174,12 +222,43 @@ export async function checkWithReview(
   options: CheckOptions & {
     bootstrapBaseline?: boolean;
     materializeAllDeterministic?: boolean;
-    /** Adapters need tuple diagnostics before an automatic baseline can fail. */
-    captureFailureIsError?: boolean;
     /** Only public live check commands count toward the agent reminder. */
     recordAgentCheck?: boolean;
   },
 ): Promise<{ summary: CheckSummary; review: ReviewRunResult }> {
+  if (options.ref !== undefined) {
+    const conflicts = [
+      options.from !== undefined && "--from",
+      options.latest && "--latest",
+      options.changed !== undefined && "--changed",
+      options.gate && "--gate",
+      options.reuseServer && "--reuse-server",
+    ].filter(Boolean);
+    if (conflicts.length)
+      throw new IdiomError(
+        `--ref cannot be combined with ${conflicts.join(", ")}; it requires a fresh named-flow capture with an owned server`,
+      );
+    return withRefWorktree(
+      {
+        ...options,
+        ref: options.ref,
+        dependencies: options.dependencies?.capture,
+      },
+      (executionContext) =>
+        checkWithReview({
+          ...options,
+          ref: undefined,
+          executionContext,
+          dependencies: {
+            ...options.dependencies,
+            capture: {
+              ...options.dependencies?.capture,
+              signal: executionContext.signal,
+            },
+          },
+        }),
+    );
+  }
   const clock = options.dependencies?.monotonicNow ?? (() => performance.now());
   const started = clock();
   const {
@@ -190,7 +269,6 @@ export async function checkWithReview(
     emitTickets,
     advisory,
     materializeAllDeterministic,
-    captureFailureIsError,
     recordAgentCheck,
     bootstrapBaseline,
     ...reviewOptions
@@ -209,7 +287,8 @@ export async function checkWithReview(
   let bootstrap: Parameters<typeof recordBaseline>[0] | undefined;
   // Preflight: everything that can refuse the run does so here, before a
   // server starts or a capture begins.
-  const validated = await validateForRun(options);
+  const validated =
+    options.executionContext?.validated ?? (await validateForRun(options));
   const flow = validated.flows[0]?.flow;
   if (flow === undefined) throw new IdiomError(`unknown flow ${options.flow}`);
   if (recordedMode) {
@@ -217,6 +296,7 @@ export async function checkWithReview(
       validated,
       flow,
       baselineFile,
+      comparisonCommit: options.executionContext?.commit,
       cwd: options.cwd,
     });
     if (selected === undefined) {
@@ -232,7 +312,13 @@ export async function checkWithReview(
         baselineNotApplied =
           "baseline not applied: no reachable recorded baseline; changed checks never initialize one";
       } else
-        bootstrap = { validated, flow, runDirectory: "", requireHead: true };
+        bootstrap = {
+          validated,
+          flow,
+          runDirectory: "",
+          requireHead: true,
+          expectedCommit: options.executionContext?.commit,
+        };
     }
   }
   await preflightRun({
@@ -249,43 +335,58 @@ export async function checkWithReview(
         ? { prod: options.prod }
         : undefined,
     isolatedRegistry: options.isolatedRegistry,
+    stateProjectDirectory: options.executionContext?.stateProjectDirectory,
   });
   const recording =
     recordAgentCheck === true &&
     options.from === undefined &&
     options.latest !== true
-      ? await beginCheckRecording(options)
+      ? await beginCheckRecording({
+          ...options,
+          project:
+            options.executionContext?.stateProjectDirectory ?? options.project,
+        })
       : undefined;
+  // The digest record needs every coordinate's occurrence and the ranking
+  // context in every mode, not only the recorded comparison.
   const result = await runReview({
     ...reviewOptions,
     deterministicOnly: true,
-    includeIssueRankingContext: !recordedMode,
+    includeIssueRankingContext: true,
     ...(advisory === true ? { advisory: true } : {}),
     ...(materializeAllDeterministic === true
       ? { materializeAllDeterministic: true }
       : {}),
-    ...(recordedMode || materializeAllDeterministic === true
-      ? { includeDeterministicOccurrences: true }
-      : {}),
+    includeDeterministicOccurrences: true,
+    recordAttribution: true,
   });
   options.dependencies?.capture?.signal?.throwIfAborted();
-  if (captureFailureIsError) {
-    const loaded = await loadRunTuples(validated, flow, result.runDirectory);
-    const failures = loaded.tuples.flatMap((tuple) =>
-      tuple.failure ? [`${tuple.failure.stage}: ${tuple.failure.message}`] : [],
-    );
-    if (failures.length)
-      throw new RunFailure({
-        stage: "capture",
-        cause: "capture-failed",
-        headline: `capture failed: ${failures.length} tuple(s): ${(failures[0] as string).split("\n")[0]}`,
-        detail: `Capture failed: ${failures.join("; ")}. Reports: ${result.reportPath}, ${result.htmlReportPath}`,
-        hint: failures.some((failure) =>
-          /executable doesn't exist|playwright install/i.test(failure),
-        )
-          ? "npx playwright install chromium, then rerun"
-          : "open the report for each failed tuple, fix the flow or the app, and rerun",
-      });
+  const loaded = await loadRunTuples(validated, flow, result.runDirectory);
+  const completeness = captureCompleteness(
+    loaded,
+    validated.project.capture.colorScheme,
+  );
+  const captureFailures = completeness.failures;
+  const ordinaryFailure = captureFailures.some(
+    (failure) => !failure.hostDeferred,
+  );
+  const hostDeferred = (result.scope?.deferredTuples?.length ?? 0) > 0;
+  let baselineNotRecorded: BaselineNotRecorded | undefined;
+  if (
+    bootstrap !== undefined &&
+    (captureFailures.length > 0 || loaded.tuples.length === 0)
+  ) {
+    bootstrap = undefined;
+    recordedMode = false;
+    // A mixed run names its ordinary gaps; only a purely host-busy one defers.
+    if (hostDeferred && !ordinaryFailure)
+      baselineNotApplied =
+        "baseline not applied: host busy; initialization did not occur because review is deferred";
+    else
+      baselineNotRecorded = baselineGapDiagnostic(
+        captureFailures,
+        completeness.total,
+      );
   }
   const baselineRecorded =
     bootstrap === undefined
@@ -296,17 +397,22 @@ export async function checkWithReview(
         });
   let known: Set<string> | undefined;
   if (baseline !== undefined) {
-    const validated = await validateProject({
-      project: options.project,
-      flow: options.flow,
-      cwd: options.cwd,
-    });
+    const validated =
+      options.executionContext?.validated ??
+      (await validateProject({
+        project: options.project,
+        flow: options.flow,
+        cwd: options.cwd,
+      }));
     const record = validated.flows[0];
     if (record !== undefined) {
       const loaded = await loadRunTuples(
         validated,
         record.flow,
-        resolveStoredRun(validated.projectDirectory, baseline),
+        resolveStoredRun(
+          validated.stateProjectDirectory ?? validated.projectDirectory,
+          baseline,
+        ),
       );
       known = deterministicFingerprintSet(
         loaded.tuples,
@@ -325,15 +431,29 @@ export async function checkWithReview(
       ...(result.build === undefined ? {} : { build: result.build }),
       runDirectory: result.runDirectory,
       reportPath: result.reportPath,
-      ...(await summarizeBaselineComparison(options, result, findings)),
+      ...(await summarizeBaselineComparison(
+        {
+          ...options,
+          validated,
+          comparisonCommit: options.executionContext?.commit,
+        },
+        result,
+        findings,
+      )),
       ...(baselineRecorded === undefined ? {} : { baselineRecorded }),
     };
   } else {
     const deferredIds = new Set(
       result.deferredFindings.map((finding) => finding.id),
     );
-    const open = [...findings, ...result.deferredFindings].filter(
-      (finding) => finding.status === "open" || finding.status === "approved",
+    const unresolved = [...findings, ...result.deferredFindings].filter(
+      isGateOpen,
+    );
+    const open = unresolved.filter(
+      (finding) => finding.acknowledgement === undefined,
+    );
+    const acknowledged = unresolved.filter(
+      (finding) => finding.acknowledgement !== undefined,
     );
     const live = open
       .filter(
@@ -374,13 +494,36 @@ export async function checkWithReview(
       groups,
       issues,
       blocking: live.filter(
-        (finding) => finding.severity !== "minor" && finding.basis !== "judged",
+        (finding) =>
+          (finding.severity === "blocker" || finding.severity === "major") &&
+          finding.basis !== "judged",
       ).length,
       ...(known === undefined
         ? {}
         : { preExisting: open.length - live.length }),
+      acknowledgedFindings: acknowledged.map((finding) => ({
+        ...(deferredIds.has(finding.id) ? { deferred: true } : {}),
+        ...summarizeFinding(finding, result, base),
+      })),
+      acknowledgementLapses: result.acknowledgementLapses,
     };
   }
+  summary.decisionNeeded = await pendingForRun({
+    projectDirectory:
+      validated.stateProjectDirectory ?? validated.projectDirectory,
+    designPath: join(
+      validated.projectDirectory,
+      validated.project.design.designFile,
+    ),
+    runDirectory: result.runDirectory,
+    findings: result.deterministicOccurrences ?? [
+      ...findings,
+      ...result.deferredFindings,
+    ],
+    unruledDecisionsPath: result.unruledDecisionsPath,
+    flow: options.flow,
+  });
+  summary.decisionQuestion = decisionQuestion(summary.decisionNeeded);
   if (baselineNotApplied !== undefined)
     summary.baselineNotApplied = baselineNotApplied;
   if (result.designSystemQuestions.length > 0)
@@ -432,51 +575,23 @@ export async function checkWithReview(
   }
   if (result.findingNameWarning !== undefined)
     summary.findingNameWarning = result.findingNameWarning;
+  if (hostDeferred) {
+    summary.verdict = "deferred";
+    summary.timedOutTuples = result.scope?.deferredTuples;
+  }
+  if (captureFailures.length) summary.captureFailures = captureFailures;
+  if (baselineNotRecorded) summary.baselineNotRecorded = baselineNotRecorded;
   summary.scope = result.scope;
   summary.timings = result.timings;
   summary.coverage = result.reportCoverage;
   if (result.checkCoverage !== undefined)
     summary.checkCoverage = result.checkCoverage;
   if (emitTickets !== undefined) {
-    const actionable = new Set(
-      summary.findings
-        .filter(
-          (finding) =>
-            finding.deferred !== true && finding.occurrenceOnly !== true,
-        )
-        .map((finding) => finding.id),
+    const { records, rootCauses, issueScores } = clusterInputsFromCheck(
+      summary,
+      result,
+      findings,
     );
-    const records = findings
-      .filter((finding) => actionable.has(finding.id))
-      .map((finding) => ({
-        finding,
-        runId: basename(result.runDirectory),
-        runDirectory: result.runDirectory,
-        findingsPath: result.findingsPath,
-      }));
-    const rootCauses = new Map<string, ClusterCause>();
-    for (const issue of summary.issues ?? []) {
-      const cause = issue.rootCause;
-      if (cause === undefined) continue;
-      const { symptoms, counts: _counts, ...rest } = cause;
-      for (const symptom of symptoms)
-        for (const finding of symptom.findings)
-          rootCauses.set(finding.id, { ...rest, symptoms: symptoms.length });
-    }
-    const recordIds = new Set(records.map((record) => record.finding.id));
-    const issueScores = new Map<string, number>();
-    const groupsById = new Map(
-      (summary.groups ?? []).map((group) => [group.id, group]),
-    );
-    for (const issue of summary.issues ?? [])
-      for (const groupId of issue.groups)
-        for (const member of groupsById.get(groupId)?.members ?? []) {
-          if (!recordIds.has(member.id)) continue;
-          issueScores.set(
-            member.id,
-            Math.max(issueScores.get(member.id) ?? -Infinity, issue.score),
-          );
-        }
     summary.tickets = await emitClusterTickets({
       project: options.project,
       cwd: options.cwd,
@@ -487,6 +602,27 @@ export async function checkWithReview(
       selection: { policy: "current-run", records },
     });
   }
+  const digestWarning = await recordDigest({
+    validated,
+    flow: options.flow,
+    result,
+    now: options.dependencies?.now?.() ?? new Date(),
+  });
+  if (digestWarning !== undefined) summary.digestWarning = digestWarning;
+  if (result.attributionWarning !== undefined)
+    summary.attributionWarning = result.attributionWarning;
+  summary.humanFound = await summarizeMisses({
+    projectDirectory: validated.projectDirectory,
+    extra: findingsMissEvidence(
+      [
+        ...findings,
+        ...result.deferredFindings,
+        ...(result.deterministicOccurrences ?? []),
+        ...(result.rejectedOccurrences ?? []),
+      ],
+      basename(result.runDirectory),
+    ),
+  }).catch(() => undefined);
   options.dependencies?.capture?.signal?.throwIfAborted();
   await completeCheckRecording(
     recording,
@@ -498,48 +634,188 @@ export async function checkWithReview(
   return { summary, review: result };
 }
 
+/** A check's ticketable records with their root causes and issue scores. */
+export type ClusterInputs = {
+  records: CatalogFinding[];
+  rootCauses: Map<string, ClusterCause>;
+  issueScores: Map<string, number>;
+};
+
+/**
+ * The records a check's summary reports as actionable (not deferred, not
+ * occurrence-only), with each one's root cause and best issue score.
+ */
+export function clusterInputsFromCheck(
+  summary: Pick<CheckSummary, "findings" | "issues" | "groups">,
+  result: Pick<ReviewRunResult, "runDirectory" | "findingsPath">,
+  findings: readonly Finding[],
+): ClusterInputs {
+  const actionable = new Set(
+    summary.findings
+      .filter(
+        (finding) =>
+          finding.deferred !== true && finding.occurrenceOnly !== true,
+      )
+      .map((finding) => finding.id),
+  );
+  const records = findings
+    .filter((finding) => actionable.has(finding.id))
+    .map((finding) => ({
+      finding,
+      runId: basename(result.runDirectory),
+      runDirectory: result.runDirectory,
+      findingsPath: result.findingsPath,
+    }));
+  const rootCauses = new Map<string, ClusterCause>();
+  for (const issue of summary.issues ?? []) {
+    const cause = issue.rootCause;
+    if (cause === undefined) continue;
+    const { symptoms, counts: _counts, ...rest } = cause;
+    for (const symptom of symptoms)
+      for (const finding of symptom.findings)
+        rootCauses.set(finding.id, { ...rest, symptoms: symptoms.length });
+  }
+  const recordIds = new Set(records.map((record) => record.finding.id));
+  const issueScores = new Map<string, number>();
+  const groupsById = new Map(
+    (summary.groups ?? []).map((group) => [group.id, group]),
+  );
+  for (const issue of summary.issues ?? [])
+    for (const groupId of issue.groups)
+      for (const member of groupsById.get(groupId)?.members ?? []) {
+        if (!recordIds.has(member.id)) continue;
+        issueScores.set(
+          member.id,
+          Math.max(issueScores.get(member.id) ?? -Infinity, issue.score),
+        );
+      }
+  return { records, rootCauses, issueScores };
+}
+
+/** Bookkeeping for `idiom digest`; a failure warns and never fails the check. */
+async function recordDigest(options: {
+  validated: Pick<ValidationResult, "projectDirectory" | "project">;
+  flow: string;
+  result: ReviewRunResult;
+  now: Date;
+}): Promise<string | undefined> {
+  const { result } = options;
+  try {
+    if (result.deterministicOccurrences === undefined)
+      throw new IdiomError("internal: check did not collect its occurrences");
+    await writeDigestRecord(
+      result.runDirectory,
+      buildDigestRecord({
+        flow: options.flow,
+        runDirectory: result.runDirectory,
+        projectDirectory: options.validated.projectDirectory,
+        reportPath: result.reportPath,
+        occurrences: [
+          ...result.deterministicOccurrences,
+          ...(result.rejectedOccurrences ?? []),
+        ],
+        coverage: result.reportCoverage,
+        scope: result.scope,
+        captured: [...(result.issueRankingContext?.keys() ?? [])],
+        ...digestInputs({
+          scope: result.scope,
+          coverage: result.reportCoverage,
+          checks: options.validated.project.checks,
+        }),
+        rankingContext: result.issueRankingContext,
+        now: options.now,
+      }),
+    );
+    return undefined;
+  } catch (error) {
+    return `digest record not written: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
 export function renderCheckSummary(
   summary: CheckSummary,
   options: {
+    humanFound?: boolean | undefined;
+    now?: Date | undefined;
     ungrouped?: boolean | undefined;
     top?: number | undefined;
     all?: boolean | undefined;
   } = {},
 ): string {
-  const output = withDesignSystemQuestions(
-    withAdvisory(
-      summary.groups !== undefined &&
-        summary.baseline === undefined &&
-        options.ungrouped !== true
-        ? summary.preExisting !== undefined
-          ? renderCheckGroups(summary, summary.groups)
-          : renderCheckIssues(
-              summary,
-              summary.groups,
-              summary.issues ?? collapseIssues(summary.groups, new Set()),
-              options,
-            )
-        : renderCheckFindings(summary),
-      summary.advisory,
+  let output = withAcknowledgements(
+    withDesignSystemQuestions(
+      withAdvisory(
+        summary.groups !== undefined &&
+          summary.baseline === undefined &&
+          options.ungrouped !== true
+          ? summary.preExisting !== undefined
+            ? renderCheckGroups(summary, summary.groups)
+            : renderCheckIssues(
+                summary,
+                summary.groups,
+                summary.issues ?? collapseIssues(summary.groups, new Set()),
+                options,
+              )
+          : renderCheckFindings(summary),
+        summary.advisory,
+      ),
+      summary.designSystemQuestions,
     ),
-    summary.designSystemQuestions,
+    summary,
   );
+  if (summary.verdict === "deferred")
+    output = output.replace(
+      /clean — no (?:open|new) deterministic findings/,
+      "deferred — review incomplete",
+    );
+  output = [
+    ...(summary.coverage?.runDiagnostics ?? []),
+    output,
+    ...(summary.captureFailures?.length
+      ? [
+          "Coverage gaps:",
+          ...summary.captureFailures.map(
+            (tuple) =>
+              `  ${tuple.state}/${tuple.viewport}/${tuple.colorScheme}: ${tuple.stage}: ${tuple.message}`,
+          ),
+        ]
+      : []),
+  ].join("\n");
   const notice =
     summary.baselineRecorded === undefined
       ? ""
       : `Automatically recorded baseline at ${summary.baselineRecorded.commit.slice(0, 12)} → ${summary.baselineRecorded.path}. Commit this file${summary.baselineRecorded.pixelCount > 0 ? ` and ${summary.baselineRecorded.pixelDirectory}` : ""}. Use idiom baseline accept ${summary.flow} after intentional changes.\n`;
-  const covered = withBriefCoverage(
+  let covered = withBriefCoverage(
     withProbeCoverage(
       withStateCoverage(output, summary.coverage?.stateCoverage),
       summary.coverage,
     ),
     summary.coverage,
   );
+  if (options.humanFound !== false && summary.humanFound) {
+    const lines = covered.trimEnd().split("\n");
+    const index = lines.at(-1)?.startsWith("Full report: ")
+      ? lines.length - 1
+      : lines.length;
+    lines.splice(
+      index,
+      0,
+      humanFoundLine(summary.humanFound, options.now ?? new Date()),
+    );
+    covered = `${lines.join("\n")}\n`;
+  }
   return (
     notice +
+    (summary.decisionQuestion ? `${summary.decisionQuestion}\n` : "") +
     (summary.tickets === undefined
       ? covered
-      : `${covered}${renderClusterTicketsResult(summary.tickets)}\n`)
+      : `${covered}${renderClusterTicketsResult(summary.tickets)}\n`) +
+    (summary.digestWarning === undefined
+      ? ""
+      : `Warning: ${summary.digestWarning}\n`) +
+    (summary.attributionWarning === undefined
+      ? ""
+      : `Warning: ${summary.attributionWarning}\n`)
   );
 }
 
@@ -673,6 +949,26 @@ function withAdvisory(
   return `${[...lines, "", ...block].join("\n").trimEnd()}\n`;
 }
 
+/**
+ * Acknowledged findings and lapsed acknowledgements, placed like the state
+ * coverage line so the parsed output forms keep their places. Absent when
+ * there are neither.
+ */
+function withAcknowledgements(output: string, summary: CheckSummary): string {
+  // A recorded-baseline comparison renders its own.
+  if (summary.baseline !== undefined) return output;
+  const block = acknowledgementLines(
+    summary.acknowledgedFindings ?? [],
+    summary.acknowledgementLapses ?? [],
+  );
+  if (block.length === 0) return output;
+  const lines = output.replace(/\n$/, "").split("\n");
+  const last = lines.at(-1) ?? "";
+  if (last.startsWith("Full report: "))
+    return `${[...lines.slice(0, -1), ...block, last].join("\n")}\n`;
+  return `${[...lines, ...block].join("\n")}\n`;
+}
+
 function renderCheckFindings(summary: CheckSummary): string {
   const buildNote =
     summary.build === undefined
@@ -685,6 +981,8 @@ function renderCheckFindings(summary: CheckSummary): string {
       fixed: summary.fixed ?? [],
       preExisting: summary.preExisting ?? 0,
       preExistingFindings: summary.preExistingFindings ?? [],
+      acknowledgedFindings: summary.acknowledgedFindings ?? [],
+      acknowledgementLapses: summary.acknowledgementLapses ?? [],
     };
     const header =
       summary.findings.length === 0

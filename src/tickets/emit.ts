@@ -10,6 +10,7 @@ import {
   findCatalogLineage,
   loadReviewCatalog,
   persistCatalogFindingNames,
+  type ReviewCatalog,
 } from "../review/catalog.js";
 import { lineageDecision } from "../review/lifecycle.js";
 import {
@@ -186,33 +187,12 @@ export async function emitClusterTickets(
       result.ineligible.push(id);
       continue;
     }
-    const cause = options.rootCauses?.get(record.finding.id);
-    const observations = await loadObservations(record);
-    const presented = repairPresentation(catalog, record).target;
-    // Presentation supplies canonical IDs/aliases; clustered evidence retains this occurrence's fingerprint.
-    const canonical = {
-      ...presented,
-      finding: {
-        ...presented.finding,
-        fingerprint: record.finding.fingerprint,
-      },
-    };
-    pending.push({
+    const { member, images } = await buildClusterMember(catalog, record, {
       id,
-      record: canonical,
-      component: componentFor(record, id, observations),
-      ...(cause === undefined ? {} : { cause }),
+      cause: options.rootCauses?.get(record.finding.id),
+      loadObservations,
     });
-    const images: string[] = [];
-    for (const image of record.finding.evidence.screenshots) {
-      try {
-        await assertEvidencePaths(record.runDirectory, [image]);
-        images.push(image);
-      } catch (error) {
-        if (!(error instanceof IdiomError)) throw error;
-        // Missing legacy screenshots are explicitly described as unavailable.
-      }
-    }
+    pending.push(member);
     availableImages.set(id, images);
   }
   if (pending.length === 0 && checkpoint.size === 0) return result;
@@ -344,6 +324,51 @@ export async function emitClusterTickets(
   for (const findingId of checkpoint)
     await checkpointLineageStatus({ catalog, findingId, status: "ticketed" });
   return result;
+}
+
+/**
+ * One record as a cluster member: its canonical presentation keeping this
+ * occurrence's fingerprint, its component and cause, and the screenshots
+ * that still exist on disk.
+ */
+export async function buildClusterMember(
+  catalog: ReviewCatalog,
+  record: CatalogFinding,
+  options: {
+    /** The lineage id the member is known by. */
+    id: string;
+    cause?: ClusterCause | undefined;
+    loadObservations: ReturnType<typeof observationLoader>;
+  },
+): Promise<{ member: ClusterMember; images: string[] }> {
+  const { id, cause } = options;
+  const observations = await options.loadObservations(record);
+  const presented = repairPresentation(catalog, record).target;
+  // Presentation supplies canonical IDs/aliases; clustered evidence retains this occurrence's fingerprint.
+  const canonical = {
+    ...presented,
+    finding: {
+      ...presented.finding,
+      fingerprint: record.finding.fingerprint,
+    },
+  };
+  const member: ClusterMember = {
+    id,
+    record: canonical,
+    component: componentFor(record, id, observations),
+    ...(cause === undefined ? {} : { cause }),
+  };
+  const images: string[] = [];
+  for (const image of record.finding.evidence.screenshots) {
+    try {
+      await assertEvidencePaths(record.runDirectory, [image]);
+      images.push(image);
+    } catch (error) {
+      if (!(error instanceof IdiomError)) throw error;
+      // Missing legacy screenshots are explicitly described as unavailable.
+    }
+  }
+  return { member, images };
 }
 
 export function renderClusterTicketsResult(

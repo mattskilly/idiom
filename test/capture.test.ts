@@ -127,6 +127,25 @@ async function initializeGitRepository(directory: string): Promise<void> {
   });
 }
 
+/** A rejected capture may leave its lifecycle record, never a complete run or the secret. */
+async function expectNoPublishedCapture(
+  directory: string,
+  secret: string,
+): Promise<void> {
+  const record = JSON.parse(
+    await readFile(join(directory, "run.json"), "utf8"),
+  );
+  expect(record.status).toBe("interrupted");
+  const visit = async (current: string): Promise<void> => {
+    for (const entry of await readdir(current, { withFileTypes: true })) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) await visit(path);
+      else expect(await readFile(path, "utf8")).not.toContain(secret);
+    }
+  };
+  await visit(directory);
+}
+
 async function normalizedArtifactTree(
   directory: string,
 ): Promise<Record<string, string>> {
@@ -140,6 +159,14 @@ async function normalizedArtifactTree(
         const key = relative(directory, path);
         if (entry.name === "run.json") {
           const record = JSON.parse(await readFile(path, "utf8"));
+          for (const field of [
+            "runId",
+            "owner",
+            "startedAt",
+            "updatedAt",
+            "endedAt",
+          ])
+            if (field in record) record[field] = `<${field}>`;
           record.timings.build.ms = 0;
           record.timings.start.ms = 0;
           record.timings.probe.ms = 0;
@@ -850,15 +877,19 @@ test("copied held replay evidence uses the receiving state's route sanitizer and
       },
     });
     expect(rawCopies).toHaveLength(2);
-    expect(published).toHaveLength(2);
+    // Each state is written once as a checkpoint and once at publication;
+    // both writes are sanitized and keep the recording identity.
+    expect(published).toHaveLength(4);
     for (const action of rawCopies) expect(action.held?.notes).toEqual([route]);
-    for (const [index, state] of ["first", "second"].entries()) {
-      const action = published[index];
+    for (const state of ["first", "second"]) {
       const placeholder = `/{setup-stdout:${state}}`;
-      expect(action?.name).toBe(placeholder);
-      expect(action?.requests[0]?.path).toBe(placeholder);
-      expect(action?.held?.notes).toEqual([placeholder]);
-      expect(recordingKey(action ?? {})).toBe("copied-recording");
+      const actions = published.filter((action) => action.name === placeholder);
+      expect(actions).toHaveLength(2);
+      for (const action of actions) {
+        expect(action.requests[0]?.path).toBe(placeholder);
+        expect(action.held?.notes).toEqual([placeholder]);
+        expect(recordingKey(action)).toBe("copied-recording");
+      }
       expect(
         await readFile(
           join(result.runDirectory, state, "desktop", "timelines.json"),
@@ -1233,6 +1264,8 @@ test("two full captures remain equivalent and ignore prior managed reports in so
       flow,
       dependencies: {
         browserLauncher,
+        readHost: () => ({ load: [0, 0, 0], coreCount: 11 }),
+        measureReadyUrl: async () => 1,
         inheritedEnvironment: {
           PATH: process.env.PATH,
           SEED_SLUG: "first-private-value",
@@ -1259,6 +1292,8 @@ test("two full captures remain equivalent and ignore prior managed reports in so
       flow,
       dependencies: {
         browserLauncher,
+        readHost: () => ({ load: [0, 0, 0], coreCount: 11 }),
+        measureReadyUrl: async () => 1,
         inheritedEnvironment: {
           PATH: process.env.PATH,
           SEED_SLUG: "second-private-value",
@@ -1965,7 +2000,10 @@ test.each([
       );
       expect(await isPortOpen(Number(audit[0]?.port))).toBe(false);
       await expect(access(built.data)).rejects.toThrow();
-      await expect(access(out)).rejects.toThrow();
+      await expectNoPublishedCapture(
+        out,
+        secret.replace(dataDirectoryPlaceholder, built.data),
+      );
       await expect(
         access(join(f.directory, "production-output")),
       ).rejects.toThrow();
@@ -2157,9 +2195,22 @@ test("SIGTERM during a production build cleans the process, data, output and res
     await expect(
       access(join(f.directory, "production-output")),
     ).rejects.toThrow();
-    await expect(
-      access(join(f.directory, ".idiom", "reports", "interrupted")),
-    ).rejects.toThrow();
+    // The run stays visible as interrupted, with nothing kept.
+    expect(
+      JSON.parse(
+        await readFile(
+          join(f.directory, ".idiom", "reports", "interrupted", "run.json"),
+          "utf8",
+        ),
+      ),
+    ).toMatchObject({
+      status: "interrupted",
+      interruption: { reason: "signal", signal: "SIGTERM" },
+      completedTuples: [],
+    });
+    expect(
+      await readdir(join(f.directory, ".idiom", "reports", "interrupted")),
+    ).toEqual(["run.json"]);
   } finally {
     await rm(f.directory, { recursive: true, force: true });
   }

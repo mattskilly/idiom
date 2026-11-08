@@ -52,8 +52,11 @@ export async function execute(file, args, { cwd, env, log } = {}) {
             `$ ${file} ${args.join(" ")}\n${stdout}\n${stderr}\n`,
           );
         if (code !== 0)
-          throw new Error(
-            `${file} exited ${code}: ${stderr.slice(-4000) || stdout.slice(-4000)}`,
+          throw Object.assign(
+            new Error(
+              `${file} exited ${code}: ${stderr.slice(-4000) || stdout.slice(-4000)}`,
+            ),
+            { code, stdout, stderr },
           );
         resolvePromise(stdout.trim());
       } catch (error) {
@@ -74,8 +77,11 @@ export async function evidencePath(root, path) {
   const target = await realpath(beneath(root, path));
   return beneath(base, target);
 }
+export const fullSha = (value) =>
+  /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value ?? "");
 export function validateInputs(inputs) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(inputs.flow ?? ""))
+  // An empty flow lets the gate's plan choose the flows.
+  if (inputs.flow && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(inputs.flow))
     throw new Error("flow must be a flow manifest id");
   if (!Object.hasOwn(severities, inputs.failOn) && inputs.failOn !== "never")
     throw new Error("fail-on must be blocker, major, minor, or never");
@@ -94,14 +100,46 @@ export function validateEvent(event) {
       "this action requires a pull_request event with a valid PR number",
     );
   for (const sha of [pr.base?.sha, pr.head?.sha])
-    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha ?? ""))
+    if (!fullSha(sha))
       throw new Error("pull_request base/head must contain full commit hashes");
   return pr;
 }
+/**
+ * pull_request compares the PR's merge base, push the previous commit on the
+ * branch (`base` undefined: the runner falls back to head^), and schedule the
+ * newest recorded baseline.
+ */
+export function resolveEvent(eventName, event, env = {}) {
+  if (eventName === undefined || eventName === "pull_request") {
+    const pr = validateEvent(event);
+    return { mode: "pull_request", head: pr.head.sha, base: pr.base.sha, pr };
+  }
+  if (eventName === "push") {
+    const head = event.after ?? env.GITHUB_SHA;
+    if (!fullSha(head))
+      throw new Error("push after must contain a full commit hash");
+    const before =
+      fullSha(event.before) && !/^0+$/.test(event.before)
+        ? event.before
+        : undefined;
+    return { mode: "push", head, base: before };
+  }
+  if (eventName === "schedule") {
+    if (!fullSha(env.GITHUB_SHA))
+      throw new Error("schedule requires GITHUB_SHA to be a full commit hash");
+    return { mode: "schedule", head: env.GITHUB_SHA };
+  }
+  throw new Error(
+    "this action supports pull_request, push and schedule events",
+  );
+}
+/** `baseline` undefined: the newest recorded baseline (schedule) supplied it. */
 export function validateSummary(summary, flow, baseline) {
   if (
     summary?.flow !== flow ||
-    summary.baseline?.commit !== baseline ||
+    (baseline === undefined
+      ? !fullSha(summary.baseline?.commit)
+      : summary.baseline?.commit !== baseline) ||
     summary.baselineRecorded !== undefined ||
     !Array.isArray(summary.findings) ||
     !Array.isArray(summary.fixed) ||
@@ -120,6 +158,13 @@ export function validateSummary(summary, flow, baseline) {
   }
   return summary;
 }
+/** Per-flow entries; a single-flow result from an older Action is its own entry. */
+export function flowsOf(result) {
+  if (Array.isArray(result.flows)) return result.flows;
+  return result.summary !== undefined || result.flow !== undefined
+    ? [result]
+    : [];
+}
 export function gate(result) {
   if (!Array.isArray(result.operationalErrors))
     throw new Error("invalid Action result");
@@ -127,14 +172,29 @@ export function gate(result) {
     throw new Error(result.operationalErrors.join("\n"));
   if (!Object.hasOwn(severities, result.failOn) && result.failOn !== "never")
     throw new Error("invalid fail threshold");
-  const summary = validateSummary(result.summary, result.flow, result.baseline);
-  const failing = summary.findings.filter(
-    (finding) =>
-      result.failOn !== "never" &&
-      severities[finding.severity] <= severities[result.failOn],
-  );
-  if (failing.length)
-    throw new Error(
-      `${failing.length} new finding(s) at or above ${result.failOn}`,
+  if (result.skipped) return { skipped: result.skipped, deferred: [] };
+  const flows = flowsOf(result);
+  if (!flows.length) throw new Error("invalid Action result: no flow checked");
+  const deferred = [];
+  let failing = 0;
+  for (const entry of flows) {
+    // A busy host is neutral; the other flows' findings still gate.
+    if (entry.deferred) {
+      deferred.push({ flow: entry.flow, reason: entry.deferred.reason });
+      continue;
+    }
+    const summary = validateSummary(
+      entry.summary,
+      entry.flow,
+      result.mode === "schedule" ? undefined : result.baseline,
     );
+    failing += summary.findings.filter(
+      (finding) =>
+        result.failOn !== "never" &&
+        severities[finding.severity] <= severities[result.failOn],
+    ).length;
+  }
+  if (failing)
+    throw new Error(`${failing} new finding(s) at or above ${result.failOn}`);
+  return { deferred };
 }

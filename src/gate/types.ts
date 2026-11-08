@@ -80,6 +80,10 @@ export type GatePlan = {
   /** Per-flow baseline availability: false gates open findings instead. */
   baselines: Record<string, boolean>;
   notes: string[];
+  /** Flows with at least one affected state, before budget trimming. */
+  flows: string[];
+  /** Every validated flow id. */
+  allFlows: string[];
 };
 
 export type GateSkipResult = {
@@ -88,6 +92,8 @@ export type GateSkipResult = {
   reason: string;
   line: string;
   files: GateFile[];
+  /** Every validated flow id. */
+  allFlows: string[];
 };
 
 /** What a gated flow's report carries under **Build gate**. */

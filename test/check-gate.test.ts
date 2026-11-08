@@ -298,3 +298,56 @@ createServer(async (req, res) => {
     await f.cleanup();
   }
 }, 120_000);
+
+test("--plan-only prints the plan or the skip and never starts a server or capture", async () => {
+  const f = await changedFixture(cardFiles);
+  try {
+    await f.write(
+      "components/Card.module.css",
+      ".card { color: rgb(200, 10, 10); }\n",
+    );
+    const plan = await planGate({ project: f.directory });
+    if (plan.skipped) throw new Error(plan.line);
+    expect(plan.flows).toEqual(["site"]);
+    expect(plan.allFlows).toEqual(["site"]);
+    const response = await cli(f.directory, [
+      "--gate",
+      "--plan-only",
+      "--json",
+    ]);
+    expect(response.status, response.err).toBe(0);
+    const output = JSON.parse(response.out);
+    expect(output.gate).toMatchObject({
+      planOnly: true,
+      plan: { flows: ["site"], allFlows: ["site"] },
+    });
+    expect(output.gate.line).toContain("idiom check --gate: 1 state");
+    expect(output.gate.plan.execution).toBeUndefined();
+    const text = await cli(f.directory, ["--gate", "--plan-only"]);
+    expect(text.status, text.err).toBe(0);
+    expect(text.out).toContain("idiom check --gate: 1 state");
+    expect(text.err).toBe("");
+    await expect(access(join(f.directory, "audit.txt"))).rejects.toThrow();
+    await f.commit("styled");
+    const skipped = await cli(f.directory, [
+      "--gate",
+      "--plan-only",
+      "--changed",
+      "HEAD",
+      "--json",
+    ]);
+    expect(skipped.status, skipped.err).toBe(0);
+    expect(JSON.parse(skipped.out).gate).toMatchObject({
+      skipped: true,
+      allFlows: ["site"],
+      line: expect.stringMatching(
+        /^no UI changes since [0-9a-f]{12}; skipped$/,
+      ),
+    });
+    const rejected = await cli(f.directory, ["site", "--plan-only"]);
+    expect(rejected.status).not.toBe(0);
+    expect(rejected.err).toContain("--plan-only requires --gate");
+  } finally {
+    await f.cleanup();
+  }
+}, 60_000);

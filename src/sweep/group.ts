@@ -9,6 +9,7 @@ import {
 } from "../review/ranking.js";
 import { rootCauseIssues } from "../review/root-causes.js";
 import { type CheckGroup, projectIssueSummary } from "../review/summary.js";
+import { severityRank as sharedSeverityRank } from "../schemas/severity.js";
 import {
   componentFor,
   type FindingCluster,
@@ -83,7 +84,7 @@ export async function groupSweep(
       cause: causes.get(record.finding.id),
     })),
   );
-  const severity = { blocker: 0, major: 1, minor: 2 };
+  const severity = sharedSeverityRank;
   return groupFindings(members)
     .map((cluster: FindingCluster): SweepProposal => {
       const ids = new Set(cluster.members.map((m) => m.id));
@@ -125,6 +126,9 @@ export async function groupSweep(
         salience: winner.salience,
         prominence: winner.prominence,
         score: winner.score,
+        impact: Math.max(winner.impact, ...ranked.map((rank) => rank.impact)) as
+          | 0
+          | 1,
         explanation: winner.explanation,
       };
     })

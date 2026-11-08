@@ -1,9 +1,10 @@
 name: Idiom regression guard
-description: Check PR design regressions against the merge base and publish GitHub artifact evidence.
+description: Check design regressions on pull requests (against the merge base), pushes (against the previous commit) and schedules (against the recorded baseline), skip changes with no UI, and publish GitHub artifact evidence.
 inputs:
   flow:
-    description: Flow manifest id
-    required: true
+    description: Flow manifest id; omit to check the flows the change affects (all flows on schedule)
+    required: false
+    default: ''
   project:
     description: Project directory relative to the repository root
     default: '.'
@@ -17,12 +18,15 @@ inputs:
     description: Shell script run at each revision's repository root
     default: npm ci
   token:
-    description: Token with pull-requests write permission for the managed comment
+    description: Token with pull-requests write permission for the managed comment, and checks write for the neutral deferred check run
     default: ${{ github.token }}
 outputs:
   baseline-sha:
-    description: Actual PR merge-base SHA
+    description: Commit compared with (PR merge base or the previous commit on push); empty on schedule
     value: ${{ steps.run.outputs.baseline-sha }}
+  outcome:
+    description: skipped, deferred, checked or error
+    value: ${{ steps.run.outputs.outcome }}
   new-findings:
     description: Number of new deterministic finding occurrences
     value: ${{ steps.run.outputs.new-findings }}
@@ -36,7 +40,7 @@ runs:
       with:
         node-version: '24'
         package-manager-cache: false
-    - name: Capture and compare merge base and head
+    - name: Plan, capture and compare
       id: run
       if: ${{ always() }}
       shell: bash
@@ -53,7 +57,7 @@ runs:
       if: ${{ always() && steps.run.outputs.evidence-directory != '' }}
       uses: actions/upload-artifact@v7
       with:
-        name: idiom-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+        name: idiom-${{ github.event.pull_request.number || github.event_name }}-${{ github.run_id }}-${{ github.run_attempt }}
         path: ${{ steps.run.outputs.evidence-directory }}
         if-no-files-found: error
         retention-days: 14

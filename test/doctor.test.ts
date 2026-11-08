@@ -97,6 +97,43 @@ test("an invalid project fails config and skips the rest", async () => {
   ]);
 });
 
+test("with no project, doctor still reports where Idiom runs and why nothing fires", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-doctor-empty-"));
+  directories.push(directory);
+  const home = await mkdtemp(join(tmpdir(), "idiom-doctor-home-"));
+  directories.push(home);
+  const report = await runDoctor({
+    cwd: directory,
+    dependencies: { surfaces: { home, environment: { PATH: "" } } },
+  });
+  expect(report.ok).toBe(false);
+  expect(report.surfaces).toMatchObject({
+    initialized: false,
+    notice:
+      "No .idiom/project.json: Claude Code hooks and the Autobuild gate are inactive until you run idiom init.",
+  });
+  const rendered = renderDoctorReport(report);
+  expect(rendered).toContain(
+    "\n\nWhere Idiom runs:\n  ! No .idiom/project.json",
+  );
+  expect(rendered).toContain("✗ missing         Agent instruction (AGENTS.md)");
+
+  // Surfaces never change the exit code.
+  const stdout: string[] = [];
+  expect(
+    await run(["node", "idiom", "doctor", "--json"], {
+      cwd: directory,
+      stdout: (message) => stdout.push(message),
+      stderr: () => undefined,
+    }),
+  ).toBe(RUN_FAILURE_EXIT_CODE);
+  const json = JSON.parse(stdout.join("")) as DoctorReport;
+  expect(json.surfaces?.initialized).toBe(false);
+  expect(
+    (await runDoctor({ cwd: directory, surfaces: false })).surfaces,
+  ).toBeUndefined();
+});
+
 test("the CLI exits 0 on a passing app and 2 on a failing one; --json parses", async () => {
   const good = await passing();
   const stdout: string[] = [];
@@ -107,7 +144,18 @@ test("the CLI exits 0 on a passing app and 2 on a failing one; --json parses", a
       stderr: () => undefined,
     }),
   ).toBe(0);
-  expect((JSON.parse(stdout.join("")) as DoctorReport).ok).toBe(true);
+  const json = JSON.parse(stdout.join("")) as DoctorReport;
+  expect(json.ok).toBe(true);
+  expect(json.surfaces?.initialized).toBe(true);
+  expect(json.surfaces?.entries).toHaveLength(12);
+  for (const id of [
+    "autobuild-plan",
+    "autobuild-implement",
+    "autobuild-code-review",
+  ])
+    expect(json.surfaces?.entries).toContainEqual(
+      expect.objectContaining({ id, status: "not-applicable" }),
+    );
 
   const bad = await neverReady();
   const stderr: string[] = [];
@@ -135,6 +183,14 @@ test("MCP idiom_doctor returns the structured report", async () => {
   );
   expect(report.ok).toBe(true);
   expect(report.steps.map((step) => step.id)).toContain("shutdown");
+  for (const id of [
+    "autobuild-plan",
+    "autobuild-implement",
+    "autobuild-code-review",
+  ])
+    expect(report.surfaces?.entries).toContainEqual(
+      expect.objectContaining({ id, status: "not-applicable" }),
+    );
 });
 
 test("doctor stops a leftover server first and reports it in JSON, text and stderr", async () => {

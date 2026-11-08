@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +12,7 @@ import { baselineRecordCommand } from "../src/commands/baseline.js";
 import { checkCommand, renderCheckSummary } from "../src/commands/check.js";
 import { initProject } from "../src/commands/init.js";
 import { readDecisionLog } from "../src/decisions/log.js";
+import { type DigestRecord, digestRecordSchema } from "../src/digest/record.js";
 import { comparePriority } from "../src/review/ranking.js";
 import type { Finding } from "../src/schemas/finding.js";
 import { parseFindingBlocks } from "../src/verify/spec.js";
@@ -852,3 +853,200 @@ test("a linked worktree whose registry diverged from the primary still checks, w
     firstIds,
   );
 }, 90_000);
+
+/** The stored desktop tuple again at mobile, so fingerprints span two coordinates. */
+async function withMobileTuple(project: string, runId: string) {
+  const flowPath = join(project, ".idiom", "flows", "studio-lab.json");
+  const flow = JSON.parse(await readFile(flowPath, "utf8"));
+  await writeFile(
+    flowPath,
+    JSON.stringify({ ...flow, viewports: ["desktop", "mobile"] }),
+  );
+  const editor = join(project, ".idiom", "reports", runId, "editor");
+  await cp(join(editor, "desktop"), join(editor, "mobile"), {
+    recursive: true,
+  });
+  const metadataPath = join(editor, "mobile", "metadata.json");
+  const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+  metadata.viewport = { ...metadata.viewport, name: "mobile" };
+  await writeFile(metadataPath, JSON.stringify(metadata));
+}
+
+async function digestRecordOf(project: string, runId: string) {
+  return digestRecordSchema.parse(
+    JSON.parse(
+      await readFile(
+        join(project, ".idiom", "reports", runId, "digest.json"),
+        "utf8",
+      ),
+    ),
+  );
+}
+
+const identities = (record: DigestRecord) =>
+  record.occurrences
+    .map((o) => `${o.where}\0${o.fingerprint}\0${o.disposition}`)
+    .sort();
+
+test("check records every coordinate's occurrences alike in recorded and --all modes, and digest reads them", async () => {
+  const { project, commit } = await studioProject();
+  const first = "2026-10-22T12-00-00-000Z";
+  const second = "2026-10-22T13-00-00-000Z";
+  for (const runId of [first, second]) {
+    await storedRun(project, runId, commit);
+    await withMobileTuple(project, runId);
+  }
+  const summary = await checkCommand({
+    project,
+    flow: "studio-lab",
+    from: first,
+  });
+  const recorded = await digestRecordOf(project, first);
+  expect(recorded.scope).toBe("full");
+  expect(recorded.coverage.problems).toEqual([]);
+  expect(recorded.coverage.captured).toEqual([
+    "editor/desktop",
+    "editor/mobile",
+  ]);
+  const reported = [
+    ...summary.findings,
+    ...(summary.preExistingFindings ?? []),
+  ].map((finding) => finding.fingerprint);
+  const open = recorded.occurrences.filter((o) => o.disposition === "open");
+  expect(new Set(open.map((o) => o.fingerprint))).toEqual(new Set(reported));
+  // The parity below is meaningful only with a fingerprint at two coordinates.
+  const spread = new Map<string, Set<string>>();
+  for (const o of recorded.occurrences)
+    spread.set(
+      o.fingerprint,
+      (spread.get(o.fingerprint) ?? new Set()).add(o.where),
+    );
+  expect([...spread.values()].some((wheres) => wheres.size >= 2)).toBe(true);
+
+  await checkCommand({ project, flow: "studio-lab", from: first, all: true });
+  const all = await digestRecordOf(project, first);
+  expect(identities(all)).toEqual(identities(recorded));
+
+  // Recorded mode on the later run against the --all record of the earlier.
+  await checkCommand({ project, flow: "studio-lab", from: second });
+  const stdout: string[] = [];
+  const io = {
+    stdout: (message: string) => stdout.push(message),
+    stderr: () => undefined,
+  };
+  expect(
+    await runCli(
+      ["node", "idiom", "digest", "studio-lab", "--project", project],
+      io,
+    ),
+  ).toBe(0);
+  const lines = stdout.join("\n").split("\n");
+  expect(lines.length).toBeLessThanOrEqual(25);
+  expect(lines[0]).toMatch(new RegExp(`^Nothing new since ${first}, `));
+  stdout.length = 0;
+  expect(
+    await runCli(
+      ["node", "idiom", "digest", "--json", "--project", project],
+      io,
+    ),
+  ).toBe(0);
+  const payload = JSON.parse(stdout.join("\n"));
+  expect(Object.keys(payload)[0]).toBe("interfaceVersion");
+  expect(payload.flows[0]).toMatchObject({
+    flow: "studio-lab",
+    verdict: "nothing-new",
+    run: { id: second },
+    since: { id: first },
+  });
+}, 120_000);
+
+test("an acknowledged finding is recorded as acknowledged", async () => {
+  const { project, commit } = await studioProject();
+  const from = "2026-10-22T12-00-00-000Z";
+  await storedRun(project, from, commit);
+  const summary = await checkCommand({
+    project,
+    flow: "studio-lab",
+    from,
+    all: true,
+  });
+  const target = summary.findings[0];
+  if (target === undefined) throw new Error("fixture has findings");
+  expect(
+    await runCli(
+      [
+        "node",
+        "idiom",
+        "decide",
+        target.id,
+        "--ack",
+        "ABC-1",
+        "--project",
+        project,
+      ],
+      { stdout: () => undefined, stderr: () => undefined },
+    ),
+  ).toBe(0);
+  await checkCommand({ project, flow: "studio-lab", from, all: true });
+  const record = await digestRecordOf(project, from);
+  expect(
+    record.occurrences
+      .filter((o) => o.fingerprint === target.fingerprint)
+      .map((o) => o.disposition),
+  ).toEqual(["acknowledged"]);
+}, 60_000);
+
+test("a finding rejected between two checks is counted as rejected, not fixed", async () => {
+  const { project, commit } = await studioProject();
+  const first = "2026-10-22T12-00-00-000Z";
+  const second = "2026-10-22T13-00-00-000Z";
+  for (const runId of [first, second]) await storedRun(project, runId, commit);
+  const summary = await checkCommand({
+    project,
+    flow: "studio-lab",
+    from: first,
+    all: true,
+  });
+  const target = summary.findings[0];
+  if (target === undefined) throw new Error("fixture has findings");
+  const silent = { stdout: () => undefined, stderr: () => undefined };
+  expect(
+    await runCli(
+      [
+        "node",
+        "idiom",
+        "decide",
+        target.id,
+        "--reject",
+        "--scope",
+        "rule",
+        "--reason",
+        "intended",
+        "--project",
+        project,
+      ],
+      silent,
+    ),
+  ).toBe(0);
+  await checkCommand({ project, flow: "studio-lab", from: second });
+  const record = await digestRecordOf(project, second);
+  const dispositions = record.occurrences
+    .filter((o) => o.fingerprint === target.fingerprint)
+    .map((o) => o.disposition);
+  expect(dispositions.length).toBeGreaterThan(0);
+  expect(new Set(dispositions)).toEqual(new Set(["rejected"]));
+
+  const stdout: string[] = [];
+  expect(
+    await runCli(
+      ["node", "idiom", "digest", "studio-lab", "--json", "--project", project],
+      { stdout: (message: string) => stdout.push(message), stderr: () => {} },
+    ),
+  ).toBe(0);
+  const flow = JSON.parse(stdout.join("\n")).flows[0];
+  expect(flow.since.id).toBe(first);
+  expect(flow.fixed.map((item: { id: string }) => item.id)).not.toContain(
+    target.id,
+  );
+  expect(flow.counts.rejected).toBeGreaterThan(0);
+}, 120_000);

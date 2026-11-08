@@ -1,4 +1,5 @@
 import type { Finding } from "../schemas/finding.js";
+import { severityRank as sharedSeverityRank } from "../schemas/severity.js";
 
 /**
  * Most deterministic findings listed in one model prompt. Every batch or
@@ -47,11 +48,7 @@ export type BoundedDeterministicFindings = {
   omitted: DeterministicOmission[];
 };
 
-const severityOrder: Record<Finding["severity"], number> = {
-  blocker: 0,
-  major: 1,
-  minor: 2,
-};
+const severityOrder = sharedSeverityRank;
 
 export function deterministicPromptEntry(
   finding: Finding,

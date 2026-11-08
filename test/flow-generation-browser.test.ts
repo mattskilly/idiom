@@ -159,6 +159,10 @@ test("generated flows validate and capture the viewport/scheme grid; setup resto
     expect(result.flows.kind).toBe("generated");
     const file = join(f.directory, ".idiom/flows/site.json");
     const raw = JSON.parse(await readFile(file, "utf8"));
+    // Grid/readiness contracts use a short explicit observation window; the
+    // default five-second loading window has its own real capture fixture.
+    for (const state of raw.states) state.loadingSettleMs = 50;
+    await writeFile(file, JSON.stringify(raw));
     expect(raw.states.map((s: { url: string }) => s.url)).toEqual(
       expect.arrayContaining([
         "/section/item/observed",
@@ -295,6 +299,7 @@ test("destination guard checks HTTP, client, off-origin and evidence-time naviga
             {
               id: "guard",
               description: "",
+              loadingSettleMs: 50,
               url: path,
               expect: { ...(expected ? { path: expected } : {}) },
             },

@@ -66,7 +66,7 @@ export const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
 // the deadline on every command.
 export const UPDATE_CHECK_FAILURE_TTL_MS = 60 * 60 * 1000;
 export const PACKAGE_NAME = "@mattskilly/idiom";
-const RELEASE_TARBALL_PREFIX =
+export const RELEASE_TARBALL_PREFIX =
   "https://github.com/mattskilly/idiom/releases/download/";
 const CACHE_FILE = "update-check.json";
 /** Codex's MCP `clientInfo.name` (openai/codex codex-rs/codex-mcp/src/rmcp_client.rs). */
@@ -212,8 +212,13 @@ export function updateCommand(
     case "claude-plugin":
       return "claude plugin marketplace update idiom && claude plugin update idiom@idiom";
     case "codex-plugin":
-      return `codex plugin marketplace upgrade idiom && codex plugin add idiom@idiom && codex mcp add idiom -- npx -y --package=${RELEASE_TARBALL_PREFIX}v${latest}/mattskilly-idiom-${latest}.tgz idiom mcp`;
+      return `codex plugin marketplace upgrade idiom && codex plugin add idiom@idiom && ${codexMcpAddCommand(latest)}`;
   }
+}
+
+/** Registers (or replaces) Codex's `idiom` MCP server at this release's tarball. */
+export function codexMcpAddCommand(version: string): string {
+  return `codex mcp add idiom -- npx -y --package=${RELEASE_TARBALL_PREFIX}v${version}/mattskilly-idiom-${version}.tgz idiom mcp`;
 }
 
 /** `<registry>/@mattskilly%2fidiom/latest`, honouring `NPM_CONFIG_REGISTRY`. */

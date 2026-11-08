@@ -459,6 +459,7 @@ test("init detection needs separate offer/apply confirmations and --yes only adv
     "offer-system-learning",
     "apply-system-learning",
     "offer-flow-generation",
+    "apply-wiring",
   ]);
   expect(result.systemLearning.kind).toBe("applied");
   expect(result.flows.kind).toBe("declined");

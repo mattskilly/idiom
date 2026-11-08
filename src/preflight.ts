@@ -72,6 +72,7 @@ export async function preflightRun(options: {
   capture?: { prod?: boolean | undefined } | undefined;
   gitTopology?: GitTopology | undefined;
   isolatedRegistry?: boolean | undefined;
+  stateProjectDirectory?: string | undefined;
 }): Promise<void> {
   const { projectDirectory, project } = options.validated;
   const flow = options.validated.flows[0]?.flow;
@@ -91,7 +92,7 @@ export async function preflightRun(options: {
       hint: "add server.production to .idiom/project.json, or capture without --prod",
     });
   await preflightFindingNameRegistry({
-    projectDirectory,
+    projectDirectory: options.stateProjectDirectory ?? projectDirectory,
     gitTopology: options.gitTopology,
     isolatedRegistry: options.isolatedRegistry,
   });
@@ -99,6 +100,7 @@ export async function preflightRun(options: {
   let status: Awaited<ReturnType<typeof sourceStatus>>;
   try {
     status = await sourceStatus(projectDirectory, {
+      ignoreDirty: project.baselines?.ignoreDirty,
       excludedPaths: [resolve(projectDirectory, ".idiom", "reports")],
     });
   } catch (error) {

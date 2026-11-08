@@ -48,7 +48,10 @@ async function defaultConfirmation(): Promise<boolean> {
   }
 }
 
-async function atomicWrite(path: string, content: string): Promise<void> {
+export async function atomicWrite(
+  path: string,
+  content: string,
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.tmp-${process.pid}-${Date.now()}`;
   try {

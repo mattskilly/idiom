@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { acceptanceSchema, basisDetailsSchema } from "./acceptance.js";
+import { findingSeveritySchema } from "./severity.js";
 
 export const artifactPathSchema = z
   .string()
@@ -191,6 +192,8 @@ export const findingCategories = [
   "touch-reachability",
   "liveness",
   "media-fill",
+  "visual-blank",
+  "loading-stuck",
   "collection-actions",
   "font-loading",
   "broken-link",
@@ -211,6 +214,9 @@ export const findingCategories = [
   "selection-outline",
   "disabled-highlight",
   "brief-mismatch",
+  "popover-dismissal",
+  "focus-return",
+  "spacing-target",
   "hierarchy",
   "density",
   "brand-alignment",
@@ -220,6 +226,7 @@ export const findingCategories = [
   "direction-drift",
   "offer-change",
   "unsupported-claim",
+  "detached-flyout",
 ] as const;
 
 /** Critique focus areas a page review can request (`idiom review --page --focus`). */
@@ -264,7 +271,7 @@ export const findingSchema = z
     basis: z.enum(["measured", "observed", "judged"]).optional(),
     basisDetails: basisDetailsSchema.optional(),
     category: z.enum(findingCategories),
-    severity: z.enum(["blocker", "major", "minor"]),
+    severity: findingSeveritySchema,
     confidence: z.number().min(0).max(1),
     rule: z.string().optional(),
     evidence: z
@@ -301,6 +308,7 @@ export const findingSchema = z
           .optional(),
         domSnippet: z.string().optional(),
         consoleExcerpt: z.string().optional(),
+        serverLogExcerpt: z.string().optional(),
         axeNodes: z.array(z.unknown()).optional(),
         section: z.string().min(1).optional(),
         citations: z.array(briefCitationSchema).optional(),
@@ -327,6 +335,16 @@ export const findingSchema = z
       "verified-fixed",
       "verify-failed",
     ]),
+    /** Set by the review run while an acknowledgement is in force; never carried forward. */
+    acknowledgement: z
+      .object({
+        reference: z.string().min(1),
+        at: z.iso.datetime(),
+        until: z.string().optional(),
+        note: z.string().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((finding, context) => {

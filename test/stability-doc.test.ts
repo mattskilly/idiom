@@ -94,3 +94,12 @@ test("the doc names the current interface version", () => {
   expect(doc).toContain(`interface version ${INTERFACE_VERSION}`);
   expect(doc).toContain(`"interfaceVersion": ${INTERFACE_VERSION}`);
 });
+
+test("the doc says which shared logs skip records a newer Idiom wrote", () => {
+  const start = doc.indexOf("### Records a newer Idiom wrote");
+  expect(start).toBeGreaterThan(0);
+  const section = doc.slice(start, doc.indexOf("\n## ", start));
+  expect(section).toContain("`.idiom/decisions.jsonl`");
+  expect(section).toContain("`.idiom/learned.jsonl`");
+  expect(section).toContain("additive");
+});

@@ -18,6 +18,7 @@ import {
   type Project,
 } from "../schemas/project.js";
 import { ConsoleProvenance } from "./console-provenance.js";
+import { CspRecorder } from "./csp-violations.js";
 import { ExplanationCollector } from "./explanations.js";
 import { replayRequests } from "./failure-identity.js";
 import { FilmstripBudget, FilmstripCapture } from "./filmstrips.js";
@@ -41,9 +42,14 @@ import {
   recordProbeRequest,
 } from "./probe.js";
 import { ProgressCollector } from "./progress.js";
-import { revealedObserver, revealedProbeOptions } from "./revealed.js";
+import {
+  dismissalProbeOptions,
+  revealedObserver,
+  revealedProbeOptions,
+} from "./revealed.js";
 import { ScrollbarController, scrollbarLaunchOptions } from "./scrollbars.js";
 import { TimelineCollector } from "./timeline.js";
+import { attemptTimeouts, navigate } from "./timeouts.js";
 import type {
   BrowserLauncher,
   BrowserSession,
@@ -189,6 +195,7 @@ async function captureInContext(
   let page: Page | undefined;
   let scrollbars: ScrollbarController | undefined;
   let provenance: ConsoleProvenance | undefined;
+  let csp: CspRecorder | undefined;
   // Third-party probing shares one ledger across the sweep and the clicks.
   const safety =
     tuple.probe && tuple.probeSafety === "third-party"
@@ -201,6 +208,7 @@ async function captureInContext(
     scrollbars = await ScrollbarController.create(page);
     // Without CDP provenance the tuple keeps the older console exemption.
     provenance = await ConsoleProvenance.create(page).catch(() => undefined);
+    csp = await CspRecorder.create(page).catch(() => undefined);
     const steps = "health" in tuple.state ? tuple.state.steps : [];
     const health = tuple.health ?? {
       allow:
@@ -270,7 +278,10 @@ async function captureInContext(
         recordFont(response.url(), `HTTP ${response.status()}`);
     });
     const target = page;
-    const screenshotOptions = deterministicScreenshotOptions(tuple.project);
+    const screenshotOptions = {
+      ...deterministicScreenshotOptions(tuple.project),
+      timeout: tuple.state.screenshotTimeoutMs ?? 30000,
+    };
     const explanations =
       tuple.project.checks.explanation === "visible"
         ? new ExplanationCollector(
@@ -329,6 +340,8 @@ async function captureInContext(
             tuple.onActivity,
             tuple.signal,
             collect ? timelines : undefined,
+            attemptTimeouts(tuple),
+            tuple.project.capture.maxFullPageHeight ?? 16000,
           )
         : undefined;
     const runner = createRunner(true);
@@ -344,7 +357,12 @@ async function captureInContext(
           through,
           reachContext(tuple.state),
         );
-      const response = await activePage.goto(tuple.navigationUrl);
+      const response = await navigate(
+        activePage,
+        tuple.navigationUrl,
+        attemptTimeouts(tuple).navigation,
+        "domcontentloaded",
+      );
       // Only the primary page's navigation describes the tuple's document.
       if (activePage === target) documentResponseUrl = response?.url();
       return response?.status() ?? null;
@@ -413,6 +431,7 @@ async function captureInContext(
       });
     };
     const consoleProvenance = provenance;
+    const cspRecorder = csp;
     const result = await collectPageEvidence({
       page,
       signal: tuple.signal,
@@ -462,12 +481,16 @@ async function captureInContext(
       collectConsole: async () => {
         const snapshot =
           steps.length > 0 || tuple.probe ? [...records] : records;
-        return consoleProvenance
+        const annotated = consoleProvenance
           ? consoleProvenance.annotate(snapshot, timestamps)
           : snapshot;
+        return cspRecorder
+          ? await cspRecorder.annotate(annotated, annotate)
+          : annotated;
       },
       tokens: tuple.tokens ?? { status: "not-configured" },
-      screenshotOptions: deterministicScreenshotOptions(tuple.project),
+      screenshotOptions,
+      maxFullPageHeight: tuple.project.capture.maxFullPageHeight,
       reuseScreenshot: tuple.reuseScreenshot,
       reuseScreenshotGeometry: tuple.reuseScreenshotGeometry,
       now: runtime.now,
@@ -479,6 +502,8 @@ async function captureInContext(
             touchReachability: tuple.project.checks.touchReachability,
             liveness: tuple.project.checks.liveness,
             mediaFill: tuple.project.checks.mediaFill,
+            visualBlank: tuple.project.checks.visualBlank,
+            loadingStuck: tuple.project.checks.loadingStuck.enabled,
             ...(tuple.project.checks.collections.length === 0
               ? {}
               : {
@@ -487,6 +512,7 @@ async function captureInContext(
                   ),
                 }),
             components: tuple.project.checks.components,
+            spacingTargets: tuple.project.checks.spacingTargets,
             inferredComponents: inferredComponentInputs(tuple.designComponents),
             invariants: tuple.invariants,
             shell: tuple.shell,
@@ -622,6 +648,9 @@ async function captureInContext(
                       ],
                     }),
                   )),
+              ...(tuple.enumerateProbe || tuple.designReference
+                ? {}
+                : dismissalProbeOptions(settings, tuple.explicitDismiss)),
               motionSelectors: tuple.project.checks.motion.selectors,
               motionMinExtentPx: tuple.project.checks.motion.minExtentPx,
               reducedMotion: tuple.project.capture.reducedMotion,
@@ -677,6 +706,7 @@ async function captureInContext(
     await closeWithin(() => page?.close());
     await scrollbars?.dispose();
     await provenance?.dispose();
+    await csp?.dispose();
   }
 }
 
@@ -884,7 +914,11 @@ export function createBrowserLauncher(
               reachContext(tuple.state),
             );
           } else {
-            await page.goto(tuple.navigationUrl);
+            await navigate(
+              page,
+              tuple.navigationUrl,
+              attemptTimeouts(tuple).navigation,
+            );
           }
           await page.waitForTimeout(
             tuple.state.settleMs ?? tuple.project.capture.settleMs,

@@ -1,6 +1,7 @@
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { readDesignAssets } from "../brief/design-asset.js";
 import {
   captureTupleKey,
   expectedCaptureTupleKeys,
@@ -25,6 +26,10 @@ import {
 } from "./attachments.js";
 import { type GitTopology, resolveBaseline } from "./baseline.js";
 import { writeBeforeAfterComposite } from "./compare.js";
+import {
+  type DesignAssetVerification,
+  verifyDesignAssets,
+} from "./design-assets.js";
 import {
   evaluateVerification,
   type VerificationEvaluation,
@@ -62,7 +67,15 @@ export type VerifyRunResult = {
   newBlockers?: VerificationEvaluation["newBlockers"] | undefined;
   newFindings?: VerificationEvaluation["newFindings"] | undefined;
   coverage?: import("../report/coverage.js").ReportCoverage | undefined;
+  /** Set when the build carries an Idiom design asset asserting this flow. */
+  designAssets?: DesignAssetVerification | undefined;
 };
+
+function designAssetCauses(
+  result: DesignAssetVerification | undefined,
+): string[] {
+  return (result?.briefs ?? []).flatMap((brief) => brief.failures);
+}
 
 function defaultOutput(projectDirectory: string, now: Date): string {
   return join(
@@ -100,6 +113,23 @@ export async function runVerify(options: {
     ? options.spec
     : resolve(validated.projectDirectory, options.spec);
   const findings = await readVerificationSpec(specPath);
+  const assetBriefs = (
+    await readDesignAssets(validated.projectDirectory)
+  ).filter((brief) =>
+    brief.criteria.some((criterion) =>
+      criterion.assertions.some((assertion) => assertion.flow === flow.id),
+    ),
+  );
+  const checkAssets = async (root: string) =>
+    assetBriefs.length === 0
+      ? undefined
+      : verifyDesignAssets({
+          validated,
+          flow,
+          briefs: assetBriefs,
+          capturesRoot: root,
+          dependencies: options.dependencies?.capture,
+        });
   const findingTuples = selectFindingTuples({
     findings,
     flow,
@@ -137,6 +167,14 @@ export async function runVerify(options: {
   try {
     const manifest = createAttachmentManifest(tuples);
     if (findings.length === 0) {
+      if (assetBriefs.length > 0) {
+        capturesRoot = await mkdtemp(join(tmpdir(), "idiom-verify-captures-"));
+        checkCancelled();
+      }
+      const designAssets =
+        capturesRoot === undefined
+          ? undefined
+          : await checkAssets(capturesRoot);
       const reportCoverage = buildVerificationCoverage({
         flow,
         project: validated.project,
@@ -151,6 +189,7 @@ export async function runVerify(options: {
         manifest,
         noFindings: true,
         reportCoverage,
+        designAssets,
       });
       const reportPath = await writeVerificationReport(staging, report);
       const htmlReportPath = await writeHtmlReport(
@@ -163,6 +202,7 @@ export async function runVerify(options: {
           manifest,
           noFindings: true,
           reportCoverage,
+          designAssets,
         }),
       );
       await writeAttachmentManifest(staging, manifest);
@@ -179,11 +219,12 @@ export async function runVerify(options: {
         htmlReportPath: join(outputDirectory, basename(htmlReportPath)),
         outputDirectory,
         outcome: "no-findings",
-        passed: true,
+        passed: designAssets?.passed ?? true,
         findingCount: 0,
-        causes: [],
+        causes: designAssetCauses(designAssets),
         verdicts: [],
         newBlockers: [],
+        ...(designAssets === undefined ? {} : { designAssets }),
       };
     }
 
@@ -442,6 +483,11 @@ export async function runVerify(options: {
         })),
       };
     }
+    checkCancelled();
+    const designAssets = await checkAssets(capturesRoot);
+    // The pinned design asset is part of the contract: its failure fails the run.
+    if (evaluation !== undefined && designAssets?.passed === false)
+      evaluation = { ...evaluation, passed: false };
     const currentCommit =
       loadedA.commit === loadedB.commit
         ? loadedB.commit
@@ -464,6 +510,7 @@ export async function runVerify(options: {
       currentRunB: loadedB.runId,
       manifest,
       reportCoverage,
+      designAssets,
       ...(evaluation === undefined
         ? { diagnostic: diagnostic ?? "unknown comparison failure" }
         : { evaluation }),
@@ -480,6 +527,7 @@ export async function runVerify(options: {
         comparisons,
         filmstripImages,
         reportCoverage,
+        designAssets,
         ...(evaluation === undefined
           ? { diagnostic: diagnostic ?? "unknown comparison failure" }
           : { evaluation }),
@@ -502,6 +550,7 @@ export async function runVerify(options: {
               .filter(({ status }) => status !== "fixed")
               .map(({ finding, reason }) => `${finding.id}: ${reason}`),
             ...evaluation.newBlockers,
+            ...designAssetCauses(designAssets),
           ];
     return {
       reportPath: join(outputDirectory, "before-after.md"),
@@ -512,6 +561,7 @@ export async function runVerify(options: {
       coverage: reportCoverage,
       findingCount: findings.length,
       causes,
+      ...(designAssets === undefined ? {} : { designAssets }),
       ...(evaluation === undefined
         ? {}
         : {

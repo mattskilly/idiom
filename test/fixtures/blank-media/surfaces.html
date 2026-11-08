@@ -1,0 +1,51 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Authored media surfaces</title>
+<style>
+body { margin: 0; display: grid; grid-template-columns: repeat(4, 160px); gap: 8px; }
+img,picture,canvas,iframe,video,.surface { display: block; box-sizing: border-box; width: 160px; height: 100px; border: 0; padding: 0; }
+.surface { position: relative; }
+.rich { background: linear-gradient(35deg,#e64980,#40c9ff,#f8df50); }
+.empty,.skeleton { background: #b2c3db; }
+.cover { position: absolute; inset: 0; background: rgba(255,255,255,.98); pointer-events: none; }
+.partial .cover { width: 70%; }
+.translucent .cover { background: rgba(255,255,255,.5); }
+.pseudo::after { content: ''; position: absolute; inset: 0; background: #fff; pointer-events: none; }
+</style>
+<canvas id="empty-canvas"></canvas>
+<iframe id="blank-frame" srcdoc="<!doctype html><body style='background:#abc'>"></iframe>
+<video id="empty-video" controls></video>
+<picture><img id="blank-picture" alt="Preview" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='100'%3E%3Crect width='160' height='100' fill='%23abc'/%3E%3C/svg%3E"></picture>
+<div id="blank-background" class="surface" style="background-image:linear-gradient(#abc,#abc)"></div>
+<div id="placeholder" class="surface skeleton" data-skeleton="true"></div>
+<div style="opacity:.005"><canvas id="transparent" class="rich"></canvas></div>
+<div class="surface"><canvas id="covered" class="rich"></canvas><div class="cover"></div></div>
+<div class="surface pseudo"><canvas id="pseudo-covered" class="rich"></canvas></div>
+<canvas id="painted"></canvas>
+<div style="width:0;height:0;contain:paint"><canvas id="paint-contained" class="rich"></canvas></div>
+<div style="overflow:hidden;width:0;height:0"><canvas id="fixed-escape" class="rich" style="position:fixed;top:1100px;left:0"></canvas></div>
+<div style="display:contents;overflow:hidden"><canvas id="contents-child" class="rich"></canvas></div>
+<canvas id="«r0»" data-testid="durable-surface" class="rich"></canvas>
+<div style="width:160px;height:100px;overflow:hidden"><canvas id="scaled-painted" class="rich" style="width:320px;height:200px;transform:scale(.5);transform-origin:0 0"></canvas></div>
+<picture style="display:inline;width:auto;height:auto"><img id="inline-picture" alt="Illustration" class="rich" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='100'%3E%3Cpath fill='red' d='M0 0h80v100H0z'/%3E%3Cpath fill='blue' d='M80 0h80v100H80z'/%3E%3C/svg%3E"></picture>
+<img id="real-thumbnail" alt="Detailed thumbnail">
+<img id="two-colour" alt="Two colour illustration">
+<canvas id="swatch" aria-labelledby="colour-label" style="background:#a3c"></canvas>
+<span id="colour-label" hidden>Selected colour</span>
+<div class="configured-swatch"><canvas id="configured" style="background:#a3c"></canvas></div>
+<iframe id="painted-frame" srcdoc="<!doctype html><body style='background:linear-gradient(45deg,red,blue);height:100vh;margin:0'>"></iframe>
+<div class="surface partial"><canvas id="partial" class="rich"></canvas><div class="cover"></div></div>
+<div class="surface translucent"><canvas id="translucent" class="rich"></canvas><div class="cover"></div></div>
+<div class="surface"><canvas id="transparent-hitbox" class="rich"></canvas><div style="position:absolute;inset:0"></div></div>
+<canvas id="too-small" style="width:119px;height:80px"></canvas>
+<canvas id="too-short" style="width:120px;height:79px"></canvas>
+<canvas id="boundary" style="width:120px;height:80px"></canvas>
+<canvas id="hidden" style="display:none"></canvas>
+<div style="overflow:hidden;width:0;height:0"><canvas id="clipped"></canvas></div>
+<div class="surface" id="masked-wrapper"><canvas id="masked"></canvas></div>
+<div class="surface" style="position:relative"><canvas id="intersecting-mask"></canvas><span id="mask-intersection" style="position:absolute;top:20px;left:20px;width:10px;height:10px"></span></div>
+<div class="surface placeholder" id="populated">A layout container with content</div>
+<script>
+const c = document.querySelector('#painted'), ctx = c.getContext('2d');
+for(let y=0;y<c.height;y++) for(let x=0;x<c.width;x++) { ctx.fillStyle=`rgb(${(x*17+y*13)%256},${(x*7+y*23)%256},${(x*3+y*41)%256})`; ctx.fillRect(x,y,1,1); }
+document.querySelector('#real-thumbnail').src=c.toDataURL();
+const two=document.createElement('canvas');two.width=160;two.height=100;const t=two.getContext('2d');t.fillStyle='#ff0000';t.fillRect(0,0,80,100);t.fillStyle='#0000ff';t.fillRect(80,0,80,100);document.querySelector('#two-colour').src=two.toDataURL();
+</script></html>

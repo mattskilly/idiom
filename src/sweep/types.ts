@@ -22,6 +22,8 @@ export type SweepProposal = {
   salience: number;
   prominence: number;
   score: number;
+  /** Impact tier (docs/rules.md, Ranking); orders proposals within a severity. */
+  impact: 0 | 1;
   explanation: RankingExplanation;
 };
 export type ProductSweepSummary = {

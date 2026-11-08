@@ -5,6 +5,8 @@ import {
   invariantSelectors,
   isGroupInvariant,
 } from "../schemas/invariant.js";
+import { spacingTargetSchema } from "../schemas/targets.js";
+import { loadingStuckSchema, visualBlankSchema } from "./blank-schema.js";
 import {
   livenessArtifactSchema,
   touchReachabilityArtifactSchema,
@@ -103,6 +105,7 @@ const elementSchema = z
       ])
       .optional(),
     spacingExcluded: z.string().min(1).optional(),
+    adjacentGapExcluded: z.string().min(1).optional(),
     paintedContent: z
       .object({
         selectors: z.array(z.string()),
@@ -1070,6 +1073,45 @@ const probeMenuSchema = z
       .optional(),
   })
   .strict();
+const dismissalTestSchema = z
+  .object({
+    method: z.enum(["escape", "outside", "iframe"]),
+    outcome: z.enum([
+      "closed",
+      "stayed-open",
+      "not-tested",
+      "not-reached",
+      "inconclusive",
+    ]),
+    reason: z.string().optional(),
+    point: z.object({ x: finite, y: finite }).strict().optional(),
+    iframe: z
+      .object({ selector: z.string().min(1), name: z.string() })
+      .strict()
+      .optional(),
+    focus: z
+      .object({
+        returned: z.boolean(),
+        active: z.string().min(1),
+        activeSelector: z.string().min(1).optional(),
+        focusedTrigger: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+const probeDismissalSchema = z
+  .object({
+    trigger: z.string().min(1),
+    root: z.string().min(1),
+    kind: z.enum(["popup", "expanded", "dialog", "popover"]),
+    role: z.string().min(1).optional(),
+    status: z.enum(["tested", "partial", "not-reached", "not-applicable"]),
+    reason: z.string().optional(),
+    explicit: z.string().min(1).optional(),
+    tests: z.array(dismissalTestSchema),
+  })
+  .strict();
 const selectionTrialsSchema = z
   .object({
     status: z.enum(["ran", "partial"]),
@@ -1095,6 +1137,13 @@ const selectionTrialsSchema = z
 
 const probeSchema = z
   .object({
+    stateReachTimeout: z
+      .object({
+        kind: z.enum(["navigation", "readiness"]),
+        timeoutMs: z.number().finite().positive(),
+      })
+      .strict()
+      .optional(),
     safety: probeSafetySchema.optional(),
     failureReplay: z
       .object({
@@ -1111,6 +1160,14 @@ const probeSchema = z
       .strict()
       .optional(),
     selectionTrials: selectionTrialsSchema.optional(),
+    dismissal: z
+      .object({
+        tested: countSchema,
+        notReached: countSchema,
+        limit: countSchema,
+      })
+      .strict()
+      .optional(),
     fingerprints: z.record(z.string(), z.string()).optional(),
     heldReplay: z
       .object({
@@ -1176,8 +1233,18 @@ const probeSchema = z
             })
             .strict()
             .optional(),
+          openedDisclosure: z
+            .object({
+              root: z.string().min(1),
+              kind: z.enum(["details", "popup", "expanded"]),
+              trigger: rectSchema,
+              panel: rectSchema,
+            })
+            .strict()
+            .optional(),
           selectsAncestor: selectsAncestorSchema.optional(),
           menu: probeMenuSchema.optional(),
+          dismissal: probeDismissalSchema.optional(),
         })
         .strict(),
     ),
@@ -1188,8 +1255,8 @@ const componentSchema = z
   .object({
     name: z.string().min(1),
     selector: z.string(),
-    width: finite.positive(),
-    height: finite.positive(),
+    width: finite.positive().optional(),
+    height: finite.positive().optional(),
     tolerance: z
       .object({
         ratio: finite.min(0),
@@ -1211,9 +1278,31 @@ const componentSchema = z
   })
   .strict()
   .refine(
+    (component) =>
+      component.width !== undefined || component.height !== undefined,
+    "declare at least one component dimension",
+  )
+  .refine(
     (component) => component.selector !== "" || component.unresolved === true,
     { message: "selector is required unless the component is unresolved" },
   );
+
+const spacingTargetObservationSchema = z
+  .object({
+    target: spacingTargetSchema,
+    pairs: z.array(
+      z
+        .object({
+          first: rectSchema.extend({ selector: z.string().min(1) }),
+          second: rectSchema.extend({ selector: z.string().min(1) }),
+          container: z.string().min(1).optional(),
+        })
+        .strict(),
+    ),
+    status: z.enum(["measured", "unmeasurable"]),
+    reasons: z.array(z.string().min(1)),
+  })
+  .strict();
 
 const invariantObservationSchema = z
   .object({
@@ -1316,6 +1405,14 @@ const overlapKind = z.enum(["interactive", "text"]);
 
 const overlapSchema = z
   .object({
+    cardAction: z
+      .object({
+        card: z.string().min(1),
+        group: z.string().min(1),
+        status: z.enum(["intentional", "ambiguous"]),
+      })
+      .strict()
+      .optional(),
     a: z.string().min(1),
     b: z.string().min(1),
     kinds: z.tuple([overlapKind, overlapKind]),
@@ -1373,6 +1470,7 @@ const fieldGroupSchema = z
           selector: z.string().min(1),
           role: z.enum(["label", "control", "helper"]),
           rect: rectSchema,
+          textRect: rectSchema.optional(),
         })
         .strict(),
     ),
@@ -1860,8 +1958,9 @@ const shellVisibilitySchema = z
 
 const sizeSchema = z.object({ width: dimension, height: dimension }).strict();
 
-const screenshotGeometrySchema = z
+export const screenshotGeometrySchema = z
   .object({
+    croppedFromHeight: dimension.optional(),
     strategy: z.enum(["viewport", "full-page", "tiled"]),
     scale: finite.positive(),
     width: dimension,
@@ -1874,6 +1973,12 @@ const screenshotGeometrySchema = z
     rects: z.record(z.string().min(1), rectSchema).optional(),
   })
   .strict()
+  .refine(
+    (value) =>
+      value.croppedFromHeight === undefined ||
+      (value.croppedFromHeight > value.height && value.strategy !== "viewport"),
+    "cropped screenshot must retain original height",
+  )
   .refine(
     (value) => value.tiles === undefined || value.strategy === "tiled",
     "tiles are recorded only for tiled screenshots",
@@ -1907,6 +2012,7 @@ const observationArtifactV2Schema = z
         .strict(),
     ),
     components: z.array(componentSchema).optional(),
+    spacingTargets: z.array(spacingTargetObservationSchema).optional(),
     invariants: z.array(invariantObservationSchema).optional(),
     shellVisibility: shellVisibilitySchema.optional(),
     probe: probeSchema.optional(),
@@ -1977,6 +2083,8 @@ const observationArtifactV2Schema = z
     progress: progressArtifactSchema.optional(),
     touchReachability: touchReachabilityArtifactSchema.optional(),
     liveness: livenessArtifactSchema.optional(),
+    visualBlank: visualBlankSchema.optional(),
+    loadingStuck: loadingStuckSchema.optional(),
     mediaFrames: z.array(mediaFrameSchema).optional(),
     mediaFill: z
       .object({ tolerance: z.number().int().min(0).max(64) })

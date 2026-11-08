@@ -3,6 +3,12 @@ import { basename, join } from "node:path";
 import { redactCredentials } from "../critique/redact.js";
 import { readTemplate } from "../templates.js";
 import { IDIOM_VERSION } from "../version.js";
+import { detectWiring, wiringFacts } from "../wiring/detect.js";
+import type {
+  Proposal,
+  WiringDetection,
+  WiringReport,
+} from "../wiring/types.js";
 
 export type SetupPackageManager = "bun" | "pnpm" | "yarn" | "npm";
 
@@ -34,7 +40,39 @@ export type SetupFacts = {
   scaffoldFiles: { product: ScaffoldFileState; design: ScaffoldFileState };
   seedCandidates: string[];
   envExample: string | undefined;
+  /** Wiring signals by name, PATH availability, and init's outcome when known. */
+  wiring?: SetupWiringFacts | undefined;
 };
+
+export type SetupWiringFacts = {
+  found: string[];
+  agents: { claude: boolean; codex: boolean };
+  /** Surfaces init wired or found already wired, when it ran. */
+  wired?: string[];
+  /** Surfaces init found but left: skipped, default off, declined, protected. */
+  left?: string[];
+};
+
+/** Bounded: surface names only, never file contents or executable paths. */
+export function setupWiringFacts(
+  detection: WiringDetection,
+  report?: WiringReport,
+): SetupWiringFacts {
+  const { found, agents } = wiringFacts(detection);
+  if (report === undefined) return { found, agents };
+  const done = (row: Proposal) =>
+    row.disposition === "unchanged" ||
+    (report.mode === "applied" &&
+      (row.disposition === "create" || row.disposition === "update"));
+  return {
+    found,
+    agents,
+    wired: report.proposals.filter(done).map((row) => row.surface),
+    left: report.proposals
+      .filter((row) => row.disposition !== "unavailable" && !done(row))
+      .map((row) => row.surface),
+  };
+}
 
 export const MAX_SETUP_SCRIPTS = 20;
 export const MAX_SETUP_ROUTES = 30;
@@ -245,6 +283,7 @@ async function scaffoldFileState(
 /** Reads what setup needs to know; lenient, so half-configured repos work. */
 export async function collectSetupFacts(
   projectDirectory: string,
+  wiring?: WiringReport,
 ): Promise<SetupFacts> {
   const manifest = record(
     await readJson(join(projectDirectory, "package.json")),
@@ -286,5 +325,9 @@ export async function collectSetupFacts(
     },
     seedCandidates,
     envExample,
+    wiring: setupWiringFacts(
+      wiring?.detection ?? (await detectWiring(projectDirectory)),
+      wiring,
+    ),
   };
 }

@@ -42,6 +42,8 @@ import type { Project } from "../schemas/project.js";
 import { escapeHtml } from "./html.js";
 
 export type ReportCoverage = {
+  runDiagnostics?: string[] | undefined;
+  verdict?: "deferred" | undefined;
   flow: string;
   purpose: string;
   declaredStateCount: number;
@@ -128,6 +130,7 @@ type CoverageTuple = Pick<
   | "layoutRepresentative"
   | "observations"
   | "timelines"
+  | "screenshotGeometry"
 >;
 
 function tupleSucceeded(tuple: CoverageTuple): boolean {
@@ -357,6 +360,7 @@ export function buildReviewCoverage(options: {
       ? computeProbeCoverage({
           tuples: options.tuples,
           flowBudgetMs: record?.probe.flowBudgetMs,
+          intended: record?.probe.intended,
         })
       : undefined;
   const stateLabels = Object.fromEntries(
@@ -390,6 +394,10 @@ export function buildReviewCoverage(options: {
     briefs !== undefined && briefs.entries.length > 0 ? briefs : undefined;
   return {
     flow: options.flow.id,
+    ...((record?.deferredTuples?.length ?? 0) > 0
+      ? { verdict: "deferred" as const }
+      : {}),
+    runDiagnostics: runDiagnosticLines(record, options.tuples),
     purpose: "Declared review coverage",
     declaredStateCount: record
       ? new Set(record.declared.map((tuple) => tuple.state)).size
@@ -507,7 +515,10 @@ export function buildVerificationCoverage(options: {
   };
 }
 
-export function renderCoverageMarkdown(coverage: ReportCoverage): string {
+export function renderCoverageMarkdown(
+  coverage: ReportCoverage,
+  includeDiagnostics = true,
+): string {
   const states =
     coverage.states.length === 0
       ? "none"
@@ -550,6 +561,9 @@ export function renderCoverageMarkdown(coverage: ReportCoverage): string {
     "## Coverage and limits",
     "",
     markdownText(coverage.purpose),
+    ...(includeDiagnostics ? (coverage.runDiagnostics ?? []) : []).map(
+      markdownText,
+    ),
     "",
     `- Flow: ${markdownText(coverage.flow)}`,
     `- States: ${coverage.states.length} of ${coverage.declaredStateCount} declared (${states})`,
@@ -738,7 +752,10 @@ function renderSurfaceGroupMarkdown(
   ];
 }
 
-export function renderCoverageHtml(coverage: ReportCoverage): string {
+export function renderCoverageHtml(
+  coverage: ReportCoverage,
+  includeDiagnostics = true,
+): string {
   const states =
     coverage.states.length === 0
       ? "none"
@@ -763,7 +780,7 @@ export function renderCoverageHtml(coverage: ReportCoverage): string {
     surfaces === undefined
       ? ""
       : `<h3>Project surfaces</h3><dl>${renderSurfaceGroupHtml("Judged in this review", surfaces.judged)}${renderSurfaceGroupHtml("Governed by another flow, not judged here", surfaces.governedNotJudged)}${renderSurfaceGroupHtml("Ungoverned (no flow captures this surface)", surfaces.ungoverned)}</dl>`;
-  return `<section class="panel coverage" aria-labelledby="coverage-heading"><h2 id="coverage-heading">Coverage and limits</h2><p>${escapeHtml(coverage.purpose)}</p><dl><dt>Flow</dt><dd>${escapeHtml(coverage.flow)}</dd><dt>States</dt><dd>${coverage.states.length} of ${coverage.declaredStateCount} declared (${states})</dd><dt>Viewports</dt><dd>${viewports}</dd><dt>Colour schemes</dt><dd>${schemes}</dd><dt>Successful tuples</dt><dd>${coverage.successfulTuples} of ${coverage.selectedTuples} selected</dd>${coverage.stateCoverage === undefined ? "" : `<dt>State coverage</dt><dd>${escapeHtml(stateCoverageLine(coverage.stateCoverage))}</dd>`}${coverage.commits.map(({ label, value }) => `<dt>${escapeHtml(label)}</dt><dd><code>${escapeHtml(value)}</code></dd>`).join("")}</dl>${surfaceHtml}${interactionHtml(coverage.interaction)}${probeCoverageHtml(coverage)}${gateHtml(coverage)}${disclosureCoverageHtml(coverage)}${emptyContainerCoverageHtml(coverage)}${briefCoverageHtml(coverage)}<h3>Limitations</h3><ul>${coverage.limitations.map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("")}</ul></section>`;
+  return `<section class="panel coverage" aria-labelledby="coverage-heading"><h2 id="coverage-heading">Coverage and limits</h2><p>${escapeHtml(coverage.purpose)}</p>${(includeDiagnostics ? (coverage.runDiagnostics ?? []) : []).map((line) => `<p>${escapeHtml(line)}</p>`).join("")}<dl><dt>Flow</dt><dd>${escapeHtml(coverage.flow)}</dd><dt>States</dt><dd>${coverage.states.length} of ${coverage.declaredStateCount} declared (${states})</dd><dt>Viewports</dt><dd>${viewports}</dd><dt>Colour schemes</dt><dd>${schemes}</dd><dt>Successful tuples</dt><dd>${coverage.successfulTuples} of ${coverage.selectedTuples} selected</dd>${coverage.stateCoverage === undefined ? "" : `<dt>State coverage</dt><dd>${escapeHtml(stateCoverageLine(coverage.stateCoverage))}</dd>`}${coverage.commits.map(({ label, value }) => `<dt>${escapeHtml(label)}</dt><dd><code>${escapeHtml(value)}</code></dd>`).join("")}</dl>${surfaceHtml}${interactionHtml(coverage.interaction)}${probeCoverageHtml(coverage)}${gateHtml(coverage)}${disclosureCoverageHtml(coverage)}${emptyContainerCoverageHtml(coverage)}${briefCoverageHtml(coverage)}<h3>Limitations</h3><ul>${coverage.limitations.map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("")}</ul></section>`;
 }
 
 function interactionHtml(interaction: QuickInteraction | undefined): string {
@@ -790,4 +807,54 @@ function renderSurfaceGroupHtml(
           )
           .join("")}</ul>`;
   return `<dt>${escapeHtml(label)}</dt><dd>${value}</dd>`;
+}
+
+export function runDiagnosticLines(
+  record: RunRecord | undefined,
+  tuples: Array<
+    Pick<
+      CheckTuple,
+      | "state"
+      | "viewport"
+      | "colorScheme"
+      | "observations"
+      | "screenshotGeometry"
+    >
+  >,
+): string[] {
+  const lines: string[] = [];
+  const host = record?.host;
+  const deferred = record?.deferredTuples ?? [];
+  if (host) {
+    const load = Math.max(host.loadStart?.[0] ?? 0, host.loadEnd?.[0] ?? 0);
+    const evidence = host.pressureReasons.includes("load")
+      ? `load ${Number(load.toFixed(2))} on ${host.coreCount} cores`
+      : host.readyStartMs && host.readyEndMs
+        ? `ready URL ${Number((host.readyEndMs / host.readyStartMs).toFixed(1))} times slower than at start`
+        : "pressure recorded";
+    if (deferred.length)
+      lines.push(
+        `Host busy: ${deferred.length} of ${record?.selected.length} tuples timed out (${evidence}). No review for: ${[...new Set(deferred.map((tuple) => tuple.state))].join(", ")}. Re-run on an idle host.`,
+      );
+    else if (host.pressureReasons.includes("load"))
+      lines.push(
+        `Host load: ${Number(load.toFixed(2))} on ${host.coreCount} cores (threshold ${host.threshold} per core).`,
+      );
+  }
+  for (const retry of record?.retries ?? [])
+    lines.push(
+      `Retry ${retry.state}/${retry.viewport}/${retry.colorScheme} (${retry.phase}): ${retry.outcome}; doubled ${retry.firstTimeout.kind} deadline ${retry.doubledDeadlineMs} ms.`,
+    );
+  for (const tuple of tuples) {
+    const shot =
+      tuple.screenshotGeometry ??
+      (tuple.observations?.version === 2
+        ? tuple.observations.screenshot
+        : undefined);
+    if (shot?.croppedFromHeight)
+      lines.push(
+        `Screenshot cropped for ${tuple.state}/${tuple.viewport}/${tuple.colorScheme ?? "light"}: captured ${shot.height} of ${shot.croppedFromHeight} CSS px.`,
+      );
+  }
+  return lines;
 }

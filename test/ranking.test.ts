@@ -4,6 +4,8 @@ import {
   affectedCounts,
   buildIssueRankingContext,
   categorySalience,
+  comparePriority,
+  impactReasons,
   salienceFor,
   scoreGroup,
 } from "../src/review/ranking.js";
@@ -228,6 +230,7 @@ test("distinct states and places use bounded logarithms, never occurrence totals
   expect(affectedCounts([...coordinates, ...coordinates])).toEqual({
     states: 1,
     places: 4,
+    viewports: 2,
   });
   expect(scoreGroup(group, { states: 1, places: 4 }).prominence).toBeCloseTo(
     1 + 1 / 12,
@@ -252,4 +255,74 @@ test("distinct states and places use bounded logarithms, never occurrence totals
   );
   expect(hygiene.prominence).toBe(3.5);
   expect(hygiene.score).toBeLessThan(scoreGroup(group, counts).score);
+});
+
+test("impact reasons name every way a finding is more than single-state cosmetic", () => {
+  const base = {
+    states: 1,
+    viewports: 1,
+    primary: false,
+    interactive: false,
+    salience: 7,
+  };
+  expect(impactReasons(base)).toEqual([]);
+  expect(impactReasons({ ...base, states: 2 })).toEqual(["states"]);
+  expect(impactReasons({ ...base, viewports: 2 })).toEqual(["viewports"]);
+  expect(impactReasons({ ...base, primary: true })).toEqual(["primary"]);
+  expect(impactReasons({ ...base, interactive: true })).toEqual([
+    "interactive",
+  ]);
+  expect(impactReasons({ ...base, salience: 9 })).toEqual(["broken"]);
+});
+
+test("scoreGroup sets the impact tier from breadth, controls, primary placement and broken behaviour", () => {
+  const cosmetic = {
+    category: "token-drift",
+    rule: "idiom:token-drift",
+    selector: "#target",
+    coordinates: ["editor/desktop"],
+  };
+  const plain = buildIssueRankingContext([
+    captured([target({ tag: "div", interactive: false })]),
+  ]);
+  expect(scoreGroup(cosmetic, counts, plain)).toMatchObject({
+    impact: 0,
+    impactReasons: [],
+  });
+  expect(scoreGroup(cosmetic, counts)).toMatchObject({ impact: 0 });
+  const control = buildIssueRankingContext([
+    captured([target({ interactive: true })]),
+  ]);
+  expect(scoreGroup(cosmetic, counts, control).impactReasons).toEqual([
+    "interactive",
+  ]);
+  expect(
+    scoreGroup(
+      cosmetic,
+      counts,
+      buildIssueRankingContext([captured([action()])]),
+    ).impactReasons,
+  ).toContain("primary");
+  expect(
+    scoreGroup(
+      { ...cosmetic, coordinates: ["editor/desktop", "editor/mobile"] },
+      affectedCounts(["editor/desktop", "editor/mobile"]),
+    ).impactReasons,
+  ).toEqual(["viewports"]);
+  expect(scoreGroup(cosmetic, { states: 3, places: 3 }).impactReasons).toEqual([
+    "states",
+  ]);
+  expect(scoreGroup(group, counts).impactReasons).toEqual(["broken"]);
+});
+
+test("within a severity the impact tier outranks score; severity still comes first", () => {
+  const wide = { severity: "major" as const, impact: 1, score: 2 };
+  const cosmetic = { severity: "major" as const, impact: 0, score: 30 };
+  expect([cosmetic, wide].sort(comparePriority)).toEqual([wide, cosmetic]);
+  const blocker = { severity: "blocker" as const, impact: 0, score: 1 };
+  expect([wide, blocker].sort(comparePriority)).toEqual([blocker, wide]);
+  // Missing impact is neutral: such callers keep their score order.
+  const legacy = { severity: "major" as const, score: 5 };
+  expect([legacy, wide].sort(comparePriority)).toEqual([legacy, wide]);
+  expect([cosmetic, legacy].sort(comparePriority)).toEqual([legacy, cosmetic]);
 });

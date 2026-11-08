@@ -106,6 +106,8 @@ test("multi-state check JSON stays parseable while live progress precedes the re
           controlTimeoutMs: 1500,
           stateTimeoutMs: 2100,
         },
+        // Live progress is measured apart from the independent loading window.
+        loadingStuck: { enabled: false },
       },
     };
     const flow = {

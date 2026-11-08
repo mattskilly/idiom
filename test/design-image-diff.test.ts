@@ -226,5 +226,8 @@ test("tall pages compare quickly", () => {
     app = paint(1440, 6000, []);
   const started = performance.now();
   compareDesignImage({ design, app, width: 1440 });
-  expect(performance.now() - started).toBeLessThan(2000);
+  // Guards against a super-linear offset search on tall pages, not a promised
+  // limit: idle this compare takes ~0.3s, and two concurrent full suites have
+  // pushed it past 3s. The ceiling stays far below what a quadratic search costs.
+  expect(performance.now() - started).toBeLessThan(10_000);
 });

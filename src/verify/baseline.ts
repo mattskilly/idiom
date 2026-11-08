@@ -1,8 +1,12 @@
 import { execFile } from "node:child_process";
-import type { Dirent } from "node:fs";
-import { access, readdir, readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import {
+  assertCompleteRun,
+  completeRunNames,
+  isCompleteRun,
+} from "../capture/run-lifecycle.js";
 import { IdiomError } from "../errors.js";
 import { type Finding, findingSchema } from "../schemas/finding.js";
 
@@ -60,6 +64,7 @@ async function exists(path: string): Promise<boolean> {
 async function findingsAt(
   runDirectory: string,
 ): Promise<Finding[] | undefined> {
+  if (!(await isCompleteRun(runDirectory))) return undefined;
   const path = join(runDirectory, "findings.json");
   let raw: string;
   try {
@@ -112,17 +117,7 @@ function matchesAll(candidates: Finding[], expected: Finding[]): boolean {
 }
 
 async function runsBelow(root: string): Promise<string[]> {
-  let entries: Dirent[];
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
-  return entries
-    .filter((entry) => entry.isDirectory())
-    .sort((left, right) => left.name.localeCompare(right.name))
-    .map((entry) => join(root, entry.name));
+  return (await completeRunNames(root)).sort().map((name) => join(root, name));
 }
 
 async function validateBaseline(
@@ -130,6 +125,7 @@ async function validateBaseline(
   findings: Finding[],
 ): Promise<string> {
   const resolved = resolve(runDirectory);
+  await assertCompleteRun(resolved);
   const stored = await findingsAt(resolved);
   if (stored === undefined)
     throw new IdiomError(`baseline capture has no findings.json: ${resolved}`);

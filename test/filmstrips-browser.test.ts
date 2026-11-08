@@ -355,16 +355,32 @@ test("loading evidence retains the held original action, with its own replay ide
 });
 
 test("page scale maps CSS crop coordinates to the actual compositor pixels", async () => {
-  const { directory, manifest } = await capture(
-    "transition.html",
-    true,
-    350,
-    0,
-    2,
-  );
+  // Any frame after the 300ms transition shows the panel at rest. Under heavy
+  // load the sampler honestly declines late paints ("misses a known visual
+  // change") — sometimes both 400 and settle — so recapture until one carries
+  // pixels; the decline itself is correct behavior, not what this test checks.
+  const atRest = (
+    frames: Awaited<
+      ReturnType<typeof capture>
+    >["manifest"]["actions"][number]["frames"],
+  ) =>
+    frames.find((f) => f.slot === 400 && f.path) ??
+    frames.find((f) => f.slot === "settle" && f.path);
+  let result = await capture("transition.html", true, 350, 0, 2);
+  for (
+    let attempt = 1;
+    attempt < 3 && !atRest(result.manifest.actions[0]?.frames ?? []);
+    attempt++
+  ) {
+    await rm(result.directory, { recursive: true, force: true });
+    result = await capture("transition.html", true, 350, 0, 2);
+  }
+  const { directory, manifest } = result;
   try {
     const action = manifest.actions[0];
-    const frame = action?.frames.find((f) => f.slot === 400);
+    const frame =
+      atRest(action?.frames ?? []) ??
+      action?.frames.find((f) => f.slot === "settle");
     expect(frame?.geometry?.pageScale, JSON.stringify(frame)).toBe(2);
     expect(frame?.geometry?.scale).toBe(2);
     const png = decodeFrame(

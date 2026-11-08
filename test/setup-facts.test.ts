@@ -40,6 +40,11 @@ test("an empty, uninitialized directory yields empty facts without throwing", as
     scaffoldFiles: { product: "missing", design: "missing" },
     seedCandidates: [],
     envExample: undefined,
+    // PATH availability depends on the machine running the test.
+    wiring: {
+      found: [],
+      agents: { claude: expect.any(Boolean), codex: expect.any(Boolean) },
+    },
   });
   expect(setupPrompt(facts)).toContain("none found");
 });

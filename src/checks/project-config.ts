@@ -1,9 +1,8 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { loadBriefChecks } from "../brief/store.js";
 import { readDecisionLog } from "../decisions/log.js";
 import { designChoicesFrom } from "../design/decide.js";
-import { parseRulingBlocks } from "../rulings/law.js";
+import { readEffectiveLaw } from "../rulings/effective.js";
 import type { Project } from "../schemas/project.js";
 import { checksConfigFrom } from "./registry.js";
 import type { ChecksConfig, ScaleRulingRecord } from "./types.js";
@@ -16,15 +15,14 @@ import type { ChecksConfig, ScaleRulingRecord } from "./types.js";
 async function scaleRulings(
   projectDirectory: string,
   designFile: string,
+  stateProjectDirectory: string,
 ): Promise<ScaleRulingRecord[]> {
-  let source: string;
-  try {
-    source = await readFile(join(projectDirectory, designFile), "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
-  return parseRulingBlocks(source).resolutions.flatMap((resolution) =>
+  return (
+    await readEffectiveLaw(
+      join(projectDirectory, designFile),
+      stateProjectDirectory,
+    )
+  ).resolutions.flatMap((resolution) =>
     resolution.scale === undefined
       ? []
       : [
@@ -52,14 +50,19 @@ async function scaleRulings(
  */
 export async function projectChecksConfig(validated: {
   projectDirectory: string;
+  stateProjectDirectory?: string | undefined;
   project: Pick<Project, "checks"> & {
     design?: Pick<Project["design"], "designFile"> | undefined;
   };
 }): Promise<ChecksConfig> {
   const designChoices = designChoicesFrom(
-    await readDecisionLog(validated.projectDirectory),
+    await readDecisionLog(
+      validated.stateProjectDirectory ?? validated.projectDirectory,
+    ),
   );
-  const briefs = await loadBriefChecks(validated.projectDirectory);
+  const briefs = await loadBriefChecks(
+    validated.stateProjectDirectory ?? validated.projectDirectory,
+  );
   return {
     ...checksConfigFrom(validated.project.checks),
     ...(designChoices.length ? { designChoices } : {}),
@@ -71,6 +74,7 @@ export async function projectChecksConfig(validated: {
           : await scaleRulings(
               validated.projectDirectory,
               validated.project.design.designFile,
+              validated.stateProjectDirectory ?? validated.projectDirectory,
             ),
     },
   };

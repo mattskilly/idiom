@@ -34,7 +34,8 @@ export async function loadPristine(
     const value = record as Record<string, unknown> | null;
     if (
       !safeRelative(key) ||
-      !skillNames.includes(skill as SkillName) ||
+      (!skillNames.includes(skill as SkillName) &&
+        skill !== "ab-verify-idiom") ||
       !key.includes("/") ||
       !value ||
       typeof value.version !== "string" ||
@@ -49,14 +50,13 @@ export async function loadPristine(
   }
   return parsed as PristineManifest;
 }
-/** Init seeds only bytes it really installed or recognizes exactly. Older
- * provenance is retained unless an explicit verifier replacement was approved. */
+/** Init seeds only bytes it really installed or recognizes exactly. Existing
+ * provenance is always retained; differing skills go through upgrade instead. */
 export async function seedPristine(
   root: string,
   skill: SkillName,
   files: Record<string, string>,
   version: string,
-  replace = false,
 ): Promise<void> {
   const identity = await inspect(root, `${canonicalPath(skill)}/SKILL.md`);
   if (identity.kind !== "file" || identity.content !== files["SKILL.md"])
@@ -66,7 +66,7 @@ export async function seedPristine(
     const key = `${skill}/${name}`;
     const local = await inspect(root, `${canonicalPath(skill)}/${name}`);
     if (local.kind !== "file" || local.content !== content) continue;
-    if (manifest.files[key] && !replace) continue;
+    if (manifest.files[key]) continue;
     const base = await inspect(root, pristinePath(key));
     if (base.kind !== "file" && base.kind !== "absent") continue;
     // An orphan baseline is evidence too: do not overwrite unknown bytes.

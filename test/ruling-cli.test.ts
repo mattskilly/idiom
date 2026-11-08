@@ -368,3 +368,48 @@ test("scale and generic decisions reject each other's modes; a cancelled answer 
   expect(cancelled.recorded).toBe(false);
   expect(await readFile(design, "utf8")).toBe(before);
 });
+
+test.each(["--add-step", "--drift"])(
+  "log-backed scale answer %s shares effective checks and protects manual ruling",
+  async (mode) => {
+    const directory = await project();
+    const output: string[] = [];
+    const args = [
+      "node",
+      "idiom",
+      "--project",
+      directory,
+      "decide",
+      "--decision",
+      "ruling-2",
+      mode,
+      "--reason",
+      "Intentional human answer",
+      "--build",
+      "build-1",
+      "--escalation",
+      "esc-1",
+    ];
+    expect(
+      await run(args, { stdout: () => {}, stderr: (s) => output.push(s) }),
+      output.join("\n"),
+    ).toBe(0);
+    const context = await loadProjectContext({ project: directory });
+    const config = await projectChecksConfig(context);
+    expect(config.scaleQuestions?.rulings).toMatchObject([
+      {
+        fingerprint: "scale-print",
+        answer: mode === "--add-step" ? "add-step" : "drift",
+        value: "17px",
+        context: {
+          landmark: "main",
+          component: "role:.row-control",
+          viewport: "desktop",
+        },
+      },
+    ]);
+    await expect(
+      rulingCommand({ project: directory, decision: "ruling-2", drift: true }),
+    ).rejects.toThrow("already been recorded");
+  },
+);

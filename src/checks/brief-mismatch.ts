@@ -423,6 +423,23 @@ export function evaluateBriefAssertions(
   });
 }
 
+/** The finding rule id for one brief assertion; the design asset lists the same ids. */
+export function briefMismatchRuleId(
+  slug: string,
+  criterion: number,
+  assertionIndex: number,
+  assertion: BriefAssertion,
+): string {
+  return `idiom:brief-mismatch:${slug}:c${criterion}:a${assertionIndex}:${briefAssertionForm(assertion)}:${briefAssertionIdentity(assertion)}`;
+}
+
+/** Names the brief, and the design asset it came from when it did. */
+export function briefLabel(brief: BriefCheck): string {
+  return brief.source === undefined
+    ? `Brief "${brief.title}" (${brief.slug})`
+    : `Brief "${brief.title}" (${brief.slug}, design asset ${brief.source.name})`;
+}
+
 export const briefMismatchCheck: DeterministicCheck = {
   id: "brief-mismatch",
   run({ tuple, config }) {
@@ -439,15 +456,20 @@ export const briefMismatchCheck: DeterministicCheck = {
       );
     const candidates: FindingCandidate[] = [];
     for (const result of evaluateBriefAssertions(tuple, briefs)) {
-      const { brief, criterion, assertionIndex, form } = result;
+      const { brief, criterion, assertionIndex } = result;
       const identity = briefAssertionIdentity(result.assertion);
       for (const failure of result.failures)
         candidates.push({
           category: this.id,
           severity: "major",
-          rule: `idiom:brief-mismatch:${brief.slug}:c${criterion.index}:a${assertionIndex}:${form}:${identity}`,
+          rule: briefMismatchRuleId(
+            brief.slug,
+            criterion.index,
+            assertionIndex,
+            result.assertion,
+          ),
           selectorHint: failure.selector,
-          explanation: `Brief "${brief.title}" (${brief.slug}), criterion "${criterion.statement}": ${failure.detail}`,
+          explanation: `${briefLabel(brief)}, criterion "${criterion.statement}": ${failure.detail}`,
           acceptance: [`${criterion.statement} (brief ${brief.slug})`],
           verification: verify(this.id, {
             brief: brief.slug,

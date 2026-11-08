@@ -1,4 +1,9 @@
 import type { DoctorDependencies, DoctorReport } from "../doctor/run.js";
+import {
+  inspectSurfaces,
+  renderSurfaces,
+  type SurfacesReport,
+} from "../doctor/surfaces.js";
 import { RunFailure, type RunFailureJson } from "../errors.js";
 import { validateForRun } from "../preflight.js";
 import { resolveProjectArgument } from "../project.js";
@@ -15,6 +20,8 @@ export type InitValidateReport = {
     | { ok: false; failure: RunFailureJson };
   /** Null when validation failed, so no flow was booted. */
   doctor: DoctorReport | null;
+  /** Where Idiom is wired; present even when validation failed. */
+  surfaces: SurfacesReport;
 };
 
 export type InitValidateProblem = {
@@ -58,6 +65,11 @@ export async function initValidate(options: {
   signal?: AbortSignal | undefined;
   dependencies?: DoctorDependencies | undefined;
 }): Promise<InitValidateReport> {
+  const surfaces = await inspectSurfaces({
+    project: options.project,
+    cwd: options.cwd,
+    dependencies: options.dependencies?.surfaces,
+  });
   let validated: Awaited<ReturnType<typeof validateForRun>>;
   try {
     validated = await validateForRun({
@@ -73,6 +85,7 @@ export async function initValidate(options: {
         failure: validationFailure(error, options.project, options.cwd),
       },
       doctor: null,
+      surfaces,
     };
   }
   const flows = validated.flows.map(({ file, flow }) => ({
@@ -85,12 +98,14 @@ export async function initValidate(options: {
     project: options.project,
     cwd: options.cwd,
     signal: options.signal,
+    surfaces: false,
     dependencies: options.dependencies,
   });
   return {
     ready: doctor.ok,
     validate: { ok: true, projectDirectory: validated.projectDirectory, flows },
     doctor,
+    surfaces,
   };
 }
 
@@ -123,6 +138,7 @@ export function renderInitValidate(report: InitValidateReport): string[] {
   ];
   if (report.doctor !== null)
     lines.push(...renderDoctorReport(report.doctor).trimEnd().split("\n"));
+  lines.push("", ...renderSurfaces(report.surfaces));
   if (report.ready) lines.push("ready");
   return lines;
 }

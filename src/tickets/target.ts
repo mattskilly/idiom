@@ -1,4 +1,4 @@
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { parse } from "smol-toml";
 import { IdiomError } from "../errors.js";
@@ -82,6 +82,29 @@ export async function fileTrackerFrom(start: string): Promise<FileTracker> {
         readyState: "ready",
         source: "file",
       };
+    directory = parent;
+  }
+}
+
+/** The nearest directory at or above `start` that holds `autobuild.toml`. */
+export async function findAutobuildRoot(
+  start: string,
+): Promise<string | undefined> {
+  let directory = resolve(start);
+  while (true) {
+    try {
+      if ((await stat(join(directory, "autobuild.toml"))).isFile())
+        return directory;
+    } catch (error) {
+      if (
+        !["ENOENT", "ENOTDIR"].includes(
+          (error as NodeJS.ErrnoException).code ?? "",
+        )
+      )
+        throw error;
+    }
+    const parent = dirname(directory);
+    if (parent === directory) return undefined;
     directory = parent;
   }
 }

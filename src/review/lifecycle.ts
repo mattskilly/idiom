@@ -1,6 +1,16 @@
 import { access } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import type { Decision } from "../schemas/decision.js";
+import {
+  type AttributionCache,
+  lineageIntroduction,
+} from "../attribution/lookup.js";
+import type { RecordedIntroduction } from "../attribution/record.js";
+import { causeText, rangeText } from "../attribution/render.js";
+import {
+  resolveAcknowledgement,
+  ticketStateLookup,
+} from "../decisions/acknowledgements.js";
+import type { Acknowledgement, Decision } from "../schemas/decision.js";
 import {
   indexTrackerTickets,
   resolveEmbeddedTicket,
@@ -14,7 +24,7 @@ import type {
   ReviewCatalog,
 } from "./catalog.js";
 
-const TRACKER_STATES = ["triage", "ready", "doing", "done"] as const;
+export const TRACKER_STATES = ["triage", "ready", "doing", "done"] as const;
 
 export type FindingLifecycle = {
   id: string;
@@ -42,7 +52,19 @@ export type FindingLifecycle = {
       }
     | undefined;
   verification?: "verified-fixed" | "verify-failed" | undefined;
+  /** The latest acknowledgement, judged against the latest occurrence. */
+  acknowledgement?:
+    | {
+        reference: string;
+        until?: string | undefined;
+        note?: string | undefined;
+        state: "active" | "lapsed";
+        lapse?: string | undefined;
+      }
+    | undefined;
   path: string[];
+  /** `decide --list`: the latest first-seen range `check` recorded for it. */
+  introduced?: RecordedIntroduction | undefined;
 };
 
 async function exists(path: string): Promise<boolean> {
@@ -210,10 +232,19 @@ export async function reduceLifecycles(options: {
    * caller other than `idiom context` reads exactly one checkout.
    */
   additionalTrackerRoots?: readonly string[] | undefined;
+  /** `decide --list` only: resolved against the project's own tracker. */
+  acknowledgements?: readonly Acknowledgement[] | undefined;
+  /** `decide --list` only: read each lineage's recorded first-seen range. */
+  introductions?: boolean | undefined;
+  now?: Date | undefined;
 }): Promise<FindingLifecycle[]> {
+  const attributionCache: AttributionCache = new Map();
   const roots = trackerRootsFor(
     options.catalog.projectDirectory,
     options.additionalTrackerRoots,
+  );
+  const ticketState = ticketStateLookup(
+    trackerRootsFor(options.catalog.projectDirectory),
   );
   // Indexed once per call: every lineage is resolved against the same reads.
   const indexes = await Promise.all(roots.map(indexTrackerTickets));
@@ -231,6 +262,20 @@ export async function reduceLifecycles(options: {
     const verification =
       latestStatus === "verified-fixed" || latestStatus === "verify-failed"
         ? latestStatus
+        : undefined;
+    const acknowledged =
+      options.acknowledgements === undefined
+        ? undefined
+        : await resolveAcknowledgement({
+            target: lineage,
+            finding: lineage.latest.finding,
+            entries: options.acknowledgements,
+            ticketState,
+            now: options.now ?? new Date(),
+          });
+    const introduced =
+      options.introductions === true
+        ? await lineageIntroduction(lineage, attributionCache)
         : undefined;
     const path = ["open"];
     if (decision !== undefined)
@@ -261,7 +306,25 @@ export async function reduceLifecycles(options: {
       ...(decision === undefined ? {} : { decision }),
       ...(ticket === undefined ? {} : { ticket }),
       ...(verification === undefined ? {} : { verification }),
+      ...(acknowledged === undefined
+        ? {}
+        : {
+            acknowledgement: {
+              reference: acknowledged.record.reference,
+              ...(acknowledged.record.until === undefined
+                ? {}
+                : { until: acknowledged.record.until }),
+              ...(acknowledged.record.note === undefined
+                ? {}
+                : { note: acknowledged.record.note }),
+              state: acknowledged.kind,
+              ...(acknowledged.kind === "lapsed"
+                ? { lapse: acknowledged.lapse.message }
+                : {}),
+            },
+          }),
       path,
+      ...(introduced === undefined ? {} : { introduced }),
     });
   }
   return output;
@@ -272,6 +335,16 @@ function ticketLabel(ticket: FindingLifecycle["ticket"]): string {
   if (ticket.state === "checkpointed")
     return "checkpointed — no tracker ticket found";
   return `${ticket.id ?? "unknown ticket"}${ticket.state === undefined ? "" : ` (${ticket.state})`}${ticket.source === "consolidated" ? " — consolidated" : ""}${ticket.conflict ? " — conflict" : ""}`;
+}
+
+function acknowledgementLabel(
+  acknowledgement: NonNullable<FindingLifecycle["acknowledgement"]>,
+): string {
+  const note =
+    acknowledgement.note === undefined ? "" : ` — ${acknowledgement.note}`;
+  if (acknowledgement.state === "lapsed")
+    return `${acknowledgement.reference} (lapsed — ${acknowledgement.lapse ?? "no longer in force"})`;
+  return `${acknowledgement.reference} (active${acknowledgement.until === undefined ? "" : ` until ${acknowledgement.until}`})${note}`;
 }
 
 export function renderLifecycleList(lifecycles: FindingLifecycle[]): string {
@@ -290,11 +363,22 @@ export function renderLifecycleList(lifecycles: FindingLifecycle[]): string {
         ? []
         : [`  ID aliases: ${lifecycle.aliases.ids.join(", ")}`]),
       `  Observed: ${lifecycle.firstObserved} -> ${lifecycle.latestObserved} (${lifecycle.occurrences} occurrence${lifecycle.occurrences === 1 ? "" : "s"})`,
+      ...(lifecycle.introduced === undefined
+        ? []
+        : [
+            `  Appeared: ${rangeText(lifecycle.introduced)}`,
+            `  Likely cause: ${causeText(lifecycle.introduced)}`,
+          ]),
       `  Decision: ${
         lifecycle.decision === undefined
           ? "none"
           : `${lifecycle.decision.decision} (${lifecycle.decision.scope})${lifecycle.decision.reason === undefined ? "" : ` — ${lifecycle.decision.reason}`}`
       }`,
+      ...(lifecycle.acknowledgement === undefined
+        ? []
+        : [
+            `  Acknowledgement: ${acknowledgementLabel(lifecycle.acknowledgement)}`,
+          ]),
       `  Ticket: ${ticketLabel(lifecycle.ticket)}`,
       ...(lifecycle.ticket === undefined || lifecycle.ticket.paths.length === 0
         ? []

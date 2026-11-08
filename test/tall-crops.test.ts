@@ -338,3 +338,51 @@ describe("geometry records", () => {
     expect(v2.rect({ ...element, selector: "#b" })).toBe(element.rect);
   });
 });
+
+test("40000 CSS px is capped before capture, preserves DPR and rejects off-image crops", async () => {
+  const page = await open(
+    '<body style="margin:0;height:40000px;background:#00f"><div id="inside" style="width:100px;height:100px;background:#e00"></div><div id="outside" style="position:absolute;top:35000px;width:100px;height:100px;background:#e00"></div></body>',
+    { width: 200, height: 600 },
+  );
+  try {
+    const observed = await observe(page);
+    const started = performance.now();
+    const shot = await captureScreenshot(page, options);
+    expect(performance.now() - started).toBeLessThan(30000);
+    expect(shot.geometry).toMatchObject({
+      height: 16000,
+      croppedFromHeight: 40000,
+      scale: 2,
+    });
+    const image = PNG.sync.read(shot.buffer);
+    expect(image.height).toBe(32000);
+    expect(pixel(image, 100, 8191)).toEqual([0, 0, 255]);
+    expect(pixel(image, 100, 8192)).toEqual([0, 0, 255]);
+    observed.screenshot = await withScreenshotGeometry(
+      page,
+      shot.geometry,
+      { width: 200, height: 40000 },
+      ["#inside", "#outside"],
+    );
+    expect(observed.screenshot.drift).toBeUndefined();
+    expect(centreRed(await crop(shot.buffer, observed, "#inside"))).toBe(true);
+    expect(await crop(shot.buffer, observed, "#outside")).toBeUndefined();
+    expect(observationArtifactSchema.parse(observed).version).toBe(2);
+    const lower = await captureScreenshot(page, options, {
+      maxFullPageHeight: 800,
+    });
+    expect(lower.geometry).toMatchObject({
+      height: 800,
+      croppedFromHeight: 40000,
+    });
+    expect(PNG.sync.read(lower.buffer).height).toBe(1600);
+    const viewport = await captureScreenshot(page, {
+      ...options,
+      fullPage: false,
+    });
+    expect(viewport.geometry.height).toBe(600);
+    expect(viewport.geometry.croppedFromHeight).toBeUndefined();
+  } finally {
+    await page.context().close();
+  }
+});

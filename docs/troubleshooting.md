@@ -73,7 +73,9 @@ npx playwright@<version> install --with-deps chromium
 
 1. Commit the listed paths, or stash them under a name you can find again.
 2. Commit a baseline you recorded earlier before recording another.
-3. Rerun the command:
+3. If only tracker/scratch paths change, configure [`baselines.ignoreDirty`](configuration.md#baselines) with narrow repository-root globs. Validation refuses discoverable application inputs.
+4. For a busy checkout or merges landing during capture, run `idiom check checkout --ref HEAD` (or `--ref HEAD~1`) to capture a fixed committed revision. See [fixed-commit capture](commands.md#capture-a-fixed-commit). Commit the project configuration and flow at that revision; fetch missing history if the ref cannot resolve. Install the package manager selected by the revision's lockfile, and supply required environment variables (untracked `.env` files are absent).
+5. Rerun the command:
 
 ```sh
 git stash push -u -m "before idiom baseline"
@@ -227,6 +229,24 @@ node --version
 
 2. For the plugin and `npx`, the `node` that matters is the one on the PATH the host launches with. With nvm or volta, set a default of 22.12 or newer, then restart the host.
 3. Run [`idiom doctor`](commands.md#doctor): its first line reports the Node version.
+
+## Most tuples timed out on a busy machine
+
+**Symptom:** A check says `Host busy: 12 of 20 tuples timed out (load 64 on 11 cores). No review for: …`. JSON says `verdict: "deferred"`; the exit code is 3.
+
+**Cause:** Navigation/readiness timed out again after one retry, made after the other tuples with double deadlines. The recorded 1-minute load/core ratio exceeded `capture.hostPressureThreshold` (default 1.5), or the ready URL became more than 10 times slower than its successful measurement at start. Missing measurements are unavailable; a busy start does not pretend to be an idle latency baseline. The report preserves genuine findings and lists the states that received no review.
+
+**Fix:** Re-run on an idle host after other builds finish. Increasing the probe budget cannot make an unreachable state produce evidence: `Probe produced no evidence for <state>: the state timed out` recommends an idle-host re-run. On an idle host, persistent timeouts remain ordinary `missing-state` blockers to investigate. Very tall screenshots are capped at 16000 CSS px by default; adjust `capture.maxFullPageHeight` or a state's `screenshotTimeoutMs` if the report says a needed region was cropped.
+
+## A run was interrupted
+
+**Symptom:** A capture or check stopped early. On `Ctrl-C` or `SIGTERM` Idiom prints `Interrupted: run <id> kept 7 of 20 tuples (unverified).` on stderr and exits non-zero. After a hard kill (`SIGKILL`, a restart, a closed terminal), the next Idiom command in the project prints `Run <id> was interrupted (process gone) after 7 of 20 tuples.` once.
+
+**Cause:** Each run's report directory, `.idiom/reports/<runId>/`, exists from the run's first second. Its `run.json` says `status: "running"` and lists the planned tuples, and Idiom adds each tuple to `completedTuples` once that tuple's evidence is saved. A clean finish sets `status: "complete"`. A run stopped before that is `interrupted`; when no process remains to say so, the next command that lists runs finds the `running` record whose process is gone and marks it.
+
+**Fix:** Open `.idiom/reports/<runId>/run.json` to see how far the run got. `completedTuples` names the tuples whose screenshot, DOM and metadata are kept in their state/viewport directories, and `interruption` says why it stopped. That evidence is **unverified**: the run never reached its final source check, report or secret scan of the whole run. `check`, `review`, `decide`, `report`, baselines and MCP ignore interrupted runs, and passing one with `--from` explains that it is interrupted. Idiom cannot resume a run; capture again for a complete one. Delete interrupted run directories you no longer need.
+
+Separately, when the first `check` would record the baseline and some tuples failed, it still reports the findings for the tuples that succeeded, lists the failed ones under `Coverage gaps`, and ends with `Baseline not recorded: 3 of 120 tuples failed (<list>). Findings for the other 117 are above.` It exits 1, even with `--fail-on never`. Fix or remove the failing states and check again to record the baseline.
 
 ## Still stuck
 

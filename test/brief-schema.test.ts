@@ -362,3 +362,33 @@ test("record input never carries researchRun", () => {
     expect.stringMatching(/researchRun/),
   ]);
 });
+
+test("optional screen inventory trims values and leaves old records absent", () => {
+  const old = briefInputSchema.parse(fixture);
+  expect(old).not.toHaveProperty("screenQuestion");
+  expect(old).not.toHaveProperty("inventory");
+  expect(
+    briefInputSchema.parse({
+      ...fixture,
+      screenQuestion: "  What needs action?  ",
+      inventory: ["  12 queues  "],
+    }),
+  ).toMatchObject({
+    screenQuestion: "What needs action?",
+    inventory: ["12 queues"],
+  });
+});
+
+test.each([
+  [{ screenQuestion: "first\nsecond" }, "screenQuestion"],
+  [{ screenQuestion: "question\r" }, "screenQuestion"],
+  [{ screenQuestion: "   " }, "screenQuestion"],
+  [{ inventory: [] }, "inventory"],
+  [{ inventory: ["  "] }, "inventory[0]"],
+])("invalid screen inventory has field diagnostics: %j", (fields, path) => {
+  expect(
+    issues({ ...fixture, ...fields }).some((issue) =>
+      issue.startsWith(`${path}:`),
+    ),
+  ).toBe(true);
+});

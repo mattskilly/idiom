@@ -616,6 +616,7 @@ export class FilmstripCapture {
     directory: string,
     tuple: CheckTuple,
     candidates = temporalCandidates(tuple, this.checks),
+    consume = true,
   ): Promise<FilmstripManifest> {
     const selected = new Set(
       candidates.flatMap((c) => {
@@ -747,9 +748,9 @@ export class FilmstripCapture {
         entry.reason =
           record?.reason ?? "one or more sampled slots unavailable";
       manifest.actions.push(entry);
-      this.records.delete(token);
+      if (consume) this.records.delete(token);
     }
-    this.clear();
+    if (consume) this.clear();
     await writeFile(
       join(directory, "filmstrips.json"),
       `${JSON.stringify(manifest, null, 2)}\n`,

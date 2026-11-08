@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ElectronApplication } from "playwright";
@@ -253,9 +253,14 @@ test.each(["tuple", "measurement", "teardown", "launch"] as const)(
     }
     if (stage !== "teardown") expect(close).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+    // The run stays visible but is never published as complete.
     await vi.waitFor(async () => {
       if (workspace)
-        await expect(access(workspace.finalDirectory)).rejects.toThrow();
+        expect(
+          JSON.parse(
+            await readFile(join(workspace.finalDirectory, "run.json"), "utf8"),
+          ).status,
+        ).toBe("interrupted");
     });
   },
 );

@@ -284,8 +284,10 @@ test("different saliences never borrow each other's geometry or combine rule fam
       issue.score,
     ]),
   ).toEqual([
-    ["placeholder", 4, 2.5, 10],
+    // Impact tier: broken behaviour (salience 9) outranks the placeholder
+    // link's higher score; neither borrows the other's geometry.
     ["broken", 9, 1, 9],
+    ["placeholder", 4, 2.5, 10],
   ]);
 });
 

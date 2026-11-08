@@ -11,6 +11,7 @@ import {
 } from "../setup/agents.js";
 import { collectSetupFacts } from "../setup/facts.js";
 import { delimitedSetupPrompt, setupPrompt } from "../setup/prompt.js";
+import type { WiringReport } from "../wiring/types.js";
 import type { Confirmation } from "./init.js";
 
 export type AgentSetupOutcome =
@@ -46,6 +47,8 @@ export async function offerAgentSetup(options: {
   environment: NodeJS.ProcessEnv;
   probe?: CritiqueProcessRunner | undefined;
   launch?: SetupAgentLauncher | undefined;
+  /** Init's original detection and outcome, so the prompt sees what was left. */
+  wiring?: WiringReport | undefined;
 }): Promise<AgentSetupOutcome> {
   const { projectDirectory, write, environment } = options;
   if (options.agent === false) {
@@ -55,12 +58,16 @@ export async function offerAgentSetup(options: {
   if (options.agent === undefined && environment[SETUP_AGENT_ENV] === "1")
     return { kind: "skipped" };
   const printPrompt = async () => {
-    const prompt = setupPrompt(await collectSetupFacts(projectDirectory));
+    const prompt = setupPrompt(
+      await collectSetupFacts(projectDirectory, options.wiring),
+    );
     write(AGENT_SETUP_PRINT_LEAD);
     for (const line of delimitedSetupPrompt(prompt)) write(line);
   };
   const launch = async (agent: SetupAgent): Promise<AgentSetupOutcome> => {
-    const prompt = setupPrompt(await collectSetupFacts(projectDirectory));
+    const prompt = setupPrompt(
+      await collectSetupFacts(projectDirectory, options.wiring),
+    );
     const label = SETUP_AGENT_LABELS[agent];
     write(`Launching ${label} for setup…`);
     const exitCode = await (options.launch ?? launchSetupAgent)({

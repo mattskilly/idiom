@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+  <head>
+    <style>
+      body { margin: 0; font: 16px system-ui; padding: 16px; }
+      .backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 0.3); }
+      .backdrop[hidden] { display: none; }
+      [role="alertdialog"] { position: fixed; top: 30%; left: 30%; width: 320px; background: #fff; padding: 16px; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <button id="review" type="button">Review changes</button>
+    <div class="backdrop" hidden>
+      <div role="alertdialog" aria-modal="true" aria-labelledby="title">
+        <h2 id="title">Publish these changes?</h2>
+        <button type="button" id="keep">Back</button>
+        <button type="button" id="confirm">Publish</button>
+      </div>
+    </div>
+    <script>
+      const trigger = document.getElementById("review");
+      const backdrop = document.querySelector(".backdrop");
+      const close = () => {
+        if (backdrop.hidden) return;
+        backdrop.hidden = true;
+        trigger.focus();
+      };
+      trigger.addEventListener("click", () => {
+        backdrop.hidden = false;
+        document.getElementById("keep").focus();
+      });
+      document.getElementById("keep").addEventListener("click", close);
+      document.getElementById("confirm").addEventListener("click", close);
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") close();
+      });
+    </script>
+  </body>
+</html>

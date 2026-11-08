@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { findingCategories } from "./finding.js";
+import { findingSeveritySchema } from "./severity.js";
 
-export const findingSeveritySchema = z.enum(["blocker", "major", "minor"]);
+export { findingSeveritySchema } from "./severity.js";
 
 const ruleMatchSchema = z
   .object({

@@ -67,7 +67,11 @@ async function capturedFixture(
     viewports: [{ name: "desktop", width: 1000, height: 800 }],
     colorSchemes: ["light"],
     capture: { settleMs: 0 },
-    checks: { probe: { waitMs: 50, ...probe } },
+    // Probe budgets are measured apart from the independent loading window.
+    checks: {
+      probe: { waitMs: 50, ...probe },
+      loadingStuck: { enabled: false },
+    },
     design: {},
     model: { provider: "anthropic", model: "unused" },
   });

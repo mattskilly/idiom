@@ -9,6 +9,7 @@ import { basisDescription } from "../findings/presentation.js";
 import type { ReviewOutcome } from "../review/report.js";
 import { type ReviewDependencies, runReview } from "../review/run.js";
 import { type Finding, findingSchema } from "../schemas/finding.js";
+import { severityRank as sharedSeverityRank } from "../schemas/severity.js";
 import { groupSweep } from "../sweep/group.js";
 import { renderProductSweep } from "../sweep/report.js";
 import { runProductSweep } from "../sweep/run.js";
@@ -45,7 +46,7 @@ export type SweepSummary = {
   tickets?: ClusterTicketsResult | undefined;
 };
 
-const severityRank = { blocker: 0, major: 1, minor: 2 } as const;
+const severityRank = sharedSeverityRank;
 // Measured findings outrank model judgement at the same severity.
 const layerRank = { deterministic: 0, model: 1 } as const;
 
@@ -179,8 +180,11 @@ export async function sweepWithReview(
     .array()
     .parse(JSON.parse(await readFile(result.findingsPath, "utf8")));
   const ranked = rankSweepFindings(
+    // Acknowledged findings are tracked elsewhere and never gate.
     findings.filter(
-      (finding) => finding.status === "open" || finding.status === "approved",
+      (finding) =>
+        (finding.status === "open" || finding.status === "approved") &&
+        finding.acknowledgement === undefined,
     ),
   );
   const base = options.cwd ?? process.cwd();
@@ -205,7 +209,9 @@ export async function sweepWithReview(
       layer: finding.layer,
     })),
     blocking: ranked.filter(
-      (finding) => finding.severity !== "minor" && finding.basis !== "judged",
+      (finding) =>
+        (finding.severity === "blocker" || finding.severity === "major") &&
+        finding.basis !== "judged",
     ).length,
   };
   const records = ranked.map((finding) => ({

@@ -143,6 +143,8 @@ async function snapshot(
         salience: 4,
         prominence: 1,
         score: 4,
+        impact: 0 as const,
+        impactReasons: [],
         explanation: {
           areaRatio: 0,
           aboveFold: false,

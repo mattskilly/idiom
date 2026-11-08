@@ -32,7 +32,7 @@ These are the rules the contract test applies (see [How the promise is enforced]
 
 **Output** (Idiom writes it, you read it: `--json` payloads, `findings.json`). Properties may be added. An existing property stays, keeps its type and never becomes a wider type. A property that is always present stays always present. New enum values may appear, and a property that is already a union may gain variants, so a consumer must tolerate values it does not recognise. A property that is not a union never becomes one that admits other types (`string` to `string | null` is breaking).
 
-**Input** (you write it, Idiom reads it: `.idiom/project.json`, flow manifests, `decisions.jsonl`, baselines, MCP tool inputs, flags). Optional properties may be added. Existing properties stay accepted with the same type or a wider one. Nothing that was optional becomes required. Enum values and variants may be added, never removed.
+**Input** (you write it, Idiom reads it: `.idiom/project.json`, flow manifests, `decisions.jsonl`, baselines, MCP tool inputs, flags). Optional properties may be added. Existing properties stay accepted with the same type or a wider one. Nothing that was optional becomes required. Enum values and variants may be added, never removed. A record type added to a shared log is additive too: see [Records a newer Idiom wrote](#records-a-newer-idiom-wrote).
 
 **Commands.** A stable command never disappears. Its existing options keep their long name and short flag, keep whether they take a value, and never become mandatory. Its positional arguments are never removed, never become required and never stop accepting several values. New options are never mandatory, and new arguments are always optional.
 
@@ -63,6 +63,9 @@ A command's status covers its flags and positional arguments. It is not a promis
 | `fix` | experimental |
 | `sweep` | experimental |
 | `coverage` | experimental |
+| `digest` | experimental |
+| `nightly` | experimental |
+| `bisect` | experimental |
 | `explore` | experimental |
 | `explore resolve` | experimental |
 | `compare` | experimental |
@@ -72,6 +75,8 @@ A command's status covers its flags and positional arguments. It is not a promis
 | `brief plan` | experimental |
 | `brief record` | experimental |
 | `brief decide` | experimental |
+| `brief export` | experimental |
+| `brief attach` | experimental |
 | `brief list` | experimental |
 | `brief show` | experimental |
 | `ruling` | experimental |
@@ -95,8 +100,12 @@ Stable. The meanings are in [Exit codes and setup failures](commands.md#exit-cod
 - `0`: the command succeeded and nothing blocks.
 - `1`: blocking findings, a failed gate or verification, or a usage or other error.
 - `2`: the run could not happen (a refused precondition, a server that never became ready, or a capture that could not start).
+- `3`: `check` deferred review because recorded host pressure coincided with exhausted navigation/readiness timeouts. This exit code is additive at interface version 1; with default `--deferred fail` it takes precedence over findings and `--fail-on never`, including changed/gate checks. Explicit `--deferred warn` warns on stderr and continues severity gates: otherwise passing checks exit 0, genuine gated findings still exit 1, and run failures still exit 2.
+- `4`: `check --gate` requires explicit reference/ruling answers, with no ordinary eligible failure. This is additive at interface version 1. Run failures (2), default deferral (3), and ordinary eligible findings (1) take precedence. `--deferred warn` continues evaluation; `--fail-on never` disables severity and decision status gates. Plain checks keep their existing status. JSON adds `decisionNeeded` and deterministic `decisionQuestion`, including in mixed failures. `decide --pending --json` is stable-additive.
 
 ## JSON output
+
+At interface version 1, `check` additively supports optional `verdict: "deferred"` and `timedOutTuples` coordinates (`state`, `viewport`, `colorScheme`). Changed/gate aggregates qualify them with `flow`. Normal fields, genuine findings and the numeric `blocking` count retain their meanings; host deferral creates no finding. Stored `run.json` host measurements determine replay behavior. An incomplete initial review does not automatically record a baseline, including with `--deferred warn`. The opt-in policy changes only CLI status; JSON remains truthful and MCP semantics are unchanged.
 
 Every payload except `brief list` is an object that starts with `"interfaceVersion": 1`. The stable-additive payloads promise the fields named here; anything else in them is experimental until it is named.
 
@@ -116,6 +125,12 @@ Every payload except `brief list` is an object that starts with `"interfaceVersi
 | `sweep` | `sweep` | experimental |
 | `coverage` | `coverage` | experimental |
 | `coverage --states` | `coverage` | experimental |
+| `digest` | `digest` | experimental |
+| `nightly` | `nightly` | experimental |
+| `bisect` | `bisect` | experimental |
+| `decide --pending` | `decide` | stable-additive |
+| `decide --list` | `decide` | experimental |
+| `learn list` | `learn` | experimental |
 | `compare` | `compare` | experimental |
 | `brief research` | `brief` | experimental |
 | `brief triage` | `brief triage` | experimental |
@@ -123,6 +138,8 @@ Every payload except `brief list` is an object that starts with `"interfaceVersi
 | `brief plan` | `brief plan` | experimental |
 | `brief record` | `brief record` | experimental |
 | `brief decide` | `brief decide` | experimental |
+| `brief export` | `brief export` | experimental |
+| `brief attach` | `brief attach` | experimental |
 | `brief list` | `brief list` | experimental |
 | `brief show` | `brief show` | experimental |
 
@@ -161,6 +178,8 @@ Tool names and input schemas are stable for the tools marked stable. The tools d
 | `idiom_brief_plan` | experimental |
 | `idiom_brief_record` | experimental |
 | `idiom_brief_decide` | experimental |
+| `idiom_brief_export` | experimental |
+| `idiom_brief_attach` | experimental |
 | `idiom_setup_prompt` | experimental |
 | `idiom_ready` | experimental |
 
@@ -183,6 +202,18 @@ Field-by-field definitions are in [record schemas](schemas.md).
 | Every other capture artifact in a run directory (`dom.html`, `axe.json`, `observations.json`, timelines, crops, …) and the layout of `.idiom/reports/` beyond the three names | output | experimental |
 
 Commit `.idiom/project.json`, the flow manifests, `decisions.jsonl`, baselines, rule overrides and the finding-name registry. A newer Idiom with the same interface version keeps reading what an older one wrote.
+
+### Records a newer Idiom wrote
+
+Teammates and CI runners may be on different Idiom versions while sharing one log. Readers of `.idiom/decisions.jsonl` (type field `decision`) and `.idiom/learned.jsonl` (type field `kind`) skip a record whose type they don't know, keep every other record, and print one stderr note per command:
+
+```text
+Skipped 3 decision records written by a newer Idiom (types: acknowledge). Upgrade to use them.
+```
+
+A malformed line, a known type with invalid fields, or a record missing its identity fields (`at`, `findingId` and `fingerprint` in decisions; `version` and `id` in learned entries) still fails as before. Commands that write these files never drop or rewrite a skipped line. So adding a record type to these files is additive and needs no interface version bump.
+
+The finding-name registry, decision briefs and a run's `run.json` have no record types; a change to them follows the Input rules above.
 
 ## Ids
 

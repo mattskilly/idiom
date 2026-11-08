@@ -1,9 +1,15 @@
 import { createHash } from "node:crypto";
 import type { ObservedElement } from "../checks/types.js";
 import type { Finding } from "../schemas/finding.js";
+import { severityRank as sharedSeverityRank } from "../schemas/severity.js";
 import { isComponentBoundary, isComponentShell } from "../tickets/cluster.js";
 import { generatedClass } from "./fingerprint.js";
-import { type CheckIssue, collapseIssues } from "./issues.js";
+import {
+  type CheckIssue,
+  collapseIssues,
+  impactOf,
+  mergeImpactReasons,
+} from "./issues.js";
 import {
   affectedCounts,
   comparePriority,
@@ -62,7 +68,7 @@ export const rootCauseConfidence = {
   region: 0.4,
 } as const;
 
-const severityOrder = { blocker: 0, major: 1, minor: 2 } as const;
+const severityOrder = sharedSeverityRank;
 
 const expandProperty: Record<string, string[]> = {
   borderRadius: [
@@ -733,6 +739,12 @@ function rootCauseIssue(
     salience: winner.ranking.salience,
     prominence: winner.ranking.prominence,
     score: winner.ranking.score * breadth,
+    ...impactOf(
+      mergeImpactReasons(
+        ranked.map(({ ranking }) => ranking.impactReasons),
+        ranked.some(({ ranking }) => ranking.primaryAction),
+      ),
+    ),
     explanation: { ...winner.ranking.explanation, breadth },
     groups: ordered.map((symptom) => symptom.group.id),
     elements: groups.length,

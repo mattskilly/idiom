@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+  <head>
+    <style>
+      body { margin: 0; font: 16px system-ui; }
+      header { padding: 16px; }
+      [role="dialog"] { position: fixed; top: 0; right: 0; bottom: 0; width: 320px; background: #fff; border-left: 1px solid #ccc; padding: 16px; }
+      [role="dialog"][hidden] { display: none; }
+      .anchor { position: relative; }
+      [role="menu"] { position: absolute; top: 40px; left: 0; background: #fff; border: 1px solid #ccc; padding: 4px; list-style: none; margin: 0; }
+      [role="menu"][hidden] { display: none; }
+      main { padding: 16px; }
+      iframe { width: 360px; height: 240px; border: 1px solid #ccc; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <button id="drawer-toggle" aria-controls="drawer">Open drawer</button>
+    </header>
+    <main>
+      <p>Canvas</p>
+      <iframe title="Canvas" srcdoc="<body style='margin:0;height:100vh;background:#fafafa'><p>Drop content here</p></body>"></iframe>
+    </main>
+    <div id="drawer" role="dialog" aria-label="Pages" hidden>
+      <div class="anchor">
+        <button id="start" aria-haspopup="menu" aria-expanded="false" aria-controls="start-menu">Start from…</button>
+        <ul id="start-menu" role="menu" hidden>
+          <li role="menuitem" tabindex="-1">Blank page</li>
+          <li role="menuitem" tabindex="-1">Template</li>
+        </ul>
+      </div>
+    </div>
+    <script>
+      {
+        // Block-scoped: a restore that rewrites the document in the same
+        // window runs this again, and the drawer's menu must still open.
+        const drawer = document.getElementById("drawer");
+        const toggle = document.getElementById("drawer-toggle");
+        const trigger = document.getElementById("start");
+        const menu = document.getElementById("start-menu");
+        const closeMenu = (refocus) => {
+          if (menu.hidden) return false;
+          menu.hidden = true;
+          trigger.setAttribute("aria-expanded", "false");
+          if (refocus) trigger.focus();
+          return true;
+        };
+        toggle.addEventListener("click", () => {
+          drawer.hidden = false;
+        });
+        trigger.addEventListener("click", () => {
+          const open = menu.hidden;
+          menu.hidden = !open;
+          trigger.setAttribute("aria-expanded", String(open));
+        });
+        document.addEventListener("keydown", (event) => {
+          if (event.key !== "Escape") return;
+          if (closeMenu(true)) return;
+          if (!drawer.hidden) {
+            drawer.hidden = true;
+            toggle.focus();
+          }
+        });
+      }
+    </script>
+  </body>
+</html>

@@ -53,6 +53,8 @@ const project = projectSchema.parse({
   },
   viewports: [{ name: "desktop", width: 800, height: 600 }],
   capture: { settleMs: 0, colorSchemeAttribute: "data-theme" },
+  // Isolation and motion contracts are measured apart from the loading window.
+  checks: { loadingStuck: { enabled: false } },
   design: {},
   model: { provider: "anthropic", model: "unused" },
 });

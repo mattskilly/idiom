@@ -2,6 +2,7 @@ import type { Dirent } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
+import { isCompleteRun } from "../capture/run-lifecycle.js";
 import { readDecisionLog } from "../decisions/log.js";
 import { IdiomError, RunFailure } from "../errors.js";
 import { type Finding, findingSchema } from "../schemas/finding.js";
@@ -324,6 +325,11 @@ async function reportObservations(root: string): Promise<Observation[]> {
   for (const run of runs
     .filter((entry) => entry.isDirectory())
     .sort((left, right) => left.name.localeCompare(right.name))) {
+    if (
+      run.name.startsWith(".") ||
+      !(await isCompleteRun(join(root, run.name)))
+    )
+      continue;
     const path = join(root, run.name, "findings.json");
     let raw: string;
     try {

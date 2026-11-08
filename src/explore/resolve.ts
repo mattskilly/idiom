@@ -5,7 +5,7 @@ import type { DecideDependencies } from "../commands/decide.js";
 import { decideCommand } from "../commands/decide.js";
 import { ticketsCommand } from "../commands/tickets.js";
 import { IdiomError } from "../errors.js";
-import { parseRulingBlocks } from "../rulings/law.js";
+import { effectiveLaw } from "../rulings/effective.js";
 import {
   loadRulingNames,
   persistRulingNames,
@@ -53,6 +53,7 @@ function outcomeFingerprints(
 }
 
 async function assertNotRecorded(options: {
+  projectDirectory: string;
   designPath: string;
   candidate?: PersistedExplorationCandidate | undefined;
   steering?: SteeringIdentity | undefined;
@@ -67,8 +68,8 @@ async function assertNotRecorded(options: {
   }
   const fingerprints = outcomeFingerprints(options.candidate, options.steering);
   if (
-    parseRulingBlocks(source).resolutions.some((resolution) =>
-      fingerprints.has(resolution.fingerprint),
+    (await effectiveLaw(source, options.projectDirectory)).resolutions.some(
+      (resolution) => fingerprints.has(resolution.fingerprint),
     )
   )
     throw new IdiomError(
@@ -88,6 +89,7 @@ export async function resolveExplorationNone(options: {
   if (reason === "")
     throw new IdiomError("exploration reason must not be blank");
   await assertNotRecorded({
+    projectDirectory: options.projectDirectory,
     designPath: join(
       options.projectDirectory,
       options.project.design.designFile,
@@ -129,6 +131,7 @@ export async function resolveExplorationChoice(options: {
     options.project.design.designFile,
   );
   await assertNotRecorded({
+    projectDirectory: options.projectDirectory,
     designPath,
     candidate: options.candidate,
     steering: options.stored.manifest.steering,

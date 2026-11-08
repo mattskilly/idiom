@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<title>Ambiguous card actions</title>
+<style>
+  body { margin: 24px; font: 16px Arial; color: #111; background: white; }
+  .cards { display: flex; flex-wrap: wrap; gap: 24px; }
+  .card { display: grid; width: 150px; height: 120px; }
+  .card > * { grid-area: 1/1; }
+  a { display: flex; align-items: center; justify-content: center; background: #eee; color: #111; text-decoration: none; }
+  a:first-child { height: 80px; }
+  .second { align-self: end; height: 30px; }
+  button { width: 40px; height: 40px; justify-self: end; z-index: 1; }
+</style>
+<main><h1>Gallery</h1><div id="required" class="cards">
+  <article class="card" id="card-1"><a href="/first">First</a><a class="second" href="/second">Second</a><button aria-label="More" id="action-1">⋯</button></article>
+  <article class="card" id="card-2"><a href="/first">First</a><a class="second" href="/second">Second</a><button aria-label="More" id="action-2">⋯</button></article>
+  <article class="card" id="card-3"><a href="/first">First</a><a class="second" href="/second">Second</a><button aria-label="More" id="action-3">⋯</button></article>
+</div></main>
+</html>

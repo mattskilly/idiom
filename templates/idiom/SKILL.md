@@ -18,6 +18,9 @@ Ask only for design judgment; report execution errors. When available, prefer MC
 Before writing a ticket, spec or code that adds or changes visible UI, or when
 `$ARGUMENTS` is `brief <request>`, never write the ticket first:
 
+Build every block's empty, zero, loading and error states; every row/item's hover, selected, focus and disabled states. Empty and zero are distinct; loading does not replace error. Declare important cases as named flow states so Idiom captures them, including opened drawers, dialogs and menus. With `editor` also declared as a base state, an opened state is:
+`{"id":"editor+menu","description":"Page menu open","from":"editor","steps":[{"action":"click","selector":"[data-testid=open-menu]"}],"expect":{"selectorPresent":["[data-testid=page-menu]"]}}`
+
 1. Call `idiom_brief_triage` with the request verbatim (CLI: `idiom brief triage "<request>" --json`). `no design decision`: proceed as usual.
 2. `design decision`: call `idiom_brief_plan` with the triage id (CLI: `idiom brief plan <id>`) and follow it within its budget. Cite every claim, label it hands-on or read, and write "nothing found" rather than guess.
 3. Call `idiom_brief_record` (CLI: `idiom brief record --json`) with the filled shape; fix every `path: message` issue it returns.
@@ -35,8 +38,9 @@ Report the verdict and evidence paths. Do not repair anything yourself.
 ## Check mode
 
 When `$ARGUMENTS` is `check <flow>`, run `idiom check <flow>`; present findings
-in its order: severity first, then prominence (salience × prominence) within a tier, with each `Evidence:` image. If asked, fix blockers and majors and
-rerun until clean. Never decide, suppress or reword findings; ask the human.
+in its order: severity first, then prominence (salience × prominence) within a tier, with each `Evidence:` image. For authorized repairs:
+Fix the top three findings in rank order (function before appearance), re-run, and stop after three rounds, reporting what remains.
+One round is one repair batch followed by one check; the initial check is not a repair round. Stop earlier when nothing remains. Repair only within the caller's authorization; remaining blocking findings still withhold completion and do not permit suppressions. Never decide, suppress or reword findings; ask the human.
 
 In a build loop use `idiom check --gate`: it checks only what the change
 affects, within a time budget, and skips at once when nothing UI changed. Run

@@ -8,6 +8,10 @@ import {
 } from "../baseline/coordinate.js";
 import { IdiomError } from "../errors.js";
 import type { Finding } from "../schemas/finding.js";
+import {
+  findingSeveritySchema,
+  severityRank as sharedSeverityRank,
+} from "../schemas/severity.js";
 import type { FindingDraft } from "./findings.js";
 
 /**
@@ -32,7 +36,7 @@ const memberSchema = z
     commit: z.string(),
     state: z.string(),
     colorScheme: z.enum(["light", "dark"]).optional(),
-    severity: z.enum(["blocker", "major", "minor"]),
+    severity: findingSeveritySchema,
     status: z.string(),
     deferred: z.literal(true).optional(),
     coordinates: z.array(coordinateSchema),
@@ -46,7 +50,7 @@ const groupSchema = z
     layer: z.enum(["deterministic", "model"]),
     category: z.string(),
     rule: z.string().optional(),
-    severity: z.enum(["blocker", "major", "minor"]),
+    severity: findingSeveritySchema,
     representative: z.string().min(1),
     members: z.array(memberSchema).min(1),
     coordinates: z.array(coordinateSchema),
@@ -61,7 +65,7 @@ export type GroupCoordinate = TupleCoordinate;
 export type FindingGroupMember = z.infer<typeof memberSchema>;
 export type FindingGroup = z.infer<typeof groupSchema>;
 
-const severityOrder = { blocker: 0, major: 1, minor: 2 } as const;
+const severityOrder = sharedSeverityRank;
 
 function coordinateOf(finding: {
   state: string;
@@ -198,7 +202,7 @@ export function groupRepeatedFindings(
           severityOrder[member.severity] < severityOrder[worst]
             ? member.severity
             : worst,
-        "minor",
+        representative.severity,
       ),
       representative: representative.id,
       members,

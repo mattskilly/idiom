@@ -34,6 +34,11 @@ import { validateForRun } from "../preflight.js";
 import { preflightFindingNameRegistry } from "../review/names.js";
 import { isWebFlow } from "../schemas/flow.js";
 import type { Project } from "../schemas/project.js";
+import {
+  inspectSurfaces,
+  type SurfaceDependencies,
+  type SurfacesReport,
+} from "./surfaces.js";
 
 export type DoctorStepId =
   | "node"
@@ -62,6 +67,8 @@ export type DoctorReport = {
   /** Servers an earlier, killed run left behind; present only when any were found. */
   leftovers?: LeftoverServer[] | undefined;
   failure?: RunFailureJson | undefined;
+  /** Where Idiom is wired; informational, never affects `ok`. */
+  surfaces?: SurfacesReport | undefined;
 };
 
 export type DoctorDependencies = {
@@ -69,6 +76,7 @@ export type DoctorDependencies = {
   inheritedEnvironment?: NodeJS.ProcessEnv | undefined;
   nodeVersion?: string | undefined;
   onLeftoverServer?: ((message: string) => void) | undefined;
+  surfaces?: SurfaceDependencies | undefined;
 };
 
 const STEP_ORDER: DoctorStepId[] = [
@@ -99,8 +107,18 @@ export async function runDoctor(options: {
   cwd?: string | undefined;
   port?: number | undefined;
   signal?: AbortSignal | undefined;
+  /** Inspect where Idiom is wired (default true). */
+  surfaces?: boolean | undefined;
   dependencies?: DoctorDependencies | undefined;
 }): Promise<DoctorReport> {
+  const surfaces =
+    options.surfaces === false
+      ? undefined
+      : await inspectSurfaces({
+          project: options.project,
+          cwd: options.cwd,
+          dependencies: options.dependencies?.surfaces,
+        });
   const steps: DoctorStep[] = [];
   let leftovers: LeftoverServer[] = [];
   let failure: RunFailure | undefined;
@@ -140,6 +158,7 @@ export async function runDoctor(options: {
       steps: ordered,
       ...(leftovers.length === 0 ? {} : { leftovers }),
       ...(failure === undefined ? {} : { failure: failure.failureJson() }),
+      ...(surfaces === undefined ? {} : { surfaces }),
     };
   };
 
@@ -211,7 +230,11 @@ export async function runDoctor(options: {
     });
 
   // tree: a warning only; doctor never records a baseline.
-  const tree = await timed(() => sourceStatus(validated.projectDirectory));
+  const tree = await timed(() =>
+    sourceStatus(validated.projectDirectory, {
+      ignoreDirty: validated.project.baselines?.ignoreDirty,
+    }),
+  );
   if ("error" in tree)
     steps.push({
       id: "tree",

@@ -287,6 +287,10 @@ test.each([
   { fixture: "silent", reaches: 2 },
 ])(
   "short hold replays declared $fixture with $reaches shared reaches",
+  // Eligibility compares a response end (CDP clock) with a mutation (page
+  // clock); a saturated host can skew them by a few ms and decline honestly.
+  // Each attempt opens a fresh page and counts reaches from its own baseline.
+  { retry: 2 },
   async ({ fixture, reaches }) => {
     const { TimelineCollector } = await import("../src/capture/timeline.js");
     const { replayRequests } = await import(

@@ -32,6 +32,42 @@ export const runMerge: MergeRunner = (args) =>
       },
     );
   });
+/** One more than the longest leading marker-character run; at least 7. */
+export function markerWidth(...texts: string[]): number {
+  let width = 7;
+  for (const content of texts)
+    for (const run of content.matchAll(/^(?:<+|\|+|=+|>+)/gm))
+      width = Math.max(width, run[0].length + 1);
+  return width;
+}
+/** A readable diff3 rendering of a merge, with human labels on each side. */
+export function renderConflictText(
+  merge: Merge,
+  labels: { local: string; base: string; incoming: string },
+): string {
+  const width = markerWidth(
+    ...merge.segments.flatMap((segment) =>
+      typeof segment === "string"
+        ? [segment]
+        : [segment.local, segment.base, segment.incoming],
+    ),
+  );
+  const line = (text: string) =>
+    text === "" || text.endsWith("\n") ? text : `${text}\n`;
+  let text = "";
+  for (const segment of merge.segments) {
+    if (typeof segment === "string") {
+      text += segment;
+      continue;
+    }
+    text = line(text);
+    text += `${"<".repeat(width)} local ${labels.local}\n${line(segment.local)}`;
+    text += `${"|".repeat(width)} base ${labels.base}\n${line(segment.base)}`;
+    text += `${"=".repeat(width)}\n${line(segment.incoming)}`;
+    text += `${">".repeat(width)} incoming ${labels.incoming}\n`;
+  }
+  return text;
+}
 export async function mergeText(
   base: string,
   local: string,
@@ -42,11 +78,7 @@ export async function mergeText(
   const label = randomUUID();
   // Git's separator has no label. Choose a marker width absent from every
   // input, so even literal marker examples inside a hunk cannot spoof it.
-  let width = 7;
-  for (const content of [base, local, incoming]) {
-    for (const run of content.matchAll(/^(?:<+|\|+|=+|>+)/gm))
-      width = Math.max(width, run[0].length + 1);
-  }
+  const width = markerWidth(base, local, incoming);
   const start = "<".repeat(width);
   const ancestor = "|".repeat(width);
   const separator = "=".repeat(width);

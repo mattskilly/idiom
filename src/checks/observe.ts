@@ -44,12 +44,14 @@ import type {
   RepeatedContainerObservation,
   SelectionOutlineObservation,
   SelectorMark,
+  SpacingTargetObservation,
   TokenContext,
   TokenObservation,
   WordBreakObservation,
   WordFragment,
 } from "./types.js";
 import { ensureVisibilityDom } from "./visibility-dom.js";
+import { inventoryBlankMedia } from "./visual-blank-dom.js";
 
 export type TokenDeclarations =
   | { status: "not-configured" }
@@ -500,6 +502,8 @@ export async function normalizeTokenDeclarations(
 }
 
 export type ObserveOptions = {
+  visualBlank?: ChecksConfig["visualBlank"];
+  loadingStuck?: boolean | undefined;
   designComparison?: boolean | undefined;
   /** Gallery frames are recorded for screenshot band sampling when auto. */
   mediaFill?:
@@ -526,17 +530,11 @@ export type ObserveOptions = {
   shell?: string | undefined;
   floatingOverlays?: string[] | undefined;
   invariants?: EffectiveInvariant[] | undefined;
-  components?: Array<{
-    name: string;
-    selector: string;
-    width: number;
-    height: number;
-    tolerance: {
-      ratio: number;
-      px: number;
-      mode?: "tighter" | "looser" | undefined;
-    };
-  }>;
+  components?: Omit<
+    ComponentObservation,
+    "rects" | "inferred" | "unresolved"
+  >[];
+  spacingTargets?: import("../schemas/targets.js").SpacingTarget[] | undefined;
   /**
    * Component sizes inferred from DESIGN.md; each selector is resolved here
    * from class or aria-label words. Explicit `components` selectors win.
@@ -629,6 +627,7 @@ async function observeWithTokens(
       axeTargets,
       maskSelectors,
       componentInput,
+      spacingInput,
       inferredInput,
       invariantInput,
       markInput,
@@ -2811,7 +2810,12 @@ async function observeWithTokens(
       >();
       const spacingExclusion = (element: Element) => {
         const reason = window.__idiomVisibility.excluded(element);
-        return reason === undefined ? {} : { spacingExcluded: reason };
+        const adjacentGapExcluded =
+          window.__idiomVisibility.adjacentGapExcluded(element);
+        return {
+          ...(reason === undefined ? {} : { spacingExcluded: reason }),
+          ...(adjacentGapExcluded === undefined ? {} : { adjacentGapExcluded }),
+        };
       };
       // WCAG 2.5.8's inline exception: the anchor's own rendered text, not an
       // icon, atomic child or block descendant, has to set its size.
@@ -3821,18 +3825,17 @@ async function observeWithTokens(
       overlapCandidates.sort((a, b) => a.bounds.left - b.bounds.left);
       const holds = (owner: Element, hits: Element[]) =>
         hits.some((hit) => hit === owner || owner.contains(hit));
-      // A card's corner action: a control absolutely positioned inside the
-      // card's own link, layered on top of it so both stay clickable.
+      // Retain the established absolute-action proof, including below-fold cards.
       const cornerActionOverCardLink = (
         action: OverlapCandidate,
         link: OverlapCandidate,
-      ) => {
+      ): Element | undefined => {
         if (
           action.kind !== "interactive" ||
           link.kind !== "interactive" ||
           !link.element.matches("a[href], [role=link]")
         )
-          return false;
+          return undefined;
         const actionBox = action.element.getBoundingClientRect();
         const linkBox = link.element.getBoundingClientRect();
         if (
@@ -3841,11 +3844,17 @@ async function observeWithTokens(
           actionBox.right > linkBox.right + 1 ||
           actionBox.bottom > linkBox.bottom + 1
         )
-          return false;
+          return undefined;
         let card = action.element.parentElement;
         while (card !== null && !card.contains(link.element))
           card = card.parentElement;
-        if (card === null) return false;
+        if (
+          card === null ||
+          card.matches(
+            "html, body, main, nav, header, footer, ul, ol, [role=list], [role=grid]",
+          )
+        )
+          return undefined;
         // The action, or a passive wrapper below the card that holds it.
         let positioned = false;
         for (
@@ -3854,13 +3863,13 @@ async function observeWithTokens(
           current = current.parentElement
         ) {
           if (current !== action.element && interactiveElements.has(current))
-            return false;
+            return undefined;
           if (getComputedStyle(current).position === "absolute") {
             positioned = true;
             break;
           }
         }
-        if (!positioned) return false;
+        if (!positioned) return undefined;
         // The card's own link covers the card, not some link inside it.
         const cardBox = card.getBoundingClientRect();
         const cardArea = cardBox.width * cardBox.height;
@@ -3869,7 +3878,7 @@ async function observeWithTokens(
           areaOf(intersectEdges(edgesOf(linkBox), edgesOf(cardBox))) <
             0.8 * cardArea
         )
-          return false;
+          return undefined;
         // The action must be on top, where a pointer reaches it.
         const x = actionBox.left + actionBox.width / 2;
         const y = actionBox.top + actionBox.height / 2;
@@ -3882,14 +3891,195 @@ async function observeWithTokens(
           const stack = document.elementsFromPoint(x, y);
           const above = stack.findIndex((hit) => holds(action.element, [hit]));
           const below = stack.findIndex((hit) => holds(link.element, [hit]));
-          return above !== -1 && (below === -1 || above < below);
+          return above !== -1 && (below === -1 || above < below)
+            ? card
+            : undefined;
         }
         // Below the fold: a positioned action without a negative z-index
         // paints over an unpositioned link.
-        return (
-          getComputedStyle(link.element).position === "static" &&
+        return getComputedStyle(link.element).position === "static" &&
           !(Number.parseInt(getComputedStyle(action.element).zIndex, 10) < 0)
+          ? card
+          : undefined;
+      };
+      type CardAction = {
+        card: string;
+        group: string;
+        status: "intentional" | "ambiguous";
+      };
+      const linkSelector = "a[href], [role=link]";
+      const ownerCache = new Map<Element, Element | undefined>();
+      const cardOwner = (element: Element): Element | undefined => {
+        if (ownerCache.has(element)) return ownerCache.get(element);
+        let owner: Element | undefined;
+        for (
+          let current = element.parentElement;
+          current && current !== document.body;
+          current = current.parentElement
+        ) {
+          if (current.matches("main, nav, section, header, footer")) break;
+          const links = [...current.querySelectorAll(linkSelector)];
+          // An action-only list can live inside a card. A collection of
+          // links is a boundary; never give its sibling cards one owner.
+          if (current.matches("ul, ol, [role=list], [role=grid]")) {
+            if (links.length > 0) break;
+            continue;
+          }
+          if (links.length === 0) continue;
+          // A collection itself is never a card, even if both controls have
+          // it as their nearest common ancestor.
+          if (
+            [...current.querySelectorAll("article, li, [role=listitem]")].some(
+              (item) => item.querySelector(linkSelector) !== null,
+            )
+          )
+            break;
+          const signature = repeatedSignature(current);
+          const repeated =
+            [...(current.parentElement?.children ?? [])].filter(
+              (peer) => repeatedSignature(peer) === signature,
+            ).length >= 2;
+          const semantic = current.matches("article, li, [role=listitem]");
+          const isolated =
+            links.length === 1 &&
+            current.querySelectorAll("button, [role=button]").length >= 1;
+          if (semantic || repeated || isolated) {
+            owner = current;
+            break;
+          }
+        }
+        ownerCache.set(element, owner);
+        return owner;
+      };
+      const pointerPoints = (box: Edges) => {
+        const clipped = intersectEdges(box, viewportEdges);
+        if (areaOf(clipped) <= 0) return [];
+        const points: Array<[number, number]> = [];
+        for (const x of [0.2, 0.5, 0.8])
+          for (const y of [0.2, 0.5, 0.8])
+            points.push([
+              clipped.left + (clipped.right - clipped.left) * x,
+              clipped.top + (clipped.bottom - clipped.top) * y,
+            ]);
+        return points;
+      };
+      const cardAction = (
+        action: OverlapCandidate,
+        link: OverlapCandidate,
+      ): CardAction | undefined => {
+        if (
+          action.kind !== "interactive" ||
+          link.kind !== "interactive" ||
+          !link.element.matches(linkSelector)
+        )
+          return undefined;
+        // A link acting as the corner action only qualifies through the
+        // measured corner proof, never through structural ownership alone.
+        const linkAction = action.element.matches(linkSelector);
+        const actionOwner = linkAction ? undefined : cardOwner(action.element);
+        const linkOwner = linkAction ? undefined : cardOwner(link.element);
+        // Shared ownership alone is not the card-link pattern: the link must
+        // cover the card, or the action must sit on the link's face (an
+        // edge poke of a few pixels allowed). A button colliding with a
+        // small title link in the same card stays an ordinary overlap.
+        const coversCard = (card: Element) => {
+          const linkBox = edgesOf(link.element.getBoundingClientRect());
+          const cardBox = edgesOf(card.getBoundingClientRect());
+          const cardArea = areaOf(cardBox);
+          const actionBox = edgesOf(action.element.getBoundingClientRect());
+          const actionArea = areaOf(actionBox);
+          const tolerance = 8;
+          return (
+            (cardArea > 0 &&
+              areaOf(intersectEdges(linkBox, cardBox)) >= 0.8 * cardArea) ||
+            (actionArea > 0 &&
+              actionBox.left >= linkBox.left - tolerance &&
+              actionBox.top >= linkBox.top - tolerance &&
+              actionBox.right <= linkBox.right + tolerance &&
+              actionBox.bottom <= linkBox.bottom + tolerance &&
+              areaOf(intersectEdges(actionBox, linkBox)) >= 0.75 * actionArea)
+          );
+        };
+        const agreed =
+          actionOwner !== undefined &&
+          actionOwner === linkOwner &&
+          coversCard(actionOwner)
+            ? actionOwner
+            : undefined;
+        // Structural discovery must not revoke an already proven corner
+        // action. Use its measured local common ancestor whenever discovery
+        // does not agree, while retaining obstruction/reachability checks.
+        const fallback =
+          agreed === undefined
+            ? cornerActionOverCardLink(action, link)
+            : undefined;
+        const card = agreed ?? fallback;
+        if (!card) return undefined;
+        for (
+          let current: Element | null = action.element;
+          current && current !== card;
+          current = current.parentElement
+        )
+          if (Number.parseInt(getComputedStyle(current).zIndex, 10) < 0)
+            return undefined;
+        // A stray action obstructing another card remains a real collision,
+        // including the part where it also intersects its own card's link.
+        if (
+          overlapCandidates.some(
+            (other) =>
+              other !== link &&
+              other !== action &&
+              other.element.matches(linkSelector) &&
+              cardOwner(other.element) !== card &&
+              !card.contains(other.element) &&
+              areaOf(intersectEdges(action.bounds, other.bounds)) > 0,
+          )
+        )
+          return undefined;
+        const actionPoints = pointerPoints(action.bounds);
+        const reaches = (element: Element, point: [number, number]) => {
+          const top = document.elementFromPoint(...point);
+          return top !== null && (top === element || element.contains(top));
+        };
+        if (
+          actionPoints.length > 0 &&
+          !actionPoints.some((point) => reaches(action.element, point))
+        )
+          return undefined;
+        const linkPoints = pointerPoints(link.bounds).filter(
+          ([x, y]) =>
+            x < action.bounds.left ||
+            x > action.bounds.right ||
+            y < action.bounds.top ||
+            y > action.bounds.bottom,
         );
+        if (
+          linkPoints.length > 0 &&
+          !linkPoints.some((point) => reaches(link.element, point))
+        )
+          return undefined;
+        const links = [...card.querySelectorAll(linkSelector)].filter(
+          (element) => cardOwner(element) === card,
+        );
+        const repeated =
+          [...(card.parentElement?.children ?? [])].filter(
+            (peer) => repeatedSignature(peer) === repeatedSignature(card),
+          ).length >= 2;
+        const group =
+          repeated && card.parentElement
+            ? `${selectorFor(card.parentElement)} | ${repeatedSignature(card)}`
+            : selectorFor(card);
+        const proven = actionPoints.length > 0 && linkPoints.length > 0;
+        const legacy =
+          actionPoints.length === 0 && cornerActionOverCardLink(action, link);
+        return {
+          card: selectorFor(card),
+          group,
+          status:
+            (links.length === 1 || fallback !== undefined) && (proven || legacy)
+              ? "intentional"
+              : "ambiguous",
+        };
       };
       const overlaps: Array<{
         a: string;
@@ -3899,6 +4089,7 @@ async function observeWithTokens(
         partial: string[];
         samples: number;
         hits: number;
+        cardAction?: CardAction;
       }> = [];
       for (let index = 0; index < overlapCandidates.length; index += 1) {
         const left = overlapCandidates[index] as OverlapCandidate;
@@ -3914,9 +4105,7 @@ async function observeWithTokens(
             (left.element instanceof HTMLLabelElement &&
               left.element.control === right.element) ||
             (right.element instanceof HTMLLabelElement &&
-              right.element.control === left.element) ||
-            cornerActionOverCardLink(left, right) ||
-            cornerActionOverCardLink(right, left)
+              right.element.control === left.element)
           )
             continue;
           let best: Edges | undefined;
@@ -3964,7 +4153,9 @@ async function observeWithTokens(
           if (samples > 0 && hits === 0) continue;
           const [a, b] =
             left.selector < right.selector ? [left, right] : [right, left];
+          const card = cardAction(left, right) ?? cardAction(right, left);
           overlaps.push({
+            ...(card === undefined ? {} : { cardAction: card }),
             a: a.selector,
             b: b.selector,
             kinds: [a.kind, b.kind],
@@ -5348,6 +5539,7 @@ async function observeWithTokens(
           selector: string;
           role: "label" | "control" | "helper";
           rect: Rect;
+          textRect?: Rect;
         }>;
       }> = [];
       const labelElements = all.filter(
@@ -5433,6 +5625,47 @@ async function observeWithTokens(
           if (branch.parentElement === null) break;
           branch = branch.parentElement;
         }
+        const captionFragments: DOMRect[] = [];
+        const captionWalker = document.createTreeWalker(
+          label,
+          NodeFilter.SHOW_TEXT,
+        );
+        for (
+          let node = captionWalker.nextNode();
+          node;
+          node = captionWalker.nextNode()
+        ) {
+          const parent = node.parentElement;
+          if (
+            !node.textContent?.trim() ||
+            !parent ||
+            control.contains(node) ||
+            helpers.some((helper) => helper.contains(node)) ||
+            !isVisibleContent(parent, false) ||
+            window.__idiomVisibility.excluded(parent) !== undefined ||
+            !parent.checkVisibility({
+              checkOpacity: true,
+              checkVisibilityCSS: true,
+            })
+          )
+            continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          captionFragments.push(
+            ...[...range.getClientRects()].filter(
+              (r) => r.width > 0 && r.height > 0,
+            ),
+          );
+        }
+        const textRect =
+          captionFragments.length === 0
+            ? undefined
+            : rectOf({
+                left: Math.min(...captionFragments.map((r) => r.left)),
+                top: Math.min(...captionFragments.map((r) => r.top)),
+                right: Math.max(...captionFragments.map((r) => r.right)),
+                bottom: Math.max(...captionFragments.map((r) => r.bottom)),
+              });
         let labelRect: Rect;
         if (label.contains(control)) {
           // Captions are often nested in spans/strong tags. Measure their
@@ -5468,8 +5701,8 @@ async function observeWithTokens(
               !containsFieldPart(caption) &&
               renderedPaths.has(caption)
             ) {
-              // Use the caption's box, including its line height, so a span
-              // touching the input measures zero rather than a glyph inset.
+              // Keep the caption layout box for between-group spacing;
+              // textRect supplies the separate inner label measurement.
               if (!captionBoxes.has(caption))
                 texts.push(...caption.getClientRects());
               captionBoxes.add(caption);
@@ -5529,6 +5762,7 @@ async function observeWithTokens(
               ? "document"
               : selectorFor(region),
           members: members.map(({ element, role, rect }) => ({
+            ...(role === "label" && textRect ? { textRect } : {}),
             selector: selectorFor(element),
             role,
             rect,
@@ -6119,6 +6353,76 @@ async function observeWithTokens(
                   height: rect.height,
                 };
               }),
+          };
+        },
+      );
+      const spacingBox = (element: Element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          selector: selectorFor(element),
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        };
+      };
+      const spacingTargets: SpacingTargetObservation[] = spacingInput.map(
+        (target) => {
+          const reasons: string[] = [];
+          const pairs: SpacingTargetObservation["pairs"] = [];
+          const visibleMatches = (selector: string): Element[] => {
+            try {
+              const all = [...document.querySelectorAll(selector)];
+              const visible = all.filter((element) =>
+                renderedPaths.has(element),
+              );
+              if (visible.length === 0)
+                reasons.push(
+                  `${selector}: 0 visible matches (${all.length} total)`,
+                );
+              return visible;
+            } catch {
+              reasons.push(`${selector}: invalid CSS selector`);
+              return [];
+            }
+          };
+          if ("between" in target) {
+            const [a, b] = target.between.map((selector) => {
+              const matches = visibleMatches(selector);
+              if (matches.length > 1)
+                reasons.push(
+                  `${selector}: ambiguous (${matches.length} visible matches)`,
+                );
+              return matches;
+            });
+            if (a?.length === 1 && b?.length === 1 && a[0] && b[0])
+              pairs.push({ first: spacingBox(a[0]), second: spacingBox(b[0]) });
+          } else {
+            for (const container of visibleMatches(target.within)) {
+              const children = [...container.children].filter((element) =>
+                renderedPaths.has(element),
+              );
+              if (children.length < 2)
+                reasons.push(
+                  `${selectorFor(container)}: fewer than two visible direct children (${children.length})`,
+                );
+              for (let i = 1; i < children.length; i++) {
+                const first = children[i - 1];
+                const second = children[i];
+                if (first && second)
+                  pairs.push({
+                    container: selectorFor(container),
+                    first: spacingBox(first),
+                    second: spacingBox(second),
+                  });
+              }
+            }
+          }
+          return {
+            target,
+            pairs,
+            status: reasons.length === 0 ? "measured" : "unmeasurable",
+            reasons,
           };
         },
       );
@@ -9511,6 +9815,7 @@ async function observeWithTokens(
         emptyRegions,
         repeatedContainers,
         ...(components.length === 0 ? {} : { components }),
+        spacingTargets,
         ...(mediaFrames === undefined ? {} : { mediaFrames }),
         ...(collections === undefined ? {} : { collections }),
         ...(selectorMarks.length === 0 ? {} : { selectorMarks }),
@@ -9530,6 +9835,7 @@ async function observeWithTokens(
       axeTargets: axeHeadingTargets,
       maskSelectors: masks,
       componentInput: observeOptions.components ?? [],
+      spacingInput: observeOptions.spacingTargets ?? [],
       inferredInput: observeOptions.inferredComponents ?? [],
       invariantInput: (observeOptions.invariants ?? []).map((assertion) => ({
         ...assertion,
@@ -9627,6 +9933,12 @@ async function observeWithTokens(
     });
   }
 
+  if (artifact.version === 2 && observeOptions.visualBlank?.enabled)
+    artifact.visualBlank = await inventoryBlankMedia(
+      page,
+      observeOptions.visualBlank.swatchSelectors,
+      masks,
+    );
   if (artifact.version === 2 && liveness) artifact.liveness = liveness;
   if (artifact.version === 2 && artifact.layoutShift?.status === "ran") {
     const entries = artifact.layoutShift.entries as Array<

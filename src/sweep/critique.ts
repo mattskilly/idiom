@@ -66,6 +66,7 @@ type SweepAdapter = {
  */
 export async function sweepCritique(options: {
   projectDirectory: string;
+  stateProjectDirectory?: string | undefined;
   runDirectory: string;
   project: Project;
   flow: Flow;
@@ -93,6 +94,7 @@ export async function sweepCritique(options: {
     );
     const context = await buildCritiqueContext({
       projectDirectory: options.projectDirectory,
+      stateProjectDirectory: options.stateProjectDirectory,
       runDirectory: options.runDirectory,
       project: options.project,
       flow: options.flow,

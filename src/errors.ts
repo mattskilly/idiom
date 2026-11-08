@@ -1,5 +1,9 @@
 import { EXIT_CODES } from "./interface/version.js";
 
+export class DecisionNeeded extends Error {}
+
+export class DeferredCheck extends Error {}
+
 export class IdiomError extends Error {
   constructor(message: string) {
     super(message);

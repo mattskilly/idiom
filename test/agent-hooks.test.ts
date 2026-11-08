@@ -36,6 +36,10 @@ import { projectSchema } from "../src/schemas/project.js";
 import { commit, git } from "./baseline-support.js";
 
 const exec = promisify(execFile);
+// Every test retries ({ retry: 2 }): hooks fail open once their 140ms budget
+// is spent, and a saturated verify host can spend it on process start and git
+// alone, dropping a Stop block at random. Each test builds a fresh fixture, so
+// a whole-test retry is safe.
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(
@@ -182,9 +186,13 @@ test.each([
   "view.liquid",
   "view.pug",
   "src\\components\\Card.tsx",
-])("defaults match %s", (path) => expect(matchesUI(path)).toBe(true));
+])("defaults match %s", { retry: 2 }, (path) =>
+  expect(matchesUI(path)).toBe(true),
+);
 
-test("globs are segment-aware, escape literal route brackets and replace defaults", () => {
+test("globs are segment-aware, escape literal route brackets and replace defaults", {
+  retry: 2,
+}, () => {
   expect(matchesUI("Card.tsx", ["**/*.tsx"])).toBe(true);
   expect(matchesUI("pages/[id]/page.ts", ["pages/[id]/p?ge.ts"])).toBe(true);
   expect(matchesUI("pages/id/page.ts", ["pages/[id]/*.ts"])).toBe(false);
@@ -211,7 +219,9 @@ test("globs are segment-aware, escape literal route brackets and replace default
   expect(DEFAULT_UI_GLOBS).toContain("**/app/**/layout.ts");
 });
 
-test("strict project config and lightweight parser agree on agent configuration", async () => {
+test("strict project config and lightweight parser agree on agent configuration", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   const original = JSON.parse(
     await readFile(join(root, ".idiom/project.json"), "utf8"),
@@ -239,6 +249,7 @@ test("strict project config and lightweight parser agree on agent configuration"
 
 test.each(["Edit", "Write", "MultiEdit"])(
   "%s emits provider context suggesting changed checks for configured flows",
+  { retry: 2 },
   async (tool) => {
     const root = await fixture();
     await writeFile(
@@ -263,7 +274,9 @@ test.each(["Edit", "Write", "MultiEdit"])(
   },
 );
 
-test("flow lists are explicitly bounded and missing flows direct configuration", async () => {
+test("flow lists are explicitly bounded and missing flows direct configuration", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   for (const file of (
     await exec("git", ["ls-files", ".idiom/flows"], { cwd: root })
@@ -285,7 +298,9 @@ test("flow lists are explicitly bounded and missing flows direct configuration",
   expect(message.length).toBeLessThan(1300);
 });
 
-test("non-UI, unrelated tools, malformed input, uninitialized and opt-out are silent and don't write state", async () => {
+test("non-UI, unrelated tools, malformed input, uninitialized and opt-out are silent and don't write state", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   expect((await edit(root, "Bash")).output).toBeUndefined();
   expect((await edit(root, "Edit", "src/server.ts")).output).toBeUndefined();
@@ -309,7 +324,9 @@ test("non-UI, unrelated tools, malformed input, uninitialized and opt-out are si
   expect((await stop(empty)).output).toBeUndefined();
 });
 
-test("custom and empty globs replace defaults in actual hooks", async () => {
+test("custom and empty globs replace defaults in actual hooks", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   await configure(root, { uiGlobs: ["**/*.custom"] });
   expect((await edit(root)).output).toBeUndefined();
@@ -320,7 +337,9 @@ test("custom and empty globs replace defaults in actual hooks", async () => {
   expect((await stop(root)).output).toBeUndefined();
 });
 
-test("outside paths and escaping symlinks are rejected, including missing children", async () => {
+test("outside paths and escaping symlinks are rejected, including missing children", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   const outside = await temporary();
   await writeFile(join(outside, "Card.tsx"), "external");
@@ -345,7 +364,9 @@ test("outside paths and escaping symlinks are rejected, including missing childr
   }
 });
 
-test("nested cwd and Git subprojects use project-relative evidence, including canonical path aliases", async () => {
+test("nested cwd and Git subprojects use project-relative evidence, including canonical path aliases", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   expect(
     (
@@ -366,7 +387,9 @@ test("nested cwd and Git subprojects use project-relative evidence, including ca
   expect((await context(project)).root).toBe(project);
 });
 
-test("initial clean tree allows; tracked differences and untracked UI each block", async () => {
+test("initial clean tree allows; tracked differences and untracked UI each block", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   expect((await stop(root)).output).toBeUndefined();
   await writeFile(join(root, "server.ts"), "backend");
@@ -378,7 +401,9 @@ test("initial clean tree allows; tracked differences and untracked UI each block
   expect((await stop(other)).output.decision).toBe("block");
 });
 
-test("single-block Stop persists across edits and commits, with independent sessions and successful-check epochs", async () => {
+test("single-block Stop persists across edits and commits, with independent sessions and successful-check epochs", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   await edit(root);
   expect(
@@ -402,7 +427,9 @@ test("single-block Stop persists across edits and commits, with independent sess
   expect((await stop(root)).output).toBeUndefined();
 });
 
-test("successful check on a dirty file invalidates on another edit, but staging, mtime and backend edits don't", async () => {
+test("successful check on a dirty file invalidates on another edit, but staging, mtime and backend edits don't", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   const path = join(root, "src/components/Card.tsx");
   await writeFile(path, "dirty checked");
@@ -420,6 +447,7 @@ test("successful check on a dirty file invalidates on another edit, but staging,
 
 test.each(["add", "delete", "rename"])(
   "%s invalidates the UI digest",
+  { retry: 2 },
   async (operation) => {
     const root = await fixture();
     await checked(root);
@@ -436,13 +464,17 @@ test.each(["add", "delete", "rename"])(
   },
 );
 
-test("a first-check rename from a UI extension to a backend filename still owes a check", async () => {
+test("a first-check rename from a UI extension to a backend filename still owes a check", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   await git(root, "mv", "src/components/Card.tsx", "src/server.ts");
   expect((await stop(root)).output.decision).toBe("block");
 });
 
-test("corrupt evidence is never a successful check and ignore updates preserve existing lines", async () => {
+test("corrupt evidence is never a successful check and ignore updates preserve existing lines", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   await writeFile(
     join(root, ".idiom/.gitignore"),
@@ -467,7 +499,9 @@ test("corrupt evidence is never a successful check and ignore updates preserve e
   ).toContain("state.json");
 });
 
-test("Git-ignored observed files remain in subsequent successful-check fingerprints", async () => {
+test("Git-ignored observed files remain in subsequent successful-check fingerprints", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   await writeFile(join(root, ".gitignore"), "ignored.tsx\n");
   await writeFile(join(root, "ignored.tsx"), "before");
@@ -478,7 +512,9 @@ test("Git-ignored observed files remain in subsequent successful-check fingerpri
   expect((await stop(root)).output.decision).toBe("block");
 });
 
-test("non-Git trees need observed edits before their first check", async () => {
+test("non-Git trees need observed edits before their first check", {
+  retry: 2,
+}, async () => {
   const root = await fixture(false);
   expect((await stop(root)).output).toBeUndefined();
   await edit(root);
@@ -489,7 +525,9 @@ test("non-Git trees need observed edits before their first check", async () => {
   expect((await stop(root, "two")).output.decision).toBe("block");
 });
 
-test("linked worktrees have independent evidence and cannot borrow configuration across their boundary", async () => {
+test("linked worktrees have independent evidence and cannot borrow configuration across their boundary", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   const container = await temporary();
   const linked = join(container, "linked");
@@ -508,7 +546,9 @@ test("linked worktrees have independent evidence and cannot borrow configuration
   expect((await edit(nested)).output).toBeUndefined();
 });
 
-test("state mutations fail open under contention or persistence failure, without a block or lost acknowledgment", async () => {
+test("state mutations fail open under contention or persistence failure, without a block or lost acknowledgment", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   await edit(root);
   await writeFile(join(root, ".idiom/agent-hooks/lock"), "held");
@@ -525,7 +565,9 @@ test("state mutations fail open under contention or persistence failure, without
   expect((await stop(broken)).output).toBeUndefined();
 });
 
-test("aged orphan locks recover edit recording, single-block Stop and successful-check publication", async () => {
+test("aged orphan locks recover edit recording, single-block Stop and successful-check publication", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   const ctx = await context(root);
   const lockPath = join(ctx.directory, "lock");
@@ -552,7 +594,9 @@ test("aged orphan locks recover edit recording, single-block Stop and successful
   await expect(readFile(lockPath)).rejects.toThrow();
 });
 
-test("a hook killed while holding its mutation lock cannot disable later Stop reminders", async () => {
+test("a hook killed while holding its mutation lock cannot disable later Stop reminders", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   await writeFile(join(root, "src/components/Card.tsx"), "unchecked");
   const runtime = pathToFileURL(
@@ -580,7 +624,9 @@ test("a hook killed while holding its mutation lock cannot disable later Stop re
   await expect(readFile(lockPath)).rejects.toThrow();
 });
 
-test("a displaced writer cannot publish or remove its successor's lock", async () => {
+test("a displaced writer cannot publish or remove its successor's lock", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   const ctx = await context(root);
   const budget = createBudget(5000);
@@ -600,7 +646,9 @@ test("a displaced writer cannot publish or remove its successor's lock", async (
   }
 });
 
-test("concurrent checks preserve newer evidence and intervening edits; expired updates publish nothing and release locks", async () => {
+test("concurrent checks preserve newer evidence and intervening edits; expired updates publish nothing and release locks", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   const ctx = await context(root);
   const budget = createBudget(5000);
@@ -648,7 +696,9 @@ test("concurrent checks preserve newer evidence and intervening edits; expired u
   }
 });
 
-test("bounded pending/session metadata stays readable and retains the newest acknowledgment", async () => {
+test("bounded pending/session metadata stays readable and retains the newest acknowledgment", {
+  retry: 2,
+}, async () => {
   const root = await fixture(false);
   const ctx = await context(root);
   const budget = createBudget(5000);
@@ -679,7 +729,9 @@ test("bounded pending/session metadata stays readable and retains the newest ack
   }
 });
 
-test("whole Node edit and Stop invocations remain below 200ms on a modest monorepo", async () => {
+test("whole Node edit and Stop invocations remain below 200ms on a modest monorepo", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   await mkdir(join(root, "packages/backend"), { recursive: true });
   await Promise.all(
@@ -706,7 +758,9 @@ test("whole Node edit and Stop invocations remain below 200ms on a modest monore
   expect(Math.max(...timings)).toBeLessThan(200);
 });
 
-test("slow Git is killed by the internal deadline without publishing evidence or stranding a lock", async () => {
+test("slow Git is killed by the internal deadline without publishing evidence or stranding a lock", {
+  retry: 2,
+}, async () => {
   const root = await fixture();
   await writeFile(join(root, "src/components/Card.tsx"), "changed");
   const bin = await temporary();

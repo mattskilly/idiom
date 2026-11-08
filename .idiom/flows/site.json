@@ -1,0 +1,91 @@
+{
+  "id": "site",
+  "target": { "kind": "web" },
+  "surface": "site",
+  "title": "idiom.build landing page and docs",
+  "intent": [
+    "Explain what Idiom does and get a visitor to install it",
+    "Let a reader learn the loop and look up rules and configuration"
+  ],
+  "setup": [],
+  "states": [
+    {
+      "id": "landing",
+      "description": "The landing page",
+      "url": "/",
+      "expect": {
+        "status": 200,
+        "textPresent": ["Idiom checks it the way a designer would."],
+        "selectorPresent": ["main"]
+      },
+      "mask": []
+    },
+    {
+      "id": "docs-home",
+      "description": "The docs overview",
+      "url": "/docs",
+      "expect": {
+        "status": 200,
+        "textPresent": ["What Idiom is"],
+        "selectorPresent": ["main"]
+      },
+      "mask": []
+    },
+    {
+      "id": "getting-started",
+      "description": "The getting started guide",
+      "url": "/docs/getting-started",
+      "expect": {
+        "status": 200,
+        "textPresent": ["Getting started"],
+        "selectorPresent": ["main"]
+      },
+      "mask": []
+    },
+    {
+      "id": "guide-design-qa",
+      "description": "The design QA for Claude Code guide",
+      "url": "/docs/design-qa-for-claude-code",
+      "expect": {
+        "status": 200,
+        "textPresent": ["Design QA for Claude Code"],
+        "selectorPresent": ["main"]
+      },
+      "mask": []
+    },
+    {
+      "id": "guide-states",
+      "description": "The loading, empty and error states guide",
+      "url": "/docs/testing-loading-empty-error-states",
+      "expect": {
+        "status": 200,
+        "textPresent": ["Testing loading, empty and error states"],
+        "selectorPresent": ["main"]
+      },
+      "mask": []
+    },
+    {
+      "id": "rules",
+      "description": "The rules reference",
+      "url": "/docs/rules",
+      "expect": {
+        "status": 200,
+        "textPresent": ["Rules"],
+        "selectorPresent": ["main"]
+      },
+      "mask": []
+    },
+    {
+      "id": "configuration",
+      "description": "The configuration reference",
+      "url": "/docs/configuration",
+      "expect": {
+        "status": 200,
+        "textPresent": ["Configuration"],
+        "selectorPresent": ["main"]
+      },
+      "mask": []
+    }
+  ],
+  "viewports": ["desktop", "tablet", "phone"]
+}

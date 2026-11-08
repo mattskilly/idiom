@@ -310,6 +310,22 @@ export const adjacentGapCheck: DeterministicCheck = {
     const observed = signalledElements(tuple);
     if ("reason" in observed) return unavailable(this.id, observed.reason);
     const observation = tuple.observations;
+    const hiddenByStyle = (
+      element: Pick<ObservedElementV2, "styles" | "painted">,
+    ) =>
+      Number.parseFloat(element.styles.opacity) === 0 ||
+      ["hidden", "collapse"].includes(element.styles.visibility) ||
+      (element.painted?.value === false &&
+        ["opacity-0", "visibility-hidden", "visibility-collapse"].includes(
+          element.painted.reason,
+        ));
+    const hiddenAncestors = new Set(
+      observation?.version === 2
+        ? observation.elements
+            .filter(hiddenByStyle)
+            .map((element) => element.selector)
+        : [],
+    );
     const viewportArea =
       (observation?.viewport.width ?? 1) * (observation?.viewport.height ?? 1);
     const gate = paintedGate(tuple, ["idiom:adjacent-elements-touch"]);
@@ -328,9 +344,21 @@ export const adjacentGapCheck: DeterministicCheck = {
           ? observed.elements
           : observed.elements.filter(isElementPainted);
       const rawBoxes = observed.elements.filter((element) => {
+        const styleHidden =
+          hiddenByStyle(element) ||
+          element.ancestorSelectors.some((selector) =>
+            hiddenAncestors.has(selector),
+          );
+        // The focused/legacy guard supplements the painted gate; keep its
+        // distinct-owner coverage even when causal style evidence excludes
+        // a touch-mode participant before candidate pairs are constructed.
+        if (styleHidden && mode === "touch")
+          gate.allows("idiom:adjacent-elements-touch", element);
         if (
           isVisuallyHidden(element) ||
           element.spacingExcluded !== undefined ||
+          element.adjacentGapExcluded !== undefined ||
+          styleHidden ||
           excludedTags.has(element.tag)
         )
           return false;

@@ -40,7 +40,7 @@ Gates count measured and observed findings. Judged findings gate only if you opt
 
 ## Ranking
 
-Findings come in fix order, severity first: every blocker comes before every major, and every major before every minor; within each tier, findings are ranked by salience × prominence: how noticeable the problem is and how prominent the element is. Symptoms that share one cause, such as one component misbehaving in six places, become one issue.
+Findings come in fix order, severity first: every blocker comes before every major, and every major before every minor; within a severity, findings that span states or viewports, sit on a primary action, target an interactive control or break behaviour come before single-state cosmetic ones; within each tier, findings are ranked by salience × prominence: how noticeable the problem is and how prominent the element is. Symptoms that share one cause, such as one component misbehaving in six places, become one issue.
 
 ## Coverage
 

@@ -3,7 +3,7 @@ import { IdiomError } from "../errors.js";
 import { acceptanceText } from "../findings/presentation.js";
 import type { ReviewRunResult } from "../review/run.js";
 import type { Finding } from "../schemas/finding.js";
-import { validateProject } from "../validation.js";
+import { type ValidationResult, validateProject } from "../validation.js";
 import { compareRunToBaseline } from "./compare.js";
 import { tupleCoordinateKey } from "./coordinate.js";
 
@@ -29,6 +29,8 @@ export type SummaryFinding = {
   timeline?: { id: string; path: string } | undefined;
   deferred?: boolean | undefined;
   occurrenceOnly?: boolean | undefined;
+  /** Tracked elsewhere: shown, never counted toward --fail-on or as new. */
+  acknowledged?: { reference: string; until?: string | undefined } | undefined;
 };
 /** Relative to the working directory when inside it, absolute otherwise. */
 export function displayPath(base: string, absolute: string): string {
@@ -73,6 +75,16 @@ export function summarizeFinding(
       : {
           screenshot: displayPath(base, `${result.runDirectory}/${screenshot}`),
         }),
+    ...(finding.acknowledgement === undefined
+      ? {}
+      : {
+          acknowledged: {
+            reference: finding.acknowledgement.reference,
+            ...(finding.acknowledgement.until === undefined
+              ? {}
+              : { until: finding.acknowledgement.until }),
+          },
+        }),
     ...(finding.evidence.timeline === undefined
       ? {}
       : {
@@ -91,6 +103,8 @@ const occurrenceKey = (finding: Finding) =>
 export async function summarizeBaselineComparison(
   options: {
     flow: string;
+    validated?: ValidationResult | undefined;
+    comparisonCommit?: string | undefined;
     baselineFile?: string | undefined;
     project?: string | undefined;
     cwd?: string | undefined;
@@ -102,17 +116,20 @@ export async function summarizeBaselineComparison(
     throw new IdiomError(
       "review did not return requested deterministic occurrences",
     );
-  const validated = await validateProject(options);
+  const validated = options.validated ?? (await validateProject(options));
   const flow = validated.flows[0]?.flow;
   if (flow === undefined) throw new IdiomError(`unknown flow ${options.flow}`);
   const comparison = await compareRunToBaseline({
     validated,
     flow,
     baselineFile: options.baselineFile,
+    comparisonCommit: options.comparisonCommit,
     cwd: options.cwd,
     runDirectory: result.runDirectory,
+    // Acknowledged occurrences never enter the comparison: neither new nor,
+    // since fixed is read from every current candidate, fixed.
     liveOccurrences: result.deterministicOccurrences.filter(
-      (finding) => finding.status === "open" || finding.status === "approved",
+      (finding) => isGateOpen(finding) && finding.acknowledgement === undefined,
     ),
   });
   const materialKeys = new Set(material.map(occurrenceKey));
@@ -129,7 +146,8 @@ export async function summarizeBaselineComparison(
   return {
     findings: comparison.newFindings.map(summarize),
     blocking: comparison.newFindings.filter(
-      (finding) => finding.severity !== "minor",
+      (finding) =>
+        finding.severity === "blocker" || finding.severity === "major",
     ).length,
     preExisting: comparison.preExisting.length,
     preExistingFindings: comparison.preExisting.map(summarize),
@@ -144,7 +162,19 @@ export async function summarizeBaselineComparison(
       }),
     ),
     baseline: comparison.baseline,
+    acknowledgedFindings: result.deterministicOccurrences
+      .filter(
+        (finding) =>
+          isGateOpen(finding) && finding.acknowledgement !== undefined,
+      )
+      .map(summarize),
+    acknowledgementLapses: result.acknowledgementLapses,
   };
+}
+
+/** Open work a gate may count; an acknowledgement additionally excludes it. */
+export function isGateOpen(finding: Finding): boolean {
+  return finding.status === "open" || finding.status === "approved";
 }
 export type BaselineComparisonSummary = Awaited<
   ReturnType<typeof summarizeBaselineComparison>

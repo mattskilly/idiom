@@ -1,0 +1,20 @@
+<!doctype html>
+<title>A no-op icon button with a Radix tooltip</title>
+<style>
+  body { margin: 24px; font: 16px Arial; }
+  button { width: 48px; height: 48px; }
+  [data-radix-popper-content-wrapper] { position: absolute; top: 80px; left: 24px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+</style>
+<button id="icon" aria-label="Help">?</button>
+<script>
+  const icon = document.querySelector('#icon');
+  icon.onpointerenter = () => {
+    if (document.querySelector('[data-radix-popper-content-wrapper]')) return;
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('data-radix-popper-content-wrapper', '');
+    wrapper.innerHTML = '<div data-state="delayed-open" data-side="bottom">Help topics<span role="tooltip" class="sr-only">Help topics</span></div>';
+    document.body.append(wrapper);
+  };
+  icon.onpointerdown = () => document.querySelector('[data-radix-popper-content-wrapper]')?.remove();
+</script>

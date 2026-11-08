@@ -226,7 +226,7 @@ test("README exposes design and agent entry points", () => {
     expect(design).toContain(fragment);
   const agent = readmeSection("## Use it from your agent");
   for (const fragment of [
-    "twenty-two",
+    "twenty-four",
     "stdio",
     "/plugin marketplace add mattskilly/idiom",
     "/plugin install idiom@idiom",

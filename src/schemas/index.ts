@@ -12,7 +12,15 @@ export {
 } from "../rulings/names.js";
 export * from "./acceptance.js";
 export * from "./brief.js";
-export { type Decision, decisionSchema } from "./decision.js";
+export {
+  type Acknowledgement,
+  acknowledgementSchema,
+  type Decision,
+  type DecisionLogEntry,
+  decisionLogEntrySchema,
+  decisionSchema,
+  isAcknowledgement,
+} from "./decision.js";
 export * from "./design.js";
 export {
   type ExplorationCandidate,

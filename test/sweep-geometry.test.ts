@@ -277,3 +277,32 @@ test("hidden and invisible elements are skipped; old captures say why", () => {
     surfaceGeometry({ ...tuple, observations: undefined }).unavailable,
   ).toMatch(/unavailable/);
 });
+
+test("geometry labels single-axis component targets", () => {
+  const result = surfaceGeometry(
+    tupleOf([], {
+      extra: {
+        components: [
+          {
+            name: "tile",
+            selector: ".tile",
+            height: 56,
+            tolerance: { ratio: 0, px: 8 },
+            rects: [],
+          },
+          {
+            name: "panel",
+            selector: ".panel",
+            width: 280,
+            tolerance: { ratio: 0, px: 1 },
+            rects: [],
+          },
+        ],
+      },
+    }),
+  );
+  expect(result.components.map(({ expected }) => expected)).toEqual([
+    "56px high",
+    "280px wide",
+  ]);
+});

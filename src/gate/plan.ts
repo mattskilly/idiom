@@ -1,5 +1,6 @@
 import { relative, resolve, sep } from "node:path";
 import { resolveRunBaseline } from "../baseline/compare.js";
+import { assertedStates, readDesignAssets } from "../brief/design-asset.js";
 import { captureConcurrency } from "../capture/lanes.js";
 import type { ProbeRegion } from "../capture/probe.js";
 import { PROBE_WALL_TARGET_MS } from "../capture/run.js";
@@ -83,6 +84,7 @@ export async function planGate(
   const gate = resolveGateConfig(project);
   const changes = await collectChanges(projectDirectory, options.base, git);
   const base = shortBase(changes.resolvedBase);
+  const allFlows = validated.flows.map((record) => record.flow.id);
   // Globs are project-relative; changed paths are repository-relative.
   const prefix = relative(changes.repository, projectDirectory)
     .split(sep)
@@ -104,9 +106,24 @@ export async function planGate(
     reason: files.length ? "no UI changes" : "no changes",
     line: `no UI changes since ${base}; skipped`,
     files,
+    allFlows,
   });
-  if (!byPath.some((file) => file.ui)) return skip(byPath);
   const flows = validated.flows.map((record) => record.flow);
+  // A design asset pinned to the build is its contract: its asserted states
+  // are always checked, whatever the diff touched.
+  const assetStates = assertedStates(
+    await readDesignAssets(projectDirectory),
+  ).filter(({ flow, state }) =>
+    flows.some(
+      (candidate) =>
+        candidate.id === flow &&
+        (options.flow === undefined || options.flow === flow) &&
+        candidate.states.some((declared) => declared.id === state),
+    ),
+  );
+  const assetsAssert = assetStates.length > 0;
+  const uiChanged = byPath.some((file) => file.ui);
+  if (!uiChanged && !assetsAssert) return skip(byPath);
   const select = options.dependencies?.select ?? selectChangedStates;
   const uiPaths = new Set(
     byPath.filter((file) => file.ui).map((file) => file.path),
@@ -115,7 +132,17 @@ export async function planGate(
     ...changes,
     files: changes.files.filter((file) => uiPaths.has(file.path)),
   };
-  let selection = await select(projectDirectory, flows, uiChanges);
+  const { files: _files, ...changeGit } = changes;
+  let selection: ChangedSelection = uiChanged
+    ? await select(projectDirectory, flows, uiChanges)
+    : {
+        git: changeGit,
+        files: [],
+        candidates: [],
+        selected: [],
+        skipped: [],
+        fallbackFiles: [],
+      };
   const graph = selection.graph ?? {
     complete: false,
     reasons: ["no import graph"],
@@ -136,19 +163,43 @@ export async function planGate(
     const remaining = uiChanges.files.filter(
       (file) => !serverOnly.has(file.path),
     );
-    if (!remaining.length)
+    if (!remaining.length && !assetsAssert)
       return skip([
         ...byPath.filter((file) => !file.ui),
         ...byGraph.filter((file) => !file.ui),
       ]);
-    selection = {
-      ...(await select(projectDirectory, flows, {
-        ...uiChanges,
-        files: remaining,
-      })),
-      graph,
-    };
+    selection = remaining.length
+      ? {
+          ...(await select(projectDirectory, flows, {
+            ...uiChanges,
+            files: remaining,
+          })),
+          graph,
+        }
+      : { ...selection, files: [], selected: [], candidates: [], graph };
   }
+  const missingAsserted = assetStates
+    .filter(
+      (entry) =>
+        !selection.selected.some(
+          (state) => state.flow === entry.flow && state.state === entry.state,
+        ),
+    )
+    .map(({ flow, state }) => ({ flow, state }));
+  if (missingAsserted.length)
+    selection = {
+      ...selection,
+      candidates: [
+        ...selection.candidates,
+        ...missingAsserted.filter(
+          (entry) =>
+            !selection.candidates.some(
+              (state) => stateKey(state) === stateKey(entry),
+            ),
+        ),
+      ],
+      selected: [...selection.selected, ...missingAsserted],
+    };
   const graphClass = new Map(byGraph.map((file) => [file.path, file]));
   const files: GateFile[] = byPath.map((file) => {
     const graphFile = graphClass.get(file.path);
@@ -200,6 +251,11 @@ export async function planGate(
   const notes: string[] = [];
   if (selection.git.fallbackReason) notes.push(selection.git.fallbackReason);
   const rankOf = (flow: string, state: string): GateRank => {
+    // Asserted states are trimmed last: the build is held to them.
+    if (
+      assetStates.some((entry) => entry.flow === flow && entry.state === state)
+    )
+      return "route";
     const owning = selection.files.filter((file) =>
       file.states.some((entry) => entry.flow === flow && entry.state === state),
     );
@@ -210,7 +266,9 @@ export async function planGate(
   const regions = new Map<string, GateStatePlan["region"]>();
   const atBase = reflectsBase(git, changes.repository, changes.resolvedBase);
   const referenceMaps = new Map<string, Map<string, ProbeRegion>>();
+  const affectedFlows: string[] = [];
   for (const flow of flows) {
+    const asserted = assetStates.filter((entry) => entry.flow === flow.id);
     const ids = selection.selected
       .filter((state) => state.flow === flow.id)
       .map((state) => state.state);
@@ -221,6 +279,12 @@ export async function planGate(
       (id) => requested === undefined || requested.includes(id),
     );
     if (!chosen.length) continue;
+    for (const entry of asserted)
+      if (chosen.includes(entry.state))
+        notes.push(
+          `design asset ${entry.brief.source?.name ?? entry.brief.slug}: brief ${entry.brief.slug} asserts ${flow.id}/${entry.state}`,
+        );
+    affectedFlows.push(flow.id);
     const history = await loadFlowHistory(projectDirectory, flow.id);
     histories.set(flow.id, history);
     const model = costModel(history);
@@ -421,6 +485,8 @@ export async function planGate(
     minimumExceedsBudget: trimmed.minimumExceedsBudget,
     baselines,
     notes,
+    flows: affectedFlows,
+    allFlows,
     execution: {
       validated,
       selection: finalSelection,

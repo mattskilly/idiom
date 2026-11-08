@@ -1,4 +1,4 @@
-import { rename, writeFile } from "node:fs/promises";
+import { readFile, rename, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export function reportContentSecurityPolicy(interactive = false): string {
@@ -47,6 +47,37 @@ export function reportRelativeHref(path: string): string {
 
 export function pngDataUri(source: Uint8Array): string {
   return `data:image/png;base64,${Buffer.from(source).toString("base64")}`;
+}
+
+/** Raw PNG bytes one HTML report inlines; the base64 report must stay far below V8's string limit. */
+export const INLINE_IMAGE_BUDGET_BYTES = 96 * 1024 * 1024;
+
+/**
+ * Data URIs for run-relative PNGs, smallest first, while they fit the budget.
+ * Images left out are absent from the map; renderers link them instead, since
+ * the report's CSP only admits data: images. Many tall full-page screenshots
+ * would otherwise make the report longer than a JavaScript string can be.
+ */
+export async function inlineReportImages(
+  runDirectory: string,
+  paths: readonly string[],
+  budgetBytes = INLINE_IMAGE_BUDGET_BYTES,
+): Promise<Map<string, string>> {
+  const sized = await Promise.all(
+    [...new Set(paths)].map(async (path) => ({
+      path,
+      size: (await stat(join(runDirectory, path))).size,
+    })),
+  );
+  sized.sort((a, b) => a.size - b.size || a.path.localeCompare(b.path));
+  const inlined = new Map<string, string>();
+  let remaining = budgetBytes;
+  for (const { path, size } of sized) {
+    if (size > remaining) break;
+    remaining -= size;
+    inlined.set(path, pngDataUri(await readFile(join(runDirectory, path))));
+  }
+  return inlined;
 }
 
 export function badge(label: string, tone = "neutral"): string {
@@ -111,6 +142,7 @@ p { max-width: 82ch; }
 .badge { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 .badge-good { color: var(--accent); background: var(--accent-soft); }
 .badge-blocker, .badge-failed, .badge-reproduced { color: var(--danger); }
+.badge-info { color: var(--muted); }
 .badge-major, .badge-unverifiable { color: var(--warning); }
 .panel, .finding, .comparison { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: clamp(14px, 2vw, 24px); margin: 14px 0; box-shadow: 0 6px 24px rgb(0 0 0 / .04); }
 .finding > :first-child, .panel > :first-child { margin-top: 0; }

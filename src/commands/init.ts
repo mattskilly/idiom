@@ -1,24 +1,14 @@
-import { randomUUID } from "node:crypto";
 import {
-  chmod,
   lstat,
   mkdir,
   readFile,
   readlink,
-  rename,
-  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { stdin, stdout } from "node:process";
-import { createInterface } from "node:readline/promises";
-import { planAutobuildWiring } from "../autobuild/wiring.js";
-import {
-  type BriefInstructionOutcome,
-  briefInstructionLines,
-  offerBriefInstruction,
-} from "../brief/instruction.js";
+import type { BriefInstructionOutcome } from "../brief/instruction.js";
 import { sanitizeCritiqueDiagnostic } from "../critique/claude-code.js";
 import {
   type GenerateFlow,
@@ -27,8 +17,10 @@ import {
 } from "../flows/generate.js";
 import { resolveProjectArgument } from "../project.js";
 import { skillIdentity } from "../skills/merge.js";
-import { inspect } from "../skills/paths.js";
+import { applyWrites, inspect } from "../skills/paths.js";
 import { seedPristine } from "../skills/pristine.js";
+import type { SkillName, UpgradeReport } from "../skills/types.js";
+import { type UpgradeDependencies, upgradeSkills } from "../skills/upgrade.js";
 import { discoverSources } from "../system/learn/discover.js";
 import { applySystemDraft } from "../system/learn/draft.js";
 import {
@@ -39,58 +31,30 @@ import {
 import {
   idiomSkillFileNames,
   readAutobuildTemplate,
-  readAutobuildVerifierSkillTemplate,
   readIdiomSkillFile,
   readTemplate,
   templateNames,
 } from "../templates.js";
 import { validateProjectConfiguration } from "../validation.js";
 import { IDIOM_VERSION } from "../version.js";
+import { renderSkillSections } from "./upgrade.js";
 
-export type InitConfirmationRequest =
-  | { kind: "offer-system-learning"; prompt: string; path: string }
-  | {
-      kind: "apply-system-learning";
-      prompt: string;
-      path: string;
-      diff: string;
-    }
-  | { kind: "offer-flow-generation"; prompt: string; path: string }
-  | {
-      kind: "replace-scaffold-file";
-      prompt: string;
-      path: string;
-    }
-  | {
-      kind: "offer-autobuild-wiring";
-      prompt: string;
-      path: string;
-    }
-  | {
-      kind: "apply-autobuild-config";
-      prompt: string;
-      path: string;
-      diff: string;
-    }
-  | {
-      kind: "replace-autobuild-skill";
-      prompt: string;
-      path: string;
-    }
-  | { kind: "offer-brief-instruction"; prompt: string; path: string }
-  | { kind: "offer-agent-setup"; prompt: string; path: string };
+export {
+  type Confirmation,
+  defaultConfirmation,
+  type InitConfirmationRequest,
+} from "../confirmation.js";
 
-export type Confirmation = (
-  request: InitConfirmationRequest,
-) => Promise<boolean>;
-
+import { type Confirmation, defaultConfirmation } from "../confirmation.js";
+import { DESIGN_QA_LINES } from "../wiring/instructions.js";
+import { runWiring, wiringSummaryLines } from "../wiring/run.js";
+import type {
+  WiringDependencies,
+  WiringOptions,
+  WiringReport,
+} from "../wiring/types.js";
 export type AutobuildInitOutcome =
-  | { kind: "not-detected" }
-  | { kind: "available-noninteractive" }
-  | { kind: "declined" }
-  | { kind: "applied" }
-  | { kind: "already-wired" }
-  | { kind: "manual"; reason: string; addition: string };
+  import("../autobuild/setup.js").AutobuildSetupOutcome;
 
 export type InitResult = {
   projectDirectory: string;
@@ -99,9 +63,16 @@ export type InitResult = {
   unchanged: string[];
   skipped: string[];
   skillWarnings?: string[];
+  /** Existing, differing managed skills, upgraded in place without a model. */
+  skillUpgrade?: UpgradeReport;
+  /** Projection of the autobuild-gate wiring row, kept for MCP and scripts. */
   autobuild: AutobuildInitOutcome;
-  /** The offer to add the idiom brief instruction to CLAUDE.md or AGENTS.md. */
+  /** Projection of the Design QA rows for AGENTS.md and CLAUDE.md. */
   briefInstruction: BriefInstructionOutcome[];
+  /** The single detected-then-confirmed wiring plan and its outcome. */
+  wiring?: WiringReport;
+  /** Wiring-only (--wire) or preview-only (--dry-run) runs skip scaffolding. */
+  mode?: "wire" | "dry-run";
   systemLearning: {
     kind:
       | "not-detected"
@@ -128,12 +99,6 @@ const canonicalSkillPath = join(".agents", "skills", "idiom");
 const canonicalSkillFile = join(canonicalSkillPath, "SKILL.md");
 const claudeSkillPath = join(".claude", "skills", "idiom");
 const claudeSkillTarget = "../../.agents/skills/idiom";
-const autobuildFile = "autobuild.toml";
-const autobuildSkillPath = join(".agents", "skills", "ab-verify-idiom");
-const autobuildSkillFile = join(autobuildSkillPath, "SKILL.md");
-const autobuildClaudeSkillPath = join(".claude", "skills", "ab-verify-idiom");
-const autobuildClaudeSkillTarget = "../../.agents/skills/ab-verify-idiom";
-
 async function entryExists(path: string): Promise<boolean> {
   try {
     await lstat(path);
@@ -158,9 +123,23 @@ async function matchesTemplate(
   return (await readFile(file, "utf8")) === template;
 }
 
+async function regularFile(path: string): Promise<string | undefined> {
+  try {
+    const entry = await lstat(path);
+    if (!entry.isFile() || entry.isSymbolicLink()) return undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  return readFile(path, "utf8");
+}
+
+/** Absent skills are created and exact ones recorded; an existing idiom skill
+ * that differs is deferred to the upgrade engine, never written here. */
 async function installSkills(
   projectDirectory: string,
   result: InitResult,
+  deferred: SkillName[],
 ): Promise<void> {
   try {
     await inspect(projectDirectory, canonicalSkillFile);
@@ -186,10 +165,26 @@ async function installSkills(
   } else {
     const directoryEntry = await lstat(canonicalDirectory);
     if (directoryEntry.isDirectory() && !directoryEntry.isSymbolicLink()) {
-      canonicalOwned = await matchesTemplate(
+      const main = await regularFile(
         join(projectDirectory, canonicalSkillFile),
-        await readIdiomSkillFile("SKILL.md"),
       );
+      if (main !== undefined && skillIdentity(main) === "idiom") {
+        let differs = main !== (await readIdiomSkillFile("SKILL.md"));
+        for (const name of idiomSkillFileNames) {
+          if (differs || name === "SKILL.md") continue;
+          const file = join(projectDirectory, canonicalSkillPath, name);
+          if (
+            (await entryExists(file)) &&
+            !(await matchesTemplate(file, await readIdiomSkillFile(name)))
+          )
+            differs = true;
+        }
+        if (differs) {
+          deferred.push("idiom");
+          return;
+        }
+        canonicalOwned = true;
+      }
     }
     (canonicalOwned ? result.unchanged : result.skipped).push(
       canonicalSkillFile,
@@ -239,281 +234,30 @@ async function installSkills(
   else result.skipped.push(claudeSkillPath);
 }
 
-export async function defaultConfirmation(
-  request: InitConfirmationRequest,
-): Promise<boolean> {
-  const readline = createInterface({ input: stdin, output: stdout });
-  try {
-    const answer = await readline.question(request.prompt);
-    return /^(y|yes)$/i.test(answer.trim());
-  } finally {
-    readline.close();
-  }
+function recordOnce(collection: string[], path: string): void {
+  if (!collection.includes(path)) collection.push(path);
 }
-
-type ManagedEntryState =
-  | { kind: "absent" }
-  | { kind: "exact" }
-  | { kind: "replaceable" }
-  | { kind: "unsafe"; reason: string };
-
-type WiringPreparation = {
-  configPath: string;
-  configPlan: ReturnType<typeof planAutobuildWiring>;
-  skillState: ManagedEntryState;
-  claudeState: ManagedEntryState;
-  snapshots: Map<string, string>;
-  skillTemplate: string;
-};
-
 async function entrySnapshot(path: string): Promise<string> {
   try {
-    const entry = await lstat(path);
-    if (entry.isSymbolicLink()) return `symlink:${await readlink(path)}`;
-    if (entry.isFile())
+    const value = await lstat(path);
+    if (value.isSymbolicLink()) return `symlink:${await readlink(path)}`;
+    if (value.isFile())
       return `file:${(await readFile(path)).toString("base64")}`;
-    if (entry.isDirectory()) return "directory";
+    if (value.isDirectory()) return "directory";
     return "other";
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent";
     throw error;
   }
 }
-
-async function verifierSkillState(
-  projectDirectory: string,
-  template: string,
-): Promise<ManagedEntryState> {
-  try {
-    await inspect(projectDirectory, autobuildSkillFile);
-  } catch {
-    return {
-      kind: "unsafe",
-      reason: `${autobuildSkillFile} has a protected ancestor.`,
-    };
-  }
-  const directory = join(projectDirectory, autobuildSkillPath);
-  try {
-    const entry = await lstat(directory);
-    if (!entry.isDirectory() || entry.isSymbolicLink())
-      return {
-        kind: "unsafe",
-        reason: `${autobuildSkillPath} is occupied by a foreign entry.`,
-      };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      return { kind: "absent" };
-    throw error;
-  }
-
-  const file = join(projectDirectory, autobuildSkillFile);
-  try {
-    const entry = await lstat(file);
-    if (!entry.isFile() || entry.isSymbolicLink())
-      return {
-        kind: "unsafe",
-        reason: `${autobuildSkillFile} is occupied by a foreign entry.`,
-      };
-    const content = await readFile(file, "utf8");
-    if (
-      skillIdentity(content) !== undefined &&
-      skillIdentity(content) !== "ab-verify-idiom"
-    )
-      return {
-        kind: "unsafe",
-        reason: `${autobuildSkillFile} is a foreign skill.`,
-      };
-    return content === template ? { kind: "exact" } : { kind: "replaceable" };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      return {
-        kind: "unsafe",
-        reason: `${autobuildSkillPath} is an unowned existing directory.`,
-      };
-    throw error;
-  }
-}
-
-async function verifierClaudeState(
-  projectDirectory: string,
-): Promise<ManagedEntryState> {
-  const path = join(projectDirectory, autobuildClaudeSkillPath);
-  try {
-    await inspect(projectDirectory, autobuildClaudeSkillPath);
-  } catch {
-    return {
-      kind: "unsafe",
-      reason: `${autobuildClaudeSkillPath} has a protected ancestor.`,
-    };
-  }
-  try {
-    const entry = await lstat(path);
-    if (
-      entry.isSymbolicLink() &&
-      (await readlink(path)) === autobuildClaudeSkillTarget
-    )
-      return { kind: "exact" };
-    return {
-      kind: "unsafe",
-      reason: `${autobuildClaudeSkillPath} is occupied by a foreign entry.`,
-    };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      return { kind: "absent" };
-    throw error;
-  }
-}
-
-async function prepareWiring(
-  projectDirectory: string,
-): Promise<WiringPreparation | undefined> {
-  const configPath = join(projectDirectory, autobuildFile);
-  const manualAddition = await readAutobuildTemplate();
-  let configSource: string;
-  try {
-    const entry = await lstat(configPath);
-    if (!entry.isFile() || entry.isSymbolicLink()) {
-      return {
-        configPath,
-        configPlan: {
-          kind: "manual",
-          original: "",
-          candidate: "",
-          diff: "",
-          complete: false,
-          manualAddition,
-          reason: `${autobuildFile} is not a regular file.`,
-        },
-        skillState: { kind: "absent" },
-        claudeState: { kind: "absent" },
-        snapshots: new Map([[configPath, await entrySnapshot(configPath)]]),
-        skillTemplate: await readAutobuildVerifierSkillTemplate(),
-      };
-    }
-    configSource = await readFile(configPath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-
-  const skillTemplate = await readAutobuildVerifierSkillTemplate();
-  const skillState = await verifierSkillState(projectDirectory, skillTemplate);
-  const claudeState = await verifierClaudeState(projectDirectory);
-  const paths = [
-    ...[".agents", ".agents/skills", ".claude", ".claude/skills"].map((path) =>
-      join(projectDirectory, path),
-    ),
-    configPath,
-    join(projectDirectory, autobuildSkillPath),
-    join(projectDirectory, autobuildSkillFile),
-    join(projectDirectory, autobuildClaudeSkillPath),
-  ];
-  const snapshots = new Map<string, string>();
-  for (const path of paths) snapshots.set(path, await entrySnapshot(path));
-  return {
-    configPath,
-    configPlan: planAutobuildWiring(configSource, manualAddition),
-    skillState,
-    claudeState,
-    snapshots,
-    skillTemplate,
-  };
-}
-
-function wiringUnsafe(preparation: WiringPreparation): string | undefined {
-  if (preparation.configPlan.kind === "manual")
-    return preparation.configPlan.reason;
-  if (preparation.skillState.kind === "unsafe")
-    return preparation.skillState.reason;
-  if (preparation.claudeState.kind === "unsafe")
-    return preparation.claudeState.reason;
-  return undefined;
-}
-
-function wiringComplete(preparation: WiringPreparation): boolean {
-  return (
-    preparation.configPlan.kind === "ready" &&
-    preparation.configPlan.complete &&
-    preparation.skillState.kind === "exact" &&
-    preparation.claudeState.kind === "exact"
-  );
-}
-
-async function snapshotsUnchanged(
-  snapshots: Map<string, string>,
-): Promise<boolean> {
-  for (const [path, snapshot] of snapshots)
-    if ((await entrySnapshot(path)) !== snapshot) return false;
-  return true;
-}
-
-function recordOnce(collection: string[], path: string): void {
-  if (!collection.includes(path)) collection.push(path);
-}
-
 async function atomicReplaceConfig(
   path: string,
   expected: string,
   content: string,
 ): Promise<void> {
   if ((await readFile(path, "utf8")) !== expected)
-    throw new Error(`${path} changed after confirmation; rerun init`);
-  const entry = await lstat(path);
-  const temporary = join(
-    dirname(path),
-    `.${basename(path)}.idiom-${process.pid}-${randomUUID()}.tmp`,
-  );
-  try {
-    await writeFile(temporary, content, { encoding: "utf8", flag: "wx" });
-    await chmod(temporary, entry.mode);
-    await rename(temporary, path);
-  } finally {
-    await rm(temporary, { force: true });
-  }
-}
-
-async function applyWiring(
-  projectDirectory: string,
-  preparation: WiringPreparation,
-  result: InitResult,
-): Promise<void> {
-  if (preparation.skillState.kind === "absent") {
-    await mkdir(join(projectDirectory, autobuildSkillPath), {
-      recursive: true,
-    });
-    await writeFile(
-      join(projectDirectory, autobuildSkillFile),
-      preparation.skillTemplate,
-      "utf8",
-    );
-    recordOnce(result.created, autobuildSkillFile);
-  } else if (preparation.skillState.kind === "replaceable") {
-    await writeFile(
-      join(projectDirectory, autobuildSkillFile),
-      preparation.skillTemplate,
-      "utf8",
-    );
-    recordOnce(result.replaced, autobuildSkillFile);
-  } else recordOnce(result.unchanged, autobuildSkillFile);
-
-  if (preparation.claudeState.kind === "absent") {
-    const path = join(projectDirectory, autobuildClaudeSkillPath);
-    await mkdir(dirname(path), { recursive: true });
-    await symlink(autobuildClaudeSkillTarget, path, "dir");
-    recordOnce(result.created, autobuildClaudeSkillPath);
-  } else recordOnce(result.unchanged, autobuildClaudeSkillPath);
-
-  if (
-    preparation.configPlan.kind === "ready" &&
-    preparation.configPlan.candidate !== preparation.configPlan.original
-  ) {
-    await atomicReplaceConfig(
-      preparation.configPath,
-      preparation.configPlan.original,
-      preparation.configPlan.candidate,
-    );
-    recordOnce(result.replaced, autobuildFile);
-  } else recordOnce(result.unchanged, autobuildFile);
+    throw new Error(`${path} changed after confirmation`);
+  await applyWrites(dirname(path), [{ path: basename(path), content }]);
 }
 
 async function desiredFiles(
@@ -545,8 +289,16 @@ export async function initProject(options: {
   flows?: boolean | undefined;
   surface?: string | undefined;
   generateFlows?: GenerateFlow | undefined;
+  /** Test seam for the in-place upgrade of existing, differing skills. */
+  skillUpgrade?: UpgradeDependencies | undefined;
   confirm?: Confirmation | undefined;
   write?: ((message: string) => void) | undefined;
+  /** Detection, skips and opt-ins for the single wiring plan. */
+  wiring?: WiringOptions | undefined;
+  /** "report-only" detects and previews but never applies (MCP). */
+  wiringApplication?: "allow" | "report-only" | undefined;
+  /** Test seams: selection, PATH/Git lookups and the safe-write hook. */
+  wiringDependencies?: WiringDependencies | undefined;
 }): Promise<InitResult> {
   const projectDirectory = resolveProjectArgument(options.project, options.cwd);
   const result: InitResult = {
@@ -560,72 +312,58 @@ export async function initProject(options: {
     systemLearning: { kind: "not-detected" },
     flows: { kind: "not-requested" },
   };
-  await mkdir(projectDirectory, { recursive: true });
   const confirm = options.confirm ?? defaultConfirmation;
   const write =
     options.write ??
     ((message: string) => {
       stdout.write(message);
     });
-  const wiring = await prepareWiring(projectDirectory);
-  let wiringApproved = false;
-  if (wiring !== undefined) {
-    if (wiringComplete(wiring)) {
-      result.autobuild = { kind: "already-wired" };
-      recordOnce(result.unchanged, autobuildFile);
-      recordOnce(result.unchanged, autobuildSkillFile);
-      recordOnce(result.unchanged, autobuildClaudeSkillPath);
-    } else if (options.yes === true)
-      result.autobuild = { kind: "available-noninteractive" };
-    else if (
-      !(await confirm({
-        kind: "offer-autobuild-wiring",
-        path: autobuildFile,
-        prompt:
-          "Autobuild is detected. Wire Idiom verification into this repository? [y/N] ",
-      }))
+  const wiringOptions = options.wiring ?? {};
+  const wire = async () => {
+    result.wiring = await runWiring(
+      projectDirectory,
+      {
+        ...wiringOptions,
+        yes: options.yes,
+        application: options.wiringApplication,
+      },
+      {
+        ...options.wiringDependencies,
+        ...(options.confirm === undefined ? {} : { confirm: options.confirm }),
+        interactive:
+          options.yes !== true &&
+          (options.confirm !== undefined || stdin.isTTY === true),
+      },
+      write,
+    );
+    result.autobuild = await autobuildProjection(
+      result.wiring,
+      options.yes !== true,
+    );
+    if (
+      result.autobuild.kind === "applied" &&
+      !result.replaced.includes("autobuild.toml")
     )
-      result.autobuild = { kind: "declined" };
-    else {
-      const unsafe = wiringUnsafe(wiring);
-      if (unsafe !== undefined) {
-        if (wiring.configPlan.kind === "manual")
-          recordOnce(result.skipped, autobuildFile);
-        if (wiring.skillState.kind === "unsafe")
-          recordOnce(result.skipped, autobuildSkillFile);
-        if (wiring.claudeState.kind === "unsafe")
-          recordOnce(result.skipped, autobuildClaudeSkillPath);
-        result.autobuild = {
-          kind: "manual",
-          reason: unsafe,
-          addition: wiring.configPlan.manualAddition,
-        };
-      } else {
-        let decisionsApproved = true;
-        if (
-          wiring.configPlan.kind === "ready" &&
-          wiring.configPlan.candidate !== wiring.configPlan.original
-        ) {
-          write(wiring.configPlan.diff);
-          decisionsApproved = await confirm({
-            kind: "apply-autobuild-config",
-            path: autobuildFile,
-            prompt:
-              "Apply the Autobuild configuration change shown above? [y/N] ",
-            diff: wiring.configPlan.diff,
-          });
-        }
-        if (decisionsApproved && wiring.skillState.kind === "replaceable")
-          decisionsApproved = await confirm({
-            kind: "replace-autobuild-skill",
-            path: autobuildSkillFile,
-            prompt: `${autobuildSkillFile} already exists and differs. Replace it? [y/N] `,
-          });
-        if (decisionsApproved) wiringApproved = true;
-        else result.autobuild = { kind: "declined" };
-      }
-    }
+      result.replaced.push("autobuild.toml");
+    result.briefInstruction = briefProjection(result.wiring);
+  };
+  if (wiringOptions.dryRun) {
+    // Nothing is created: not even the project directory or scaffold.
+    result.mode = "dry-run";
+    await wire();
+    return result;
   }
+  if (wiringOptions.wire) {
+    const project = await inspect(projectDirectory, ".idiom/project.json");
+    if (project.kind !== "file")
+      throw new Error(
+        "idiom init --wire needs an initialized project (.idiom/project.json). Run idiom init first.",
+      );
+    result.mode = "wire";
+    await wire();
+    return result;
+  }
+  await mkdir(projectDirectory, { recursive: true });
   for (const directory of directoryNames) {
     await mkdir(join(projectDirectory, directory), { recursive: true });
   }
@@ -659,25 +397,16 @@ export async function initProject(options: {
       result.skipped.push(relativePath);
     }
   }
-  if (wiringApproved && wiring !== undefined) {
-    if (!(await snapshotsUnchanged(wiring.snapshots))) {
-      result.autobuild = {
-        kind: "manual",
-        reason:
-          "An Autobuild wiring destination changed after it was previewed; rerun init before applying it.",
-        addition: wiring.configPlan.manualAddition,
-      };
-    } else {
-      await applyWiring(projectDirectory, wiring, result);
-      result.autobuild = { kind: "applied" };
-    }
-  }
-  await installSkills(projectDirectory, result);
+  const deferred: SkillName[] = [];
+  await installSkills(projectDirectory, result, deferred);
   try {
     const files: Record<string, string> = {};
     for (const name of idiomSkillFileNames)
       files[name] = await readIdiomSkillFile(name);
-    if (!result.skipped.includes(canonicalSkillFile))
+    if (
+      !result.skipped.includes(canonicalSkillFile) &&
+      !deferred.includes("idiom")
+    )
       await seedPristine(projectDirectory, "idiom", files, IDIOM_VERSION);
   } catch (error) {
     result.skillWarnings ??= [];
@@ -686,33 +415,6 @@ export async function initProject(options: {
       `Pristine records for idiom could not be seeded: ${sanitizeCritiqueDiagnostic(error)}`,
     );
   }
-  if (
-    result.autobuild.kind === "applied" ||
-    result.autobuild.kind === "already-wired"
-  ) {
-    try {
-      await seedPristine(
-        projectDirectory,
-        "ab-verify-idiom",
-        { "SKILL.md": await readAutobuildVerifierSkillTemplate() },
-        IDIOM_VERSION,
-        wiringApproved && wiring?.skillState.kind === "replaceable",
-      );
-    } catch (error) {
-      result.skillWarnings ??= [];
-      recordOnce(
-        result.skillWarnings,
-        `Pristine records for ab-verify-idiom could not be seeded: ${sanitizeCritiqueDiagnostic(error)}`,
-      );
-    }
-  }
-  result.briefInstruction = await offerBriefInstruction({
-    projectDirectory,
-    interactive:
-      options.yes !== true &&
-      (options.confirm !== undefined || stdin.isTTY === true),
-    confirm,
-  });
   const sources = await discoverSources(projectDirectory);
   if (sources.length) {
     if (options.yes || (!options.confirm && !stdin.isTTY)) {
@@ -825,7 +527,95 @@ export async function initProject(options: {
     }
     result.flows = { ...generated, kind };
   } else if (options.yes !== true) result.flows = { kind: "declined" };
+  await wire();
+  // After wiring, so a gate wired (or a verifier migrated) in this run has its
+  // verifier skill upgraded by the same rules as idiom upgrade.
+  if (
+    result.autobuild.kind === "applied" ||
+    result.autobuild.kind === "already-wired"
+  ) {
+    try {
+      if (
+        (
+          await inspect(
+            projectDirectory,
+            ".agents/skills/idiom-verify/SKILL.md",
+          )
+        ).kind === "file"
+      )
+        deferred.push("idiom-verify");
+    } catch {
+      /* Setup already reports protected verifier paths; retain that diagnostic. */
+    }
+  }
+  if (deferred.length)
+    try {
+      // Same decision as idiom upgrade, minus the model: overlaps are left
+      // untouched and reported, never replaced.
+      result.skillUpgrade = await upgradeSkills(
+        { projectDirectory, agent: false, skills: deferred },
+        options.skillUpgrade ?? {},
+      );
+    } catch (error) {
+      result.skillWarnings ??= [];
+      recordOnce(
+        result.skillWarnings,
+        `Existing skills could not be upgraded: ${sanitizeCritiqueDiagnostic(error)}`,
+      );
+    }
   return result;
+}
+
+/** The gate row in the older outcome shape that MCP and scripts read. */
+async function autobuildProjection(
+  report: WiringReport,
+  offered: boolean,
+): Promise<AutobuildInitOutcome> {
+  const row = report.proposals.find(
+    (entry) => entry.surface === "autobuild-gate",
+  );
+  if (row === undefined || row.disposition === "unavailable")
+    return { kind: "not-detected" };
+  const diff = row.preview === undefined ? {} : { diff: row.preview };
+  if (row.disposition === "protected")
+    return {
+      kind: "manual",
+      reason: row.reason,
+      addition: await readAutobuildTemplate(),
+    };
+  if (row.disposition === "unchanged") return { kind: "already-wired" };
+  // Deselected at a prompt is a decline; under --yes it stays an offer.
+  if (row.disposition === "skipped")
+    return {
+      kind:
+        offered && (report.mode === "applied" || report.mode === "declined")
+          ? "declined"
+          : "available-noninteractive",
+    };
+  if (report.mode === "applied") return { kind: "applied", ...diff };
+  if (report.mode === "declined") return { kind: "declined", ...diff };
+  return { kind: "available-noninteractive", ...diff };
+}
+
+/** The Design QA rows in the older brief-instruction outcome shape. */
+function briefProjection(report: WiringReport): BriefInstructionOutcome[] {
+  const lines = [...DESIGN_QA_LINES];
+  const outcomes: BriefInstructionOutcome[] = [];
+  for (const row of report.proposals) {
+    if (row.surface !== "agents" && row.surface !== "claude") continue;
+    if (row.disposition === "unavailable" || row.disposition === "skipped")
+      continue;
+    if (row.disposition === "protected")
+      outcomes.push({ kind: "unsafe", path: row.path, reason: row.reason });
+    else if (row.disposition === "unchanged")
+      outcomes.push({ kind: "present", path: row.path });
+    else if (report.mode === "applied")
+      outcomes.push({ kind: "added", path: row.path });
+    else if (report.mode === "declined")
+      outcomes.push({ kind: "declined", path: row.path });
+    else outcomes.push({ kind: "available", path: row.path, lines });
+  }
+  return outcomes;
 }
 
 /** The last line of every init summary: the readiness check that marks setup done. */
@@ -855,6 +645,18 @@ export function initSummaryLines(result: InitResult): string[] {
   }
   for (const file of result.skipped) lines.push(`Preserved existing ${file}`);
   for (const warning of result.skillWarnings ?? []) lines.push(warning);
+  if (result.skillUpgrade) {
+    lines.push(
+      "Existing skills upgraded in place (same rules as idiom upgrade):",
+      ...renderSkillSections(result.skillUpgrade),
+    );
+    for (const conflict of result.skillUpgrade.discoveryConflicts)
+      lines.push(`protected: ${conflict.path} — ${conflict.reason}`);
+    if (result.skillUpgrade.files.some((file) => file.action === "conflicted"))
+      lines.push(
+        "Conflicted skill files were left untouched; run idiom upgrade to resolve them (see the conflict above).",
+      );
+  }
   if (result.autobuild.kind === "available-noninteractive")
     lines.push(
       "Autobuild verification is available; rerun `idiom init` interactively to review and approve wiring.",
@@ -872,7 +674,13 @@ export function initSummaryLines(result: InitResult): string[] {
     lines.push("Make this addition by hand:");
     lines.push(result.autobuild.addition);
   }
-  lines.push(...briefInstructionLines(result.briefInstruction));
-  lines.push(INIT_NEXT_LINE);
+  if (result.wiring) lines.push(...wiringSummaryLines(result.wiring));
+  if (result.mode === undefined) lines.push(INIT_NEXT_LINE);
+  else
+    lines.push(
+      result.mode === "dry-run"
+        ? "Dry run: nothing was created or changed."
+        : "Wiring only: scaffold, skills and app setup were not touched. Rerun idiom init --wire to update wiring.",
+    );
   return lines;
 }

@@ -74,6 +74,16 @@ function knownFacts(facts: SetupFacts): string[] {
     `- Example env file (by name only, contents not read): ${facts.envExample ?? NONE}`,
     `- PRODUCT.md: ${facts.scaffoldFiles.product}; DESIGN.md: ${facts.scaffoldFiles.design} (scaffold = untouched template, edited = human-owned)`,
   );
+  const wiring = facts.wiring;
+  if (wiring !== undefined) {
+    lines.push(
+      `- Wiring signals found by \`idiom init\`: ${list(wiring.found)}. On PATH (available, not checked for usability): claude ${wiring.agents.claude ? "yes" : "no"}, codex ${wiring.agents.codex ? "yes" : "no"}`,
+    );
+    if (wiring.wired !== undefined)
+      lines.push(
+        `- Wiring now in place: ${list(wiring.wired)}. Left as the human chose (default off, deselected or protected): ${list(wiring.left ?? [])}`,
+      );
+  }
   return lines;
 }
 
@@ -110,6 +120,8 @@ export function setupPrompt(facts: SetupFacts): string {
     "",
     "Choose one primary user journey and write `.idiom/flows/<id>.json` with 3 to 8 named states. Include at least one empty, loading or error state when the repository can force one (see docs/configuration.md#force-empty-error-and-loading-states). Use stable selectors: `data-testid`, an ARIA role plus accessible name, or a label. Never rely on `nth-child`, generated class names or text that changes with data. Run `idiom validate <id>` until it passes (see docs/configuration.md#flows).",
     "",
+    "Inspect the repository for drawers, dialogs and menus. Declare their opened states with `from` and click `steps`, for example `edit-home+brand-drawer`, so their contents get checked (docs/configuration.md#capture-opened-drawers-dialogs-and-menus).",
+    "",
     docs,
     "",
     "Follow `.agents/skills/idiom/init.md` (installed by `idiom init`). Mine the repository first, then ask the human only what the code cannot answer. If either file is marked `edited` above, treat it as human-owned: propose changes instead of overwriting it.",
@@ -124,6 +136,11 @@ export function setupPrompt(facts: SetupFacts): string {
     "- Do not commit, push or open pull requests; leave every change in the working tree for the human to review.",
     "- Do not change application behavior to make setup pass.",
     "- Ask before adding any script to the app.",
+    ...(facts.wiring?.left?.length
+      ? [
+          `- Do not add wiring the human left off (${facts.wiring.left.join(", ")}): when you rerun \`idiom init\`, add \`--skip-wiring <id>\` for each of them, and never install a git hook without asking.`,
+        ]
+      : []),
     "",
   ].join("\n");
 }

@@ -8,7 +8,7 @@ import {
   loadLegacyReferences,
 } from "../references/catalog.js";
 import { MAX_UNRULED_DECISIONS } from "../rulings/aggregate.js";
-import { parseRulingBlocks } from "../rulings/law.js";
+import { effectiveLaw } from "../rulings/effective.js";
 import type { Decision } from "../schemas/decision.js";
 import type { Finding } from "../schemas/finding.js";
 import type { Flow } from "../schemas/flow.js";
@@ -157,6 +157,7 @@ export function tupleDesignImages(
 
 export async function buildCritiqueContext(options: {
   projectDirectory: string;
+  stateProjectDirectory?: string | undefined;
   runDirectory: string;
   project: Project;
   flow: Flow;
@@ -175,7 +176,10 @@ export async function buildCritiqueContext(options: {
     join(options.projectDirectory, options.project.design.designFile),
     "design guidance",
   );
-  const parsedLaw = parseRulingBlocks(designMd);
+  const parsedLaw = await effectiveLaw(
+    designMd,
+    options.stateProjectDirectory ?? options.projectDirectory,
+  );
   const designImages = tupleDesignImages(options.tuples, options.runDirectory);
   return {
     flow: options.flow.id,
@@ -189,7 +193,7 @@ export async function buildCritiqueContext(options: {
       join(options.projectDirectory, options.project.design.productFile),
       "product guidance",
     ),
-    designMd,
+    designMd: parsedLaw.designMd,
     references: await loadReferenceContext(options.projectDirectory),
     priorDecisions: options.priorDecisions,
     priorRules: options.priorRules ?? [],

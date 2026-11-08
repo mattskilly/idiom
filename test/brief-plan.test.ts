@@ -10,6 +10,7 @@ import {
   briefInputFieldNames,
   briefInputSchema,
 } from "../src/schemas/brief.js";
+import { flowSchema } from "../src/schemas/flow.js";
 
 const pinned = JSON.parse(
   readFileSync(
@@ -124,6 +125,8 @@ test("the record shape covers every input field and parses once filled", () => {
   };
   const filled: Record<string, unknown> = {
     ...shape,
+    screenQuestion: "Which item needs action?",
+    inventory: ["12 items, each with a name and status"],
     slug: "pinned-group",
     title: "Pinned group",
     decision: "How does a user pin an item?",
@@ -207,4 +210,62 @@ test("the rendered plan lists rules, questions, standards and a JSON record shap
   expect(text).toContain("https://www.w3.org/WAI/ARIA/apg/patterns/");
   const json = /```json\n([\s\S]+?)\n```/.exec(text)?.[1] ?? "";
   expect(JSON.parse(json).request).toBe(pinned.request);
+});
+
+test("preparation inventories real data and builds all states before options", () => {
+  const plan = buildBriefPlan({
+    request: "Build an editor",
+    questions: ["Which layout?"],
+    references: [],
+  });
+  const inventory = plan.inventoryInstructions.join(" ");
+  expect(inventory).toMatch(/one question.*one line/);
+  expect(inventory).toMatch(/real objects and magnitudes/);
+  expect(inventory).toMatch(/rather than fabricate/);
+  const states = plan.stateChecklist.join(" ");
+  for (const state of [
+    "empty",
+    "zero",
+    "loading",
+    "error",
+    "hover",
+    "selected",
+    "focus",
+    "disabled",
+  ])
+    expect(states).toContain(state);
+  expect(states).toContain("every block's");
+  expect(states).toContain("every row or item's");
+  expect(states).toContain("named flow states");
+  const opened = JSON.parse(
+    plan.stateChecklist.find((line) => line.startsWith("{")) ?? "{}",
+  );
+  expect(opened).toMatchObject({
+    id: "editor+menu",
+    from: "editor",
+    steps: [{ action: "click", selector: "[data-testid=open-menu]" }],
+    expect: { selectorPresent: ["[data-testid=page-menu]"] },
+  });
+  expect(
+    flowSchema.safeParse({
+      id: "editor",
+      title: "Editor",
+      intent: [],
+      setup: [],
+      states: [
+        { id: "editor", description: "Editor", url: "/editor", expect: {} },
+        opened,
+      ],
+    }).success,
+  ).toBe(true);
+  const text = renderBriefPlan(plan);
+  expect(text.indexOf("## Inventory before options")).toBeLessThan(
+    text.indexOf("## Build every state"),
+  );
+  expect(text.indexOf("## Build every state")).toBeLessThan(
+    text.indexOf("## Reference products"),
+  );
+  expect(text.indexOf("## Inventory before options")).toBeLessThan(
+    text.indexOf('"options":'),
+  );
 });

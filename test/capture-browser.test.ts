@@ -334,103 +334,120 @@ function withScrollbarSession<T extends object>(page: T) {
   });
 }
 
-test("isolates each tuple, captures truthful artifacts, and reports every mismatch", async () => {
-  if (state === undefined) throw new Error("missing state");
-  const viewport = project.viewports[0];
-  if (viewport === undefined) throw new Error("missing viewport");
-  const handlers = new Map<string, (value: never) => void>();
-  const screenshot = vi.fn(async () => Buffer.from("png"));
-  const page = withScrollbarSession({
-    on: vi.fn((event: string, handler: (value: never) => void) => {
-      handlers.set(event, handler);
-    }),
-    goto: vi.fn(async () => {
-      handlers.get("console")?.({
-        type: () => "error",
-        text: () => "console failure",
-        location: () => ({ url: "local.js", lineNumber: 2, columnNumber: 3 }),
-      } as never);
-      handlers.get("pageerror")?.(new Error("page failure") as never);
-      return { status: () => 404, url: () => "https://example.test/state" };
-    }),
-    waitForTimeout: vi.fn(async () => undefined),
-    locator: vi.fn((selector: string) => ({
-      innerText: async () => "different text",
-      count: async () => (selector === "#absent" ? 2 : 0),
-    })),
-    content: vi.fn(async () => "<html>captured</html>"),
-    evaluate: vi.fn(async () => observations),
-    screenshot,
-    close: vi.fn(async () => undefined),
-  });
-  const context = {
-    newPage: vi.fn(async () => page as unknown as Page),
-    close: vi.fn(async () => undefined),
-  };
-  const browser = {
-    version: () => "Chromium 1",
-    newContext: vi.fn(async () => context as unknown as BrowserContext),
-    close: vi.fn(async () => undefined),
-  };
-  const axe = { testEngine: { name: "axe" }, violations: [] };
-  const launcher = createBrowserLauncher({
-    launch: async () => browser as unknown as Browser,
-    createAxe: () => ({ analyze: async () => axe }),
-    now: () => new Date("2026-08-14T12:00:00.000Z"),
-  });
-  const session = await launcher();
-  const result = await session.capture({
-    project,
-    state,
-    viewport,
-    navigationUrl: "http://127.0.0.1:3001/state",
-  });
+test.each([undefined, 1234])(
+  "isolates each tuple, captures truthful artifacts, and reports every mismatch (screenshot timeout %s)",
+  async (screenshotTimeoutMs) => {
+    if (state === undefined) throw new Error("missing state");
+    const viewport = project.viewports[0];
+    if (viewport === undefined) throw new Error("missing viewport");
+    const handlers = new Map<string, (value: never) => void>();
+    const screenshot = vi.fn(
+      async (_options: Parameters<Page["screenshot"]>[0]) => Buffer.from("png"),
+    );
+    const page = withScrollbarSession({
+      on: vi.fn((event: string, handler: (value: never) => void) => {
+        handlers.set(event, handler);
+      }),
+      goto: vi.fn(async () => {
+        handlers.get("console")?.({
+          type: () => "error",
+          text: () => "console failure",
+          location: () => ({ url: "local.js", lineNumber: 2, columnNumber: 3 }),
+        } as never);
+        handlers.get("pageerror")?.(new Error("page failure") as never);
+        return { status: () => 404, url: () => "https://example.test/state" };
+      }),
+      waitForTimeout: vi.fn(async () => undefined),
+      locator: vi.fn((selector: string) => ({
+        innerText: async () => "different text",
+        count: async () => (selector === "#absent" ? 2 : 0),
+      })),
+      content: vi.fn(async () => "<html>captured</html>"),
+      evaluate: vi.fn(async () => observations),
+      screenshot,
+      close: vi.fn(async () => undefined),
+    });
+    const context = {
+      newPage: vi.fn(async () => page as unknown as Page),
+      close: vi.fn(async () => undefined),
+    };
+    const browser = {
+      version: () => "Chromium 1",
+      newContext: vi.fn(async () => context as unknown as BrowserContext),
+      close: vi.fn(async () => undefined),
+    };
+    const axe = { testEngine: { name: "axe" }, violations: [] };
+    const launcher = createBrowserLauncher({
+      launch: async () => browser as unknown as Browser,
+      createAxe: () => ({ analyze: async () => axe }),
+      now: () => new Date("2026-08-14T12:00:00.000Z"),
+    });
+    const session = await launcher();
+    const result = await session.capture({
+      project,
+      state: { ...state, screenshotTimeoutMs },
+      viewport,
+      navigationUrl: "http://127.0.0.1:3001/state",
+    });
 
-  expect(browser.newContext).toHaveBeenCalledWith({
-    viewport: { width: 390, height: 844 },
-    deviceScaleFactor: 2,
-    locale: "en-US",
-    timezoneId: "America/New_York",
-    colorScheme: "dark",
-    reducedMotion: "reduce",
-  });
-  expect(page.waitForTimeout).toHaveBeenCalledWith(125);
-  // State capture keeps today's scrollbar-free layout, set before navigating.
-  expect(page.scrollbarSends).toHaveBeenCalledWith(
-    "Emulation.setScrollbarsHidden",
-    { hidden: true },
-  );
-  expect(page.scrollbarSends.mock.invocationCallOrder[0]).toBeLessThan(
-    page.goto.mock.invocationCallOrder[0] ?? 0,
-  );
-  expect(screenshot).toHaveBeenCalledWith({
-    fullPage: true,
-    animations: "disabled",
-    type: "png",
-  });
-  expect(JSON.stringify(screenshot.mock.calls)).not.toContain(
-    "must-not-be-used",
-  );
-  expect(result).toMatchObject({
-    ok: true,
-    status: 404,
-    axe,
-    observations,
-    mismatches: [
-      { kind: "status" },
-      { kind: "text-present" },
-      { kind: "selector-present" },
-      { kind: "selector-absent" },
-    ],
-    console: [
-      { type: "error", text: "console failure" },
-      { type: "pageerror", text: "page failure" },
-    ],
-  });
-  expect(context.close).toHaveBeenCalledOnce();
-  await session.close();
-  expect(browser.close).toHaveBeenCalledOnce();
-});
+    expect(browser.newContext).toHaveBeenCalledWith({
+      viewport: { width: 390, height: 844 },
+      deviceScaleFactor: 2,
+      locale: "en-US",
+      timezoneId: "America/New_York",
+      colorScheme: "dark",
+      reducedMotion: "reduce",
+    });
+    expect(page.waitForTimeout).toHaveBeenCalledWith(125);
+    // State capture keeps today's scrollbar-free layout, set before navigating.
+    expect(page.scrollbarSends).toHaveBeenCalledWith(
+      "Emulation.setScrollbarsHidden",
+      { hidden: true },
+    );
+    expect(page.scrollbarSends.mock.invocationCallOrder[0]).toBeLessThan(
+      page.goto.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(screenshot).toHaveBeenCalledWith({
+      fullPage: true,
+      animations: "disabled",
+      type: "png",
+      timeout: expect.any(Number),
+    });
+    expect(page.goto).toHaveBeenCalledWith("http://127.0.0.1:3001/state", {
+      timeout: 30000,
+      waitUntil: "domcontentloaded",
+    });
+    const screenshotDeadline = screenshot.mock.calls[0]?.[0]?.timeout;
+    expect(screenshotDeadline).toBeLessThanOrEqual(
+      screenshotTimeoutMs ?? 30000,
+    );
+    expect(screenshotDeadline).toBeGreaterThan(
+      (screenshotTimeoutMs ?? 30000) - 1000,
+    );
+    expect(JSON.stringify(screenshot.mock.calls)).not.toContain(
+      "must-not-be-used",
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      status: 404,
+      axe,
+      observations,
+      mismatches: [
+        { kind: "status" },
+        { kind: "text-present" },
+        { kind: "selector-present" },
+        { kind: "selector-absent" },
+      ],
+      console: [
+        { type: "error", text: "console failure" },
+        { type: "pageerror", text: "page failure" },
+      ],
+    });
+    expect(context.close).toHaveBeenCalledOnce();
+    await session.close();
+    expect(browser.close).toHaveBeenCalledOnce();
+  },
+);
 
 test("touch viewports set hasTouch without changing ordinary context options", () => {
   expect(
@@ -2913,6 +2930,8 @@ test.each([0, 1000])(
         reducedMotion: false,
         animationSettleMs: bound,
       },
+      // Isolate the animation bound from the independent loading observation window.
+      checks: { ...project.checks, loadingStuck: { enabled: false } },
     });
     const target = flowSchema.parse({
       id: "f",
@@ -3195,9 +3214,21 @@ test("an expected 404 document and its same-URL script keep distinct request pro
       failed
         .map((record) => record.request)
         .sort((a, b) => a.resourceType.localeCompare(b.resourceType)),
-    ).toEqual([
-      { resourceType: "document", mainFrame: true },
-      { resourceType: "script", mainFrame: true },
+    ).toMatchObject([
+      {
+        resourceType: "document",
+        mainFrame: true,
+        method: "GET",
+        url: documentUrl,
+        status: 404,
+      },
+      {
+        resourceType: "script",
+        mainFrame: true,
+        method: "GET",
+        url: documentUrl,
+        status: 404,
+      },
     ]);
     const metadata = JSON.parse(
       await readFile(join(tupleDirectory, "metadata.json"), "utf8"),
@@ -3217,8 +3248,9 @@ test("an expected 404 document and its same-URL script keep distinct request pro
       .map(({ candidate }) => candidate);
     expect(reported).toHaveLength(1);
     expect(reported[0]?.selectorHint).toBe(
-      `error | ${documentUrl}:0:0 | ${text}`,
+      `request | GET ${documentUrl} | 404`,
     );
+    expect(reported[0]?.explanation).toMatch(/^GET \/missing returned 404\./);
     expect(reported[0]?.explanation).not.toContain("recorded");
   } finally {
     await rm(directory, { recursive: true, force: true });

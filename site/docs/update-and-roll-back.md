@@ -21,7 +21,7 @@ idiom --version
 For a project dependency, pin an exact version and commit the package manifest and lockfile:
 
 ```sh
-npm install --save-dev --save-exact @mattskilly/idiom@0.20.0
+npm install --save-dev --save-exact @mattskilly/idiom@0.21.0
 npx --no-install idiom --version
 ```
 
@@ -37,20 +37,22 @@ idiom upgrade
 # For a pinned project dependency: npx --no-install idiom upgrade
 ```
 
-`--project <dir>` chooses an explicit directory. Without it, the command finds an initialized ancestor of the current directory, or uses the current directory for a new installation. In the project it changes only Idiom's skill files, pristine state, and owned discovery links, never other project configuration. Its first step updates a global npm or bun CLI, as above; `--no-self-update` skips that step and merges the installed CLI's skills, and `--dry-run` names the CLI install it would run without running it. The optional `ab-verify-idiom` skill participates only if already installed or recorded in pristine state; detecting `autobuild.toml` alone does not install it.
+`--project <dir>` chooses an explicit directory. Without it, the command finds an initialized ancestor of the current directory, or uses the current directory for a new installation. In the project it upgrades Idiom skill files, pristine state and owned discovery links. With `autobuild.toml`, an interactive run also offers the default UI gate and legacy verifier rename through an exact diff and confirmation; declining leaves those destinations untouched. Noninteractive/JSON runs report availability, and dry runs write nothing. Its first step updates a global npm or bun CLI, as above; `--no-self-update` skips that step and merges the installed CLI's skills, and `--dry-run` names the CLI install it would run without running it. The optional `idiom-verify` skill participates only if already installed or recorded in pristine state; detecting `autobuild.toml` alone does not install it.
 
-The report names the installed CLI version and previous per-file versions. Legacy files with identical bytes in several releases report candidate versions; partial upgrades may report mixed versions. The outcomes are:
+The report names the installed CLI version and previous per-file versions. Legacy files with identical bytes in several releases report candidate versions; partial upgrades may report mixed versions. Each skill starts with one summary line, such as `idiom: merged (2 files)` or `idiom-verify: current`: the highest outcome among its files, in the order conflicted, merged, resolved, adopted, installed, removed, kept, current, and how many files carry it. Its files follow, indented. The outcomes are:
 
 | Outcome | Meaning |
 | --- | --- |
 | `current` | Upstream is unchanged or the live file already matches. Your customization stays. |
-| `adopted` | An untouched old file takes the installed release's content, or a missing tracked file is restored. |
+| `adopted` | An untouched old file takes the installed release's content, a file new in this release is added, or a missing tracked file is restored. |
 | `merged` | Independent local and upstream changes combine cleanly. |
 | `resolved` | The configured model proposed conflict-hunk replacements that passed validation. |
-| `conflicted` | The live file and its pristine entry remain unchanged; review the reported paths. |
-| `installed` | A new upstream file is installed and recorded. |
+| `conflicted` | The live file and its pristine entry remain unchanged; review the reported paths and the printed conflict. |
+| `installed` | A first install: the file is installed and recorded. |
 | `removed` | A retired, unedited upstream file and its ownership record are removed. |
 | `kept` | A customized retired file becomes local, or a foreign/unsafe entry stays protected. |
+
+For an overlapping edit, the report also prints the three-way merge with each side marked (`<<<<<<< local`, `||||||| base`, `=======`, `>>>>>>> incoming`), labelled as not written to disk. The preview stops at 80 lines; `--json` carries the whole text as `conflictText`, and the report's `skills` array carries each skill's summary.
 
 Successful files advance even when another conflicts. Content conflicts and protected discovery collisions return exit status 1 after printing the whole report. A second successful run is a no-op. Foreign skills, user support files, and differently targeted symlinks stay untouched.
 
@@ -64,7 +66,7 @@ Dry run reports deterministic outcomes and marks overlaps as needing resolution;
 
 ## Pristine records and conflicts
 
-`idiom init` records exact upstream bytes at `.agents/skills/.idiom-pristine/idiom/SKILL.md` and `.agents/skills/.idiom-pristine/idiom/init.md`, plus `.agents/skills/.idiom-pristine/ab-verify-idiom/SKILL.md` when the verifier is installed. `.agents/skills/.idiom-pristine/manifest.json` records schema, version and SHA-256 digest for each file. These are tracked project files; commit them alongside `.agents/skills/idiom/` and any installed verifier. Keep the discovery links under `.claude/skills/` in the same commit.
+`idiom init` records exact upstream bytes at `.agents/skills/.idiom-pristine/idiom/SKILL.md` and `.agents/skills/.idiom-pristine/idiom/init.md`, plus `.agents/skills/.idiom-pristine/idiom-verify/SKILL.md` when the verifier is installed. `.agents/skills/.idiom-pristine/manifest.json` records schema, version and SHA-256 digest for each file. These are tracked project files; commit them alongside `.agents/skills/idiom/` and any installed verifier. Keep the discovery links under `.claude/skills/` in the same commit. Running `idiom init` again on an existing skill that differs never offers to replace it: init merges it with the same rules as `idiom upgrade`, without a model, and leaves an overlap untouched for `idiom upgrade` to resolve.
 
 For a project predating pristine records, exact known released templates can be adopted offline. Unknown customized copies conflict because their original upstream bytes cannot be proved. The report gives the expected pristine path and the installed incoming template path; an unavailable base is not fabricated.
 
@@ -72,7 +74,7 @@ For overlapping edits, Idiom uses the same `model.provider` and `model.model` in
 
 Code retains clean merge regions exactly, including independent upstream changes. A proposal supplies replacements only for actual conflict hunks. Validation rejects missing/extra hunks, new conflict markers, and changes to the skill's frontmatter `name`. No conflict markers are written into live skills.
 
-For a manual conflict, use the two paths printed in the report:
+For a manual conflict, use the two paths printed in the report. The printed conflict preview already shows the local, base and incoming sides of each overlap:
 
 1. Review the live, pristine (if available), and incoming files. Save your reviewed merged result **outside the managed trees**, for example `/tmp/idiom-skill-reviewed.md`. Keep that saved copy until the workflow is complete.
 2. Copy the reported incoming template bytes into the live file. Leave the pristine directory alone.

@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Pending previews</title>
+<style>body{margin:0}.thumbnail,iframe,.skeleton{display:block;width:160px;height:100px;border:0;background:#bac8de}</style>
+<h1 id="ready">Preview collection</h1>
+<img class="thumbnail" id="hung-thumbnail" src="/never-image" alt="">
+<iframe id="hung-iframe" src="/never-frame" title="Preview"></iframe>
+<div id="tinted" class="skeleton" data-skeleton="true"></div>
+<script>fetch('/never-data').then(r=>r.json()).then(()=>document.querySelector('#tinted').remove());</script>
+</html>

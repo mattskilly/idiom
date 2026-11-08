@@ -1,7 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { IdiomError } from "../errors.js";
-import { type Decision, decisionSchema } from "../schemas/decision.js";
+import { noteUnknownRecord } from "../records/unknown.js";
+import { type Decision, decisionLogEntrySchema } from "../schemas/decision.js";
+import { entryIssues, unknownDecisionType } from "./log.js";
 
 export async function readDecisions(
   projectDirectory: string,
@@ -28,14 +30,21 @@ export async function readDecisions(
         `.idiom/decisions.jsonl:${index + 1}: malformed JSON: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    const parsed = decisionSchema.safeParse(value);
+    const type = unknownDecisionType(value);
+    if (type !== undefined) {
+      noteUnknownRecord({ family: "decision", path, line: index + 1, type });
+      continue;
+    }
+    const parsed = decisionLogEntrySchema.safeParse(value);
     if (!parsed.success) {
-      const issues = parsed.error.issues
+      const issues = entryIssues(value, parsed.error.issues)
         .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
         .join("; ");
       throw new IdiomError(`.idiom/decisions.jsonl:${index + 1}: ${issues}`);
     }
-    decisions.push(parsed.data);
+    // Acknowledgements are not judgments; this reader returns judgments only.
+    if (parsed.data.decision === "accept" || parsed.data.decision === "reject")
+      decisions.push(parsed.data);
   }
   return decisions;
 }

@@ -105,7 +105,9 @@ test("one broken token yields one root-cause issue across radius, spacing and sh
     }
 
   const text = renderCheckSummary(summary);
-  expect(text).toMatch(/^1\. \[minor\] root cause — `--control-scale`/m);
+  // Impact tier: the two link issues are interactive controls, so they rank
+  // above the single-state, selector-less token cause within minor.
+  expect(text).toMatch(/^3\. \[minor\] root cause — `--control-scale`/m);
   expect(text).toContain("Confidence: 0.9 (token --control-scale)");
   expect(text).toContain("Symptoms (3; 3 findings):");
   expect(text).toContain("Done when: every symptom above clears on recheck.");

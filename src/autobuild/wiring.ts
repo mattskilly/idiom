@@ -26,7 +26,7 @@ export type AutobuildWiringPlan =
       reason: string;
     };
 
-const commandKey = "idiom-verify";
+export const gateCommand = "idiom check --gate --fail-on major --deferred warn";
 const canonicalCommandPattern =
   /^idiom verify ([A-Za-z0-9][A-Za-z0-9._-]*) --spec \.ab\/spec\.md --out \.ab\/idiom$/;
 
@@ -54,7 +54,7 @@ function endsWithNewline(source: string): boolean {
   return source.endsWith("\n");
 }
 
-function structuralMask(source: string): string {
+export function structuralMask(source: string): string {
   const output = [...source];
   let index = 0;
   let mode: "normal" | "comment" | "basic" | "literal" = "normal";
@@ -253,7 +253,7 @@ function addAssignmentToTable(
   return `${prefix}${separator}${assignment}${terminator}${suffix}`;
 }
 
-function insertVerifyParent(source: string): string {
+function insertVerifyParent(source: string, stepName: string): string {
   const analysis = analyzeTables(source);
   const child = analysis.tables.find((table) =>
     table.name.startsWith("verify."),
@@ -261,7 +261,7 @@ function insertVerifyParent(source: string): string {
   const childNames = analysis.tables
     .map((table) => /^verify\.([A-Za-z0-9_-]+)$/.exec(table.name)?.[1])
     .filter((name): name is string => name !== undefined);
-  const selected = [...new Set([...childNames, "idiom"])];
+  const selected = [...new Set([...childNames, stepName])];
   const newline = newlineOf(source);
   if (child === undefined)
     return addTableAtEnd(source, "verify", [
@@ -273,19 +273,20 @@ function insertVerifyParent(source: string): string {
 function appendIdiomToArray(
   source: string,
   span: { start: number; end: number },
+  stepName: string,
 ): string {
   const array = source.slice(span.start, span.end);
   const mask = structuralMask(array);
   let last = mask.length - 2;
   while (last > 0 && /\s/.test(mask[last] ?? "")) last -= 1;
   if (last === 0)
-    return `${source.slice(0, span.start + 1)}"idiom"${source.slice(span.start + 1)}`;
+    return `${source.slice(0, span.start + 1)}${JSON.stringify(stepName)}${source.slice(span.start + 1)}`;
 
   const close = array.length - 1;
   const closeLineStart = Math.max(array.lastIndexOf("\n", close - 1) + 1, 0);
   const beforeClose = mask.slice(closeLineStart, close).trim();
   if (!array.includes("\n") || beforeClose.length > 0) {
-    const insertion = `${mask[last] === "," ? "" : ","} "idiom"`;
+    const insertion = `${mask[last] === "," ? "" : ","} ${JSON.stringify(stepName)}`;
     const absolute = span.start + last + 1;
     return `${source.slice(0, absolute)}${insertion}${source.slice(absolute)}`;
   }
@@ -298,7 +299,7 @@ function appendIdiomToArray(
   if (mask[last] !== ",")
     updated = `${updated.slice(0, last + 1)},${updated.slice(last + 1)}`;
   const adjustedCloseLineStart = closeLineStart + (mask[last] === "," ? 0 : 1);
-  updated = `${updated.slice(0, adjustedCloseLineStart)}${indent}"idiom"${newline}${updated.slice(adjustedCloseLineStart)}`;
+  updated = `${updated.slice(0, adjustedCloseLineStart)}${indent}${JSON.stringify(stepName)}${newline}${updated.slice(adjustedCloseLineStart)}`;
   return `${source.slice(0, span.start)}${updated}${source.slice(span.end)}`;
 }
 
@@ -312,6 +313,7 @@ function splitLines(value: string): string[] {
 export function createAutobuildDiff(
   original: string,
   candidate: string,
+  path = "autobuild.toml",
 ): string {
   if (original === candidate) return "";
   const before = splitLines(original);
@@ -375,7 +377,7 @@ export function createAutobuildDiff(
       .join("\n");
     return `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@\n${body}`;
   });
-  return `--- a/autobuild.toml\n+++ b/autobuild.toml\n${hunks.join("\n")}\n`;
+  return `--- ${original ? `a/${path}` : "/dev/null"}\n+++ b/${path}\n${hunks.join("\n")}\n`;
 }
 
 function manualPlan(
@@ -394,7 +396,7 @@ function manualPlan(
   };
 }
 
-function isValidAutobuildPath(path: unknown): path is string {
+export function isValidAutobuildPath(path: unknown): path is string {
   if (
     typeof path !== "string" ||
     path.length === 0 ||
@@ -418,180 +420,196 @@ export function planAutobuildWiring(
   original: string,
   manualAddition: string,
 ): AutobuildWiringPlan {
-  let document: TomlTable;
-  let template: TomlTable;
   try {
-    document = parse(original);
-    template = parse(manualAddition);
-  } catch (error) {
-    return manualPlan(
-      original,
-      manualAddition,
-      `Autobuild configuration could not be parsed safely: ${(error as Error).message}`,
-    );
-  }
-
-  const templateCommands = template.commands;
-  const templateVerify = template.verify;
-  if (!isRecord(templateCommands) || !isRecord(templateVerify))
-    return manualPlan(
-      original,
-      manualAddition,
-      "The shipped Autobuild template is invalid.",
-    );
-  const expectedStep = templateVerify.idiom;
-  if (!isRecord(expectedStep))
-    return manualPlan(
-      original,
-      manualAddition,
-      "The shipped Autobuild template is invalid.",
-    );
-  const expectedCommand = templateCommands[commandKey];
-  if (typeof expectedCommand !== "string")
-    return manualPlan(
-      original,
-      manualAddition,
-      "The shipped Autobuild command is invalid.",
-    );
-
-  const commands = document.commands;
-  if (commands !== undefined && !isRecord(commands))
-    return manualPlan(original, manualAddition, "[commands] is not a table.");
-  const existingCommand = commands?.[commandKey];
-  if (
-    existingCommand !== undefined &&
-    !isCompatibleIdiomCommand(existingCommand)
-  )
-    return manualPlan(
-      original,
-      manualAddition,
-      "[commands].idiom-verify is owned by a different or incompatible command.",
-    );
-
-  const verify = document.verify;
-  if (verify !== undefined && !isRecord(verify))
-    return manualPlan(original, manualAddition, "[verify] is not a table.");
-  const steps = verify?.steps;
-  if (
-    steps !== undefined &&
-    (!Array.isArray(steps) || steps.some((step) => typeof step !== "string"))
-  )
-    return manualPlan(
-      original,
-      manualAddition,
-      "verify.steps is not a string array.",
-    );
-  const idiomCount = Array.isArray(steps)
-    ? steps.filter((step) => step === "idiom").length
-    : 0;
-  if (idiomCount > 1)
-    return manualPlan(
-      original,
-      manualAddition,
-      'verify.steps selects "idiom" more than once.',
-    );
-
-  const existingStep = verify?.idiom;
-  const compatiblePaths =
-    isRecord(existingStep) &&
-    (existingStep.paths === undefined ||
-      (Array.isArray(existingStep.paths) &&
-        existingStep.paths.length > 0 &&
-        existingStep.paths.every(isValidAutobuildPath)));
-  const compatibleStep =
-    isRecord(existingStep) &&
-    existingStep.kind === "agent" &&
-    existingStep.skill === "ab-verify-idiom" &&
-    compatiblePaths;
-  if (existingStep !== undefined && !compatibleStep)
-    return manualPlan(
-      original,
-      manualAddition,
-      "[verify.idiom] is owned by a different or incompatible verify step.",
-    );
-
-  const complete =
-    existingCommand !== undefined && idiomCount === 1 && compatibleStep;
-  if (complete)
-    return {
-      kind: "ready",
-      original,
-      candidate: original,
-      diff: "",
-      complete: true,
-      manualAddition,
-    };
-
-  try {
+    const document = parse(original);
+    const template = parse(manualAddition);
+    const tc = template.commands;
+    const tv = template.verify;
+    if (!isRecord(tc) || !isRecord(tv))
+      throw new Error("Invalid shipped template");
+    const stepName = Object.keys(tv).find((key) => key !== "steps");
+    if (!stepName || !isRecord(tv[stepName]))
+      throw new Error("Invalid shipped step");
+    const expected = tv[stepName];
+    const gate = stepName === "idiom-check";
+    const commandKey = gate ? "idiom-check" : "idiom-verify";
+    const expectedCommand = tc[commandKey];
+    if (typeof expectedCommand !== "string")
+      throw new Error("Invalid shipped command");
+    const commands = document.commands;
+    const verify = document.verify;
+    if (commands !== undefined && !isRecord(commands))
+      throw new Error("[commands] is not a table");
+    if (verify !== undefined && !isRecord(verify))
+      throw new Error("[verify] is not a table");
+    const command = commands?.[commandKey];
+    const normalized =
+      typeof command === "string"
+        ? command
+            .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "")
+            .split(/[\t\n\f\r ]+/)
+            .join(" ")
+        : command;
+    if (
+      command !== undefined &&
+      (gate
+        ? normalized !== gateCommand &&
+          normalized !== "idiom check --gate --fail-on major"
+        : !isCompatibleIdiomCommand(command))
+    )
+      throw new Error(
+        `[commands].${commandKey} is owned by a different or incompatible command`,
+      );
+    const steps = verify?.steps;
+    if (
+      steps !== undefined &&
+      (!Array.isArray(steps) || steps.some((step) => typeof step !== "string"))
+    )
+      throw new Error("verify.steps is not a string array");
+    const count = Array.isArray(steps)
+      ? steps.filter((step) => step === stepName).length
+      : 0;
+    if (count > 1)
+      throw new Error(`verify.steps selects "${stepName}" more than once`);
+    const existing = verify?.[stepName];
+    if (
+      existing !== undefined &&
+      (!isRecord(existing) ||
+        (gate
+          ? !(
+              (existing.kind === "check" && existing.command === commandKey) ||
+              (existing.kind === "agent" && existing.skill === "idiom-verify")
+            ) ||
+            Object.keys(existing).some(
+              (key) =>
+                ![
+                  "kind",
+                  "command",
+                  "skill",
+                  "paths",
+                  "always",
+                  "afterReconcile",
+                ].includes(key),
+            ) ||
+            (existing.kind === "agent" && existing.command !== undefined) ||
+            (existing.kind === "check" && existing.skill !== undefined)
+          : existing.kind !== expected.kind ||
+            existing.skill !== "idiom-verify") ||
+        (existing.paths !== undefined &&
+          (!Array.isArray(existing.paths) ||
+            !existing.paths.length ||
+            !existing.paths.every(isValidAutobuildPath))))
+    )
+      throw new Error(
+        `[verify.${stepName}] is owned by a different or incompatible verify step`,
+      );
     let candidate = original;
-    if (existingCommand === undefined)
+    if (command === undefined)
       candidate = addAssignmentToTable(
         candidate,
         "commands",
         `${commandKey} = ${JSON.stringify(expectedCommand)}`,
       );
-
-    if (idiomCount === 0) {
+    else if (gate && normalized !== gateCommand)
+      candidate = replaceScalar(
+        candidate,
+        "commands",
+        commandKey,
+        JSON.stringify(gateCommand),
+      );
+    if (!count) {
       if (uniqueTable(candidate, "verify") === undefined)
-        candidate = insertVerifyParent(candidate);
+        candidate = insertVerifyParent(candidate, stepName);
       else if (steps === undefined)
         candidate = addAssignmentToTable(
           candidate,
           "verify",
-          'steps = ["idiom"]',
+          `steps = [${JSON.stringify(stepName)}]`,
         );
       else {
         const span = assignmentValueSpan(candidate, "verify", "steps");
-        if (span === undefined)
-          throw new Error(
-            "verify.steps does not have a unique patchable source span",
-          );
-        candidate = appendIdiomToArray(candidate, span);
+        if (!span) throw new Error("verify.steps has no patchable source span");
+        candidate = appendIdiomToArray(candidate, span, stepName);
       }
     }
-
-    if (existingStep === undefined) {
-      const kind = expectedStep.kind;
-      const skill = expectedStep.skill;
-      const paths = expectedStep.paths;
-      if (
-        typeof kind !== "string" ||
-        typeof skill !== "string" ||
-        !Array.isArray(paths) ||
-        paths.some((path) => typeof path !== "string")
-      )
-        throw new Error("the shipped Idiom verify step is invalid");
-      candidate = addTableAtEnd(candidate, "verify.idiom", [
-        `kind = ${JSON.stringify(kind)}`,
-        `skill = ${JSON.stringify(skill)}`,
-        `paths = [${paths.map((path) => JSON.stringify(path)).join(", ")}]`,
-      ]);
-    }
-
-    const reparsed = parse(candidate);
-    const reparsedCommands = reparsed.commands;
-    const reparsedVerify = reparsed.verify;
-    if (
-      !isRecord(reparsedCommands) ||
-      !isCompatibleIdiomCommand(reparsedCommands[commandKey]) ||
-      !isRecord(reparsedVerify) ||
-      !Array.isArray(reparsedVerify.steps) ||
-      reparsedVerify.steps.filter((step) => step === "idiom").length !== 1 ||
-      !isRecord(reparsedVerify.idiom) ||
-      reparsedVerify.idiom.kind !== "agent" ||
-      reparsedVerify.idiom.skill !== "ab-verify-idiom"
-    )
-      throw new Error(
-        "the patched configuration did not validate semantically",
+    if (existing === undefined)
+      candidate = addTableAtEnd(
+        candidate,
+        `verify.${stepName}`,
+        Object.entries(expected).map(
+          ([key, value]) => `${key} = ${JSON.stringify(value)}`,
+        ),
       );
+    else if (gate && isRecord(existing) && existing.paths !== undefined) {
+      const span = assignmentValueSpan(
+        candidate,
+        `verify.${stepName}`,
+        "paths",
+      );
+      if (!span) throw new Error("paths has no patchable source span");
+      const start = candidate.lastIndexOf("\n", span.start) + 1;
+      candidate =
+        candidate.slice(0, start) +
+        candidate
+          .slice(span.end)
+          .replace(/^[ \t]*(?=\r?\n)/, "")
+          .replace(/^\r?\n/, "");
+    }
+    if (gate && isRecord(existing) && existing.kind === "check") {
+      candidate = replaceScalar(
+        candidate,
+        `verify.${stepName}`,
+        "kind",
+        '"agent"',
+      );
+      const span = assignmentValueSpan(
+        candidate,
+        `verify.${stepName}`,
+        "command",
+      );
+      if (!span) throw new Error("command has no patchable source span");
+      const start = candidate.lastIndexOf("\n", span.start) + 1;
+      const line = candidate.slice(start, span.start);
+      candidate =
+        candidate.slice(0, start) +
+        line.replace(/command(\s*=\s*)$/, "skill$1") +
+        '"idiom-verify"' +
+        candidate
+          .slice(span.end)
+          .replace(
+            /^/,
+            candidate.slice(span.start, span.end).match(/([ \t]*#.*)$/)?.[1] ??
+              "",
+          );
+    }
+    if (!endsWithNewline(original) && endsWithNewline(candidate))
+      candidate = candidate.slice(0, -newlineOf(candidate).length);
+    const after = parse(candidate);
+    const ac = after.commands;
+    const av = after.verify;
+    if (
+      !isRecord(ac) ||
+      !isRecord(av) ||
+      !Array.isArray(av.steps) ||
+      av.steps.filter((step) => step === stepName).length !== 1 ||
+      !isRecord(av[stepName]) ||
+      av[stepName].kind !== expected.kind ||
+      (gate
+        ? (ac[commandKey] !== gateCommand && normalized !== gateCommand) ||
+          av[stepName].skill !== "idiom-verify" ||
+          av[stepName].paths !== undefined
+        : !isCompatibleIdiomCommand(ac[commandKey]) ||
+          av[stepName].skill !== "idiom-verify")
+    )
+      throw new Error("Patched configuration did not validate semantically");
     if (endsWithNewline(candidate) !== endsWithNewline(original))
-      throw new Error("the patch changed the trailing-newline convention");
+      throw new Error("Patch changed trailing-newline convention");
     return {
       kind: "ready",
       original,
       candidate,
       diff: createAutobuildDiff(original, candidate),
-      complete: false,
+      complete: original === candidate,
       manualAddition,
     };
   } catch (error) {
@@ -601,4 +619,46 @@ export function planAutobuildWiring(
       `Autobuild configuration could not be edited safely: ${(error as Error).message}`,
     );
   }
+}
+
+function replaceScalar(
+  source: string,
+  table: string,
+  key: string,
+  value: string,
+): string {
+  const span = assignmentValueSpan(source, table, key);
+  if (!span) throw new Error(`${table}.${key} has no patchable source span`);
+  // Preserve comments, including # inside quoted scalar values.
+  const tail = source.slice(span.start, span.end);
+  const match = /^("(?:[^"\\]|\\.)*"|'[^']*')([ \t]*(?:#.*)?)$/.exec(tail);
+  if (!match)
+    throw new Error(`${table}.${key} has an unsupported scalar shape`);
+  return (
+    source.slice(0, span.start) + value + match[2] + source.slice(span.end)
+  );
+}
+
+export function renameVerifierReferences(source: string): string {
+  const document = parse(source);
+  if (!isRecord(document.verify)) return source;
+  let candidate = source;
+  for (const [name, step] of Object.entries(document.verify)) {
+    if (isRecord(step) && step.skill === "ab-verify-idiom")
+      candidate = replaceScalar(
+        candidate,
+        `verify.${name}`,
+        "skill",
+        '"idiom-verify"',
+      );
+  }
+  const after = parse(candidate);
+  if (
+    isRecord(after.verify) &&
+    Object.values(after.verify).some(
+      (step) => isRecord(step) && step.skill === "ab-verify-idiom",
+    )
+  )
+    throw new Error("Unpatchable legacy reference");
+  return candidate;
 }

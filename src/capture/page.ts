@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import { PNG } from "pngjs";
+import type { LoadingStuckEvidence } from "../checks/blank-schema.js";
 import { type ObserveOptions, observePage } from "../checks/observe.js";
 import type {
   ActionTimelineArtifact,
@@ -13,9 +14,15 @@ import type {
   ProgressArtifact,
   ScreenshotGeometry,
 } from "../checks/types.js";
+import { inventoryBlankMedia } from "../checks/visual-blank-dom.js";
 import { classifyDocument } from "../document.js";
 import { settleAnimations } from "./animation-settle.js";
 import { ExplanationCollector, mergeExplanations } from "./explanations.js";
+import {
+  disposeLoadingObservation,
+  readLoadingObservation,
+  startLoadingObservation,
+} from "./loading-stuck.js";
 import { sampleMediaFrames, sampleOrphanInk } from "./media-bands.js";
 import { mergeMotion } from "./motion.js";
 import {
@@ -28,6 +35,7 @@ import {
   type TimelineCollector,
   withTimelineIds,
 } from "./timeline.js";
+import { TupleTimeoutError } from "./timeouts.js";
 import { diagnoseTouchReachability, parkPointer } from "./touch.js";
 import type {
   ConsoleRecord,
@@ -36,6 +44,7 @@ import type {
   TupleFailureStage,
   TupleResult,
 } from "./types.js";
+import { sampleBlankMedia } from "./visual-blank.js";
 
 import { type StepHealthGuard, WebStepFailure } from "./web-steps.js";
 
@@ -68,6 +77,7 @@ export async function collectPageEvidence(options: {
   collectConsole: () => Promise<ConsoleRecord[]>;
   tokens: Parameters<typeof observePage>[1];
   screenshotOptions: Parameters<Page["screenshot"]>[0];
+  maxFullPageHeight?: number | undefined;
   reuseScreenshot?: Buffer | undefined;
   /** Geometry of `reuseScreenshot`, recorded when it was taken. */
   reuseScreenshotGeometry?: ScreenshotGeometry | undefined;
@@ -106,8 +116,12 @@ export async function collectPageEvidence(options: {
   let dom: string | undefined;
   let screenshot: Buffer | undefined;
   let screenshotGeometry: ScreenshotGeometry | undefined;
+  let observedSize: { width: number; height: number } | undefined;
   let axe: unknown;
   let nonHtml = false;
+  let loading: LoadingStuckEvidence | undefined;
+  let loadingStarted = false;
+  const loadingWindow = options.state.loadingSettleMs ?? 5000;
   let observations: ObservationArtifact | undefined;
   let stage: TupleFailureStage = options.reachStage;
   let failure: unknown;
@@ -128,6 +142,31 @@ export async function collectPageEvidence(options: {
   try {
     activity(options.reachStage);
     status = await options.reach();
+    stage = "expectation";
+    options.assertDestination?.();
+    if (options.observe?.loadingStuck) {
+      const html = await options.page.evaluate(() =>
+        /^(text\/html|application\/xhtml\+xml)(;|$)/i.test(
+          document.contentType,
+        ),
+      );
+      if (html && !options.state.loading) {
+        await startLoadingObservation(
+          options.page,
+          loadingWindow,
+          options.state.mask,
+        );
+        loadingStarted = true;
+      } else
+        loading = {
+          status: "skipped",
+          reason: html ? "intentional loading state" : "non-HTML document",
+          windowMs: loadingWindow,
+          observedMs: 0,
+          intentional: options.state.loading === true,
+          records: [],
+        };
+    }
     await options.healthGuard?.checkpoint();
     activity("settle");
     await options.page.waitForTimeout(options.settleMs);
@@ -192,6 +231,30 @@ export async function collectPageEvidence(options: {
         }
       });
       options.signal?.throwIfAborted();
+    }
+    if (loadingStarted) {
+      activity("loading settle");
+      let elapsed =
+        (await readLoadingObservation(options.page))?.observedMs ?? 0;
+      while (elapsed < loadingWindow) {
+        options.signal?.throwIfAborted();
+        await options.page.waitForTimeout(
+          Math.min(100, Math.ceil(loadingWindow - elapsed)),
+        );
+        await options.healthGuard?.checkpoint();
+        elapsed =
+          (await readLoadingObservation(options.page))?.observedMs ??
+          loadingWindow;
+      }
+    } else {
+      // Reach waits only for DOM-ready; without the loading window, resources
+      // such as images still need the load event before the screenshot.
+      activity("load settle");
+      await options.page
+        .waitForLoadState("load", { timeout: loadingWindow })
+        .catch(() => undefined);
+      options.signal?.throwIfAborted();
+      await options.healthGuard?.checkpoint();
     }
     const bodyText = nonHtml
       ? await options.page.evaluate(
@@ -272,7 +335,7 @@ export async function collectPageEvidence(options: {
     // The size a full-page shot would capture before observing starts,
     // compared after the shot: layout that moves during or after observe
     // (observe itself takes seconds on large pages) leaves its rects stale.
-    const observedSize = nonHtml ? undefined : await fullPageSize(options.page);
+    observedSize = nonHtml ? undefined : await fullPageSize(options.page);
     observations = await observePage(
       options.page,
       options.tokens,
@@ -346,9 +409,25 @@ export async function collectPageEvidence(options: {
     }
     stage = "screenshot";
     activity(stage);
-    const reused = !animations.hadAnimations
-      ? options.reuseScreenshot
-      : undefined;
+    if (
+      !nonHtml &&
+      observations.version === 2 &&
+      options.observe?.visualBlank?.enabled
+    )
+      observations = {
+        ...observations,
+        visualBlank: await inventoryBlankMedia(
+          options.page,
+          options.observe.visualBlank.swatchSelectors,
+          options.state.mask,
+        ),
+      };
+    const reused =
+      !loadingStarted &&
+      !(observations.version === 2 && observations.visualBlank) &&
+      !animations.hadAnimations
+        ? options.reuseScreenshot
+        : undefined;
     let geometry: Omit<ScreenshotGeometry, "drift" | "rects"> | undefined;
     if (reused !== undefined) {
       screenshot = reused;
@@ -359,6 +438,7 @@ export async function collectPageEvidence(options: {
         animations.unresolved
           ? { ...options.screenshotOptions, animations: "allow" }
           : options.screenshotOptions,
+        { maxFullPageHeight: options.maxFullPageHeight },
       );
       screenshot = captured.buffer;
       geometry = captured.geometry;
@@ -371,22 +451,35 @@ export async function collectPageEvidence(options: {
       } = geometry as ScreenshotGeometry;
       screenshotGeometry =
         !nonHtml && observations.version === 2
-          ? await withScreenshotGeometry(
-              options.page,
-              own,
-              observedSize,
-              observations.elements.map((element) => element.selector),
-            )
+          ? await withScreenshotGeometry(options.page, own, observedSize, [
+              ...observations.elements.map((element) => element.selector),
+              ...(observations.visualBlank?.records.map((r) => r.selector) ??
+                []),
+            ])
           : own;
       if (observations.version === 2)
         observations = { ...observations, screenshot: screenshotGeometry };
     }
     if (!nonHtml && observations.version === 2) {
+      if (loadingStarted)
+        loading = await readLoadingObservation(options.page, true);
+      if (loading) observations = { ...observations, loadingStuck: loading };
       const image = screenshot;
       // One lazy decode serves every pixel sampler below.
       let decoded: PNG | undefined;
+      let decodeAttempted = false;
+      let decodeError: unknown;
       const decode = () => {
-        decoded ??= PNG.sync.read(image);
+        if (!decodeAttempted) {
+          decodeAttempted = true;
+          try {
+            decoded = PNG.sync.read(image);
+          } catch (error) {
+            decodeError = error;
+          }
+        }
+        if (!decoded)
+          throw decodeError ?? new Error("screenshot PNG could not be decoded");
         return decoded;
       };
       if (
@@ -405,6 +498,17 @@ export async function collectPageEvidence(options: {
           ),
         };
       }
+      if (observations.visualBlank)
+        observations = {
+          ...observations,
+          visualBlank: sampleBlankMedia(
+            observations.visualBlank,
+            decode,
+            observations.viewport,
+            screenshotGeometry,
+            observations.document.scrollWidth,
+          ),
+        };
       const orphans = observations.orphanWords;
       if (orphans !== undefined && orphans.status !== "unavailable")
         observations = {
@@ -430,13 +534,42 @@ export async function collectPageEvidence(options: {
       } catch (healthError) {
         failure = healthError;
       }
+      if (status !== undefined) {
+        try {
+          options.assertDestination?.();
+        } catch (destinationError) {
+          failure = destinationError;
+          stage = "expectation";
+          dom = undefined;
+          axe = undefined;
+          observations = undefined;
+          screenshot = undefined;
+          screenshotGeometry = undefined;
+        }
+      }
     }
     if (failure instanceof WebStepFailure) {
       stage = "step";
       status = failure.status;
       screenshot = failure.screenshot;
+      screenshotGeometry = failure.screenshotGeometry;
+      if (observations?.version === 2) {
+        if (screenshotGeometry)
+          screenshotGeometry = await withScreenshotGeometry(
+            options.page,
+            screenshotGeometry,
+            observedSize,
+            observations.elements.map((element) => element.selector),
+          ).catch(() =>
+            failure instanceof WebStepFailure
+              ? failure.screenshotGeometry
+              : undefined,
+          );
+        observations = { ...observations, screenshot: screenshotGeometry };
+      }
     }
   } finally {
+    if (loadingStarted) await disposeLoadingObservation(options.page);
     await options.healthGuard?.dispose();
     await options.timelines?.finishLoad("state did not settle");
   }
@@ -537,15 +670,18 @@ export async function collectPageEvidence(options: {
   // Read after reach either way: a reach that throws after goto still navigated.
   const documentUrl = options.documentUrl?.();
   if (failure !== undefined) {
+    const cause = failure instanceof WebStepFailure ? failure.cause : failure;
     return {
       ok: false,
       probeMs,
       stage,
       message: errorMessage(failure),
+      timeout: cause instanceof TupleTimeoutError ? cause.timeout : undefined,
       status,
       ...(documentUrl === undefined ? {} : { documentUrl }),
       dom,
       screenshot,
+      screenshotGeometry,
       console: records,
       axe,
       observations,

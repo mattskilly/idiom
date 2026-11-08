@@ -1,8 +1,8 @@
 # How check ranks Top issues
 
-`check` ranks presentation issues by **severity first** (BLOCKER, MAJOR, MINOR),
-then prominence as measured by the existing **salience × prominence** score within
-each tier, then first-seen bucket order. Scores use full precision. `--top N`
+`check` ranks presentation issues by **severity first** (BLOCKER, MAJOR, MINOR, INFO),
+then by [impact](#impact), then prominence as measured by the existing
+**salience × prominence** score within each tier, then first-seen bucket order. Scores use full precision. `--top N`
 limits the displayed prefix; JSON always contains the entire ranked catalogue.
 Detection, thresholds, finding fingerprints, durable groups, decisions, baseline
 comparison and failure gates are independent of this presentation.
@@ -88,6 +88,8 @@ All unlisted rules within a known category use its category default.
 | `selection-outline` | All rules | 9 | Broken behaviour or obstructed content. |
 | `disabled-highlight` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
 | `brief-mismatch` | All rules | 4 | General consistency, semantics or contextual quality. |
+| `popover-dismissal` | All rules | 9 | Broken behaviour or obstructed content. |
+| `focus-return` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
 | `hierarchy` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `density` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `brand-alignment` | All rules | 4 | General consistency, semantics or contextual quality. |
@@ -165,7 +167,7 @@ never combine one group's salience with another's geometry. Equal products use
 member severity then original order. The winning group supplies `id`, the first
 entry of `groups`, and the explanation; remaining groups retain original order.
 The issue heading reports the worst severity across all its groups. Final issue
-sorting uses worst issue severity, score, then original bucket order.
+sorting uses worst issue severity, impact tier, score, then original bucket order.
 
 Compact text shows one example and the family occurrence count. `--all` shows
 every original group's own rule, problem, evidence and decision command. Commands
@@ -257,3 +259,25 @@ fold and primary flags, unique state/place counts and geometry availability.
 These inputs reproduce the formula, including neutral fallbacks. Scores and
 explanations are issue-summary metadata and are never persisted on findings or
 durable groups.
+
+## Impact
+
+Within a severity, the impact tier comes before the score. An issue holds every
+impact reason any of its groups holds; a root cause holds every reason of its
+symptoms.
+
+A finding is in the higher **impact** tier when any of these holds, and in the lower tier only when none does, which is exactly a single-state cosmetic finding:
+
+- **states**: it appears in two or more states;
+- **viewports**: it appears at two or more viewports;
+- **primary**: its element is a recorded primary action, or sits above the fold in the page's primary region (`<main>` or a marked primary region), at any coordinate where it appears;
+- **interactive**: its element is an interactive control (a link, button, input or other focusable control);
+- **broken**: its rule reports broken behaviour or obstructed content (salience 9 in the [ranking table](ranking.md#salience)).
+
+Without a ranking context, breadth and broken behaviour still apply, and
+`primary` falls back to the run-wide primary-action selectors. Callers that
+cannot compute impact sort as if it held, so their order is unchanged. Scores,
+salience and prominence are not affected.
+
+Info sorts below minor regardless of impact or prominence. Info-only groups
+retain info; mixed groups use their strongest actual member.

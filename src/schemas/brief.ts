@@ -68,6 +68,15 @@ export const briefSlugSchema = z
     "must be a lowercase slug such as pinned-group",
   );
 
+/** An autobuild ticket id, as `ab ticket attach` names it. */
+export const ticketIdSchema = z
+  .string()
+  .max(128)
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9._:-]*$/,
+    "must be a ticket id such as file-281",
+  );
+
 const httpUrl = z
   .string()
   .url()
@@ -291,6 +300,13 @@ const briefFields = {
   request: nonEmpty.max(20_000),
   /** The design question being decided. */
   decision: nonEmpty,
+  screenQuestion: z
+    .string()
+    .refine((value) => !/[\r\n]/.test(value), "must be one line")
+    .trim()
+    .min(1)
+    .optional(),
+  inventory: z.array(nonEmpty).min(1).optional(),
   /** Did the requester propose a solution of their own? */
   requestNamedIdea: z.boolean(),
   triage: briefTriageResultSchema.optional(),
@@ -478,6 +494,8 @@ export const storedBriefSchema = z
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
     researchRun: researchRunSchema.optional(),
+    /** Autobuild tickets this brief was attached to as a design asset. */
+    tickets: z.array(ticketIdSchema).optional(),
   })
   .strict()
   .superRefine((brief, context) => {

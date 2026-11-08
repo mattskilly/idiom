@@ -400,3 +400,43 @@ test("check and sweep guidance preserve severity-first presentation with score i
     );
   }
 });
+
+test("UI preparation precedes triage and repair recipes share a bounded loop", async () => {
+  const skill = await readIdiomSkillTemplate();
+  const preparation = skill.slice(
+    skill.indexOf("## Before you spec UI"),
+    skill.indexOf("1. Call `idiom_brief_triage`"),
+  );
+  for (const state of [
+    "empty",
+    "zero",
+    "loading",
+    "error",
+    "hover",
+    "selected",
+    "focus",
+    "disabled",
+  ])
+    expect(preparation).toContain(state);
+  expect(preparation).toContain("named flow states");
+  expect(preparation).toContain('"id":"editor+menu"');
+  expect(preparation).toContain('"from":"editor"');
+  expect(preparation).toContain("base state");
+  const instruction =
+    "Fix the top three findings in rank order (function before appearance), re-run, and stop after three rounds, reporting what remains.";
+  expect(skill).toContain(instruction);
+  expect(skill).toContain("initial check is not a repair round");
+  expect(skill).toContain(
+    "remaining blocking findings still withhold completion",
+  );
+  expect(skill).not.toContain("rerun until clean");
+  for (const file of [
+    "docs/commands.md",
+    "docs/configuration.md",
+    "templates/autobuild.idiom.toml",
+    "templates/idiom-verify/SKILL.md",
+  ])
+    expect(
+      await readFile(join(import.meta.dirname, "..", file), "utf8"),
+    ).toContain(instruction);
+});

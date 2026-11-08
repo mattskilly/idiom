@@ -40,7 +40,7 @@ For Codex, in your shell:
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.20.0/mattskilly-idiom-0.20.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.21.0/mattskilly-idiom-0.21.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.
@@ -62,6 +62,8 @@ idiom init
 ```sh
 idiom init --print-setup-prompt
 ```
+
+`init` also looks for the places your project builds UI and wires Idiom into them in one plan you confirm once: a **Design QA (Idiom)** section in `AGENTS.md` (and `CLAUDE.md` or a Cursor rule when you have them) that tells every agent to triage, read context and run `idiom check --changed`, plus `.github/workflows/idiom.yml` when you use GitHub Actions. Git hooks, a nightly run and an Autobuild design-review rule are opt-in. Preview it with `idiom init --dry-run`, rerun only this step with `idiom init --wire`, and leave any surface alone with `--skip-wiring <surface>`. See [init wiring](/docs/commands#wire-agents-ci-hooks-and-autobuild).
 
 Setup writes three things:
 
@@ -94,8 +96,10 @@ idiom check home                  # the first run records a baseline; commit .id
 idiom check home --fail-on major  # later runs fail only on new problems
 ```
 
-The first check on a clean commit records a baseline. After that, `check` reports only findings the baseline didn't have, and `idiom baseline accept home` accepts intentional changes. The [GitHub Action](/docs/configuration#github-action) runs this on every pull request and posts one comment.
+The first check on a clean commit records a baseline. After that, `check` reports only findings the baseline didn't have, and `idiom baseline accept home` accepts intentional changes. The [GitHub Action](/docs/configuration#github-action) runs this on every pull request and posts one comment; `idiom init` writes that workflow for you when `.github/workflows/` exists, with a full check of every flow on pushes to the default branch.
 
-To gate every build an agent makes, use `idiom check home --gate --fail-on major`. It checks only what the change affects within a 3-minute budget, skips docs- and test-only changes in under a second, and ends with a `Timing:` line. Keep the full check on a schedule.
+When `autobuild.toml` exists, interactive `idiom init` (in its wiring plan) and `idiom upgrade` offer the default `idiom-check` gate with an exact diff and confirmation. It runs `idiom check --gate --fail-on major --deferred warn`, with no path filter or verifier-skill requirement. Busy hosts warn about incomplete coverage; actual findings and run failures still fail. Finding verification is a separate opt-in for Idiom-originated tickets, using a detected project flow and project-derived paths.
+
+To gate every build an agent makes manually, use `idiom check --gate --fail-on major --deferred warn`. It checks only what the change affects within a 3-minute budget, skips docs- and test-only changes in under a second, and ends with a `Timing:` line. Keep the full check on a schedule.
 
 If a step fails, [Troubleshooting](/docs/troubleshooting) lists each symptom with its cause and fix, and `idiom doctor` names the step that failed.

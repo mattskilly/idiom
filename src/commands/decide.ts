@@ -1,10 +1,22 @@
+import { join } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
+import { readGit } from "../changed/git.js";
 import {
+  latestAcknowledgement,
+  parseUntil,
+} from "../decisions/acknowledgements.js";
+import {
+  acknowledgements as acknowledgementEntries,
+  appendAcknowledgement,
   appendDecision,
+  appendRulingDecision,
   decisionLogPath,
-  readDecisionLog,
+  judgments,
+  readDecisionLogEntries,
 } from "../decisions/log.js";
+import { pendingDecisions } from "../decisions/pending.js";
+import { decisionQuestion } from "../decisions/question.js";
 import { IdiomError } from "../errors.js";
 import { acceptanceText } from "../findings/presentation.js";
 import {
@@ -16,9 +28,18 @@ import {
   persistCatalogFindingNames,
 } from "../review/catalog.js";
 import { type FindingGroup, readGroups } from "../review/groups.js";
-import { reduceLifecycles, renderLifecycleList } from "../review/lifecycle.js";
+import {
+  type FindingLifecycle,
+  reduceLifecycles,
+  renderLifecycleList,
+} from "../review/lifecycle.js";
+import { type RulingAnswer, rulingAnswer } from "../rulings/answer.js";
+import { readEffectiveLaw } from "../rulings/effective.js";
+import { lookupUnruledDecision } from "../rulings/lookup.js";
 import type { Decision } from "../schemas/decision.js";
 import type { Finding } from "../schemas/finding.js";
+import type { PendingDecision } from "../schemas/pending-decision.js";
+import { loadProjectContext } from "../validation.js";
 
 export type PromptedDecision =
   | { action: "accept"; reason?: string | undefined }
@@ -46,7 +67,18 @@ export type DecideResult = {
   accepted: number;
   rejected: number;
   skipped: number;
+  /** Set by --ack / --unack only. */
+  acknowledged?: number | undefined;
+  unacknowledged?: number | undefined;
+  /** The acknowledgement --ack wrote or --unack removed. */
+  acknowledgement?:
+    | { findingId: string; reference: string; until?: string | undefined }
+    | undefined;
+  decisionNeeded?: PendingDecision[] | undefined;
+  decisionQuestion?: string | undefined;
   listed?: boolean | undefined;
+  /** Set by --list: every lineage's lifecycle. */
+  lifecycles?: FindingLifecycle[] | undefined;
 };
 
 function trimmedReason(reason: string | undefined): string | undefined {
@@ -179,26 +211,185 @@ async function findGroup(
   throw new IdiomError(`unknown group id ${JSON.stringify(id)}`);
 }
 
-export async function decideCommand(options: {
-  project?: string | undefined;
-  cwd?: string | undefined;
-  finding?: string | undefined;
-  /** A finding group (#52): one decision per member. */
-  group?: string | undefined;
-  accept?: boolean | undefined;
-  reject?: boolean | undefined;
-  /** A design decision's chosen reference; recorded as an accept with designChoice. */
-  choose?: string | undefined;
-  scope?: "instance" | "rule" | undefined;
-  reason?: string | undefined;
-  /** Internal adapter option: validate without normalizing human text. */
-  preserveReason?: boolean | undefined;
-  list?: boolean | undefined;
-  dependencies?: DecideDependencies | undefined;
-  write?: ((message: string) => void) | undefined;
-}): Promise<DecideResult> {
+export async function decideCommand(
+  options: RulingAnswer & {
+    pending?: boolean | undefined;
+    decision?: string | undefined;
+    build?: string | undefined;
+    escalation?: string | undefined;
+    project?: string | undefined;
+    cwd?: string | undefined;
+    finding?: string | undefined;
+    /** A finding group (#52): one decision per member. */
+    group?: string | undefined;
+    accept?: boolean | undefined;
+    reject?: boolean | undefined;
+    /** A design decision's chosen reference; recorded as an accept with designChoice. */
+    choose?: string | undefined;
+    scope?: "instance" | "rule" | undefined;
+    reason?: string | undefined;
+    /** Internal adapter option: validate without normalizing human text. */
+    preserveReason?: boolean | undefined;
+    list?: boolean | undefined;
+    /** With --list: the caller prints the lifecycles as JSON instead. */
+    json?: boolean | undefined;
+    /** Acknowledge the finding as tracked elsewhere under this reference. */
+    ack?: string | undefined;
+    /** Remove the finding's acknowledgement. */
+    unack?: boolean | undefined;
+    /** --ack only: free text recorded with the acknowledgement. */
+    note?: string | undefined;
+    /** --ack only: the last day (YYYY-MM-DD, inclusive) it holds. */
+    until?: string | undefined;
+    dependencies?: DecideDependencies | undefined;
+    write?: ((message: string) => void) | undefined;
+  },
+): Promise<DecideResult> {
+  const rulingFlags = [
+    options.candidate,
+    options.wording,
+    options.noRule,
+    options.addStep,
+    options.token,
+    options.drift,
+  ].some((value) => value !== undefined);
+  if (options.escalation !== undefined && !options.build?.trim())
+    throw new IdiomError("--escalation requires --build");
+  if (options.build !== undefined && !options.build.trim())
+    throw new IdiomError("--build must not be blank");
+  if (options.escalation !== undefined && !options.escalation.trim())
+    throw new IdiomError("--escalation must not be blank");
+  const provenance = options.build
+    ? {
+        build: options.build,
+        ...(options.escalation ? { escalation: options.escalation } : {}),
+      }
+    : undefined;
+  const otherMode = [
+    options.finding,
+    options.group,
+    options.accept,
+    options.reject,
+    options.choose,
+    options.scope,
+    options.ack,
+    options.unack,
+    options.note,
+    options.until,
+  ].some((value) => value !== undefined);
+  if (options.pending) {
+    if (
+      otherMode ||
+      rulingFlags ||
+      options.decision ||
+      options.list ||
+      options.reason !== undefined ||
+      provenance
+    )
+      throw new IdiomError(
+        "--pending is read-only and cannot be combined with other decision modes",
+      );
+    const context = await loadProjectContext(options);
+    const decisionNeeded = await pendingDecisions(options);
+    const text = decisionQuestion(decisionNeeded);
+    if (!options.json) options.write?.(text || "No pending decisions.");
+    return {
+      projectDirectory: context.projectDirectory,
+      path: decisionLogPath(context.projectDirectory),
+      accepted: 0,
+      rejected: 0,
+      skipped: 0,
+      listed: true,
+      decisionNeeded,
+      decisionQuestion: text,
+    };
+  }
+  if (options.decision !== undefined) {
+    if (otherMode || options.list)
+      throw new IdiomError(
+        "--decision cannot be combined with finding, group or listing modes",
+      );
+    const reason = trimmedReason(options.reason);
+    if (!reason)
+      throw new IdiomError(
+        "ruling answers require an explicit nonblank --reason",
+      );
+    const context = await loadProjectContext(options);
+    const designPath = join(
+      context.projectDirectory,
+      context.project.design.designFile,
+    );
+    const decision = await lookupUnruledDecision({
+      projectDirectory: context.projectDirectory,
+      designPath,
+      id: options.decision,
+      allowResolved: true,
+    });
+    const at = (options.dependencies?.now?.() ?? new Date()).toISOString();
+    const resolution = rulingAnswer(decision, options, at);
+    const law = await readEffectiveLaw(designPath, context.projectDirectory);
+    const entries = await readDecisionLogEntries(context.projectDirectory);
+    const retry =
+      provenance?.escalation &&
+      entries.some(
+        (entry) =>
+          entry.decision === "ruling" &&
+          entry.fingerprint === decision.fingerprint &&
+          entry.provenance?.build === provenance.build &&
+          entry.provenance?.escalation === provenance.escalation,
+      );
+    if (
+      !retry &&
+      law.resolutions.some((r) => r.fingerprint === decision.fingerprint)
+    )
+      throw new IdiomError(
+        `ruling ${decision.id} has already been recorded in the design law`,
+      );
+    let commit = "unknown";
+    try {
+      commit = (
+        await readGit(context.projectDirectory, ["rev-parse", "HEAD"])
+      ).trim();
+    } catch {
+      /* A project need not be a Git checkout. */
+    }
+    const path = await appendRulingDecision(context.projectDirectory, {
+      at,
+      commit,
+      findingId: decision.id,
+      fingerprint: decision.fingerprint,
+      decision: "ruling",
+      actor: "human",
+      reason,
+      resolution,
+      ...(provenance ? { provenance } : {}),
+    });
+    return {
+      projectDirectory: context.projectDirectory,
+      path,
+      accepted: 0,
+      rejected: 0,
+      skipped: 0,
+    };
+  }
+  if (rulingFlags)
+    throw new IdiomError("ruling answer flags require --decision");
+  if (provenance && options.choose === undefined)
+    throw new IdiomError(
+      "--build and --escalation require --choose or --decision",
+    );
+  if (provenance && !trimmedReason(options.reason))
+    throw new IdiomError(
+      "external answers require an explicit nonblank --reason",
+    );
   const catalog = await loadReviewCatalog(options);
-  const decisions = await readDecisionLog(catalog.projectDirectory);
+  const entries = await readDecisionLogEntries(catalog.projectDirectory);
+  const decisions = judgments(entries);
+  const acknowledgementMode =
+    options.ack !== undefined ||
+    options.unack === true ||
+    options.note !== undefined ||
+    options.until !== undefined;
   const flagMode =
     options.finding !== undefined ||
     options.group !== undefined ||
@@ -213,12 +404,19 @@ export async function decideCommand(options: {
   let path = decisionLogPath(catalog.projectDirectory);
 
   if (options.list === true) {
-    if (flagMode)
+    if (flagMode || acknowledgementMode)
       throw new IdiomError(
-        "--list cannot be combined with --finding, --group, --accept, --reject, --scope, or --reason",
+        "--list cannot be combined with --finding, --group, --accept, --reject, --scope, --reason, --ack, --unack, --note, or --until",
       );
-    const lifecycles = await reduceLifecycles({ catalog, decisions });
-    (options.write ?? (() => undefined))(renderLifecycleList(lifecycles));
+    const lifecycles = await reduceLifecycles({
+      catalog,
+      decisions,
+      acknowledgements: acknowledgementEntries(entries),
+      introductions: true,
+      now: options.dependencies?.now?.() ?? new Date(),
+    });
+    if (options.json !== true)
+      (options.write ?? (() => undefined))(renderLifecycleList(lifecycles));
     return {
       projectDirectory: catalog.projectDirectory,
       path,
@@ -226,6 +424,122 @@ export async function decideCommand(options: {
       rejected,
       skipped,
       listed: true,
+      lifecycles,
+    };
+  }
+
+  if (acknowledgementMode) {
+    const now = options.dependencies?.now?.() ?? new Date();
+    if (options.ack !== undefined && options.unack === true)
+      throw new IdiomError("provide only one of --ack or --unack");
+    if (options.ack === undefined && options.unack !== true)
+      throw new IdiomError(
+        options.note !== undefined
+          ? "--note applies only to --ack"
+          : "--until applies only to --ack",
+      );
+    const flag = options.ack !== undefined ? "--ack" : "--unack";
+    if (
+      options.accept !== undefined ||
+      options.reject !== undefined ||
+      options.choose !== undefined
+    )
+      throw new IdiomError(
+        `${flag} records no judgment; it cannot be combined with --accept, --reject or --choose`,
+      );
+    if (options.scope !== undefined)
+      throw new IdiomError(
+        `${flag} applies to one finding; --scope does not apply`,
+      );
+    if (options.reason !== undefined)
+      throw new IdiomError(
+        options.ack !== undefined
+          ? "--ack records a note with --note, not --reason"
+          : "--unack takes no --reason",
+      );
+    if (options.group !== undefined)
+      throw new IdiomError(`${flag} applies to one --finding, not a --group`);
+    if (options.unack === true && options.note !== undefined)
+      throw new IdiomError("--note applies only to --ack");
+    if (options.unack === true && options.until !== undefined)
+      throw new IdiomError("--until applies only to --ack");
+    if (options.finding === undefined)
+      throw new IdiomError(`${flag} requires a finding id`);
+    let note: string | undefined;
+    if (options.note !== undefined) {
+      if (options.note.trim() === "")
+        throw new IdiomError("--note must not be blank");
+      // MCP records the human's reason verbatim, as it does for judgments.
+      note = options.preserveReason ? options.note : options.note.trim();
+    }
+    let reference: string | undefined;
+    if (options.ack !== undefined) {
+      reference = options.ack.trim();
+      if (reference === "") throw new IdiomError("--ack needs a reference");
+      if (/[\r\n]/.test(reference))
+        throw new IdiomError("--ack reference must be a single line");
+      if (reference.length > 500)
+        throw new IdiomError("--ack reference must be at most 500 characters");
+    }
+    const until =
+      options.until === undefined ? undefined : parseUntil(options.until, now);
+    const lineage = findCatalogLineage(catalog, options.finding);
+    const latest = lineage.latest.finding;
+    if (reference === undefined) {
+      const current = latestAcknowledgement(
+        lineage,
+        acknowledgementEntries(entries),
+      );
+      if (current?.decision !== "acknowledge")
+        throw new IdiomError(`${lineage.id} has no acknowledgement to remove`);
+      await persistCatalogFindingNames(catalog);
+      const result = await appendAcknowledgement({
+        projectDirectory: catalog.projectDirectory,
+        finding: { ...latest, id: lineage.id },
+        kind: "unacknowledge",
+        reference: current.reference,
+        now: options.dependencies?.now,
+      });
+      return {
+        projectDirectory: catalog.projectDirectory,
+        path: result.path,
+        accepted,
+        rejected,
+        skipped,
+        unacknowledged: 1,
+        acknowledgement: {
+          findingId: lineage.id,
+          reference: current.reference,
+        },
+      };
+    }
+    await persistCatalogFindingNames(catalog);
+    const result = await appendAcknowledgement({
+      projectDirectory: catalog.projectDirectory,
+      finding: { ...latest, id: lineage.id },
+      kind: "acknowledge",
+      reference,
+      ...(until === undefined ? {} : { until }),
+      ...(note === undefined ? {} : { note }),
+      evidence: {
+        severity: latest.severity,
+        ...(latest.rule === undefined ? {} : { rule: latest.rule }),
+        category: latest.category,
+      },
+      now: options.dependencies?.now,
+    });
+    return {
+      projectDirectory: catalog.projectDirectory,
+      path: result.path,
+      accepted,
+      rejected,
+      skipped,
+      acknowledged: 1,
+      acknowledgement: {
+        findingId: lineage.id,
+        reference,
+        ...(until === undefined ? {} : { until }),
+      },
     };
   }
 
@@ -303,6 +617,7 @@ export async function decideCommand(options: {
       scope: options.reject ? (options.scope ?? "instance") : "instance",
       ...(reason === undefined ? {} : { reason }),
       ...(designChoice === undefined ? {} : { designChoice }),
+      ...(provenance ? { provenance } : {}),
       now: options.dependencies?.now,
     });
     path = result.path;
@@ -351,6 +666,7 @@ export async function decideCommand(options: {
       scope: response.action === "reject" ? response.scope : "instance",
       ...(reason === undefined || reason === "" ? {} : { reason }),
       ...(designChoice === undefined ? {} : { designChoice }),
+      ...(provenance ? { provenance } : {}),
       now: options.dependencies?.now,
     });
     path = result.path;

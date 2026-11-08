@@ -322,7 +322,7 @@ test("interactive init emits the Autobuild diff before confirmation and write", 
     confirm: async (request) => {
       if (request.kind === "offer-flow-generation") return false;
       events.push(`confirm:${request.kind}`);
-      if (request.kind === "apply-autobuild-config")
+      if (request.kind === "apply-wiring")
         expect(await readFile(config, "utf8")).toBe(original);
       return true;
     },
@@ -332,14 +332,14 @@ test("interactive init emits the Autobuild diff before confirmation and write", 
   const diff = events.findIndex((event) =>
     event.includes("+++ b/autobuild.toml"),
   );
-  const question = events.indexOf("confirm:apply-autobuild-config");
+  const question = events.indexOf("confirm:apply-wiring");
   const outcome = events.findIndex((event) =>
     event.includes("Wired Idiom verification into Autobuild"),
   );
   expect(diff).toBeGreaterThan(-1);
   expect(diff).toBeLessThan(question);
   expect(question).toBeLessThan(outcome);
-  expect(await readFile(config, "utf8")).toContain('"test", "idiom"');
+  expect(await readFile(config, "utf8")).toContain('"test", "idiom-check"');
 });
 
 test("noninteractive init reports Autobuild availability without writing", async () => {
@@ -377,7 +377,7 @@ test("unsafe Autobuild configuration prints manual guidance and exits zero", asy
 
   expect(code).toBe(0);
   expect(stdout.join("")).toContain("Autobuild wiring made no changes");
-  expect(stdout.join("")).toContain("# Copy these entries");
+  expect(stdout.join("")).toContain('# Append "idiom-check"');
   expect(stdout.join("")).toContain(
     "Ordinary Idiom initialization still completed",
   );

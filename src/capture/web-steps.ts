@@ -1,7 +1,13 @@
 import { type FileHandle, open } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import type { ConsoleMessage, Page, Request, Response } from "playwright";
+import {
+  type ConsoleMessage,
+  errors,
+  type Page,
+  type Request,
+  type Response,
+} from "playwright";
 import { targetVisibility } from "../checks/visibility-dom.js";
 import {
   projectLogPathSchema,
@@ -14,8 +20,14 @@ import {
 import type { ExplanationCollector } from "./explanations.js";
 import type { MotionCollector } from "./motion.js";
 import type { ProgressCollector } from "./progress.js";
+import { type CapturedScreenshot, captureScreenshot } from "./screenshot.js";
 import type { TimelineCollector } from "./timeline.js";
-import type { ConsoleRecord } from "./types.js";
+import {
+  navigate,
+  TupleTimeoutError,
+  withTimeoutDiagnostic,
+} from "./timeouts.js";
+import type { AttemptTimeouts, ConsoleRecord } from "./types.js";
 
 export type ResolvedWebHealth = {
   allow: WebHealthAllow;
@@ -68,8 +80,10 @@ export class WebStepFailure extends Error {
     message: string,
     readonly status: number | null,
     readonly screenshot: Buffer | undefined,
+    readonly cause?: unknown,
+    readonly screenshotGeometry?: CapturedScreenshot["geometry"] | undefined,
   ) {
-    super(message);
+    super(message, { cause });
   }
 }
 
@@ -173,8 +187,11 @@ export class WebStepRunner implements StepHealthGuard {
     | undefined;
   private requests = new Map<Request, Owner>();
   private pending = new Set<Request>();
-  private diagnostic: { owner: Owner; message: string } | undefined;
+  private diagnostic:
+    | { owner: Owner; message: string; cause?: unknown }
+    | undefined;
   private failureScreenshot: Promise<Buffer | undefined> | undefined;
+  private failureGeometry: CapturedScreenshot["geometry"] | undefined;
   private lastActivity = performance.now();
   private log: ServerLogCursor | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -199,6 +216,12 @@ export class WebStepRunner implements StepHealthGuard {
     private onActivity?: ((step: string) => void) | undefined,
     private signal?: AbortSignal | undefined,
     private timelines?: TimelineCollector | undefined,
+    private timeouts: AttemptTimeouts = {
+      navigation: 30000,
+      readiness: 10000,
+      quiet: 5000,
+    },
+    private maxFullPageHeight = 16000,
   ) {
     this.urls = health.allow.urls.map((source) => new RegExp(source));
     if (health.serverLog !== undefined) {
@@ -223,9 +246,9 @@ export class WebStepRunner implements StepHealthGuard {
   };
   private allowedUrl = (url: string) =>
     this.urls.some((pattern) => pattern.test(url));
-  private fail(message: string, owner = this.owner) {
+  private fail(message: string, owner = this.owner, cause?: unknown) {
     if (owner !== undefined && this.diagnostic === undefined) {
-      this.diagnostic = { owner, message };
+      this.diagnostic = { owner, message, cause };
       this.failureScreenshot = this.captureFailure();
       this.signalFailure();
     }
@@ -233,7 +256,11 @@ export class WebStepRunner implements StepHealthGuard {
   private async captureFailure(): Promise<Buffer | undefined> {
     try {
       await this.motionWindow?.finish("step failed; screenshot follows");
-      return await this.page.screenshot(this.screenshotOptions);
+      const shot = await captureScreenshot(this.page, this.screenshotOptions, {
+        maxFullPageHeight: this.maxFullPageHeight,
+      });
+      this.failureGeometry = shot.geometry;
+      return shot.buffer;
     } catch {
       return undefined;
     }
@@ -316,18 +343,25 @@ export class WebStepRunner implements StepHealthGuard {
       `Step ${diagnostic.owner.index} (${diagnostic.owner.action})${diagnostic.owner.label === undefined ? "" : ` ${diagnostic.owner.label}`}: ${diagnostic.message}`,
       this.status,
       screenshot,
+      diagnostic.cause,
+      this.failureGeometry,
     );
   }
 
   private async drain() {
-    const deadline = performance.now() + 5_000;
+    const deadline = performance.now() + this.timeouts.quiet;
     while (true) {
       await this.checkpoint();
       const now = performance.now();
       if (this.pending.size === 0 && now - this.lastActivity >= 250) break;
       if (now >= deadline) {
         this.fail(
-          `step-health timeout after 5000 ms; pending URLs: ${[...this.pending].map((request) => request.url()).join(", ") || "none (persistent activity)"}`,
+          `step-health timeout after ${this.timeouts.quiet} ms; pending URLs: ${[...this.pending].map((request) => request.url()).join(", ") || "none (persistent activity)"}`,
+          this.owner,
+          new TupleTimeoutError(
+            { kind: "readiness", timeoutMs: this.timeouts.quiet },
+            new errors.TimeoutError("readiness drain expired"),
+          ),
         );
         await this.checkpoint();
       }
@@ -348,7 +382,12 @@ export class WebStepRunner implements StepHealthGuard {
   ): Promise<number | null> {
     this.signal?.throwIfAborted();
     this.onActivity?.("navigation");
-    const response = await this.page.goto(url);
+    const response = await navigate(
+      this.page,
+      url,
+      this.timeouts.navigation,
+      "domcontentloaded",
+    );
     this.status = response?.status() ?? null;
     this.responseUrl = response?.url();
     await this.motion?.initialize();
@@ -416,8 +455,12 @@ export class WebStepRunner implements StepHealthGuard {
       const started = performance.now();
       let failed = false;
       try {
-        const action = runAction(this.page, step).catch((error) => {
-          this.fail(messageOf(error));
+        const action = runAction(
+          this.page,
+          step,
+          this.timeouts.readiness,
+        ).catch((error) => {
+          this.fail(messageOf(error), this.owner, error);
         });
         await Promise.race([action, this.failureSignal]);
         // Actionability/assertion waits cannot count toward post-action quiet.
@@ -486,8 +529,28 @@ export class WebStepRunner implements StepHealthGuard {
   }
 }
 
-export async function runAction(page: Page, step: WebStep) {
-  const timeout = 10_000;
+export async function runAction(
+  page: Page,
+  step: WebStep,
+  readinessTimeout = 10000,
+) {
+  const readiness = [
+    "waitFor",
+    "expectUrl",
+    "expectText",
+    "expectVisible",
+  ].includes(step.action);
+  const timeout = readiness ? readinessTimeout : 10000;
+  if (!readiness) return runActionWithTimeout(page, step, timeout);
+  return withTimeoutDiagnostic("readiness", timeout, () =>
+    runActionWithTimeout(page, step, timeout),
+  );
+}
+async function runActionWithTimeout(
+  page: Page,
+  step: WebStep,
+  timeout: number,
+) {
   switch (step.action) {
     case "click":
       return page.locator(step.selector).click({ timeout });
@@ -540,7 +603,7 @@ export async function runAction(page: Page, step: WebStep) {
         if (result.visible) return;
         await page.waitForTimeout(50);
       } while (performance.now() < deadline);
-      throw new Error(
+      throw new errors.TimeoutError(
         `target not visible: ${step.selector}; ${result.reason ?? "no visible intersection"} (${result.boundary ?? step.within ?? "viewport"})`,
       );
     }

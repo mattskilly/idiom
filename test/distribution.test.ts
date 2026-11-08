@@ -155,6 +155,18 @@ test("the program is one self-contained file", async () => {
   expect(program).not.toMatch(/^#!/);
 });
 
+test("Git tracks both distribution files despite the dist/ ignore", async () => {
+  // A Git install receives only tracked files. 0.20.0's first distribution
+  // commit tracked the launcher without the program it loads.
+  const { stdout } = await execFileAsync("git", ["ls-files", "--", "dist/"], {
+    cwd: repositoryRoot,
+  });
+  expect(stdout.split("\n").filter(Boolean).sort()).toEqual([
+    "dist/cli.js",
+    "dist/main.js",
+  ]);
+});
+
 test("minimal packed payload excludes repository-development inputs", async () => {
   // Bun's Git installer copies the checkout. This pack assertion proves that
   // the allowlisted runtime payload works without development files; it does
@@ -164,7 +176,7 @@ test("minimal packed payload excludes repository-development inputs", async () =
   expect(files).toContain("dist/main.js");
   expect(files).toContain("templates/project.json");
   expect(files).toContain("templates/autobuild.idiom.toml");
-  expect(files).toContain("templates/ab-verify-idiom/SKILL.md");
+  expect(files).toContain("templates/idiom-verify/SKILL.md");
   expect(files).toContain("package.json");
   expect(files).toContain("README.md");
   expect(files).not.toContain("src/cli.ts");
@@ -534,7 +546,7 @@ test.each(["legacy", "auto"] as const)(
         );
         expect(client.getServerVersion()?.version).toBe(plugin.version);
       }
-      expect((await client.listTools()).tools).toHaveLength(22);
+      expect((await client.listTools()).tools).toHaveLength(24);
       const response = await client.callTool({
         name: "idiom_flows",
         arguments: {},

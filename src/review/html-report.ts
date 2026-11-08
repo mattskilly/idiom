@@ -1,3 +1,5 @@
+import type { RecordedIntroduction } from "../attribution/record.js";
+import { appearedLine } from "../attribution/render.js";
 import type { ProductionBuild } from "../capture/types.js";
 import { coverageStatusText, paintedCoverageText } from "../checks/painted.js";
 import type { CheckCoverage, CheckTuple } from "../checks/types.js";
@@ -11,6 +13,7 @@ import {
   truncatedReferencesSentence,
 } from "../critique/reference-bound.js";
 import type { CritiqueEvidenceLimits } from "../critique/types.js";
+import type { AcknowledgementLapse } from "../decisions/acknowledgements.js";
 import { tupleDesigns } from "../design/evidence.js";
 import type { LoadedDesign } from "../design/types.js";
 import {
@@ -18,6 +21,10 @@ import {
   acceptanceText,
   basisDescription,
 } from "../findings/presentation.js";
+import {
+  type HumanFoundSummary,
+  humanFoundLine,
+} from "../learn/misses-summary.js";
 import { type ReportCoverage, renderCoverageHtml } from "../report/coverage.js";
 import {
   badge,
@@ -37,9 +44,11 @@ import { describeSpread, type FindingGroup, isRepeated } from "./groups.js";
 import { orderFindings } from "./presentation-order.js";
 import { buildIssueRankingContext } from "./ranking.js";
 import {
+  acknowledgementLabel,
   degradedReasonSentence,
   designSourceTitle,
   fallbackSentence,
+  findingIntroduction,
   groupCrop,
   type PageReviewScope,
   pageFindingEvidence,
@@ -56,6 +65,8 @@ function deferredDecisionLabel(
 }
 
 export type ReviewHtmlOptions = {
+  humanFound?: HumanFoundSummary | undefined;
+  now?: Date | undefined;
   flow: string;
   commit: string;
   build?: ProductionBuild | undefined;
@@ -81,6 +92,8 @@ export type ReviewHtmlOptions = {
   deferred?: Finding[] | undefined;
   /** Deferred ids `idiom decide --finding` accepts; absent means all are report-only. */
   deferredDecisionTargets?: ReadonlySet<string> | undefined;
+  /** Acknowledgements on this run's findings that no longer hold. */
+  acknowledgementLapses?: AcknowledgementLapse[] | undefined;
   groups?: FindingGroup[] | undefined;
   severityOverrides?:
     | Array<{
@@ -90,6 +103,8 @@ export type ReviewHtmlOptions = {
         effective: Finding["severity"];
       }>
     | undefined;
+  /** `check` only: first-seen ranges of this run's new findings, by introductionKey. */
+  introductions?: ReadonlyMap<string, RecordedIntroduction> | undefined;
 };
 
 function findingCard(
@@ -97,7 +112,9 @@ function findingCard(
   severityOverrides: ReviewHtmlOptions["severityOverrides"],
   page?: PageReviewScope | undefined,
   screenshots?: ReadonlyMap<string, string>,
+  introductions?: ReviewHtmlOptions["introductions"],
 ): string {
+  const introduction = findingIntroduction(finding, introductions);
   const pageEvidence = pageFindingEvidence(finding, page);
   const severityOverride = severityOverrides?.find(
     (item) => item.fingerprint === finding.fingerprint,
@@ -113,7 +130,9 @@ function findingCard(
         : "Manual confirmation is required.";
   return `<article class="finding">
     <h4>${escapeHtml(finding.id)}: ${escapeHtml(finding.category)}</h4>
-    <div class="summary">${badge(finding.severity, finding.severity)} ${badge(finding.layer)}${finding.basisDetails?.kind === "judged" && finding.basisDetails.confidence !== undefined ? ` ${badge(`confidence ${finding.basisDetails.confidence}`)}` : ""}</div>
+    <div class="summary">${badge(finding.severity, finding.severity)} ${badge(finding.layer)}${finding.basisDetails?.kind === "judged" && finding.basisDetails.confidence !== undefined ? ` ${badge(`confidence ${finding.basisDetails.confidence}`)}` : ""}${finding.acknowledgement === undefined ? "" : ` ${badge(acknowledgementLabel(finding.acknowledgement))}`}</div>
+    ${finding.acknowledgement === undefined ? "" : `<p><strong>Acknowledged (${escapeHtml(finding.acknowledgement.reference)}):</strong> not counted toward --fail-on or as new.${finding.acknowledgement.note === undefined ? "" : ` Note: ${escapeHtml(finding.acknowledgement.note)}`}</p>`}
+    ${introduction === undefined ? "" : `<p>${escapeHtml(appearedLine(introduction))}</p>`}
     ${severityOverride === undefined ? "" : `<p><strong>Severity override:</strong> ${escapeHtml(severityOverride.original)} → ${escapeHtml(severityOverride.effective)} by rule ${escapeHtml(severityOverride.override.id)} (${escapeHtml(severityOverride.override.reason)})</p>`}
     ${finding.rule === undefined ? "" : `<p><strong>Guidance:</strong> ${escapeHtml(finding.rule)}</p>`}
     ${(finding.evidence.references?.length ?? 0) === 0 ? "" : `<p><strong>References:</strong> ${(finding.evidence.references ?? []).map((label) => escapeHtml(label)).join(" · ")}</p>`}
@@ -124,6 +143,7 @@ function findingCard(
     ${pageEvidence.citations.map((citation) => `<p>${escapeHtml(citation)}</p>`).join("")}
     ${pageEvidence.fix === undefined ? "" : `<p><strong>Fix:</strong> ${escapeHtml(pageEvidence.fix)}</p>`}
     ${finding.evidence.consoleExcerpt === undefined ? "" : preformatted("Console evidence", finding.evidence.consoleExcerpt)}
+    ${finding.evidence.serverLogExcerpt === undefined ? "" : preformatted("Server log", finding.evidence.serverLogExcerpt)}
     ${finding.evidence.domSnippet === undefined ? "" : preformatted("DOM evidence", finding.evidence.domSnippet)}
     ${(finding.evidence.axeNodes?.length ?? 0) === 0 ? "" : preformatted("Accessibility evidence", JSON.stringify(finding.evidence.axeNodes, null, 2))}
     ${extras.length === 0 ? "" : `<p><strong>Local evidence:</strong> ${extras.map((path) => evidenceLink(path)).join(" · ")}</p>`}
@@ -145,6 +165,15 @@ function repeatedSection(options: ReviewHtmlOptions): string {
       return `<article class="panel"><h3>${escapeHtml(group.id)}: ${escapeHtml(group.category)}</h3><div class="summary">${badge(group.severity, group.severity)}</div><p>${escapeHtml(describeSpread(group))}</p><p class="meta">Members: ${escapeHtml(group.members.map((member) => member.id).join(", "))}</p>${crop === undefined ? "" : `<img class="screenshot" src="${escapeHtmlAttribute(reportRelativeHref(crop))}" alt="${escapeHtmlAttribute(`Representative crop for ${group.id}`)}">`}</article>`;
     })
     .join("")}</section>`;
+}
+
+function acknowledgementsSection(
+  lapses: readonly AcknowledgementLapse[],
+): string {
+  if (lapses.length === 0) return "";
+  return `<section><h2>Acknowledgements</h2><ul>${lapses
+    .map((lapse) => `<li>${escapeHtml(lapse.message)}</li>`)
+    .join("")}</ul></section>`;
 }
 
 function suppressedSection(items: SuppressedFinding[]): string {
@@ -299,6 +328,12 @@ function advisorySection(review: AdvisoryReview | undefined): string {
     .join("")}</section>`;
 }
 
+function humanFoundParagraph(options: ReviewHtmlOptions): string {
+  return options.humanFound === undefined
+    ? ""
+    : `<p class="meta">${escapeHtml(humanFoundLine(options.humanFound, options.now ?? new Date()))}</p>`;
+}
+
 export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
   const axisAware = options.tuples.some((tuple) => tuple.colorSchemeAxis);
   const heading =
@@ -356,9 +391,9 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
                 (tuple.colorSchemeAxis ? tuple.colorScheme : undefined),
           );
           return `<section class="panel"><h3>${escapeHtml(tuple.viewport)}${axisAware ? ` / ${escapeHtml(tuple.colorScheme ?? "light")}` : ""} (${tuple.width}×${tuple.height})${tuple.combination === undefined ? "" : ` [${escapeHtml(tuple.combination)}]`}</h3>
-          ${tuple.design ? designTupleHtml(tuple, screenshot, options.screenshots) : screenshot === undefined ? "" : `<img class="screenshot" src="${escapeHtmlAttribute(screenshot)}" alt="${escapeHtmlAttribute(`${state} at ${tuple.viewport}${axisAware ? ` in ${tuple.colorScheme}` : ""}`)}">`}
+          ${tuple.design ? designTupleHtml(tuple, screenshot, options.screenshots) : screenshot === undefined ? (tuple.screenshotPath === undefined ? "" : `<p>${evidenceLink(tuple.screenshotPath, "Open screenshot (too large to inline in this report)")}</p>`) : `<img class="screenshot" src="${escapeHtmlAttribute(screenshot)}" alt="${escapeHtmlAttribute(`${state} at ${tuple.viewport}${axisAware ? ` in ${tuple.colorScheme}` : ""}`)}">`}
           ${tuple.failure === undefined ? "" : `<p><strong>Capture failure:</strong> ${escapeHtml(tuple.failure.message)} (${evidenceLink(tuple.metadataPath, "metadata")})</p>`}
-          ${findings.length === 0 ? "<p>No findings.</p>" : findings.map((finding) => findingCard(finding, options.severityOverrides, options.page, options.screenshots)).join("")}
+          ${findings.length === 0 ? (tuple.failure?.hostDeferred ? "<p>Review deferred for this coordinate.</p>" : "<p>No findings.</p>") : findings.map((finding) => findingCard(finding, options.severityOverrides, options.page, options.screenshots, options.introductions)).join("")}
           </section>`;
         })
         .join("")}</section>`;
@@ -403,7 +438,7 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
       : `<section><h2>Page-review scope</h2><ul><li>Page: ${escapeHtml(options.page.url)}</li><li>Brief: ${escapeHtml(options.page.brief ?? "not supplied")}</li><li>Art direction: ${escapeHtml(options.page.direction ?? "not supplied")}</li><li>Focus areas: ${escapeHtml(options.page.focus.length === 0 ? "none" : options.page.focus.join(", "))}</li></ul><p>Only the brief is the source of truth for the offer and every statistic; claims were not fact-checked against the web.</p></section>`;
   return renderHtmlDocument({
     title: `${heading} review: ${options.flow}`,
-    body: `<header><h1>${escapeHtml(heading)} review: ${escapeHtml(options.flow)}</h1><p class="meta">${options.outcome.kind === "quick" ? "Source commit" : "Captured commit"}: ${escapeHtml(options.commit)}${options.outcome.kind === "quick" ? " (live URL capture; no Git source identity)" : ""}</p>${options.build === undefined ? "" : `<p class="meta">Production build: ${escapeHtml(options.build.id)}</p>`}<div class="summary">${badge(`${options.findings.length} actionable finding${options.findings.length === 1 ? "" : "s"}`)}${options.outcome.kind === "quick" || options.page !== undefined ? "" : ` ${badge(`${modelDecisionCount} unruled decision${modelDecisionCount === 1 ? "" : "s"}`)}`}${questionCount === 0 ? "" : ` ${badge(`${questionCount} design system question${questionCount === 1 ? "" : "s"}`)}`} ${badge(options.outcome.kind, options.outcome.kind === "full" ? "good" : "neutral")}</div><p>${escapeHtml(outcome)}</p>${truncatedReferences}${deterministicContext}${evidenceLimits}<p class="muted">${options.outcome.kind === "quick" || options.page !== undefined ? "Each finding is reported independently." : "Findings and unruled decisions are independent. Findings are decided through idiom decide; rulings are recorded only through idiom ruling."}</p></header>${repeatedSection(options)}${options.reportCoverage === undefined ? "" : renderCoverageHtml(options.reportCoverage)}${pageScope}${designSystemSection(options)}${unruledSection(options)}${stateSections}${suppressedSection(options.suppressed ?? [])}${deferredSection}${coverageTable(options)}${advisorySection(options.advisory)}${quickLimits}`,
+    body: `<header><h1>${escapeHtml(heading)} review: ${escapeHtml(options.flow)}</h1><p class="meta">${options.outcome.kind === "quick" ? "Source commit" : "Captured commit"}: ${escapeHtml(options.commit)}${options.outcome.kind === "quick" ? " (live URL capture; no Git source identity)" : ""}</p>${options.build === undefined ? "" : `<p class="meta">Production build: ${escapeHtml(options.build.id)}</p>`}${(options.reportCoverage?.runDiagnostics ?? []).map((line) => `<p>${escapeHtml(line)}</p>`).join("")}<div class="summary">${badge(`${options.findings.length} actionable finding${options.findings.length === 1 ? "" : "s"}`)}${options.outcome.kind === "quick" || options.page !== undefined ? "" : ` ${badge(`${modelDecisionCount} unruled decision${modelDecisionCount === 1 ? "" : "s"}`)}`}${questionCount === 0 ? "" : ` ${badge(`${questionCount} design system question${questionCount === 1 ? "" : "s"}`)}`} ${badge(options.outcome.kind, options.outcome.kind === "full" ? "good" : "neutral")}</div>${humanFoundParagraph(options)}<p>${escapeHtml(outcome)}</p>${truncatedReferences}${deterministicContext}${evidenceLimits}<p class="muted">${options.outcome.kind === "quick" || options.page !== undefined ? "Each finding is reported independently." : "Findings and unruled decisions are independent. Findings are decided through idiom decide; rulings are recorded only through idiom ruling."}</p></header>${repeatedSection(options)}${options.reportCoverage === undefined ? "" : renderCoverageHtml(options.reportCoverage, false)}${pageScope}${designSystemSection(options)}${unruledSection(options)}${stateSections}${acknowledgementsSection(options.acknowledgementLapses ?? [])}${suppressedSection(options.suppressed ?? [])}${deferredSection}${coverageTable(options)}${advisorySection(options.advisory)}${quickLimits}`,
     printable: true,
   });
 }

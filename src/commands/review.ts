@@ -114,7 +114,8 @@ export async function reviewCommand(options: {
       .filter(
         (f) =>
           f.basis === "judged" &&
-          (f.status === "open" || f.status === "approved"),
+          (f.status === "open" || f.status === "approved") &&
+          f.acknowledgement === undefined,
       )
       .map((f) => summarizeFinding(f, result, options.cwd ?? process.cwd())),
     unclassified: [...findings, ...result.deferredFindings].filter(

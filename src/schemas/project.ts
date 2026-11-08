@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { validGlob } from "../../plugins/claude/hooks/lib.mjs";
+import { isValidPattern } from "../attribution/tickets.js";
 import { filmstripConfigSchema } from "../checks/filmstrip-schema.js";
 import { parseCssColor } from "../checks/shared.js";
 import { designTokensSchema } from "../system/learn/schema.js";
@@ -7,6 +8,12 @@ import {
   componentToleranceDefault,
   designDriftConfigSchema,
 } from "./design.js";
+
+import {
+  normalizeTargetTolerance,
+  spacingTargetSchema,
+  targetToleranceSchema,
+} from "./targets.js";
 
 export const colorSchemeSchema = z.enum(["light", "dark"]);
 
@@ -74,20 +81,38 @@ const surfacesSchema = z
 
 const componentSizeSchema = z
   .object({
-    name: z.string().trim().min(1),
+    name: z.string().trim().min(1).optional(),
     selector: z.string().trim().min(1),
-    width: z.number().positive(),
-    height: z.number().positive(),
-    tolerance: z
-      .object({
-        ratio: z.number().min(0).default(0.25),
-        px: z.number().min(0).default(4),
-        mode: z.enum(["tighter", "looser"]).default("looser"),
-      })
-      .strict()
-      .default(componentToleranceDefault),
+    width: z.number().finite().positive().optional(),
+    height: z.number().finite().positive().optional(),
+    tolerance: targetToleranceSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => value.width !== undefined || value.height !== undefined,
+    "declare at least one component dimension",
+  )
+  .transform((value) => {
+    const legacy =
+      (value.width !== undefined && value.height !== undefined) ||
+      (value.tolerance !== undefined &&
+        value.tolerance.px === undefined &&
+        value.tolerance.ratio === undefined);
+    const tolerance =
+      value.tolerance === undefined
+        ? componentToleranceDefault
+        : legacy
+          ? {
+              ratio: value.tolerance.ratio ?? 0.25,
+              px: value.tolerance.px ?? 4,
+              mode: value.tolerance.mode ?? ("looser" as const),
+            }
+          : normalizeTargetTolerance(
+              value.width ?? value.height ?? 0,
+              value.tolerance,
+            );
+    return { ...value, name: value.name ?? value.selector, tolerance };
+  });
 
 const isValidRegex = (pattern: string): boolean => {
   try {
@@ -369,6 +394,7 @@ export const checksConfigSchema = z
       .prefault({}),
     centeringTolerance: z.number().positive().default(1.5),
     components: z.array(componentSizeSchema).default([]),
+    spacingTargets: z.array(spacingTargetSchema).default([]),
     copy: copyConfigSchema.prefault({}),
     glyphAllow: z.array(z.string().min(1)).default([]),
     errorPatterns: z.array(z.string().min(1)).default([]),
@@ -530,6 +556,17 @@ export const checksConfigSchema = z
       .optional(),
     touchReachability: touchReachabilityConfigSchema.optional(),
     liveness: livenessConfigSchema.optional(),
+    visualBlank: z
+      .object({
+        enabled: z.boolean().default(true),
+        swatchSelectors: selectorList,
+      })
+      .strict()
+      .prefault({}),
+    loadingStuck: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
     mediaFill: mediaFillConfigSchema,
     collections: collectionsConfigSchema,
     fonts: z
@@ -915,6 +952,8 @@ const projectInputSchema = z
         hideWebdriver: z.boolean().optional(),
         fullPage: z.boolean().default(true),
         settleMs: z.number().default(250),
+        hostPressureThreshold: z.number().finite().positive().optional(),
+        maxFullPageHeight: z.number().int().positive().optional(),
         animationSettleMs: z.number().finite().nonnegative().default(1500),
         maxMinutes: z.number().finite().positive().default(30),
         /**
@@ -935,7 +974,29 @@ const projectInputSchema = z
       })
       .strict(),
     baselines: z
-      .object({ directory: z.string().min(1) })
+      .object({
+        directory: z.string().min(1).optional(),
+        ignoreDirty: z
+          .array(
+            z.string().refine((pattern) => {
+              const segments = pattern
+                .replaceAll("\\", "/")
+                .split("/")
+                .filter((part) => part !== "." && part !== "");
+              const last = segments.at(-1) ?? "";
+              const anyFilename =
+                /^[*?]+$/.test(last) &&
+                last.includes("*") &&
+                (last.match(/\?/g)?.length ?? 0) <= 1;
+              const universal =
+                segments.every((part) => part === "**" || part === "*") ||
+                (anyFilename &&
+                  segments.slice(0, -1).every((part) => part === "**"));
+              return validGlob(pattern) && segments.length > 0 && !universal;
+            }, "must be a repository-relative glob using *, ? or **; root aliases, repository-wide **, absolute paths, parent traversal, braces, negation and extglobs are unsupported"),
+          )
+          .optional(),
+      })
       .strict()
       .optional(),
     agent: z
@@ -966,6 +1027,36 @@ const projectInputSchema = z
       .optional(),
     /** false turns off the once-a-day check for a newer Idiom release. */
     updateCheck: z.boolean().optional(),
+    /** How `check` names the ticket a new finding's likely commit refers to. */
+    attribution: z
+      .object({
+        ticketPattern: z
+          .string()
+          .min(1)
+          .refine(isValidPattern, "must be a valid regular expression"),
+      })
+      .strict()
+      .optional(),
+    /** `idiom nightly`: which new findings it files, and how. */
+    nightly: z
+      .object({
+        severity: z.enum(["blocker", "major", "minor"]).optional(),
+        labels: z
+          .array(
+            z
+              .string()
+              .regex(
+                /^[A-Za-z0-9][A-Za-z0-9:._-]*$/,
+                "must start with a letter or digit and use only letters, digits, :, ., _ or -",
+              ),
+          )
+          .min(1)
+          .optional(),
+        /** Proposal directory without autobuild; default .idiom/reports/nightly. */
+        out: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
     model: z
       .object({
         provider: critiqueProviderSchema,

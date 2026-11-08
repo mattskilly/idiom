@@ -8,6 +8,7 @@ import {
   selectColorSchemes,
   selectViewports,
 } from "../capture/resolve.js";
+import { isCompleteRun } from "../capture/run-lifecycle.js";
 import type {
   CheckTuple,
   ObservedElement,
@@ -21,7 +22,7 @@ import { pngDataUri } from "../report/html.js";
 import { reachableProjectStores } from "../report/roots.js";
 import { loadCaptureRun } from "../review/artifacts.js";
 import { loadReviewCatalog, reportRootsFor } from "../review/catalog.js";
-import { parseRulingBlocks } from "../rulings/law.js";
+import { effectiveLaw } from "../rulings/effective.js";
 import type { Flow } from "../schemas/flow.js";
 import type { Project } from "../schemas/project.js";
 import {
@@ -97,6 +98,11 @@ async function storedRuns(roots: readonly string[]): Promise<StoredRun[]> {
     for (const entry of entries
       .filter((candidate) => candidate.isDirectory())
       .sort((left, right) => left.name.localeCompare(right.name))) {
+      if (
+        entry.name.startsWith(".") ||
+        !(await isCompleteRun(resolve(root, entry.name)))
+      )
+        continue;
       if (!runs.has(entry.name))
         runs.set(entry.name, {
           runId: entry.name,
@@ -528,7 +534,7 @@ export async function collectSystemPage(options: {
     join(context.projectDirectory, context.project.design.designFile),
     context.project.design.designFile,
   );
-  const law = parseRulingBlocks(lawSource);
+  const law = await effectiveLaw(lawSource, context.projectDirectory);
   const stores = await reachableProjectStores(
     context.projectDirectory,
     options.dependencies?.gitTopology,

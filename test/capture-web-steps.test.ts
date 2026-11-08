@@ -92,6 +92,7 @@ function flowWith(
       {
         id: "final",
         description: "Final state",
+        loadingSettleMs: 50,
         url,
         steps,
         expect: {},
@@ -1025,7 +1026,11 @@ test.each([
     }
     expect(result.screenshot?.length).toBeGreaterThan(100);
   },
-  15_000,
+  // hidden-host waits out expectText's real 10-second action limit (asserted
+  // above and by the fake-timer step tests); navigation, capture and cleanup
+  // around it need more than the 5 seconds a 15-second harness left on a
+  // loaded host. The limit Idiom enforces is unchanged.
+  45_000,
 );
 
 function chainedFlow(states: unknown[]) {
@@ -1043,6 +1048,7 @@ async function captureRun(
   flow: ReturnType<typeof chainedFlow>,
   out: string,
   scope?: CaptureScope,
+  attemptTimeouts?: Partial<import("../src/capture/types.js").AttemptTimeouts>,
 ) {
   const port = await freePort();
   const project = projectAt(port);
@@ -1054,6 +1060,9 @@ async function captureRun(
     out: directory,
     scope,
     dependencies: {
+      attemptTimeouts,
+      readHost: () => ({ load: [0, 0, 0], coreCount: 11 }),
+      measureReadyUrl: async () => 1,
       browserLauncher: createBrowserLauncher({
         createAxe: () => ({ analyze: async () => ({ violations: [] }) }),
       }),
@@ -1446,10 +1455,13 @@ test("persisted failed visibility assertion remains a missing-state finding", as
       },
     ]),
     "shell-step-failure",
+    undefined,
+    { readiness: 100 },
   );
   const tuple = loaded.tuples.find((tuple) => tuple.state === "selected");
   expect(tuple?.failure).toMatchObject({
     stage: "step",
+    timeout: { kind: "readiness", timeoutMs: 200 },
     message: expect.stringContaining("target not visible"),
   });
   expect(

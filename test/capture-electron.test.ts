@@ -249,6 +249,14 @@ async function artifactTree(
         const contents = await readFile(path);
         if (entry.name === "run.json") {
           const artifact = JSON.parse(contents.toString("utf8"));
+          for (const field of [
+            "runId",
+            "owner",
+            "startedAt",
+            "updatedAt",
+            "endedAt",
+          ])
+            if (field in artifact) artifact[field] = `<${field}>`;
           artifact.timings.build.ms = 0;
           artifact.timings.start.ms = 0;
           artifact.timings.probe.ms = 0;
@@ -267,7 +275,8 @@ async function artifactTree(
                 ? Object.fromEntries(
                     Object.entries(value).map(([key, value]) => [
                       key,
-                      key === "elapsedMs" && typeof value === "number"
+                      ["elapsedMs", "observedMs"].includes(key) &&
+                      typeof value === "number"
                         ? 0
                         : withoutElapsed(value),
                     ]),
@@ -405,6 +414,11 @@ test("captures a deterministic Electron fixture with full artifact parity", asyn
     flow,
     dependencies: {
       snapshotSource: async () => ({ commit: "fixture", dirty: false }),
+      // Real load averages differ between runs; the comparison is of capture.
+      readHost: () => ({
+        load: [0, 0, 0] as [number, number, number],
+        coreCount: 8,
+      }),
     },
   };
   const first = await runCapture({
@@ -596,6 +610,8 @@ test.each([0, 1000])(
         env: {},
       },
       capture: { settleMs: 0, reducedMotion: false, animationSettleMs: bound },
+      // Keep this test specific to animation settling rather than the loading window.
+      checks: { loadingStuck: { enabled: false } },
       design: {},
       model: { provider: "claude-code", model: "test" },
     });

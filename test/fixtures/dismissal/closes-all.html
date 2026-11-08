@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+  <head>
+    <style>
+      body { margin: 0; font: 16px system-ui; }
+      header { position: relative; padding: 16px; }
+      [role="menu"] { position: absolute; top: 56px; left: 16px; background: #fff; border: 1px solid #ccc; padding: 4px; list-style: none; margin: 0; }
+      [role="menu"][hidden] { display: none; }
+      main { padding: 120px 16px 16px; }
+      iframe { width: 480px; height: 240px; border: 1px solid #ccc; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <button id="start" aria-haspopup="menu" aria-expanded="false" aria-controls="start-menu">Start from…</button>
+      <ul id="start-menu" role="menu" hidden>
+        <li role="menuitem" tabindex="-1">Blank page</li>
+        <li role="menuitem" tabindex="-1">Template</li>
+      </ul>
+    </header>
+    <main>
+      <p>Canvas</p>
+      <iframe title="Canvas" srcdoc="<body style='margin:0;height:100vh;background:#fafafa'><p>Drop content here</p></body>"></iframe>
+    </main>
+    <script>
+      const trigger = document.getElementById("start");
+      const menu = document.getElementById("start-menu");
+      const close = (refocus) => {
+        if (menu.hidden) return;
+        menu.hidden = true;
+        trigger.setAttribute("aria-expanded", "false");
+        if (refocus) trigger.focus();
+      };
+      trigger.addEventListener("click", () => {
+        const open = menu.hidden;
+        menu.hidden = !open;
+        trigger.setAttribute("aria-expanded", String(open));
+      });
+      document.addEventListener("pointerdown", (event) => {
+        if (!menu.contains(event.target) && !trigger.contains(event.target)) close(false);
+      });
+      window.addEventListener("blur", () => close(false));
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") close(true);
+      });
+    </script>
+  </body>
+</html>

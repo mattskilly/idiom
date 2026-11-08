@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><title>Authored spacing</title><style>
+  body { margin: 0; font: 16px sans-serif; }
+  .box { position: absolute; width: 20px; height: 20px; }
+  #a { left: 0; top: 0; } #b { left: 28px; top: 28px; }
+  #subpixel { left: 28.5px; top: 28.5px; }
+  .group { position: absolute; left: 100px; top: 100px; display: flex; flex-direction: column; gap: 12px; }
+  .group > div { width: 30px; height: 20px; }
+  #group2 { left: 200px; } #singleton { left: 300px; }
+  .hidden { display: none; } .transparent { opacity: 0; }
+  #offscreen { left: 100px; top: 2000px; }
+</style></head><body>
+  <div id="a" class="box"></div><div id="b" class="box"></div><div id="subpixel" class="box"></div>
+  <div class="group" id="group1">
+    text node
+    <div id="one"><span>Grandchild</span></div>
+    <div class="hidden">Hidden</div><div class="transparent">Transparent</div>
+    <div style="width:0">Zero width</div>
+    <div id="two"></div><div id="three"></div>
+  </div>
+  <div class="group" id="group2"><div id="four"></div><div id="five"></div></div>
+  <div class="group" id="singleton"><div></div></div>
+  <div class="hidden"><div id="hidden-child" class="box"></div></div>
+  <div class="box" id="offscreen"></div>
+</body></html>

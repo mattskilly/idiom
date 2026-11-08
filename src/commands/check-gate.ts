@@ -20,6 +20,8 @@ export type GateCheckOptions = Omit<ChangedCheckOptions, "changed"> & {
   changed?: true | string | undefined;
   budgetMs?: number | undefined;
   reuseServer?: boolean | undefined;
+  /** Stop after planning: no server, browser or capture. */
+  planOnly?: boolean | undefined;
   /** Receives the plan lines before any server starts (the CLI's stderr). */
   onPlan?: ((lines: string[]) => void) | undefined;
   gateDependencies?: GatePlanOptions["dependencies"];
@@ -35,7 +37,12 @@ export type GateRunResult = {
   changed: ChangedCheckResult;
   timing: CheckTiming;
 };
-export type GateResult = GateSkipResult | GateRunResult;
+export type GatePlanOnlyResult = {
+  skipped: false;
+  planOnly: true;
+  plan: GatePlan;
+};
+export type GateResult = GateSkipResult | GatePlanOnlyResult | GateRunResult;
 
 /**
  * `idiom check --gate`: plan the cheapest check that still covers the
@@ -74,6 +81,7 @@ export async function checkGate(
   if (planned.skipped) return planned;
   const { execution, ...plan } = planned;
   options.onPlan?.(renderGatePlan(plan));
+  if (options.planOnly) return { skipped: false, planOnly: true, plan };
   options.dependencies?.capture?.signal?.throwIfAborted();
   const inputIdentity = execution.production
     ? await workingTreeIdentity(execution.selection.git.repository)
@@ -86,6 +94,7 @@ export async function checkGate(
     onPlan: _onPlan,
     gateDependencies: _dependencies,
     reuseServer: _reuse,
+    planOnly: _planOnly,
     ...shared
   } = options;
   const section = {

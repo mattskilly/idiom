@@ -134,6 +134,15 @@ export const responsiveBreakCheck: DeterministicCheck = {
         )
           continue;
         const pair = [element.selector, selector].sort().join(" | ");
+        if (
+          observation.version === 2 &&
+          observation.overlaps?.some(
+            (overlap) =>
+              overlap.cardAction !== undefined &&
+              [overlap.a, overlap.b].sort().join(" | ") === pair,
+          )
+        )
+          continue;
         if (emitted.has(pair)) continue;
         emitted.add(pair);
         candidates.push({

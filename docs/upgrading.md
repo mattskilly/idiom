@@ -62,6 +62,14 @@ What you must do after moving past each release, newest first. Everything else i
 
 None.
 
+### v0.21.0
+
+- **Shared decision logs:** upgrade every machine and CI runner that reads `.idiom/decisions.jsonl` before anyone runs `idiom decide --ack`. Idiom 0.20.0 and older refuse a log that contains an acknowledgement; 0.21.0 and later skip record types they don't know.
+- **Autobuild:** run `idiom upgrade` (or `idiom init`) and accept the shown diff to replace the old `ab-verify-idiom` agent step with the UI gate (`idiom check --gate --fail-on major --deferred warn`) and rename the verifier skill to `idiom-verify`. Until then, autobuild builds that change UI mostly skip Idiom.
+- **Scripts reading results:** findings can now have severity `info`, which never counts toward a gate; `check` can exit `3` (deferred on a busy host) or `4` (a decision is needed). Accept these if your script checks a fixed list.
+- **Skills:** run `idiom upgrade` so the `idiom-verify` skill checks builds that carry an Idiom design asset instead of skipping them ([attach to an autobuild ticket](brief.md#attach-to-an-autobuild-ticket)).
+- **Scripts:** `idiom init --yes` now also applies the default wiring plan: a marked Design QA section in `AGENTS.md` (created if absent) and an existing `CLAUDE.md`, `.cursor/rules/idiom.mdc` when `.cursor/` exists, and `.github/workflows/idiom.yml` when `.github/workflows/` exists. Hooks, the nightly schedule, the Autobuild gate and landing rule stay off under bare `--yes`. To keep a script's old behavior, add `--skip-wiring agents --skip-wiring claude --skip-wiring cursor --skip-wiring github`, or preview first with `idiom init --dry-run`. Interactive init now asks once (`Apply all selected wiring shown above?`) instead of separately for the brief line, the Autobuild gate and the optional verifier. See [init wiring](commands.md#wire-agents-ci-hooks-and-autobuild).
+
 ### v0.20.0
 
 - **Runtime:** Idiom now requires Node 22.12 or newer (the CLI library requires it). On older Node every entry point (CLI, `idiom mcp`, plugin and `npx`) exits 2 with a message naming both versions. Check with `node --version` before updating.
@@ -78,7 +86,7 @@ None.
 - **Recapture:** to pick up the new disclosure, nested-border, empty-container, redundant-entry-point, control-selects-parent and token-resolution checks, the probe coverage counts, and the probe fingerprints `idiom check --gate` compares against. Recapture after recording a brief with assertions.
 - **Config:** `idiom check --gate` reads the optional `checks.gate` block (`budgetMs`, default three minutes; `nonUi`). `capture.hideWebdriver` and `checks.probe.disclosures` / `checks.probe.maxRevealed` are new.
 - **Behaviour:** a native `title` now explains a control for `unexplained-control` by default; set `checks.explanation: "visible"` to keep requiring a painted explanation.
-- **Skills:** run `idiom upgrade` for the brief guidance in the Idiom skill and the before/after evidence in `ab-verify-idiom`.
+- **Skills:** run `idiom upgrade` for the brief guidance in the Idiom skill and the before/after evidence in `idiom-verify`.
 
 ### v0.16.1
 

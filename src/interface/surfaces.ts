@@ -10,11 +10,13 @@ import { baselineFileSchema } from "../baseline/schema.js";
 import type { CheckSummary } from "../commands/check.js";
 import type { InitValidateReport } from "../commands/init-validate.js";
 import type { DoctorReport } from "../doctor/run.js";
+import { SURFACE_IDS, SURFACE_STATUSES } from "../doctor/surfaces.js";
 import type { RunFailureJson } from "../errors.js";
 import { findingNameRegistrySchema } from "../review/names.js";
-import { decisionSchema } from "../schemas/decision.js";
+import { decisionLogEntrySchema } from "../schemas/decision.js";
 import { findingCategories, findingSchema } from "../schemas/finding.js";
 import { flowSchema } from "../schemas/flow.js";
+import { pendingDecisionSchema } from "../schemas/pending-decision.js";
 import { projectSchema } from "../schemas/project.js";
 import { findingSeveritySchema, rulesSchema } from "../schemas/rules.js";
 import { INTERFACE_VERSION } from "./version.js";
@@ -42,6 +44,9 @@ export const commandStatus: Record<string, SurfaceStatus> = {
   check: "stable",
   sweep: "experimental",
   coverage: "experimental",
+  digest: "experimental",
+  nightly: "experimental",
+  bisect: "experimental",
   explore: "experimental",
   "explore resolve": "experimental",
   verify: "stable",
@@ -54,6 +59,8 @@ export const commandStatus: Record<string, SurfaceStatus> = {
   "brief plan": "experimental",
   "brief record": "experimental",
   "brief decide": "experimental",
+  "brief export": "experimental",
+  "brief attach": "experimental",
   "brief list": "experimental",
   "brief show": "experimental",
   ruling: "experimental",
@@ -87,6 +94,45 @@ export const checkJsonContract = z.looseObject({
   flow: z.string(),
   runDirectory: z.string(),
   reportPath: z.string(),
+  verdict: z.literal("deferred").optional(),
+  timedOutTuples: z
+    .array(
+      z.object({
+        state: z.string(),
+        viewport: z.string(),
+        colorScheme: z.enum(["light", "dark"]),
+      }),
+    )
+    .optional(),
+  decisionNeeded: z.array(pendingDecisionSchema).optional(),
+  decisionQuestion: z.string().optional(),
+  captureFailures: z
+    .array(
+      z.object({
+        state: z.string(),
+        viewport: z.string(),
+        colorScheme: z.enum(["light", "dark"]),
+        stage: z.string(),
+        message: z.string(),
+        hostDeferred: z.boolean().optional(),
+      }),
+    )
+    .optional(),
+  baselineNotRecorded: z
+    .object({
+      failed: z.number(),
+      total: z.number(),
+      successful: z.number(),
+      coordinates: z.array(
+        z.object({
+          state: z.string(),
+          viewport: z.string(),
+          colorScheme: z.enum(["light", "dark"]),
+        }),
+      ),
+      message: z.string(),
+    })
+    .optional(),
   blocking: z.number(),
   findings: z.array(
     z.looseObject({
@@ -97,6 +143,23 @@ export const checkJsonContract = z.looseObject({
       where: z.string(),
       problem: z.string(),
       fix: z.array(z.string()),
+    }),
+  ),
+});
+
+const surfacesContract = z.looseObject({
+  root: z.string(),
+  initialized: z.boolean(),
+  notice: z.string().optional(),
+  ms: z.number(),
+  entries: z.array(
+    z.looseObject({
+      id: z.enum(SURFACE_IDS),
+      label: z.string(),
+      status: z.enum(SURFACE_STATUSES),
+      path: z.string().optional(),
+      detail: z.string(),
+      fix: z.string().optional(),
     }),
   ),
 });
@@ -125,6 +188,7 @@ const doctorReportContract = z.looseObject({
     }),
   ),
   failure: runFailureContract.optional(),
+  surfaces: surfacesContract.optional(),
 });
 
 /** `idiom doctor --json`. */
@@ -138,6 +202,7 @@ export const initValidateJsonContract = z.looseObject({
   ready: z.boolean(),
   validate: z.looseObject({ ok: z.boolean() }),
   doctor: doctorReportContract.nullable(),
+  surfaces: surfacesContract.optional(),
 });
 
 /** Compile-time ties: tsc fails if a payload type stops satisfying its contract. */
@@ -182,7 +247,8 @@ export const jsonOutputs: JsonOutput[] = [
   {
     id: "check --gate",
     command: "check",
-    description: "the gate plan, or the skipped gate",
+    description:
+      "the gate plan/skip, or checked flows with decisionNeeded and decisionQuestion",
     status: "experimental",
   },
   {
@@ -202,14 +268,14 @@ export const jsonOutputs: JsonOutput[] = [
   {
     id: "init --validate",
     command: "init",
-    description: "{ ready, validate, doctor }",
+    description: "{ ready, validate, doctor, surfaces }",
     status: "stable-additive",
     contract: initValidateJsonContract,
   },
   {
     id: "doctor",
     command: "doctor",
-    description: "{ flow?, ok, steps, failure? }",
+    description: "{ flow?, ok, steps, failure?, surfaces? }",
     status: "stable-additive",
     contract: doctorJsonContract,
   },
@@ -262,6 +328,48 @@ export const jsonOutputs: JsonOutput[] = [
     status: "experimental",
   },
   {
+    id: "learn list",
+    command: "learn",
+    description: "human-found misses and their coverage (--list)",
+    status: "experimental",
+  },
+  {
+    id: "digest",
+    command: "digest",
+    description: "the run digest",
+    status: "experimental",
+  },
+  {
+    id: "nightly",
+    command: "nightly",
+    description: "the scheduled full check that files new findings into triage",
+    status: "experimental",
+  },
+  {
+    id: "bisect",
+    command: "bisect",
+    description: "the commit that introduced a finding",
+    status: "experimental",
+  },
+  {
+    id: "decide --pending",
+    command: "decide",
+    description:
+      "explicit unresolved decision questions and rendered escalation text",
+    status: "stable-additive",
+    contract: z.looseObject({
+      interfaceVersion: z.literal(INTERFACE_VERSION),
+      decisionNeeded: z.array(pendingDecisionSchema),
+      decisionQuestion: z.string(),
+    }),
+  },
+  {
+    id: "decide --list",
+    command: "decide",
+    description: "finding lifecycles",
+    status: "experimental",
+  },
+  {
     id: "compare",
     command: "compare",
     description: "the run comparison",
@@ -304,6 +412,18 @@ export const jsonOutputs: JsonOutput[] = [
     status: "experimental",
   },
   {
+    id: "brief export",
+    command: "brief export",
+    description: "the exported design asset",
+    status: "experimental",
+  },
+  {
+    id: "brief attach",
+    command: "brief attach",
+    description: "the ticket attachment",
+    status: "experimental",
+  },
+  {
     id: "brief list",
     command: "brief list",
     description:
@@ -340,6 +460,8 @@ export const mcpToolStatus: Record<string, SurfaceStatus> = {
   idiom_brief_plan: "experimental",
   idiom_brief_record: "experimental",
   idiom_brief_decide: "experimental",
+  idiom_brief_export: "experimental",
+  idiom_brief_attach: "experimental",
   idiom_setup_prompt: "experimental",
   idiom_ready: "experimental",
 };
@@ -379,7 +501,7 @@ export const fileFormats: FileFormat[] = [
     path: ".idiom/decisions.jsonl",
     direction: "input",
     status: "stable-additive",
-    schema: decisionSchema,
+    schema: decisionLogEntrySchema,
   },
   {
     id: "baseline",

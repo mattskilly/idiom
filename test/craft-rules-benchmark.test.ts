@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { type Browser, chromium, request } from "playwright";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { createLinkChecker } from "../src/capture/links.js";
+import { createLinkChecker, type LinkRequester } from "../src/capture/links.js";
 import type {
   FontObservation,
   LinkObservation,
@@ -67,6 +67,27 @@ afterAll(async () => {
   await new Promise((resolve) => server?.close(resolve));
 });
 
+/**
+ * The fixture's external link is on a reserved `.invalid` host. Resolving it
+ * through the OS resolver made the opted-in check depend on how fast DNS
+ * answered on a loaded host, so that one host fails as an unresolved lookup
+ * would; every local link still goes through a real request context.
+ */
+const unresolvedHost = "docs.idiom-broken.invalid";
+
+async function requester(): Promise<LinkRequester> {
+  const context = await request.newContext();
+  const unresolved = (url: string) => {
+    if (new URL(url).hostname !== unresolvedHost) return undefined;
+    return Promise.reject(new Error(`getaddrinfo ENOTFOUND ${unresolvedHost}`));
+  };
+  return {
+    head: (url, options) => unresolved(url) ?? context.head(url, options),
+    get: (url, options) => unresolved(url) ?? context.get(url, options),
+    dispose: () => context.dispose(),
+  };
+}
+
 const linkChecker = (external = false) =>
   createLinkChecker({
     external,
@@ -74,7 +95,7 @@ const linkChecker = (external = false) =>
     budgetMs: 30000,
     concurrency: 4,
     ignore: [],
-    request: () => request.newContext(),
+    request: requester,
   });
 
 async function review(name: string, options: Omit<ReviewOptions, "url"> = {}) {

@@ -25,6 +25,7 @@ import {
   serverFailureHint,
   stderrTail,
 } from "./server-diagnosis.js";
+import { ServerLog } from "./server-log.js";
 import {
   registerServer,
   type ServerRegistration,
@@ -74,6 +75,8 @@ export type SetupResult = {
 export type OwnedServer = {
   process: ChildProcess;
   output: () => string;
+  /** Everything the server printed, redacted and capped, for `server.log`. */
+  log: ServerLog;
   stop: () => Promise<void>;
 };
 
@@ -116,7 +119,32 @@ function commandCwd(projectDirectory: string, cwd?: string): string {
   return isAbsolute(cwd) ? resolve(cwd) : resolve(projectDirectory, cwd);
 }
 
+/** Cancellation-aware process-group owner shared with ref dependency setup. */
+export async function runOwnedCommand(options: {
+  command: string;
+  args?: string[] | undefined;
+  cwd: string;
+  label: string;
+  environment?: NodeJS.ProcessEnv | undefined;
+  dependencies?: ProcessDependencies | undefined;
+  signal?: AbortSignal | undefined;
+}): Promise<void> {
+  await runToClose({
+    command: options.command,
+    args: options.args,
+    cwd: options.cwd,
+    label: options.label,
+    env: options.environment ?? process.env,
+    spawnProcess: options.dependencies?.spawn ?? spawn,
+    signal: options.signal,
+    teardownTimeoutMs: options.dependencies?.teardownTimeoutMs,
+    boundStdout: true,
+  });
+}
+
 async function runToClose(options: {
+  boundStdout?: boolean;
+  args?: string[] | undefined;
   command: string;
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -128,13 +156,17 @@ async function runToClose(options: {
   options.signal?.throwIfAborted();
   let child: ChildProcess;
   try {
-    child = options.spawnProcess(options.command, {
+    const spawnOptions = {
       cwd: options.cwd,
       env: options.env,
-      shell: true,
+      shell: options.args === undefined,
       detached: options.signal !== undefined && process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+      stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
+    };
+    child =
+      options.args === undefined
+        ? options.spawnProcess(options.command, spawnOptions)
+        : options.spawnProcess(options.command, options.args, spawnOptions);
   } catch (error) {
     throw new IdiomError(
       `${options.label} could not start (${redact(options.command, options.env)}, cwd ${options.cwd}): ${redact(String(error), options.env)}`,
@@ -145,7 +177,7 @@ async function runToClose(options: {
   child.stdout?.setEncoding("utf8");
   child.stderr?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {
-    stdout += chunk;
+    stdout = options.boundStdout ? bounded(stdout + chunk) : stdout + chunk;
   });
   child.stderr?.on("data", (chunk: string) => {
     stderr = bounded(stderr + chunk);
@@ -164,13 +196,15 @@ async function runToClose(options: {
     child.once("error", reject);
     child.once("close", (code, signal) => accept({ code, signal }));
   })
-    .finally(() => options.signal?.removeEventListener("abort", abort))
+    .finally(async () => {
+      options.signal?.removeEventListener("abort", abort);
+      await stopping;
+    })
     .catch((error) => {
       throw new IdiomError(
         `${options.label} could not start (${redact(options.command, options.env)}, cwd ${options.cwd}): ${redact(String(error), options.env)}`,
       );
     });
-  await stopping;
   options.signal?.throwIfAborted();
   if (result.code !== 0) {
     const status =
@@ -376,14 +410,20 @@ export async function startServer(options: {
   });
   let output = "";
   let stderr = "";
+  const log = new ServerLog(options.environment);
   const collect = (chunk: string | Buffer) => {
     output = bounded(output + chunk.toString());
   };
-  child.stdout?.on("data", collect);
+  child.stdout?.on("data", (chunk: string | Buffer) => {
+    collect(chunk);
+    log.append("stdout", chunk.toString());
+  });
   child.stderr?.on("data", (chunk: string | Buffer) => {
     collect(chunk);
     stderr = bounded(stderr + chunk.toString());
+    log.append("stderr", chunk.toString());
   });
+  child.once("close", () => log.flush());
   const tail = () => stderrTail(stderr, output, options.environment);
   let spawnError: Error | undefined;
   child.once("error", (error) => {
@@ -431,7 +471,7 @@ export async function startServer(options: {
     return stopPromise;
   };
 
-  options.onOwned?.({ process: child, output: () => output, stop });
+  options.onOwned?.({ process: child, output: () => output, log, stop });
   const fetchReady = options.dependencies?.fetch ?? globalThis.fetch;
   const now = options.dependencies?.now ?? Date.now;
   const sleep = options.dependencies?.sleep ?? ((ms) => delay(ms));
@@ -492,7 +532,7 @@ export async function startServer(options: {
       await sleep(100);
     }
     await (await registration)?.refresh();
-    return { process: child, output: () => output, stop };
+    return { process: child, output: () => output, log, stop };
   } catch (error) {
     try {
       await stop();
@@ -551,6 +591,8 @@ export type ProductionRuntime = {
   environment: NodeJS.ProcessEnv;
   execute: () => Promise<ProductionBuild>;
   close: () => Promise<void>;
+  /** The started production server's log, once it is running. */
+  serverLog: () => ServerLog | undefined;
 };
 
 export async function prepareProduction(options: {
@@ -724,6 +766,7 @@ export async function prepareProduction(options: {
       dataDirectory,
       timings,
       close,
+      serverLog: () => active?.log,
       execute: () => {
         if (closing !== undefined)
           return Promise.reject(

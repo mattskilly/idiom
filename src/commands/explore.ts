@@ -143,7 +143,7 @@ export async function exploreCommand(options: {
     dependencies?.capture?.snapshotSource ?? snapshotSource;
   const source: SourceIdentity = await sourceSnapshot(
     context.projectDirectory,
-    {},
+    { ignoreDirty: context.project.baselines?.ignoreDirty },
   );
   const now = (dependencies?.clock ?? (() => new Date()))();
   const requestedRun = join(

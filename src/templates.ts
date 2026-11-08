@@ -48,7 +48,7 @@ export function autobuildTemplatePath(): string {
 }
 
 export function autobuildVerifierSkillTemplatePath(): string {
-  return join(templatesDirectory(), "ab-verify-idiom", "SKILL.md");
+  return join(templatesDirectory(), "idiom-verify", "SKILL.md");
 }
 
 export async function readAutobuildTemplate(): Promise<string> {

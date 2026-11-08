@@ -498,3 +498,44 @@ test("research settings default to 15 minutes and 5 searches, within bounds", ()
     false,
   );
 });
+
+test("screen inventory persists through record, read and decide before alternatives", async () => {
+  const directory = await project();
+  const inventory = {
+    screenQuestion: "What needs action?",
+    inventory: ["12 items", "0–5 queued jobs per item"],
+  };
+  const recorded = await record(
+    directory,
+    { ...fixture, ...inventory },
+    "2026-10-31T10:00:00Z",
+  );
+  const assertMarkdown = (text: string) => {
+    expect(text).toContain("**Screen question:** What needs action?");
+    expect(text).toContain("- 12 items");
+    expect(text.indexOf("**Inventory:**")).toBeLessThan(
+      text.indexOf("**Other options:**") < 0
+        ? text.indexOf("**Rejected options:**")
+        : text.indexOf("**Other options:**"),
+    );
+  };
+  expect((await readBrief(directory, recorded.slug)).brief).toMatchObject(
+    inventory,
+  );
+  assertMarkdown(await readFile(recorded.markdownPath, "utf8"));
+  await decide(directory, "corner-pin", "2026-10-31T11:00:00Z");
+  const { brief: stored } = await readBrief(directory, recorded.slug);
+  expect(stored).toMatchObject(inventory);
+  assertMarkdown(await readFile(recorded.markdownPath, "utf8"));
+  const custom = {
+    ...settings,
+    sections: settings.sections.map((section) =>
+      section.content === "decision"
+        ? { ...section, heading: "Our choice" }
+        : section,
+    ),
+  };
+  const rendered = renderBrief(stored, custom);
+  expect(rendered).toContain("## Our choice");
+  assertMarkdown(rendered);
+});

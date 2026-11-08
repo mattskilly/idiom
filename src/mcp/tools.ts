@@ -29,11 +29,17 @@ import {
 } from "../commands/baseline.js";
 import {
   type BriefDependencies,
+  briefAttachCommand,
+  briefAttachJson,
   briefDecideCommand,
   briefDecideJson,
+  briefExportCommand,
+  briefExportJson,
   briefRecordJson,
   recordBriefInput,
+  renderBriefAttach,
   renderBriefDecide,
+  renderBriefExport,
   renderTriageRun,
   runBriefPlan,
   runBriefTriage,
@@ -66,6 +72,7 @@ import {
 import { rulingCommand } from "../commands/ruling.js";
 import { renderSweepSummary, sweepCommand } from "../commands/sweep.js";
 import { verifyCommand } from "../commands/verify.js";
+import { probeCoverageLines } from "../coverage/probe.js";
 import { renderStateCoverage, stateCoverageLine } from "../coverage/states.js";
 import { figmaToken } from "../design/figma/client.js";
 import { isFigmaHost } from "../design/source.js";
@@ -79,6 +86,7 @@ import { repairPrompt } from "../fix/prompt.js";
 import type { GenerateFlow } from "../flows/generate.js";
 import { interactionTail } from "../quick/interaction.js";
 import { type QuickDependencies, runQuick } from "../quick/run.js";
+import { withRecordNotes } from "../records/unknown.js";
 import { loadRunTuples } from "../review/artifacts.js";
 import type { CatalogFinding } from "../review/catalog.js";
 import type { ReviewDependencies, ReviewRunResult } from "../review/run.js";
@@ -87,6 +95,7 @@ import {
   BRIEF_TRIAGE_MAX_QUESTIONS,
   briefSlugSchema,
   briefTriageIdSchema,
+  ticketIdSchema,
 } from "../schemas/brief.js";
 import { type Finding, findingSchema } from "../schemas/finding.js";
 import { collectSetupFacts } from "../setup/facts.js";
@@ -102,6 +111,7 @@ import {
 } from "../update/notice.js";
 import { loadProjectContext, validateProject } from "../validation.js";
 import { IDIOM_VERSION } from "../version.js";
+import { wiringFacts } from "../wiring/detect.js";
 import {
   EvidenceStore,
   evidencePath,
@@ -234,7 +244,11 @@ export function registerIdiomTools(
       (args, ctx) =>
         queue.run(ctx, async (execution) => {
           await rebind();
-          return handler(args, execution);
+          // Stdout is the protocol channel; the note goes to stderr only.
+          return withRecordNotes(
+            () => handler(args, execution),
+            (line) => process.stderr.write(`Idiom MCP: ${line}\n`),
+          );
         }),
     );
   }
@@ -402,13 +416,6 @@ export function registerIdiomTools(
     const flow = validated.flows[0]?.flow;
     if (!flow) throw new IdiomError(`Unknown flow ${flowId}`);
     const loaded = await loadRunTuples(validated, flow, output.runDirectory);
-    const failures = loaded.tuples.flatMap((tuple) =>
-      tuple.failure ? [`${tuple.failure.stage}: ${tuple.failure.message}`] : [],
-    );
-    if (failures.length)
-      throw new IdiomError(
-        `Capture failed: ${failures.join("; ")}. Report: ${output.reportPath}`,
-      );
     const originals = findingSchema
       .array()
       .parse(JSON.parse(await readFile(output.findingsPath, "utf8")));
@@ -463,10 +470,34 @@ export function registerIdiomTools(
       quick: false,
     });
     const questions = summary.designSystemQuestions ?? [];
+    const probeLines = summary.coverage?.probeCoverage
+      ? probeCoverageLines(
+          summary.coverage.probeCoverage,
+          summary.coverage.stateLabels,
+        )
+      : undefined;
+    const probeText = probeLines
+      ? `${[
+          probeLines.header,
+          ...probeLines.states,
+          ...(probeLines.warning
+            ? [`Probe warning: ${probeLines.warning}`]
+            : []),
+        ].join(" ")} `
+      : "";
     return result(
-      `Check ${flowId}: ${summary.findings.length} new/live occurrences, ${issues.length} issues; ${summary.preExisting ?? 0} pre-existing, ${summary.fixed?.length ?? 0} fixed. ${summary.baselineRecorded ? "Automatically recorded the initial baseline; commit its file. " : ""}${questions.length === 0 ? "" : `Design system questions (${questions.length}), held instead of findings; answer with idiom_decide add-step|drift: ${questions.map((question) => `${question.id} — ${question.question}`).join(" ")} `}${summary.coverage?.probeCoverage?.warning === undefined ? "" : `Probe warning: ${summary.coverage.probeCoverage.warning} `}Report: ${summary.reportPath}`,
+      `Check ${flowId}: ${(summary.coverage?.runDiagnostics ?? []).join(" ")} ${loaded.tuples.filter((tuple) => tuple.failure).length} failed captures. ${summary.findings.length} new/live occurrences, ${issues.length} issues; ${summary.preExisting ?? 0} pre-existing, ${summary.fixed?.length ?? 0} fixed${(summary.acknowledgedFindings?.length ?? 0) === 0 ? "" : `, ${summary.acknowledgedFindings?.length} acknowledged (not counted)`}. ${(summary.acknowledgementLapses ?? []).map((lapse) => `${lapse.message} `).join("")}${summary.baselineRecorded ? "Automatically recorded the initial baseline; commit its file. " : ""}${questions.length === 0 ? "" : `Design system questions (${questions.length}), held instead of findings; answer with idiom_decide add-step|drift: ${questions.map((question) => `${question.id} — ${question.question}`).join(" ")} `}${probeText}${summary.baselineNotRecorded ? `${summary.baselineNotRecorded.message} ` : ""}${summary.captureFailures?.length ? `Coverage gaps: ${summary.captureFailures.map((tuple) => `${tuple.state}/${tuple.viewport}/${tuple.colorScheme}: ${tuple.message}`).join("; ")}. ` : ""}Report: ${summary.reportPath}`,
       {
         flow: flowId,
+        ...(summary.captureFailures
+          ? { captureFailures: summary.captureFailures }
+          : {}),
+        ...(summary.baselineNotRecorded
+          ? { baselineNotRecorded: summary.baselineNotRecorded }
+          : {}),
+        ...(summary.verdict
+          ? { verdict: summary.verdict, timedOutTuples: summary.timedOutTuples }
+          : {}),
         ...(questions.length === 0 ? {} : { designSystemQuestions: questions }),
         runId: basename(output.runDirectory),
         topIssues: issues.slice(0, 5),
@@ -479,17 +510,30 @@ export function registerIdiomTools(
           new: summary.findings.length,
           fixed: summary.fixed?.length ?? 0,
           preExisting: summary.preExisting ?? 0,
+          acknowledged: summary.acknowledgedFindings?.length ?? 0,
           findings: originals.length,
           groups: output.groups.length,
           issues: issues.length,
           blocking: summary.blocking,
-          captures: { total: loaded.tuples.length, failed: 0 },
+          captures: {
+            total: loaded.tuples.length,
+            failed: loaded.tuples.filter((tuple) => tuple.failure !== undefined)
+              .length,
+          },
         },
         baseline: summary.baseline ?? {
           applied: false,
           reason: summary.baselineNotApplied ?? "all=true: full live findings",
         },
         baselineRecorded: summary.baselineRecorded,
+        ...(summary.acknowledgedFindings === undefined ||
+        summary.acknowledgedFindings.length === 0
+          ? {}
+          : { acknowledgedFindings: summary.acknowledgedFindings }),
+        ...(summary.acknowledgementLapses === undefined ||
+        summary.acknowledgementLapses.length === 0
+          ? {}
+          : { acknowledgementLapses: summary.acknowledgementLapses }),
         newFindings: live.map((finding) =>
           findingDetail(record(finding, output.runDirectory)),
         ),
@@ -560,7 +604,6 @@ export function registerIdiomTools(
             viewports: args.viewports?.join(","),
           },
           materializeAllDeterministic: true,
-          captureFailureIsError: true,
           dependencies: review(execution),
         });
         const checks = [];
@@ -583,6 +626,23 @@ export function registerIdiomTools(
         }
         return withUpdateNotice(
           result(renderChangedSelection(changed), {
+            ...(changed.checks.some(
+              (entry) =>
+                entry.status === "checked" &&
+                entry.summary.verdict === "deferred",
+            )
+              ? {
+                  verdict: "deferred",
+                  timedOutTuples: changed.checks.flatMap((entry) =>
+                    entry.status === "checked"
+                      ? (entry.summary.timedOutTuples ?? []).map((tuple) => ({
+                          flow: entry.flow,
+                          ...tuple,
+                        }))
+                      : [],
+                  ),
+                }
+              : {}),
             selection: changed.selection,
             checkedStates: changed.checkedStates,
             checks,
@@ -601,7 +661,6 @@ export function registerIdiomTools(
           viewports: args.viewports?.join(","),
         },
         materializeAllDeterministic: true,
-        captureFailureIsError: true,
         recordAgentCheck: true,
         dependencies: review(execution),
       });
@@ -784,15 +843,36 @@ export function registerIdiomTools(
   );
   register(
     "idiom_decide",
-    "Record an explicit human accept/reject judgment with a reason for one canonical finding or exactly one durable group's members. Writes the project decision log with instance scope; never accepts siblings implicitly, changes Git or repairs source. Quick-only evidence cannot receive project decisions. For a design system question (a ruling-N id from idiom_check), add-step records the value as a token step for its context in the design file (token optional, defaults to the suggestion) and drift keeps reporting it as one grouped issue; skip by not answering.",
+    "Record an explicit human accept/reject judgment with a reason for one canonical finding or exactly one durable group's members. Writes the project decision log with instance scope; never accepts siblings implicitly, changes Git or repairs source. Quick-only evidence cannot receive project decisions. acknowledge marks one finding as a real problem tracked elsewhere under reference (a ticket id or URL; reason is recorded as its note, until an optional last YYYY-MM-DD day): it stays in reports but stops counting toward fail-on and as new until it lapses (unacknowledge, until passes, its local tracker ticket reaches done, or its evidence changes materially). For a design system question (a ruling-N id from idiom_check), add-step records the value as a token step for its context in the design file (token optional, defaults to the suggestion) and drift keeps reporting it as one grouped issue; skip by not answering.",
     z.strictObject({
       id: identifier.describe(
         "Canonical finding or group ID, or a design system question's ruling-N",
       ),
       decision: z
-        .enum(["accept", "reject", "add-step", "drift"])
+        .enum([
+          "accept",
+          "reject",
+          "acknowledge",
+          "unacknowledge",
+          "add-step",
+          "drift",
+        ])
         .describe(
-          "Explicit human judgment: accept/reject a finding, add-step/drift a design system question",
+          "Explicit human judgment: accept/reject a finding, acknowledge/unacknowledge one tracked elsewhere, add-step/drift a design system question",
+        ),
+      reference: z
+        .string()
+        .trim()
+        .min(1)
+        .optional()
+        .describe(
+          "acknowledge only: where the finding is tracked (a ticket id or URL)",
+        ),
+      until: z
+        .string()
+        .optional()
+        .describe(
+          "acknowledge only: the last day (YYYY-MM-DD) the acknowledgement holds",
         ),
       token: z
         .string()
@@ -803,8 +883,16 @@ export function registerIdiomTools(
       reason: humanReason,
     }),
     false,
-    async ({ id, decision, token, reason }) => {
+    async ({ id, decision, token, reference, until, reason }) => {
       const scaleAnswer = decision === "add-step" || decision === "drift";
+      const acknowledging =
+        decision === "acknowledge" || decision === "unacknowledge";
+      if (decision === "acknowledge" && reference === undefined)
+        throw new IdiomError("acknowledge requires a reference");
+      if (decision !== "acknowledge" && reference !== undefined)
+        throw new IdiomError("reference is only used with acknowledge");
+      if (decision !== "acknowledge" && until !== undefined)
+        throw new IdiomError("until is only used with acknowledge");
       if (/^ruling-[1-9]\d*$/.test(id)) {
         if (!scaleAnswer)
           throw new IdiomError(
@@ -837,6 +925,31 @@ export function registerIdiomTools(
         );
       const found = await evidence.lookup(id);
       const isGroup = found.run.groups.some((group) => group.id === id);
+      if (acknowledging) {
+        if (isGroup)
+          throw new IdiomError(
+            `${decision} applies to one finding, not a group; pass a finding id`,
+          );
+        const output = await decideCommand({
+          ...configured,
+          finding: found.representative.id,
+          ...(decision === "acknowledge"
+            ? {
+                ack: reference,
+                note: reason,
+                ...(until === undefined ? {} : { until }),
+              }
+            : { unack: true }),
+          preserveReason: true,
+        });
+        const recorded = output.acknowledgement;
+        return result(
+          decision === "acknowledge"
+            ? `Acknowledged ${recorded?.findingId} for ${recorded?.reference}${recorded?.until === undefined ? "" : ` until ${recorded.until}`}. It stays in reports and no longer counts toward fail-on or as new. Decision log: ${output.path}`
+            : `Removed the acknowledgement on ${recorded?.findingId} (${recorded?.reference}); it counts again. Decision log: ${output.path}`,
+          output,
+        );
+      }
       const output = await decideCommand({
         ...configured,
         ...(isGroup ? { group: id } : { finding: found.representative.id }),
@@ -854,7 +967,7 @@ export function registerIdiomTools(
   );
   register(
     "idiom_init",
-    "Scaffold PRODUCT.md, DESIGN.md and .idiom in the bound project root without data loss, non-interactively (never overwrites changed files, never wires Autobuild). flows:true also generates a site flow from filesystem and running local routes. Returns files created/replaced/unchanged/preserved and next steps.",
+    "Scaffold PRODUCT.md, DESIGN.md and .idiom in the bound project root without data loss, non-interactively (never overwrites changed files, never applies wiring; returns the detected wiring plan). flows:true also generates a site flow from filesystem and running local routes. Returns files created/replaced/unchanged/preserved and next steps.",
     z.strictObject({
       flows: z
         .boolean()
@@ -877,6 +990,8 @@ export function registerIdiomTools(
         flows,
         surface,
         generateFlows: dependencies.init?.generateFlows,
+        // MCP's yes means "no prompts", never consent to wiring.
+        wiringApplication: "report-only",
         confirm: async () => false,
         write: (message) => {
           notes.push(message.trimEnd());
@@ -902,12 +1017,11 @@ export function registerIdiomTools(
               "Autobuild detected: run idiom init interactively (CLI-only) to review and approve verification wiring.",
             ]
           : []),
-        ...(output.briefInstruction.some(
-          (outcome) =>
-            outcome.kind === "available" || outcome.kind === "no-agent-file",
+        ...(output.wiring?.proposals.some(
+          (row) => row.disposition === "create" || row.disposition === "update",
         )
           ? [
-              "Optional: ask the human whether to add the brief instruction (shown in briefInstruction) to CLAUDE.md or AGENTS.md.",
+              "Wiring is available (see wiring): ask the human, then have them run idiom init --wire in a terminal (CLI-only) to review and apply it.",
             ]
           : []),
       ];
@@ -927,7 +1041,18 @@ export function registerIdiomTools(
         unchanged: output.unchanged,
         skipped: output.skipped,
         autobuild: output.autobuild,
+        ...(output.skillUpgrade ? { skills: output.skillUpgrade.skills } : {}),
         briefInstruction: output.briefInstruction,
+        ...(output.wiring
+          ? {
+              wiring: {
+                ...wiringFacts(output.wiring.detection),
+                proposals: output.wiring.proposals.map(
+                  ({ preview: _preview, ...row }) => row,
+                ),
+              },
+            }
+          : {}),
         systemLearning: output.systemLearning,
         flows: flowOutcome,
         notes,
@@ -1548,9 +1673,11 @@ export function registerIdiomTools(
       );
     },
   );
+  const ticketDescription =
+    "Autobuild ticket id. Attaching runs only ab ticket attach <id> design; it never moves the ticket's state";
   register(
     "idiom_brief_decide",
-    "Record the human's choice on a decision brief and regenerate its ticket-ready Markdown. Call only with the human's explicit choice, or with the recommendation when ask.proceed.allowed was true and you told them so. Then use .idiom/briefs/<slug>.md as the ticket, unless the result warns that it is not ticket-ready.",
+    "Record the human's choice on a decision brief and regenerate its ticket-ready Markdown. Call only with the human's explicit choice, or with the recommendation when ask.proceed.allowed was true and you told them so. Then use .idiom/briefs/<slug>.md as the ticket, unless the result warns that it is not ticket-ready. Pass ticket to also attach the decided brief to that autobuild ticket as its design asset; a failed attach leaves the decision recorded.",
     z.strictObject({
       slug: briefSlugSchema.describe("Brief slug from idiom_brief_record"),
       option: briefSlugSchema.describe("The chosen option id"),
@@ -1560,9 +1687,10 @@ export function registerIdiomTools(
         .min(1)
         .optional()
         .describe("Who decided (default requester)"),
+      ticket: ticketIdSchema.optional().describe(ticketDescription),
     }),
     false,
-    async ({ slug, option, by }) => {
+    async ({ slug, option, by, ticket }, execution) => {
       const decided = await briefDecideCommand({
         ...configured,
         cwd: root,
@@ -1571,7 +1699,79 @@ export function registerIdiomTools(
         by,
         dependencies: dependencies.brief,
       });
-      return result(renderBriefDecide(decided), briefDecideJson(decided));
+      if (ticket === undefined)
+        return result(renderBriefDecide(decided), briefDecideJson(decided));
+      try {
+        const attached = await briefAttachCommand({
+          ...configured,
+          cwd: root,
+          slug: decided.slug,
+          ticket,
+          dependencies: {
+            ...dependencies.brief,
+            capture: capture(execution),
+          },
+        });
+        return result(
+          [renderBriefDecide(decided), renderBriefAttach(attached)].join("\n"),
+          { ...briefDecideJson(decided), attach: briefAttachJson(attached) },
+        );
+      } catch (error) {
+        if (!(error instanceof IdiomError)) throw error;
+        throw new IdiomError(`decided; attach failed: ${error.message}`);
+      }
+    },
+  );
+  register(
+    "idiom_brief_export",
+    "Write a decided brief as a self-contained design asset directory: README.md (decision, rejected options, checkable acceptance criteria and the Idiom rules that verify each), criteria.json (machine-readable assertions) and reference screenshots of every asserted state at every configured viewport and scheme. Uses the latest capture unless capture is true. The directory must be new or empty and inside the project.",
+    z.strictObject({
+      slug: briefSlugSchema.describe("A decided brief's slug"),
+      out: z.string().min(1).describe("Export directory, inside the project"),
+      capture: z
+        .boolean()
+        .optional()
+        .describe("Capture the asserted states now"),
+    }),
+    false,
+    async ({ slug, out, capture: fresh }, execution) => {
+      await insideRoot(root, out, "Export directory");
+      const exported = await briefExportCommand({
+        ...configured,
+        cwd: root,
+        slug,
+        out,
+        capture: fresh,
+        dependencies: { ...dependencies.brief, capture: capture(execution) },
+      });
+      return result(
+        renderBriefExport(exported, root),
+        briefExportJson(exported, root),
+      );
+    },
+  );
+  register(
+    "idiom_brief_attach",
+    "Export a decided brief and attach it to an autobuild ticket as its design asset (ab ticket attach <id> design). Plan, review, implement and verify then judge the build against it, and idiom check --gate and idiom verify check its assertions. Never moves the ticket's state. Refuses without autobuild.toml or the ab CLI.",
+    z.strictObject({
+      slug: briefSlugSchema.describe("A decided brief's slug"),
+      ticket: ticketIdSchema.describe(ticketDescription),
+      capture: z
+        .boolean()
+        .optional()
+        .describe("Capture the asserted states now"),
+    }),
+    false,
+    async ({ slug, ticket, capture: fresh }, execution) => {
+      const attached = await briefAttachCommand({
+        ...configured,
+        cwd: root,
+        slug,
+        ticket,
+        capture: fresh,
+        dependencies: { ...dependencies.brief, capture: capture(execution) },
+      });
+      return result(renderBriefAttach(attached), briefAttachJson(attached));
     },
   );
 }

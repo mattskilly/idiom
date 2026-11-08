@@ -50,7 +50,8 @@
     </div>
   </aside>
 </div>
-<dialog id="settings" aria-labelledby="settings-title"><h2 id="settings-title">Page settings</h2><button class="btn" onclick="this.closest('dialog').close()">Close</button></dialog>
-<dialog id="help" aria-label="Help"><p>Shortcuts</p></dialog>
+<dialog id="settings" closedby="any" aria-labelledby="settings-title"><h2 id="settings-title">Page settings</h2><button class="btn" onclick="this.closest('dialog').close()">Close</button></dialog>
+<dialog id="help" closedby="any" aria-label="Help"><p>Shortcuts</p></dialog>
 <script>function openSettings(){document.getElementById('menu').hidden=true;document.getElementById('settings').showModal();}</script>
+<script>{const menu=document.getElementById('menu'),trigger=document.getElementById('project-menu');document.addEventListener('pointerdown',(event)=>{if(!menu.hidden&&!menu.contains(event.target)&&!trigger.contains(event.target))menu.hidden=true;});document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&!menu.hidden){menu.hidden=true;trigger.focus();}});}</script>
 </body></html>

@@ -222,7 +222,7 @@ test("sweep keeps every finding, ranks severity first and measured before model,
   const model = findings.filter((finding) => finding.layer === "model");
   expect(model).toHaveLength(7);
   expect(model.map((finding) => finding.category)).toContain("spec-mismatch");
-  const order = { blocker: 0, major: 1, minor: 2 } as const;
+  const order = { blocker: 0, major: 1, minor: 2, info: 3 } as const;
   const ranks = summary.findings.map(
     (finding) =>
       order[finding.severity] * 2 + (finding.layer === "model" ? 1 : 0),

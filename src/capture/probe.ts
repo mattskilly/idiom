@@ -16,6 +16,7 @@ import type {
   ProbeArtifact,
   ProbeAttemptTimings,
   ProbeCollection,
+  ProbeDismissal,
   ProbeEffect,
   ProbeResult,
   ProbeSafetyLedger,
@@ -27,6 +28,11 @@ import type {
 import { DESTRUCTIVE_ACTION_PATTERN } from "../copy-policy.js";
 import { settleAnimations } from "./animation-settle.js";
 import { Deadline, DeadlineExpired, deadlinePage } from "./deadline.js";
+import {
+  dismissalLimitReason,
+  MAX_DISMISSALS,
+  testDismissal,
+} from "./dismissal.js";
 import { beginEffectWindow, LATE_CONTENT_WINDOW_MS } from "./effect-window.js";
 import {
   type ExplanationCandidate,
@@ -159,6 +165,12 @@ export type ProbeOptions = CaptureHooks & {
     | undefined;
   /** Revealed observations per state (default 12); 0 records none. */
   maxRevealed?: number | undefined;
+  /**
+   * Test how opened overlays close (Escape, an outside click, an iframe
+   * click); `explicit` names modals exempt from the clicks. Absent: dismissal
+   * is not tested (library callers are unchanged).
+   */
+  dismissal?: { explicit: string[] } | undefined;
   /**
    * The build gate's changed region: rendered fingerprints from a reference
    * run. An ordinary control whose fingerprint is unchanged is not clicked.
@@ -553,11 +565,47 @@ async function installInstrumentation(
             ? (node as Element)
             : node.parentElement;
       if (element === null) return false;
-      return (
-        element.closest(
-          "[role=tooltip], [data-radix-popper-content-wrapper]",
-        ) !== null || element.querySelector?.("[role=tooltip]") !== null
+      if (element.closest("[role=tooltip]") !== null) return true;
+      // Radix content renders visible children beside a visually hidden
+      // role=tooltip copy. Its content parent owns both, but unrelated
+      // menu/disclosure/status siblings in the popper must remain effects.
+      const wrapper = element.closest("[data-radix-popper-content-wrapper]");
+      if (!wrapper || element.hasAttribute("aria-expanded")) return false;
+      const roots = [...wrapper.querySelectorAll("[role=tooltip]")].map(
+        (tooltip) => {
+          const content = tooltip.parentElement;
+          return content &&
+            content !== wrapper &&
+            /^(?:closed|delayed-open|instant-open)$/.test(
+              content.getAttribute("data-state") ?? "",
+            ) &&
+            !content.matches(
+              "[role=menu], [role=listbox], [role=dialog], [role=alertdialog], [aria-expanded]",
+            ) &&
+            !content.querySelector(
+              "button, a[href], input, select, textarea, [role=button], [role=menu], [role=listbox], [role=dialog], [role=alertdialog], [aria-expanded]",
+            )
+            ? content
+            : tooltip;
+        },
       );
+      if (roots.length === 0) return false;
+      const owned = (node: Node) => roots.some((root) => root.contains(node));
+      if (owned(element)) return true;
+      if (!roots.some((root) => element.contains(root))) return false;
+      const walker = document.createTreeWalker(
+        element,
+        NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+      );
+      for (let child = walker.nextNode(); child; child = walker.nextNode()) {
+        if (owned(child)) continue;
+        if (child.nodeType === Node.TEXT_NODE) {
+          if (child.textContent?.trim()) return false;
+        } else if (!roots.some((root) => child.contains(root))) {
+          return false;
+        }
+      }
+      return true;
     };
     const observer = new MutationObserver((records) => {
       for (const record of records) {
@@ -1936,6 +1984,42 @@ async function positionedPaths(page: Page): Promise<string[]> {
  * positioned element near the trigger. `opened` is false when nothing
  * opened and no open state flipped.
  */
+async function openedDisclosureGeometry(
+  page: Page,
+  path: string,
+  root: string | undefined,
+  kind: "details" | "popup" | "expanded",
+): Promise<ProbeResult["openedDisclosure"]> {
+  if (root === undefined) return undefined;
+  return await page.evaluate(
+    ({ path, root, kind }) => {
+      const trigger = document.querySelector(path);
+      const panel = document.querySelector(root);
+      if (
+        !trigger ||
+        !panel?.checkVisibility({
+          checkOpacity: true,
+          checkVisibilityCSS: true,
+        })
+      )
+        return undefined;
+      const rect = (element: Element) => {
+        const r = element.getBoundingClientRect();
+        return {
+          x: r.x + scrollX,
+          y: r.y + scrollY,
+          width: r.width,
+          height: r.height,
+        };
+      };
+      const panelRect = rect(panel);
+      if (panelRect.width <= 0 || panelRect.height <= 0) return undefined;
+      return { root, kind, trigger: rect(trigger), panel: panelRect };
+    },
+    { path, root, kind },
+  );
+}
+
 async function disclosureRoot(
   page: Page,
   candidate: Candidate,
@@ -2017,6 +2101,33 @@ async function disclosureRoot(
       before,
       openedRoots,
     },
+  );
+}
+
+/**
+ * The first opened region that is a dialog, alert dialog, modal or open
+ * popover: what a plain button opens that the dismissal probe tests.
+ */
+async function dialogRoot(
+  page: Page,
+  openedRoots: string[],
+): Promise<string | undefined> {
+  if (openedRoots.length === 0) return undefined;
+  return await page.evaluate(
+    (roots) =>
+      roots.find((root) => {
+        const region = document.querySelector(root);
+        if (region === null) return false;
+        return (
+          (region instanceof HTMLDialogElement && region.open) ||
+          region.matches(":popover-open") ||
+          ["dialog", "alertdialog"].includes(
+            region.getAttribute("role") ?? "",
+          ) ||
+          region.getAttribute("aria-modal") === "true"
+        );
+      }),
+    openedRoots,
   );
 }
 
@@ -4039,6 +4150,7 @@ export async function probeControls(
       timings: _timings,
       timeoutScope: _scope,
       revealed: _revealed,
+      dismissal: _dismissal,
       ...cached
     } = entry.result;
     const local = skippedResult(candidate, "", parent);
@@ -4056,6 +4168,7 @@ export async function probeControls(
       const {
         elapsedMs: _nestedElapsed,
         revealed: _nestedRevealed,
+        dismissal: _nestedDismissal,
         ...rest
       } = nested;
       publish(candidate, {
@@ -4067,6 +4180,79 @@ export async function probeControls(
   };
   const maxRevealed = options.maxRevealed ?? DEFAULT_MAX_REVEALED;
   let revealedCount = 0;
+  let dismissalCount = 0;
+  const dismissalSummary = options.dismissal
+    ? { tested: 0, notReached: 0, limit: MAX_DISMISSALS }
+    : undefined;
+  if (dismissalSummary) artifact.dismissal = dismissalSummary;
+  /** Open a panel again: click its parents' paths, then its trigger. */
+  const clickOpen = async (page: Page, paths: string[]) => {
+    for (const path of paths) {
+      const window = await beginEffectWindow(page, options.waitMs);
+      try {
+        await page
+          .locator(path)
+          .first()
+          .click({ timeout: 1500, noWaitAfter: true });
+        await window.wait();
+      } finally {
+        await window.dispose();
+      }
+    }
+  };
+  /**
+   * Test how the overlay a click opened closes, inside the attempt's
+   * deadline. `root` is the disclosure's root; otherwise the first opened
+   * dialog, alert dialog, modal or popover in `openedRoots`.
+   */
+  const testOpenedDismissal = async (
+    page: Page,
+    deadline: Deadline,
+    trigger: string,
+    opened: {
+      kind?: "popup" | "expanded" | undefined;
+      root?: string | undefined;
+      openedRoots: string[];
+    },
+    reopen: (page: Page) => Promise<void>,
+  ): Promise<ProbeDismissal | undefined> => {
+    const settings = options.dismissal;
+    if (settings === undefined || options.enumerateOnly) return undefined;
+    const root = opened.root ?? (await dialogRoot(page, opened.openedRoots));
+    deadline.check();
+    if (root === undefined) return undefined;
+    if (dismissalCount >= MAX_DISMISSALS) {
+      if (dismissalSummary) dismissalSummary.notReached += 1;
+      return {
+        trigger,
+        root,
+        kind: opened.kind ?? "dialog",
+        status: "not-reached",
+        reason: dismissalLimitReason,
+        tests: [],
+      };
+    }
+    progress("dismissal");
+    const { dismissal, disturbed } = await testDismissal(page, {
+      trigger,
+      root,
+      kind: opened.kind,
+      explicit: settings.explicit,
+      waitMs: options.waitMs,
+      deadline,
+      reopen,
+    });
+    deadline.check();
+    if (disturbed) needsReplay = true;
+    if (dismissal.status !== "not-applicable") {
+      dismissalCount += 1;
+      if (dismissalSummary) {
+        if (dismissal.status !== "not-reached") dismissalSummary.tested += 1;
+        if (dismissal.status !== "tested") dismissalSummary.notReached += 1;
+      }
+    }
+    return dismissal;
+  };
   /** Revealed roots of opened disclosures, for their mode-switch items. */
   const revealedRoots = new Map<Candidate, string | undefined>();
   /**
@@ -4585,6 +4771,13 @@ export async function probeControls(
             );
             deadline.check();
             if (found.opened) {
+              result.openedDisclosure = await openedDisclosureGeometry(
+                page,
+                candidate.path,
+                found.root,
+                candidate.disclosure,
+              );
+              deadline.check();
               revealedRoots.set(candidate, found.root);
               if (itemsRoot === "" && found.root !== undefined)
                 itemsRoot = found.root;
@@ -4607,6 +4800,28 @@ export async function probeControls(
                 (item) => item.path !== candidate.path,
               )
             : [];
+          if (
+            !outcome.error &&
+            !leftPage &&
+            candidate.disclosure !== "details"
+          ) {
+            const disclosure =
+              candidate.disclosure === undefined
+                ? undefined
+                : revealedRoots.get(candidate);
+            const dismissal = await testOpenedDismissal(
+              page,
+              deadline,
+              candidate.path,
+              {
+                kind: candidate.disclosure,
+                root: disclosure,
+                openedRoots,
+              },
+              (active) => clickOpen(active, [candidate.path]),
+            );
+            if (dismissal) result.dismissal = dismissal;
+          }
           return {
             result,
             items,
@@ -4780,6 +4995,12 @@ export async function probeControls(
             const fieldsBefore = disclosureParent
               ? await visibleFields(page)
               : [];
+            // A nested item that is itself a disclosure (a drawer's menu
+            // button) opens an overlay the dismissal pass tests too.
+            const positionedBefore =
+              item.disclosure !== undefined && item.disclosure !== "details"
+                ? await positionedPaths(page)
+                : [];
             effects = new Set();
             let openedRoots: string[] = [];
             const result = await clickAndObserve(
@@ -4799,6 +5020,31 @@ export async function probeControls(
               onBlocked,
               lateContentMs,
             );
+            const opened =
+              item.disclosure !== undefined &&
+              !result.error &&
+              !result.effects.some((effect) =>
+                ["navigation", "popup", "download", "filechooser"].includes(
+                  effect,
+                ),
+              )
+                ? await disclosureRoot(
+                    page,
+                    item,
+                    positionedBefore,
+                    openedRoots,
+                  )
+                : undefined;
+            const openedDisclosure =
+              opened?.opened && item.disclosure !== undefined
+                ? await openedDisclosureGeometry(
+                    page,
+                    item.path,
+                    opened.root,
+                    item.disclosure,
+                  )
+                : undefined;
+            deadline.check();
             let revealed: RevealedState | undefined;
             if (
               disclosureParent &&
@@ -4830,6 +5076,34 @@ export async function probeControls(
                   intent,
                 )
               : [];
+            const nestedDisclosure =
+              item.disclosure === "details" ? undefined : item.disclosure;
+            const testable =
+              item.disclosure !== "details" &&
+              !result.error &&
+              !result.effects.some((effect) =>
+                ["navigation", "popup", "download", "filechooser"].includes(
+                  effect,
+                ),
+              );
+            deadline.check();
+            const dismissal = testable
+              ? await testOpenedDismissal(
+                  page,
+                  deadline,
+                  item.path,
+                  {
+                    kind: nestedDisclosure,
+                    root: opened?.opened ? opened.root : undefined,
+                    openedRoots,
+                  },
+                  (active) =>
+                    clickOpen(active, [
+                      ...parents.map((parent) => parent.path),
+                      item.path,
+                    ]),
+                )
+              : undefined;
             return {
               items,
               result: result.error
@@ -4842,7 +5116,11 @@ export async function probeControls(
                     ...skippedResult(item, "", parentName),
                     ...withoutTriggerBox(result),
                     skipped: undefined,
+                    ...(openedDisclosure === undefined
+                      ? {}
+                      : { openedDisclosure }),
                     ...(revealed === undefined ? {} : { revealed }),
+                    ...(dismissal === undefined ? {} : { dismissal }),
                   },
             };
           },

@@ -120,6 +120,7 @@ test("longRunning capture records progress, round-trips offline, and discloses n
         states: [
           {
             id: name,
+            loadingSettleMs: 50,
             description: name,
             url: `/${name}`,
             steps: [
@@ -209,6 +210,7 @@ test("a web step that fetches with no feedback gets a held replay; longRunning l
         states: [
           {
             id: marked ? "marked" : "unmarked",
+            loadingSettleMs: 50,
             description: "Load items",
             url: "/loading-state/before.html",
             steps: [
@@ -232,6 +234,8 @@ test("a web step that fetches with no feedback gets a held replay; longRunning l
       });
       expect(result.ok).toBe(true);
       if (result.observations?.version !== 2) throw Error("missing evidence");
+      // Slow replay creates its own feedback after the ordinary state was frozen.
+      expect(result.observations.loadingStuck?.records).toEqual([]);
       const timelines = withTimelineIds(result.timelines);
       expect(timelines?.actions.map((action) => action.id)).toContain(
         "slow-step-1",

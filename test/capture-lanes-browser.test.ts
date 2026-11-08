@@ -46,6 +46,12 @@ function withoutTiming(value: unknown): unknown {
               "timings",
               "elapsedMs",
               "observedMs",
+              // Run lifecycle identity differs per run.
+              "runId",
+              "owner",
+              "startedAt",
+              "updatedAt",
+              "endedAt",
             ].includes(key),
         )
         .map(([key, item]) => [key, withoutTiming(item)]),
@@ -119,6 +125,12 @@ test("capture lanes preserve benchmark evidence, screenshots and finding fingerp
         dependencies: {
           snapshotSource: async () => ({ commit: "fixture", dirty: false }),
           inheritedEnvironment: { PATH: process.env.PATH },
+          // Real load and latency differ between runs; lanes must not.
+          readHost: () => ({
+            load: [0, 0, 0] as [number, number, number],
+            coreCount: 8,
+          }),
+          measureReadyUrl: async () => 1,
         },
       });
       expect(captured.counts).toEqual({ passed: 4, failed: 0, total: 4 });

@@ -9,13 +9,20 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { arch, release, tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { recordingKey } from "../checks/temporal-evidence.js";
 import { writeDesignArtifacts } from "../design/artifacts.js";
 import type { CapturedDesign, DesignDescriptor } from "../design/types.js";
 import { IdiomError } from "../errors.js";
 import type { Flow, StateCombination, ToggleCap } from "../schemas/flow.js";
 import { IDIOM_VERSION } from "../version.js";
+import {
+  atomicJson,
+  currentRunOwner,
+  installArtifactTree,
+  RunLifecycle,
+} from "./run-lifecycle.js";
+import type { RunRecord } from "./run-record.js";
 import { stagingDirectoryPrefix } from "./staging.js";
 import type {
   MetadataUrl,
@@ -70,6 +77,7 @@ export type CombinationSummary = {
 };
 
 export type ArtifactWorkspace = {
+  lifecycle?: RunLifecycle;
   finalDirectory: string;
   stagingDirectory: string;
   dataDirectory: string;
@@ -87,6 +95,7 @@ export async function createArtifactWorkspace(options: {
   projectDirectory: string;
   out?: string | undefined;
   now?: Date | undefined;
+  initialRecord?: RunRecord | undefined;
 }): Promise<ArtifactWorkspace> {
   const finalDirectory =
     options.out ??
@@ -107,11 +116,50 @@ export async function createArtifactWorkspace(options: {
   }
   const parent = dirname(finalDirectory);
   await mkdir(parent, { recursive: true });
-  const stagingDirectory = await mkdtemp(
-    join(parent, stagingDirectoryPrefix(finalDirectory)),
-  );
-  const dataDirectory = await mkdtemp(join(tmpdir(), "idiom-capture-data-"));
-  return { finalDirectory, stagingDirectory, dataDirectory };
+  let lifecycle: RunLifecycle | undefined;
+  if (options.initialRecord) {
+    try {
+      await mkdir(finalDirectory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST")
+        throw new IdiomError(
+          `capture output already exists and will not be overwritten: ${finalDirectory}`,
+        );
+      throw error;
+    }
+    try {
+      const startedAt = (options.now ?? new Date()).toISOString();
+      const record: RunRecord = {
+        ...options.initialRecord,
+        status: "running",
+        runId: basename(finalDirectory),
+        owner: await currentRunOwner(),
+        startedAt,
+        updatedAt: startedAt,
+        completedTuples: [],
+      };
+      await atomicJson(join(finalDirectory, "run.json"), record);
+      lifecycle = new RunLifecycle(finalDirectory, record);
+    } catch (error) {
+      await rm(finalDirectory, { recursive: true, force: true });
+      throw error;
+    }
+  }
+  try {
+    const stagingDirectory = await mkdtemp(
+      join(parent, stagingDirectoryPrefix(finalDirectory)),
+    );
+    const dataDirectory = await mkdtemp(join(tmpdir(), "idiom-capture-data-"));
+    return {
+      finalDirectory,
+      stagingDirectory,
+      dataDirectory,
+      ...(lifecycle ? { lifecycle } : {}),
+    };
+  } catch (error) {
+    await lifecycle?.interrupt({ reason: "capture-failed" });
+    throw error;
+  }
 }
 
 function consoleJsonl(result: TupleResult): string {
@@ -193,6 +241,7 @@ export async function writeTupleArtifacts(options: {
   browserVersion: string;
   fallbackTimestamp: string;
   build?: ProductionBuild | undefined;
+  snapshot?: boolean | undefined;
 }): Promise<void> {
   const { tuple } = options;
   const directory = join(
@@ -255,6 +304,7 @@ export async function writeTupleArtifacts(options: {
         directory,
         facts,
         result.filmstrips.finalCandidates(facts),
+        options.snapshot !== true,
       );
     }
     if (result.timelines !== undefined) {
@@ -301,9 +351,10 @@ export async function writeTupleArtifacts(options: {
   const design = designs[0];
   // How the screenshot was taken; its drift rects stay in observations.
   const shot =
-    result?.observations?.version === 2
+    result?.screenshotGeometry ??
+    (result?.observations?.version === 2
       ? result.observations.screenshot
-      : undefined;
+      : undefined);
   const metadata = {
     ...(design === undefined ? {} : { design }),
     ...(several ? { designs } : {}),
@@ -394,7 +445,11 @@ export async function writeTupleArtifacts(options: {
     failure: tuple.resolutionFailure
       ? { stage: "url-resolution", message: tuple.resolutionFailure }
       : result?.ok === false
-        ? { stage: result.stage, message: result.message }
+        ? {
+            stage: result.stage,
+            message: result.message,
+            ...(result.timeout ? { timeout: result.timeout } : {}),
+          }
         : null,
     platform: {
       platform: process.platform,
@@ -411,6 +466,9 @@ export async function writeTupleArtifacts(options: {
             scale: shot.scale,
             width: shot.width,
             height: shot.height,
+            ...(shot.croppedFromHeight === undefined
+              ? {}
+              : { croppedFromHeight: shot.croppedFromHeight }),
             ...(shot.tiles === undefined ? {} : { tiles: shot.tiles }),
             ...(shot.drift === undefined ? {} : { drift: shot.drift }),
           },
@@ -618,7 +676,19 @@ export async function publishArtifacts(
   signal?: AbortSignal,
 ): Promise<void> {
   signal?.throwIfAborted();
-  await rename(workspace.stagingDirectory, workspace.finalDirectory);
+  if (workspace.lifecycle) {
+    await workspace.lifecycle.complete(
+      JSON.parse(
+        await readFile(join(workspace.stagingDirectory, "run.json"), "utf8"),
+      ) as RunRecord,
+      () =>
+        installArtifactTree(
+          workspace.stagingDirectory,
+          workspace.finalDirectory,
+        ),
+      signal,
+    );
+  } else await rename(workspace.stagingDirectory, workspace.finalDirectory);
 }
 
 export async function cleanupWorkspace(

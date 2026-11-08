@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   lstat,
   mkdir,
@@ -14,6 +15,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import {
   type InitConfirmationRequest,
   initProject,
+  initSummaryLines,
 } from "../src/commands/init.js";
 import { projectSchema } from "../src/schemas/project.js";
 import {
@@ -203,9 +205,11 @@ test("a modified managed skill file is preserved beside an owned SKILL.md", asyn
 
   const result = await initProject({ project, yes: true });
 
-  expect(result.skipped).toEqual([".agents/skills/idiom/init.md"]);
+  expect(result.skipped).toEqual([]);
   expect(await readFile(guide, "utf8")).toBe("local interview");
-  expect(result.unchanged).toContain(".claude/skills/idiom");
+  expect(
+    result.skillUpgrade?.skills.map(({ name, outcome }) => ({ name, outcome })),
+  ).toEqual([{ name: "idiom", outcome: "current" }]);
   expect(await readlink(join(project, ".claude", "skills", "idiom"))).toBe(
     "../../.agents/skills/idiom",
   );
@@ -241,7 +245,8 @@ test("a custom canonical skill is preserved without prompting or a Claude link",
     await expect(
       lstat(join(project, ".claude", "skills", "idiom")),
     ).rejects.toMatchObject({ code: "ENOENT" });
-    expect(confirm).toHaveBeenCalledTimes(yes ? 0 : 1);
+    // Interactive: the flow offer and the single wiring confirmation.
+    expect(confirm).toHaveBeenCalledTimes(yes ? 0 : 2);
   }
 });
 
@@ -303,16 +308,16 @@ test.each(["file", "directory"])(
 test("Autobuild verification assets ship as templates but are not init scaffolding", async () => {
   const templates = templatesDirectory();
   await expect(
-    readFile(join(templates, "ab-verify-idiom", "SKILL.md"), "utf8"),
-  ).resolves.toContain("idiom verify booking");
+    readFile(join(templates, "idiom-verify", "SKILL.md"), "utf8"),
+  ).resolves.toContain("idiom verify <flow>");
   await expect(
     readFile(join(templates, "autobuild.idiom.toml"), "utf8"),
-  ).resolves.toContain("[verify.idiom]");
+  ).resolves.toContain("[verify.idiom-check]");
 
   const project = await temporaryProject();
   await initProject({ project, yes: true });
   await expect(
-    readFile(join(project, ".agents", "skills", "ab-verify-idiom", "SKILL.md")),
+    readFile(join(project, ".agents", "skills", "idiom-verify", "SKILL.md")),
   ).rejects.toMatchObject({ code: "ENOENT" });
   await expect(
     readFile(join(project, "autobuild.idiom.toml")),
@@ -327,17 +332,20 @@ test("declining the Autobuild offer leaves every wiring destination untouched", 
 
   const result = await initProject({ project, confirm });
 
-  expect(result.autobuild).toEqual({ kind: "declined" });
+  expect(result.autobuild).toMatchObject({ kind: "declined" });
   expect(confirm).toHaveBeenCalledTimes(2);
   expect(confirm).toHaveBeenCalledWith(
-    expect.objectContaining({ kind: "offer-autobuild-wiring" }),
+    expect.objectContaining({ kind: "apply-wiring" }),
   );
+  await expect(lstat(join(project, "AGENTS.md"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
   expect(await readFile(config, "utf8")).toBe('[verify]\nsteps = ["test"]\n');
   await expect(
-    lstat(join(project, ".agents", "skills", "ab-verify-idiom")),
+    lstat(join(project, ".agents", "skills", "idiom-verify")),
   ).rejects.toMatchObject({ code: "ENOENT" });
   await expect(
-    lstat(join(project, ".claude", "skills", "ab-verify-idiom")),
+    lstat(join(project, ".claude", "skills", "idiom-verify")),
   ).rejects.toMatchObject({ code: "ENOENT" });
   expect(result.created).toContain("PRODUCT.md");
 });
@@ -352,7 +360,7 @@ test("--yes only reports interactive Autobuild availability", async () => {
 
   const result = await initProject({ project, yes: true, confirm });
 
-  expect(result.autobuild).toEqual({ kind: "available-noninteractive" });
+  expect(result.autobuild).toMatchObject({ kind: "available-noninteractive" });
   expect(confirm).not.toHaveBeenCalled();
   expect(await readFile(join(project, "autobuild.toml"), "utf8")).toBe(
     "[project]\nname='x'\n",
@@ -376,7 +384,7 @@ test("accepted wiring previews before config consent and writes all canonical en
     confirm: async (request) => {
       if (request.kind === "offer-flow-generation") return false;
       events.push(request.kind);
-      if (request.kind === "apply-autobuild-config") {
+      if (request.kind === "apply-wiring") {
         expect(request.diff).toBe(preview);
         expect(await readFile(config, "utf8")).toBe(original);
       }
@@ -384,41 +392,41 @@ test("accepted wiring previews before config consent and writes all canonical en
     },
   });
 
-  expect(events).toEqual([
-    "offer-autobuild-wiring",
-    "diff",
-    "apply-autobuild-config",
-  ]);
-  expect(result.autobuild).toEqual({ kind: "applied" });
-  expect(await readFile(config, "utf8")).toContain('steps = ["test", "idiom"]');
+  // One plan, one confirmation: no separate offer or per-surface apply.
+  expect(events.slice(0, 2)).toEqual(["diff", "apply-wiring"]);
+  expect(preview).toContain("[x] autobuild-gate: update autobuild.toml");
+  expect(result.autobuild).toMatchObject({ kind: "applied" });
+  expect(await readFile(config, "utf8")).toContain(
+    'steps = ["test", "idiom-check"]',
+  );
+  expect(
+    (await lstat(join(project, ".agents/skills/idiom-verify"))).isDirectory(),
+  ).toBe(true);
   expect(
     await readFile(
-      join(project, ".agents", "skills", "ab-verify-idiom", "SKILL.md"),
+      join(project, ".agents/skills/idiom-verify/SKILL.md"),
       "utf8",
     ),
   ).toBe(await readAutobuildVerifierSkillTemplate());
-  expect(
-    await readlink(join(project, ".claude", "skills", "ab-verify-idiom")),
-  ).toBe("../../.agents/skills/ab-verify-idiom");
 });
 
 test("fully wired pathless reruns do not prompt or duplicate custom compatible wiring", async () => {
   const project = await temporaryProject();
   await writeFile(
     join(project, "autobuild.toml"),
-    `[commands]\nidiom-verify = "idiom verify home --spec .ab/spec.md --out .ab/idiom"\n[verify]\nsteps = ["idiom"]\n[verify.idiom]\nkind = "agent"\nskill = "ab-verify-idiom"\nalways = true\n`,
+    `[commands]\nidiom-check="idiom check --gate --fail-on major --deferred warn"\nidiom-verify = "idiom verify home --spec .ab/spec.md --out .ab/idiom"\n[verify]\nsteps = ["idiom", "idiom-check"]\n[verify.idiom]\nkind = "agent"\nskill = "idiom-verify"\nalways = true\n[verify.idiom-check]\nkind="agent"\nskill="idiom-verify"\n`,
   );
-  await mkdir(join(project, ".agents", "skills", "ab-verify-idiom"), {
+  await mkdir(join(project, ".agents", "skills", "idiom-verify"), {
     recursive: true,
   });
   await writeFile(
-    join(project, ".agents", "skills", "ab-verify-idiom", "SKILL.md"),
+    join(project, ".agents", "skills", "idiom-verify", "SKILL.md"),
     await readAutobuildVerifierSkillTemplate(),
   );
   await mkdir(join(project, ".claude", "skills"), { recursive: true });
   await symlink(
-    "../../.agents/skills/ab-verify-idiom",
-    join(project, ".claude", "skills", "ab-verify-idiom"),
+    "../../.agents/skills/idiom-verify",
+    join(project, ".claude", "skills", "idiom-verify"),
     "dir",
   );
   const confirm = vi.fn(
@@ -436,37 +444,185 @@ test("fully wired pathless reruns do not prompt or duplicate custom compatible w
     (await readFile(join(project, "autobuild.toml"), "utf8")).match(
       /idiom-verify/g,
     ),
-  ).toHaveLength(1);
+  ).toHaveLength(3);
 });
 
-test("declining a differing verifier replacement rolls back the whole wiring decision", async () => {
+const wiredConfig = `[commands]\nidiom-check="idiom check --gate --fail-on major --deferred warn"\nidiom-verify = "idiom verify home --spec .ab/spec.md --out .ab/idiom"\n[verify]\nsteps = ["idiom", "idiom-check"]\n[verify.idiom]\nkind = "agent"\nskill = "idiom-verify"\nalways = true\n[verify.idiom-check]\nkind="agent"\nskill="idiom-verify"\n`;
+const verifierFile = ".agents/skills/idiom-verify/SKILL.md";
+
+/** A wired repository whose verifier is `live`, optionally tracked at `base`. */
+async function wiredVerifier(live: string, base?: string): Promise<string> {
+  const project = await temporaryProject();
+  await writeFile(join(project, "autobuild.toml"), wiredConfig);
+  await mkdir(join(project, ".agents", "skills", "idiom-verify"), {
+    recursive: true,
+  });
+  await writeFile(join(project, verifierFile), live);
+  await mkdir(join(project, ".claude", "skills"), { recursive: true });
+  await symlink(
+    "../../.agents/skills/idiom-verify",
+    join(project, ".claude", "skills", "idiom-verify"),
+    "dir",
+  );
+  if (base !== undefined) {
+    const pristine = join(project, ".agents", "skills", ".idiom-pristine");
+    await mkdir(join(pristine, "idiom-verify"), { recursive: true });
+    await writeFile(join(pristine, "idiom-verify", "SKILL.md"), base);
+    await writeFile(
+      join(pristine, "manifest.json"),
+      `${JSON.stringify(
+        {
+          schema: 1,
+          files: {
+            "idiom-verify/SKILL.md": {
+              version: "0.0.0-test",
+              digest: createHash("sha256").update(base).digest("hex"),
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  }
+  return project;
+}
+const earlyLine = "# Idiom verifier";
+const recordingConfirm = () =>
+  vi.fn(async (request: InitConfirmationRequest) => {
+    return request.kind !== "offer-flow-generation";
+  });
+
+test("a differing verifier never prompts for replacement and is left untouched", async () => {
+  const project = await temporaryProject();
+  const config = join(project, "autobuild.toml");
+  await writeFile(config, "[project]\nname = 'x'\n");
+  const skill = join(project, verifierFile);
+  await mkdir(join(skill, ".."), { recursive: true });
+  await writeFile(skill, "custom verifier");
+  const confirm = recordingConfirm();
+
+  const result = await initProject({
+    project,
+    write: () => undefined,
+    confirm,
+  });
+
+  const kinds = confirm.mock.calls.map(([request]) => request.kind as string);
+  expect(kinds).not.toContain("replace-autobuild-skill");
+  expect(
+    kinds.every((kind) =>
+      ["apply-wiring", "offer-flow-generation"].includes(kind),
+    ),
+  ).toBe(true);
+  expect(result.autobuild).toMatchObject({ kind: "manual" });
+  expect(await readFile(skill, "utf8")).toBe("custom verifier");
+  expect(result.replaced).not.toContain(verifierFile);
+  expect(
+    result.skillUpgrade?.files.find((file) => file.path === verifierFile)
+      ?.action,
+  ).toBeUndefined();
+});
+
+test("an edited verifier merges cleanly during init without a prompt", async () => {
+  const template = await readAutobuildVerifierSkillTemplate();
+  expect(template).toContain(`\n${earlyLine}\n`);
+  const base = template.replace(earlyLine, "# Older verifier heading");
+  const project = await wiredVerifier(`${base}local addition\n`, base);
+  const confirm = recordingConfirm();
+
+  const result = await initProject({ project, confirm });
+
+  expect(result.autobuild).toEqual({ kind: "already-wired" });
+  expect(
+    confirm.mock.calls.map(([request]) => request.kind as string),
+  ).not.toContain("replace-autobuild-skill");
+  const live = await readFile(join(project, verifierFile), "utf8");
+  expect(live).toBe(`${template}local addition\n`);
+  expect(result.skillUpgrade?.files[0]?.action).toBe("merged");
+  expect(initSummaryLines(result)).toContain("idiom-verify: merged (1 file)");
+});
+
+test("an overlapping verifier edit is left untouched and reported with its conflict", async () => {
+  const template = await readAutobuildVerifierSkillTemplate();
+  const base = template.replace(earlyLine, "# Older verifier heading");
+  const edited = template.replace(earlyLine, "# Our verifier heading");
+  const project = await wiredVerifier(edited, base);
+
+  const result = await initProject({ project, yes: true });
+
+  expect(await readFile(join(project, verifierFile), "utf8")).toBe(edited);
+  const file = result.skillUpgrade?.files[0];
+  expect(file?.action).toBe("conflicted");
+  expect(file?.conflictText).toContain("# Our verifier heading");
+  const summary = initSummaryLines(result).join("\n");
+  expect(summary).toContain("idiom-verify: conflicted (1 file)");
+  expect(summary).toContain(
+    "conflict (not written to disk; the live file is unchanged):",
+  );
+  expect(summary).toContain(
+    "Conflicted skill files were left untouched; run idiom upgrade to resolve them",
+  );
+});
+
+test("an older unedited idiom skill adopts during init", async () => {
+  const project = await temporaryProject();
+  await initProject({ project, yes: true });
+  const skillFile = join(project, ".agents", "skills", "idiom", "SKILL.md");
+  const pristine = join(project, ".agents", "skills", ".idiom-pristine");
+  const older = (await readIdiomSkillFile("SKILL.md")).replace(
+    /\n# [^\n]*\n/,
+    "\n# Older idiom heading\n",
+  );
+  expect(older).not.toBe(await readIdiomSkillFile("SKILL.md"));
+  await writeFile(skillFile, older);
+  await writeFile(join(pristine, "idiom", "SKILL.md"), older);
+  const manifest = JSON.parse(
+    await readFile(join(pristine, "manifest.json"), "utf8"),
+  );
+  manifest.files["idiom/SKILL.md"] = {
+    version: "0.0.0-test",
+    digest: createHash("sha256").update(older).digest("hex"),
+  };
+  await writeFile(
+    join(pristine, "manifest.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  );
+
+  const result = await initProject({ project, yes: true });
+
+  expect(result.skillUpgrade?.skills[0]).toMatchObject({
+    name: "idiom",
+    outcome: "adopted",
+  });
+  expect(await readFile(skillFile, "utf8")).toBe(
+    await readIdiomSkillFile("SKILL.md"),
+  );
+});
+
+test("foreign verifier content protects wiring before any application consent", async () => {
   const project = await temporaryProject();
   const config = join(project, "autobuild.toml");
   const original = "[project]\nname = 'x'\n";
   await writeFile(config, original);
-  const skill = join(
-    project,
-    ".agents",
-    "skills",
-    "ab-verify-idiom",
-    "SKILL.md",
-  );
+  const skill = join(project, verifierFile);
   await mkdir(join(skill, ".."), { recursive: true });
   await writeFile(skill, "custom verifier");
 
   const result = await initProject({
     project,
     write: () => undefined,
-    confirm: async (request) =>
-      request.kind !== "replace-autobuild-skill" &&
-      request.kind !== "offer-flow-generation",
+    confirm: async () => false,
   });
 
-  expect(result.autobuild).toEqual({ kind: "declined" });
+  expect(result.autobuild).toMatchObject({ kind: "manual" });
   expect(await readFile(config, "utf8")).toBe(original);
   expect(await readFile(skill, "utf8")).toBe("custom verifier");
+  expect(
+    result.skillUpgrade?.files.some((file) => file.skill === "idiom-verify"),
+  ).toBeFalsy();
   await expect(
-    lstat(join(project, ".claude", "skills", "ab-verify-idiom")),
+    lstat(join(project, ".claude", "skills", "idiom-verify")),
   ).rejects.toMatchObject({ code: "ENOENT" });
 });
 

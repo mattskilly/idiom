@@ -26,7 +26,6 @@ export type ChangedCheckOptions = Omit<CheckOptions, "flow"> & {
   flow?: string | undefined;
   changed: true | string;
   materializeAllDeterministic?: boolean;
-  captureFailureIsError?: boolean;
 };
 export type ChangedCheckEntry =
   | { flow: string; status: "not-checked"; reason: string }

@@ -2085,3 +2085,123 @@ test("V2 artifacts keep legacy probes and accept strict additive timeout evidenc
       }).success,
     ).toBe(false);
 });
+
+test("host pressure, full-page cap and state screenshot timeout are optional validated inputs", async () => {
+  const legacy = (await json("examples/booking/.idiom/project.json")) as Record<
+    string,
+    unknown
+  >;
+  const parsed = projectSchema.parse(legacy);
+  expect(parsed.capture.hostPressureThreshold).toBeUndefined();
+  expect(parsed.capture.maxFullPageHeight).toBeUndefined();
+  for (const field of ["hostPressureThreshold", "maxFullPageHeight"])
+    for (const value of [0, -1, Infinity, NaN, "1", null])
+      expect(
+        projectSchema.safeParse({ ...legacy, capture: { [field]: value } })
+          .success,
+      ).toBe(false);
+  expect(
+    projectSchema.safeParse({
+      ...legacy,
+      capture: { hostPressureThreshold: 0.5, maxFullPageHeight: 40000 },
+    }).success,
+  ).toBe(true);
+  expect(
+    projectSchema.safeParse({ ...legacy, capture: { maxFullPageHeight: 1.5 } })
+      .success,
+  ).toBe(false);
+  for (const value of [0, -1, 1.5, Infinity, NaN, "1000", null])
+    expect(
+      flowSchema.safeParse(
+        minimalFlow(minimalState({ screenshotTimeoutMs: value })),
+      ).success,
+    ).toBe(false);
+  expect(
+    flowSchema.parse(minimalFlow(minimalState({ screenshotTimeoutMs: 1234 })))
+      .states[0]?.screenshotTimeoutMs,
+  ).toBe(1234);
+});
+
+describe("explicit size and spacing targets", () => {
+  test.each([
+    { selector: ".add-tile", height: 56, tolerance: { px: 8 } },
+    { name: "tile", selector: ".tile", width: 56, tolerance: { ratio: 0.1 } },
+    { selector: ".tile", width: 56, tolerance: { px: 0, mode: "tighter" } },
+    { selector: ".tile", height: 56 },
+    { selector: ".tile", height: 56, tolerance: {} },
+    { selector: ".tile", height: 56, tolerance: { mode: "tighter" } },
+    { selector: ".tile", width: 24, height: 56 },
+  ])(
+    "normalizes one-axis and unnamed declarations idempotently: %j",
+    (input) => {
+      const parsed = checksConfigSchema.parse({ components: [input] });
+      expect(parsed.components[0]?.name).toBe(
+        "name" in input ? input.name : input.selector,
+      );
+      expect(checksConfigSchema.parse(parsed)).toEqual(parsed);
+      if (input.tolerance && "px" in input.tolerance)
+        expect(parsed.components[0]?.tolerance.px).toBe(input.tolerance.px);
+    },
+  );
+
+  test.each([
+    { selector: ".tile" },
+    { selector: ".tile", height: 0 },
+    { selector: ".tile", width: Infinity },
+    { selector: ".tile", height: NaN },
+  ])("rejects incomplete or nonfinite size: %j", (input) => {
+    expect(checksConfigSchema.safeParse({ components: [input] }).success).toBe(
+      false,
+    );
+  });
+
+  test.each([
+    { between: [".a", ".b"], gap: 8, axis: "vertical", tolerance: { px: 2 } },
+    { within: ".groups", gap: 8 },
+    { within: ".groups", gap: 0, tolerance: { ratio: 0 } },
+    { between: [".a", ".b"], gap: 0, axis: "horizontal", tolerance: { px: 0 } },
+  ])("normalizes spacing targets idempotently: %j", (input) => {
+    const parsed = checksConfigSchema.parse({ spacingTargets: [input] });
+    expect(checksConfigSchema.parse(parsed)).toEqual(parsed);
+  });
+
+  test.each([
+    { gap: 8 },
+    { within: ".g", between: [".a", ".b"], gap: 8 },
+    { between: [".a"], gap: 8 },
+    { between: [".a", ".b", ".c"], gap: 8 },
+    { between: [".a", " .a "], gap: 8 },
+    { within: " ", gap: 8 },
+    { within: ".g", gap: -1 },
+    { within: ".g", gap: Infinity },
+    { within: ".g", gap: NaN },
+    { within: ".g", gap: 8, axis: "diagonal" },
+    { within: ".g", gap: 8, extra: true },
+    { within: ".g", gap: 8, tolerance: { px: -1 } },
+    { within: ".g", gap: 8, tolerance: { ratio: Infinity } },
+    { within: ".g", gap: 8, tolerance: { mode: "closest" } },
+    { within: ".g", gap: 8, tolerance: { extra: 1 } },
+  ])("rejects malformed spacing target: %j", (input) => {
+    expect(
+      checksConfigSchema.safeParse({ spacingTargets: [input] }).success,
+    ).toBe(false);
+  });
+
+  test("opened-state worked example validates as a complete flow", async () => {
+    const markdown = await readFile(
+      join(root, "docs/configuration.md"),
+      "utf8",
+    );
+    const example = markdown
+      .split("### Capture opened drawers, dialogs and menus")[1]
+      ?.match(/```json\n([\s\S]*?)\n```/);
+    expect(example).toBeDefined();
+    const flow = flowSchema.parse(JSON.parse(example?.[1] ?? ""));
+    expect(flow.states.map(({ id }) => id)).toEqual([
+      "edit-home",
+      "edit-home+brand-drawer",
+      "edit-home+dialog",
+      "edit-home+menu",
+    ]);
+  });
+});

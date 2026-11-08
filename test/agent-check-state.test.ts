@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { createBudget, recordEdit } from "../plugins/claude/hooks/lib.mjs";
 import {
   beginCheckRecording,
@@ -10,6 +10,19 @@ import {
 import { initProject } from "../src/commands/init.js";
 import type { ReportCoverage } from "../src/report/coverage.js";
 import { commit, git } from "./baseline-support.js";
+
+// These cases check which coverage may acknowledge a check, not the hook's
+// 140ms budget (agent-hooks.test.ts holds the hooks to it). Recording runs
+// Git under that default; on a loaded host it can expire and fail open to
+// undefined. Give the default a generous ceiling here; explicit budgets stay.
+vi.mock("../plugins/claude/hooks/lib.mjs", async (importOriginal) => {
+  const lib =
+    await importOriginal<typeof import("../plugins/claude/hooks/lib.mjs")>();
+  return {
+    ...lib,
+    createBudget: (ms?: number) => lib.createBudget(ms ?? 10_000),
+  };
+});
 
 const roots: string[] = [];
 afterEach(async () => {

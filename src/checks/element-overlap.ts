@@ -51,11 +51,27 @@ export const elementOverlapCheck: DeterministicCheck = {
       observation.elements.map((element) => [element.selector, element]),
     );
     const candidates: FindingCandidate[] = [];
+    const ambiguous = new Map<
+      string,
+      { cards: Set<string>; a: string; b: string }
+    >();
     for (const overlap of observation.overlaps) {
       const a = bySelector.get(overlap.a);
       const b = bySelector.get(overlap.b);
       if (a === undefined || b === undefined) continue;
       if (!gate.allows("idiom:elements-overlap", a, b)) continue;
+      if (overlap.cardAction?.status === "intentional") continue;
+      if (overlap.cardAction?.status === "ambiguous") {
+        const { group, card } = overlap.cardAction;
+        const entry = ambiguous.get(group) ?? {
+          cards: new Set<string>(),
+          a: overlap.a,
+          b: overlap.b,
+        };
+        entry.cards.add(card);
+        ambiguous.set(group, entry);
+        continue;
+      }
       if (
         reportsInteractiveOverlap(a, b, narrowViewport) ||
         reportsInteractiveOverlap(b, a, narrowViewport)
@@ -103,6 +119,26 @@ export const elementOverlapCheck: DeterministicCheck = {
           selectors: [overlap.a, overlap.b],
           overlap: { width, height },
           viewportWidth: tuple.width,
+        }),
+      });
+    }
+    for (const [group, entry] of [...ambiguous].sort(([a], [b]) =>
+      a.localeCompare(b),
+    )) {
+      candidates.push({
+        category: this.id,
+        severity: "info",
+        rule: "idiom:elements-overlap",
+        selectorHint: entry.a,
+        fingerprintHint: `card-action ${group}`,
+        explanation: `${entry.cards.size} card(s) in ${group} have overlapping links and actions whose intent is ambiguous; review the card interaction.`,
+        acceptance: [
+          "Each card's primary link and subsidiary action remain independently reachable.",
+        ],
+        verification: verify(this.id, {
+          group,
+          affectedCards: entry.cards.size,
+          selectors: [entry.a, entry.b],
         }),
       });
     }

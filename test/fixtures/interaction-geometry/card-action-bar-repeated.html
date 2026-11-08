@@ -1,0 +1,11 @@
+<!doctype html>
+<title>Repeated cards with an absolute action bar holding a button and a link</title>
+<style>
+  body { margin: 24px; font: 16px Arial; }
+  .card { position: relative; width: 240px; height: 200px; margin-bottom: 16px; }
+  a.main { display: block; width: 240px; height: 200px; background: #eee; }
+  .abs { position: absolute; top: 4px; right: 4px; }
+</style>
+<div class="card"><a class="main" href="/x1" id="feature">Feature one</a><div class="abs"><button id="like" aria-label="Like">♡</button><a href="/s1" id="more">share</a></div></div>
+<div class="card"><a class="main" href="/x2">Feature two</a><div class="abs"><button aria-label="Like">♡</button><a href="/s2">share</a></div></div>
+<div class="card"><a class="main" href="/x3">Feature three</a><div class="abs"><button aria-label="Like">♡</button><a href="/s3">share</a></div></div>

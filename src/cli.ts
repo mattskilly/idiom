@@ -25,10 +25,15 @@ import {
   baselineRecordCommand,
   renderBaselineRecord,
 } from "./commands/baseline.js";
+import { bisectCommand } from "./commands/bisect.js";
 import {
   type BriefDependencies,
+  briefAttachCommand,
+  briefAttachJson,
   briefDecideCommand,
   briefDecideJson,
+  briefExportCommand,
+  briefExportJson,
   briefGateCommand,
   briefListCommand,
   briefPlanCommand,
@@ -37,7 +42,9 @@ import {
   briefResearchCommand,
   briefShowCommand,
   briefTriageCommand,
+  renderBriefAttach,
   renderBriefDecide,
+  renderBriefExport,
   renderBriefList,
   renderBriefResearch,
 } from "./commands/brief.js";
@@ -81,6 +88,13 @@ import {
 } from "./commands/init-validate.js";
 import { instructionCommand } from "./commands/instruction.js";
 import { type LearnDependencies, learnCommand } from "./commands/learn.js";
+import {
+  learnCoveredCommand,
+  learnFixtureCommand,
+  learnListCommand,
+  renderLearnList,
+} from "./commands/learn-misses.js";
+import { nightlyCommand, renderNightly } from "./commands/nightly.js";
 import { quickCommand } from "./commands/quick.js";
 import {
   addReferenceCommand,
@@ -102,16 +116,30 @@ import { validateCommand } from "./commands/validate.js";
 import { verifyCommand } from "./commands/verify.js";
 import { renderStateCoverage } from "./coverage/states.js";
 import type { CritiqueProcessRunner } from "./critique/process.js";
-import { IdiomError, RUN_FAILURE_EXIT_CODE, RunFailure } from "./errors.js";
+import { mergePending } from "./decisions/pending.js";
+import { decisionQuestion } from "./decisions/question.js";
+import { digestFlows } from "./digest/build.js";
+import { renderDigest } from "./digest/render.js";
+import {
+  DecisionNeeded,
+  DeferredCheck,
+  IdiomError,
+  RUN_FAILURE_EXIT_CODE,
+  RunFailure,
+} from "./errors.js";
 import { severityGateEligible } from "./findings/gate.js";
 import { renderFixSummary } from "./fix/report.js";
 import type { FixDependencies } from "./fix/run.js";
 import type { GenerateFlow } from "./flows/generate.js";
+import { gatePlanLine, renderGatePlan } from "./gate/render.js";
 import { applyHelp } from "./help.js";
 import { EXIT_CODES, jsonPayload } from "./interface/version.js";
-import { resolveProjectArgument } from "./project.js";
+import { humanFoundLine, summarizeMisses } from "./learn/misses.js";
+import { nightlySchedule } from "./nightly/schedule.js";
+import { findProjectDirectory, resolveProjectArgument } from "./project.js";
 import { interactionTail } from "./quick/interaction.js";
 import type { QuickDependencies } from "./quick/run.js";
+import { withRecordNotes } from "./records/unknown.js";
 import type { ReferenceDependencies } from "./references/run.js";
 import type { OpenReportDependencies } from "./report/open.js";
 import { advisoryCount } from "./review/advisory.js";
@@ -142,6 +170,7 @@ import {
 } from "./update/self-update.js";
 import type { VerifyDependencies } from "./verify/run.js";
 import { IDIOM_VERSION_DISPLAY } from "./version.js";
+import { WIRING_SURFACES, type WiringDependencies } from "./wiring/types.js";
 
 export type ProgramDependencies = {
   cwd?: string;
@@ -153,6 +182,9 @@ export type ProgramDependencies = {
   reference?: ReferenceDependencies;
   review?: ReviewDependencies;
   decide?: DecideDependencies;
+  bisect?: import("./attribution/bisect.js").BisectDependencies;
+  /** Test seam for nightly: the per-flow check, clock and environment. */
+  nightly?: import("./commands/nightly.js").NightlyOptions["dependencies"];
   brief?: BriefDependencies;
   explore?: ExploreDependencies;
   ruling?: RulingDependencies;
@@ -168,6 +200,8 @@ export type ProgramDependencies = {
   /** Test seam for upgrade's CLI step: install detection, registry, runners. */
   selfUpdate?: SelfUpdateDependencies;
   updateCheck?: UpdateCheckDependencies;
+  /** Test seam for init wiring: selection, PATH/Git lookups, write hook. */
+  wiring?: WiringDependencies;
   /** Test seam for agent-led setup after init: probe runner, launcher, environment. */
   setupAgent?: {
     probe?: CritiqueProcessRunner;
@@ -233,6 +267,8 @@ function lineWriter(
  * With --json, a run that could not happen still prints machine-readable
  * output on stdout; the failure is then rethrown for stderr and the exit code.
  */
+class PartialCheckFailure extends Error {}
+
 async function withFailureJson<T>(
   json: boolean | undefined,
   flow: string | undefined,
@@ -357,6 +393,14 @@ export function createProgram(
     return {
       ...dependencies.capture,
       ...supplied,
+      onLifecycleDiagnostic: (message) => {
+        for (const callback of new Set([
+          dependencies.capture?.onLifecycleDiagnostic,
+          supplied?.onLifecycleDiagnostic,
+        ]))
+          callback?.(message);
+        writeErr(message);
+      },
       onLeftoverServer: (message) => {
         for (const callback of leftoverCallbacks) callback?.(message);
         writeErr(message);
@@ -406,7 +450,10 @@ export function createProgram(
       "--flow <id>",
       "with --validate: the flow to boot (default: the first flow)",
     )
-    .option("--json", "with --validate: print { ready, validate, doctor }")
+    .option(
+      "--json",
+      "with --validate: print { ready, validate, doctor, surfaces }",
+    )
     .addOption(
       new Option(
         "--agent <name>",
@@ -419,8 +466,45 @@ export function createProgram(
       "--print-setup-prompt",
       "print only the agent setup prompt and exit",
     )
+    .option(
+      "--wire",
+      "on an initialized project, only detect and wire agent files, CI, hooks and Autobuild",
+    )
+    .option("--dry-run", "print the wiring plan and change nothing")
+    .addOption(
+      new Option(
+        "--skip-wiring <surface>",
+        "leave one wiring surface unchanged (repeatable)",
+      )
+        .choices(WIRING_SURFACES)
+        .argParser((value: string, previous: string[] = []) => {
+          if (!(WIRING_SURFACES as readonly string[]).includes(value))
+            throw new InvalidArgumentError(
+              `Allowed choices are ${WIRING_SURFACES.join(", ")}.`,
+            );
+          return [...previous, value];
+        }),
+    )
+    .option(
+      "--git-hook",
+      "opt in to a pre-push idiom check --gate --fail-on blocker in husky or lefthook",
+    )
+    .option(
+      "--nightly",
+      "opt in to a scheduled idiom nightly in the generated GitHub workflow",
+    )
+    .option(
+      "--design-review",
+      "opt in to an Autobuild consent landing rule for tickets labelled design-review",
+    )
     .action(async (_options, command: Command) => {
       const local = command.opts<{
+        wire?: boolean;
+        dryRun?: boolean;
+        skipWiring?: string[];
+        gitHook?: boolean;
+        nightly?: boolean;
+        designReview?: boolean;
         yes?: boolean;
         flows?: boolean;
         surface?: string;
@@ -433,6 +517,29 @@ export function createProgram(
       const shared = command.optsWithGlobals<
         SharedOptions & { yes?: boolean }
       >();
+      const wiringFlags =
+        local.wire === true ||
+        local.dryRun === true ||
+        local.skipWiring !== undefined ||
+        local.gitHook === true ||
+        local.nightly === true ||
+        local.designReview === true;
+      if (
+        wiringFlags &&
+        (local.validate === true || local.printSetupPrompt === true)
+      )
+        throw new IdiomError(
+          "--wire, --dry-run, --skip-wiring, --git-hook, --nightly and --design-review cannot be combined with --validate or --print-setup-prompt",
+        );
+      if (
+        local.wire === true &&
+        (local.flows === true ||
+          local.surface !== undefined ||
+          local.agent !== undefined)
+      )
+        throw new IdiomError(
+          "--wire only wires; it cannot be combined with --flows, --surface, --agent or --no-agent",
+        );
       if (
         local.validate === true &&
         (local.yes === true ||
@@ -499,10 +606,21 @@ export function createProgram(
         generateFlows: dependencies.generateFlows,
         confirm: dependencies.confirm,
         write: writeOut,
+        wiring: {
+          wire: local.wire,
+          dryRun: local.dryRun,
+          skipWiring: local.skipWiring,
+          gitHook: local.gitHook,
+          nightly: local.nightly,
+          designReview: local.designReview,
+        },
+        wiringDependencies: dependencies.wiring,
       });
       for (const line of initSummaryLines(result)) writeOut(line);
+      if (result.mode !== undefined) return;
       const outcome = await offerAgentSetup({
         projectDirectory: result.projectDirectory,
+        wiring: result.wiring,
         agent: local.agent,
         yes: local.yes === true,
         interactive:
@@ -577,6 +695,12 @@ export function createProgram(
           cwd: dependencies.cwd,
           agent: options.agent,
           dryRun: options.dryRun,
+          interactive:
+            options.json !== true &&
+            (dependencies.confirm !== undefined ||
+              process.stdin.isTTY === true),
+          confirm: dependencies.confirm ?? defaultConfirmation,
+          write: options.json ? undefined : writeOut,
         },
         dependencies.upgrade,
       );
@@ -661,6 +785,10 @@ export function createProgram(
     .command("capture")
     .description("capture every state and viewport in a flow")
     .argument("<flow>", "flow manifest id")
+    .option(
+      "--ref <commit-ish>",
+      "build and capture a fixed commit in a temporary detached worktree",
+    )
     .option("--prod", "capture a fresh production build")
     .option(
       "--states <ids>",
@@ -692,6 +820,7 @@ export function createProgram(
         flow: string,
         options: {
           out?: string;
+          ref?: string;
           refreshDesign?: boolean;
           prod?: boolean;
           port?: number;
@@ -704,6 +833,7 @@ export function createProgram(
         const shared = command.optsWithGlobals<SharedOptions>();
         const result = await captureCommand({
           flow,
+          ref: options.ref,
           project: shared.project,
           out: options.out,
           scope: {
@@ -1224,6 +1354,14 @@ export function createProgram(
       "[flow]",
       "flow manifest id (required without --changed or --gate)",
     )
+    .addOption(
+      new Option(
+        "--deferred <policy>",
+        "busy host: fail with exit 3 or warn and continue severity gates",
+      )
+        .choices(["fail", "warn"])
+        .default("fail"),
+    )
     .option(
       "--gate",
       "build gate: check only what the change affects, within a time budget; skips non-UI changes",
@@ -1234,12 +1372,20 @@ export function createProgram(
       parseDuration,
     )
     .option(
+      "--plan-only",
+      "with --gate: print the gate's plan (or skip) and stop before any server or capture",
+    )
+    .option(
       "--reuse-server",
       "use a server already answering at server.readyUrl instead of starting one",
     )
     .option(
       "--changed [base]",
       "check states affected by changes since base (default: merge base with the default branch); put flow before --changed",
+    )
+    .option(
+      "--ref <commit-ish>",
+      "build and check a fixed commit in a temporary detached worktree",
     )
     .option("--prod", "capture and check a fresh production build")
     .option(
@@ -1326,7 +1472,9 @@ export function createProgram(
         flow: string | undefined,
         options: {
           changed?: true | string;
+          ref?: string;
           gate?: boolean;
+          planOnly?: boolean;
           budget?: number;
           reuseServer?: boolean;
           refreshDesign?: boolean;
@@ -1349,14 +1497,28 @@ export function createProgram(
           viewports?: string;
           schemes?: string;
           failOnJudged: boolean;
+          deferred: "fail" | "warn";
           failOn: "blocker" | "major" | "minor" | "never";
         },
         command: Command,
       ) => {
         const shared = command.optsWithGlobals<SharedOptions>();
         const changed = options.changed;
+        if (
+          options.ref !== undefined &&
+          (options.from !== undefined ||
+            options.latest ||
+            changed !== undefined ||
+            options.gate ||
+            options.reuseServer)
+        )
+          throw new IdiomError(
+            "--ref cannot be combined with --from, --latest, --changed, --gate or --reuse-server; it requires a fresh named-flow capture",
+          );
         if (options.budget !== undefined && options.gate !== true)
           throw new IdiomError("--budget requires --gate");
+        if (options.planOnly === true && options.gate !== true)
+          throw new IdiomError("--plan-only requires --gate");
         if (options.gate === true) {
           const result = await withFailureJson(
             options.json,
@@ -1377,9 +1539,12 @@ export function createProgram(
                   viewports: options.viewports,
                   schemes: options.schemes,
                 },
-                onPlan: (lines) => {
-                  for (const line of lines) writeErr(line);
-                },
+                // Plan-only prints the plan to stdout instead.
+                onPlan: options.planOnly
+                  ? undefined
+                  : (lines) => {
+                      for (const line of lines) writeErr(line);
+                    },
                 dependencies: reviewDependencies,
               }),
           );
@@ -1392,11 +1557,29 @@ export function createProgram(
                         skipped: true,
                         reason: result.reason,
                         base: result.base,
+                        line: result.line,
                         files: result.files,
+                        allFlows: result.allFlows,
                       },
                     }),
                   )
                 : result.line,
+            );
+            return;
+          }
+          if ("planOnly" in result) {
+            writeOut(
+              options.json
+                ? jsonPayload(
+                    await withUpdate({
+                      gate: {
+                        planOnly: true,
+                        line: gatePlanLine(result.plan),
+                        plan: result.plan,
+                      },
+                    }),
+                  )
+                : renderGatePlan(result.plan).join("\n"),
             );
             return;
           }
@@ -1405,6 +1588,16 @@ export function createProgram(
             (entry) => entry.status === "checked",
           );
           const plan = result.plan;
+          const decisionNeeded = mergePending(
+            checked.flatMap((entry) => entry.summary.decisionNeeded ?? []),
+          );
+          // Every viewport of a pending reference question is the question,
+          // not an ordinary failure.
+          const decisionIds = new Set(
+            decisionNeeded
+              .filter((q) => q.kind === "reference-conflict")
+              .flatMap((q) => q.findingIds ?? [q.id]),
+          );
           writeOut(
             options.json
               ? jsonPayload(
@@ -1417,6 +1610,9 @@ export function createProgram(
                       server: result.server,
                       timing: result.timing,
                     },
+                    ...aggregateDeferral(checked),
+                    decisionNeeded,
+                    decisionQuestion: decisionQuestion(decisionNeeded),
                     selection: output.selection,
                     checkedStates: output.checkedStates,
                     checks: output.checks.map((entry) =>
@@ -1435,11 +1631,27 @@ export function createProgram(
                   ...checked.map((entry) =>
                     [
                       entry.summary.baselineNotApplied,
-                      renderCheckSummary(entry.summary, options).trimEnd(),
+                      renderCheckSummary(entry.summary, {
+                        ...options,
+                        humanFound: false,
+                      }).trimEnd(),
                     ]
                       .filter(Boolean)
                       .join("\n"),
                   ),
+                  ...(() => {
+                    const summary = checked.find(
+                      (entry) => entry.summary.humanFound,
+                    )?.summary.humanFound;
+                    return summary
+                      ? [
+                          humanFoundLine(
+                            summary,
+                            reviewDependencies.now?.() ?? new Date(),
+                          ),
+                        ]
+                      : [];
+                  })(),
                 ].join("\n"),
           );
           for (const entry of checked)
@@ -1450,22 +1662,37 @@ export function createProgram(
             if (entry.summary.timing && checked.length > 1)
               writeErr(renderTimingLine(entry.summary.timing, entry.flow));
           writeErr(renderTimingLine(result.timing));
+          if (checked.some((entry) => entry.summary.baselineNotRecorded)) {
+            for (const entry of checked)
+              if (entry.summary.baselineNotRecorded)
+                writeErr(entry.summary.baselineNotRecorded.message);
+            throw new PartialCheckFailure();
+          }
+          handleDeferral(
+            checked.some((entry) => entry.summary.verdict === "deferred"),
+            options.deferred,
+            writeErr,
+          );
           const failing =
             options.failOn === "never"
               ? []
               : checked
                   .flatMap((entry) => entry.summary.findings)
-                  .filter((finding) =>
-                    severityGateEligible(
-                      finding,
-                      options.failOn,
-                      options.failOnJudged,
-                    ),
+                  .filter(
+                    (finding) =>
+                      !decisionIds.has(finding.id) &&
+                      severityGateEligible(
+                        finding,
+                        options.failOn,
+                        options.failOnJudged,
+                      ),
                   );
           if (failing.length)
             throw new IdiomError(
               `check failed: ${failing.length} new/open finding(s) at or above ${options.failOn}`,
             );
+          if (options.failOn !== "never" && decisionNeeded.length)
+            throw new DecisionNeeded();
           return;
         }
         if (changed !== undefined) {
@@ -1497,6 +1724,7 @@ export function createProgram(
             options.json
               ? jsonPayload(
                   await withUpdate({
+                    ...aggregateDeferral(checked),
                     selection: output.selection,
                     checkedStates: output.checkedStates,
                     checks: output.checks.map((entry) =>
@@ -1515,11 +1743,27 @@ export function createProgram(
                   ...checked.map((entry) =>
                     [
                       entry.summary.baselineNotApplied,
-                      renderCheckSummary(entry.summary, options).trimEnd(),
+                      renderCheckSummary(entry.summary, {
+                        ...options,
+                        humanFound: false,
+                      }).trimEnd(),
                     ]
                       .filter(Boolean)
                       .join("\n"),
                   ),
+                  ...(() => {
+                    const summary = checked.find(
+                      (entry) => entry.summary.humanFound,
+                    )?.summary.humanFound;
+                    return summary
+                      ? [
+                          humanFoundLine(
+                            summary,
+                            reviewDependencies.now?.() ?? new Date(),
+                          ),
+                        ]
+                      : [];
+                  })(),
                 ].join("\n"),
           );
           for (const entry of checked)
@@ -1544,6 +1788,17 @@ export function createProgram(
                     ),
               ),
             );
+          if (checked.some((entry) => entry.summary.baselineNotRecorded)) {
+            for (const entry of checked)
+              if (entry.summary.baselineNotRecorded)
+                writeErr(entry.summary.baselineNotRecorded.message);
+            throw new PartialCheckFailure();
+          }
+          handleDeferral(
+            checked.some((entry) => entry.summary.verdict === "deferred"),
+            options.deferred,
+            writeErr,
+          );
           const failing = checked
             .flatMap((entry) => entry.summary.findings)
             .filter((finding) =>
@@ -1570,6 +1825,7 @@ export function createProgram(
           () =>
             checkCommand({
               flow,
+              ref: options.ref,
               project: shared.project,
               cwd: dependencies.cwd,
               from: options.from,
@@ -1598,6 +1854,7 @@ export function createProgram(
           options.json === true
             ? jsonPayload(await withUpdate(summary))
             : renderCheckSummary(summary, {
+                now: reviewDependencies.now?.(),
                 ungrouped: options.ungrouped,
                 top: options.top,
                 all: options.all,
@@ -1612,6 +1869,15 @@ export function createProgram(
         }
         if (summary.timing !== undefined)
           writeErr(renderTimingLine(summary.timing));
+        if (summary.baselineNotRecorded) {
+          writeErr(summary.baselineNotRecorded.message);
+          throw new PartialCheckFailure();
+        }
+        handleDeferral(
+          summary.verdict === "deferred",
+          options.deferred,
+          writeErr,
+        );
         const failing =
           options.failOn === "never"
             ? []
@@ -1776,6 +2042,202 @@ export function createProgram(
       },
     );
 
+  program
+    .command("digest")
+    .description(
+      "short summary of the latest run compared with the previous complete run",
+    )
+    .argument("[flow]", "flow manifest id (default: every checked flow)")
+    .option(
+      "--since <run|date>",
+      "compare with this run id, or the newest complete run before a YYYY-MM-DD date or ISO datetime",
+    )
+    .option("--json", "print the digest as JSON (complete lists)")
+    .action(
+      async (
+        flow: string | undefined,
+        options: { since?: string; json?: boolean },
+        command: Command,
+      ) => {
+        const shared = command.optsWithGlobals<SharedOptions>();
+        const flows = await digestFlows({
+          project: shared.project,
+          cwd: dependencies.cwd,
+          flow,
+          since: options.since,
+        });
+        const humanFound = await findProjectDirectory(
+          resolveProjectArgument(shared.project, dependencies.cwd),
+        )
+          .then((projectDirectory) => summarizeMisses({ projectDirectory }))
+          .catch(() => undefined);
+        writeOut(
+          options.json === true
+            ? jsonPayload({ flows, ...(humanFound ? { humanFound } : {}) })
+            : renderDigest(flows, {
+                humanFound,
+                now: reviewDependencies.now?.(),
+              }).join("\n"),
+        );
+      },
+    );
+
+  program
+    .command("nightly")
+    .description(
+      "check every flow against its baseline and file new findings as triage tickets",
+    )
+    .argument("[flows...]", "flow manifest ids (default: every flow)")
+    .addOption(
+      new Option(
+        "--severity <severity>",
+        "file findings at or above this severity (default nightly.severity, then major)",
+      ).choices(["blocker", "major", "minor"]),
+    )
+    .option(
+      "--label <name>",
+      "ticket label, repeatable (default nightly.labels, then idiom); each finding's category is added",
+      (value: string, previous: string[] = []) => [...previous, value],
+    )
+    .addOption(
+      new Option(
+        "--tracker <tracker>",
+        "where tickets go: autobuild triage via ab, a proposal directory, or auto (autobuild when available)",
+      )
+        .choices(["auto", "autobuild", "directory"])
+        .default("auto"),
+    )
+    .option(
+      "--out <dir>",
+      "proposal directory without autobuild (default nightly.out, then .idiom/reports/nightly)",
+    )
+    .option(
+      "--dry-run",
+      "print what would be filed or updated; write no ticket, proposal or ledger",
+    )
+    .addOption(
+      new Option(
+        "--deferred <policy>",
+        "busy host: fail with exit 3 or warn and continue",
+      )
+        .choices(["fail", "warn"])
+        .default("fail"),
+    )
+    .option(
+      "--probe-budget <ms>",
+      "run target for the interaction probe in milliseconds; 0 = no target",
+      parseNonNegativeInt,
+    )
+    .addOption(
+      new Option(
+        "--print-schedule <kind>",
+        "print a crontab line or launchd agent that runs idiom nightly, and exit",
+      ).choices(["cron", "launchd"]),
+    )
+    .option("--json", "print the result as JSON")
+    .action(
+      async (
+        flows: string[],
+        options: {
+          severity?: "blocker" | "major" | "minor";
+          label?: string[];
+          tracker: "auto" | "autobuild" | "directory";
+          out?: string;
+          dryRun?: boolean;
+          deferred: "fail" | "warn";
+          probeBudget?: number;
+          printSchedule?: "cron" | "launchd";
+          json?: boolean;
+        },
+        command: Command,
+      ) => {
+        const shared = command.optsWithGlobals<SharedOptions>();
+        const environment =
+          dependencies.nightly?.environment ??
+          reviewDependencies.environment ??
+          process.env;
+        if (options.printSchedule !== undefined) {
+          const schedule = await nightlySchedule({
+            kind: options.printSchedule,
+            project: shared.project,
+            cwd: dependencies.cwd,
+            environment,
+          });
+          writeOut(
+            options.json === true ? jsonPayload(schedule) : schedule.text,
+          );
+          return;
+        }
+        const result = await nightlyCommand({
+          flows,
+          project: shared.project,
+          cwd: dependencies.cwd,
+          severity: options.severity,
+          labels: options.label,
+          tracker: options.tracker,
+          out: options.out,
+          dryRun: options.dryRun,
+          probeBudgetMs: options.probeBudget,
+          dependencies: {
+            ...reviewDependencies,
+            ...dependencies.nightly,
+            environment,
+          },
+        });
+        writeOut(
+          options.json === true ? jsonPayload(result) : renderNightly(result),
+        );
+        // Exit: 2 a flow could not run, 3 deferred, 1 a filing failed, else 0.
+        const failed = result.flows.filter((flow) => flow.status === "failed");
+        const first = failed[0]?.error;
+        if (first !== undefined)
+          throw new RunFailure({
+            stage: first.stage,
+            cause: first.cause,
+            headline: `nightly: ${failed.length} flow(s) not checked: ${failed.map((flow) => `${flow.flow} (${flow.error?.cause})`).join(", ")}`,
+            hint: first.hint,
+          });
+        handleDeferral(
+          result.flows.some((flow) => flow.deferred === true),
+          options.deferred,
+          writeErr,
+        );
+        const errors = result.outcomes.filter(
+          (outcome) => outcome.kind === "error",
+        ).length;
+        if (errors > 0)
+          throw new IdiomError(
+            `nightly: ${errors} filing(s) failed; what did file is in the ledger, and the next run retries the rest`,
+          );
+      },
+    );
+
+  program
+    .command("bisect")
+    .description(
+      "find the commit that introduced a finding by capturing its state across its first-seen range",
+    )
+    .argument("<finding>", "finding id")
+    .option("--json", "print the result as JSON")
+    .action(
+      async (
+        finding: string,
+        options: { json?: boolean },
+        command: Command,
+      ) => {
+        const shared = command.optsWithGlobals<SharedOptions>();
+        const result = await bisectCommand({
+          finding,
+          project: shared.project,
+          cwd: dependencies.cwd,
+          json: options.json,
+          write: writeOut,
+          dependencies: dependencies.bisect,
+        });
+        if (options.json === true) writeOut(jsonPayload(result));
+      },
+    );
+
   const explore = program
     .command("explore")
     .description("explore three rendered design directions for one flow state")
@@ -1937,6 +2399,10 @@ export function createProgram(
           writeOut(
             `${verdict.finding.id}: ${verdict.status}; acceptance ${verdict.acceptance.status} — ${verdict.acceptance.reason}`,
           );
+        for (const asset of result.designAssets?.briefs ?? [])
+          writeOut(
+            `Design asset ${asset.asset} (brief ${asset.slug}): ${asset.passed ? "passed" : "failed"}; ${asset.held} held, ${asset.mismatched} mismatched, ${asset.unmeasured} unmeasured`,
+          );
         if (!result.passed)
           throw new IdiomError(
             `verification failed: ${result.causes.join("; ")}; see ${result.reportPath}`,
@@ -1995,12 +2461,39 @@ export function createProgram(
         dependencies: dependencies.report,
       });
       writeOut(`Opened report ${result.runId} — ${result.reportPath}`);
+      const humanFound = await summarizeMisses({
+        projectDirectory: result.projectDirectory,
+      }).catch(() => undefined);
+      if (humanFound)
+        writeOut(
+          humanFoundLine(humanFound, reviewDependencies.now?.() ?? new Date()),
+        );
     });
 
   program
     .command("decide")
-    .description("record accept or reject decisions for reviewed findings")
+    .description(
+      "record accept or reject decisions for reviewed findings, or acknowledge one tracked elsewhere",
+    )
+    .argument("[finding]", "finding id; the same as --finding")
     .option("--list", "list finding lifecycles without writing decisions")
+    .option(
+      "--json",
+      "with --list or --pending, print machine-readable decisions",
+    )
+    .option(
+      "--pending",
+      "list explicit unresolved reference and ruling questions",
+    )
+    .option("--decision <id>", "record a ruling answer in the decision log")
+    .option("--candidate <index>", "choose a one-based ruling candidate")
+    .option("--wording <text>", "record a custom rule")
+    .option("--no-rule", "record that no rule is needed")
+    .option("--add-step", "add the questioned scale step")
+    .option("--token <name>", "token name for --add-step")
+    .option("--drift", "keep reporting the questioned value as drift")
+    .option("--build <slug>", "external answer build provenance")
+    .option("--escalation <id>", "external answer escalation provenance")
     .option("--finding <id>", "finding id to decide non-interactively")
     .option(
       "--group <id>",
@@ -2019,9 +2512,30 @@ export function createProgram(
       ]),
     )
     .option("--reason <text>", "optional decision reason")
+    .option(
+      "--ack <reference>",
+      "acknowledge the finding as tracked elsewhere (a ticket id or URL): it stays in reports but no longer counts toward --fail-on or as new",
+    )
+    .option("--unack", "remove the finding's acknowledgement; it counts again")
+    .option("--note <text>", "with --ack, a note recorded with it")
+    .option(
+      "--until <date>",
+      "with --ack, the last day (YYYY-MM-DD) the acknowledgement holds",
+    )
     .action(
       async (
+        positional: string | undefined,
         options: {
+          pending?: boolean;
+          decision?: string;
+          candidate?: string;
+          wording?: string;
+          rule?: boolean;
+          addStep?: boolean;
+          token?: string;
+          drift?: boolean;
+          build?: string;
+          escalation?: string;
           finding?: string;
           group?: string;
           accept?: boolean;
@@ -2030,14 +2544,37 @@ export function createProgram(
           scope?: "instance" | "rule";
           reason?: string;
           list?: boolean;
+          ack?: string;
+          unack?: boolean;
+          note?: string;
+          until?: string;
+          json?: boolean;
         },
         command: Command,
       ) => {
         const shared = command.optsWithGlobals<SharedOptions>();
+        if (
+          options.json === true &&
+          options.list !== true &&
+          options.pending !== true
+        )
+          throw new IdiomError(
+            "--json applies only to idiom decide --list or --pending; add --list or --pending",
+          );
+        if (
+          positional !== undefined &&
+          options.finding !== undefined &&
+          positional !== options.finding
+        )
+          throw new IdiomError(
+            `the finding ${positional} and --finding ${options.finding} disagree; give one`,
+          );
         const result = await decideCommand({
+          ...options,
+          noRule: options.rule === false ? true : undefined,
           project: shared.project,
           cwd: dependencies.cwd,
-          finding: options.finding,
+          finding: positional ?? options.finding,
           group: options.group,
           accept: options.accept,
           reject: options.reject,
@@ -2045,10 +2582,37 @@ export function createProgram(
           scope: options.scope,
           reason: options.reason,
           list: options.list,
+          json: options.json,
+          ack: options.ack,
+          unack: options.unack,
+          note: options.note,
+          until: options.until,
           dependencies: dependencies.decide,
           write: writeOut,
         });
-        if (result.listed !== true)
+        if (options.json === true) {
+          writeOut(
+            jsonPayload(
+              options.pending
+                ? {
+                    decisionNeeded: result.decisionNeeded ?? [],
+                    decisionQuestion: result.decisionQuestion ?? "",
+                  }
+                : { lifecycles: result.lifecycles ?? [] },
+            ),
+          );
+          return;
+        }
+        const acknowledgement = result.acknowledgement;
+        if (result.acknowledged === 1 && acknowledgement !== undefined)
+          writeOut(
+            `Acknowledged ${acknowledgement.findingId} for ${acknowledgement.reference}${acknowledgement.until === undefined ? "" : ` until ${acknowledgement.until}`}. It stays in reports and no longer counts toward --fail-on or as new — ${result.path}`,
+          );
+        else if (result.unacknowledged === 1 && acknowledgement !== undefined)
+          writeOut(
+            `Removed the acknowledgement on ${acknowledgement.findingId} (${acknowledgement.reference}); it counts again — ${result.path}`,
+          );
+        else if (result.listed !== true)
           writeOut(
             `Decisions: ${result.accepted} accepted, ${result.rejected} rejected, ${result.skipped} skipped — ${result.path}`,
           );
@@ -2322,6 +2886,83 @@ export function createProgram(
       );
     });
 
+  brief
+    .command("export")
+    .description(
+      "write a decided brief as a design asset: README, criteria.json and reference screenshots",
+    )
+    .argument("<slug>", "brief name from idiom brief list")
+    .requiredOption("--out <dir>", "a new or empty directory to write")
+    .option(
+      "--capture",
+      "capture the asserted states now instead of using the latest capture",
+    )
+    .option("--json", "print the export as JSON")
+    .action(
+      async (
+        slug: string,
+        options: { out: string; capture?: boolean },
+        command: Command,
+      ) => {
+        const shared = briefFlags(command, "export");
+        const cwd = dependencies.cwd ?? process.cwd();
+        const exported = await briefExportCommand({
+          project: shared.project,
+          cwd,
+          slug,
+          out: options.out,
+          capture: options.capture,
+          dependencies: {
+            ...dependencies.brief,
+            capture: dependencies.capture,
+          },
+        });
+        writeOut(
+          shared.json === true
+            ? jsonPayload(briefExportJson(exported, cwd))
+            : renderBriefExport(exported, cwd),
+        );
+      },
+    );
+
+  brief
+    .command("attach")
+    .description(
+      "export a decided brief and attach it to an autobuild ticket as its design asset (never moves the ticket)",
+    )
+    .argument("<slug>", "brief name from idiom brief list")
+    .requiredOption("--ticket <id>", "the autobuild ticket id")
+    .option(
+      "--capture",
+      "capture the asserted states now instead of using the latest capture",
+    )
+    .option("--json", "print the attachment as JSON")
+    .action(
+      async (
+        slug: string,
+        options: { ticket: string; capture?: boolean },
+        command: Command,
+      ) => {
+        const shared = briefFlags(command, "attach");
+        const attached = await briefAttachCommand({
+          project: shared.project,
+          cwd: dependencies.cwd,
+          slug,
+          ticket: options.ticket,
+          capture: options.capture,
+          dependencies: {
+            ...dependencies.brief,
+            capture: dependencies.capture,
+          },
+        });
+        writeOut(
+          shared.json === true
+            ? jsonPayload(briefAttachJson(attached))
+            : renderBriefAttach(attached),
+        );
+      },
+    );
+
   program
     .command("ruling")
     .description("record a reviewed design ruling or explicit no-rule outcome")
@@ -2378,11 +3019,9 @@ export function createProgram(
 
   program
     .command("learn")
-    .description(
-      "turn a human-found miss into a check entry or design-law ruling (shows the diff first)",
-    )
+    .description("record, list, cover, or export a human-found miss")
     .argument(
-      "<observation>",
+      "[observation]",
       'what is wrong, e.g. "the override dots should be 8px"',
     )
     .option(
@@ -2402,10 +3041,28 @@ export function createProgram(
     .option("--ruling", "record the observation as a design-law ruling")
     .option("--wording <text>", "ruling wording (with --ruling)")
     .option("--yes", "apply without the confirmation prompt")
+    .option("--list", "list human-found misses and their coverage")
+    .option("--covered <id>", "mark a miss covered")
+    .option(
+      "--by <rule|fixture>",
+      "rule or fixture covering the miss (with --covered)",
+    )
+    .option(
+      "--fixture <id>",
+      "export an open miss as a regression fixture skeleton",
+    )
+    .option("--out <dir>", "fixture destination directory (with --fixture)")
+    .option("--json", "print the miss list as JSON (with --list)")
     .action(
       async (
-        observation: string,
+        observation: string | undefined,
         options: {
+          list?: boolean;
+          covered?: string;
+          by?: string;
+          fixture?: string;
+          out?: string;
+          json?: boolean;
           state?: string;
           flow?: string;
           fromBrief?: string;
@@ -2419,6 +3076,66 @@ export function createProgram(
         command: Command,
       ) => {
         const shared = command.optsWithGlobals<SharedOptions>();
+        const modes = [
+          observation !== undefined,
+          options.list === true,
+          options.covered !== undefined,
+          options.fixture !== undefined,
+        ].filter(Boolean).length;
+        if (modes !== 1)
+          throw new IdiomError(
+            "choose exactly one learn mode: an observation, --list, --covered <id>, or --fixture <id>",
+          );
+        if (options.by !== undefined && options.covered === undefined)
+          throw new IdiomError("--by requires --covered");
+        if (options.out !== undefined && options.fixture === undefined)
+          throw new IdiomError("--out requires --fixture");
+        if (options.json && !options.list)
+          throw new IdiomError("--json requires --list");
+        const projectOptions = {
+          project: shared.project,
+          cwd: dependencies.cwd,
+        };
+        if (options.list) {
+          const result = await learnListCommand(projectOptions);
+          writeOut(
+            options.json
+              ? jsonPayload(result)
+              : renderLearnList(
+                  result,
+                  dependencies.learn?.clock?.() ?? new Date(),
+                ),
+          );
+          return;
+        }
+        if (options.covered !== undefined) {
+          if (options.by === undefined)
+            throw new IdiomError("--covered requires --by <rule|fixture>");
+          const result = await learnCoveredCommand({
+            ...projectOptions,
+            id: options.covered,
+            by: options.by,
+            clock: dependencies.learn?.clock,
+          });
+          writeOut(
+            `Marked ${result.id} covered by ${result.by} — .idiom/learned.jsonl\nCommit this file.`,
+          );
+          return;
+        }
+        if (options.fixture !== undefined) {
+          if (options.out === undefined)
+            throw new IdiomError("--fixture requires --out <dir>");
+          const result = await learnFixtureCommand({
+            ...projectOptions,
+            id: options.fixture,
+            out: options.out,
+            launch: dependencies.learn?.launch,
+          });
+          writeOut(`Wrote fixture skeleton: ${result.paths.join(", ")}`);
+          return;
+        }
+        if (observation === undefined)
+          throw new IdiomError("describe what is wrong; pass an observation");
         const result = await learnCommand({
           project: shared.project,
           cwd: dependencies.cwd,
@@ -2683,23 +3400,34 @@ export async function run(
   );
   let exitCode: number;
   try {
-    try {
-      await program.parseAsync(argv);
-      exitCode = EXIT_CODES.ok;
-    } catch (error) {
-      if (error instanceof RunFailure) {
-        // The headline is the first line a wrapper or CI log reads.
-        writeErr(error.message);
-        writeErr(`Fix: ${error.hint}`);
-        exitCode = RUN_FAILURE_EXIT_CODE;
-      } else if (error instanceof IdiomError) {
-        writeErr(`Error: ${error.message}`);
-        exitCode = EXIT_CODES.failed;
-      } else if (error instanceof CommanderError) {
-        if (error.code === "commander.version") notices.start(undefined, false);
-        exitCode = error.exitCode;
-      } else throw error;
-    }
+    // Records a newer Idiom wrote are noted once, after the command's output.
+    exitCode = await withRecordNotes(async () => {
+      try {
+        await program.parseAsync(argv);
+        return EXIT_CODES.ok;
+      } catch (error) {
+        if (error instanceof DecisionNeeded)
+          return EXIT_CODES["decision-needed"];
+        if (error instanceof PartialCheckFailure) return EXIT_CODES.failed;
+        if (error instanceof DeferredCheck) return EXIT_CODES.deferred;
+        if (error instanceof RunFailure) {
+          // The headline is the first line a wrapper or CI log reads.
+          writeErr(error.message);
+          writeErr(`Fix: ${error.hint}`);
+          return RUN_FAILURE_EXIT_CODE;
+        }
+        if (error instanceof IdiomError) {
+          writeErr(`Error: ${error.message}`);
+          return EXIT_CODES.failed;
+        }
+        if (error instanceof CommanderError) {
+          if (error.code === "commander.version")
+            notices.start(undefined, false);
+          return error.exitCode;
+        }
+        throw error;
+      }
+    }, writeErr);
     // After all normal output, including a failure's Fix: line.
     await notices.finish(writeErr);
   } finally {
@@ -2707,4 +3435,33 @@ export async function run(
     await notices.settled();
   }
   return exitCode;
+}
+
+function aggregateDeferral(
+  checked: Array<{
+    flow: string;
+    summary: import("./commands/check.js").CheckSummary;
+  }>,
+) {
+  const timedOutTuples = checked.flatMap((entry) =>
+    (entry.summary.timedOutTuples ?? []).map((tuple) => ({
+      flow: entry.flow,
+      ...tuple,
+    })),
+  );
+  return timedOutTuples.length
+    ? { verdict: "deferred" as const, timedOutTuples }
+    : {};
+}
+
+function handleDeferral(
+  deferred: boolean,
+  policy: "fail" | "warn",
+  write: (message: string) => void,
+): void {
+  if (!deferred) return;
+  if (policy !== "warn") throw new DeferredCheck();
+  write(
+    "Warning: host busy; review is incomplete (deferred). Continuing severity gates because --deferred warn was selected.",
+  );
 }

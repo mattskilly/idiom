@@ -40,6 +40,8 @@ const Project = z.object({
     hideWebdriver: z.boolean().optional(), // navigator.webdriver reads false; flows may override
     fullPage: z.boolean().default(true),
     settleMs: z.number().default(250),
+    hostPressureThreshold: z.number().finite().positive().optional(), // effective default 1.5
+    maxFullPageHeight: z.number().int().positive().optional(), // CSS px, default 16000
     animationSettleMs: z.number().finite().nonnegative().default(1500),
     maxMinutes: z.number().finite().positive().default(30),
     concurrency: z.number().int().min(1).max(8).default(4), // capture lanes at once
@@ -56,7 +58,10 @@ const Project = z.object({
     productFile: z.string().default("PRODUCT.md"),
     designFile: z.string().default("DESIGN.md"),
   }),
-  baselines: z.object({ directory: z.string().min(1) }).strict().optional(),
+  baselines: z.object({
+    directory: z.string().min(1).optional(),
+    ignoreDirty: z.array(z.string()).optional(), // validated repository-root globs; see Baselines
+  }).strict().optional(),
   brief: z.object({                      // optional; read only by idiom brief
     $comment: z.string().optional(),
     ticketTemplate: z.object({
@@ -95,6 +100,9 @@ Notes:
   legacy named-flow path and does not require flow mappings. Once nonempty,
   every flow must name a declared surface; review reads all manifests before
   capture so malformed or missing associations cannot understate coverage.
+- Optional `capture.hostPressureThreshold` is a finite positive load/core ratio (default 1.5); either start/end 1-minute load must strictly exceed it. A successful end ready-URL measurement over 10 times the successful start also establishes pressure. Unsupported/failed measurements remain null.
+- Optional `capture.maxFullPageHeight` is a positive integer CSS height (default 16000). Optional state `screenshotTimeoutMs` is a positive integer millisecond allowance (default 30000) for web and Electron screenshots, shared across tiles. Screenshot geometry optionally records `croppedFromHeight > height`; drift compares the original full-page size.
+- Version-1 `run.json` optionally records `host` (`loadStart`/`loadEnd`: three nonnegative averages or null; positive `coreCount`/`threshold`; positive `readyStartMs`/`readyEndMs` or null; `pressureReasons`: `load` and/or `ready-url-slowdown`), `retryCount`, `retries`, and `deferredTuples`. Retry entries carry a selected coordinate, `phase` (`capture`/`probe`), `firstTimeout` (`kind`: `navigation`/`readiness`, positive `timeoutMs`), `doubledDeadlineMs`, and `outcome` (`passed`/`timed-out`/`failed`). Coordinates are unique, retry counts agree, and deferrals require pressure plus an exhausted capture retry. Tuple failure metadata optionally carries the same typed `timeout` diagnostic. Probe artifacts optionally carry `stateReachTimeout` when replay failed but saved base evidence survived. Old records without these fields remain valid.
 - `capture.*` — determinism pins applied to every browser context. `settleMs` is the post-navigation wait before the screenshot.
 - `colorSchemes` — the ordered, unique capture axis. When absent, it normalizes to `[capture.colorScheme]`; an explicit list must retain that legacy scalar. `capture.colorSchemeAttribute`, when present, must be an HTML-safe attribute name and receives the selected scheme before application scripts execute.
 - `design.tokensFile` — ground truth for the `token-drift` check; optional because not every target has one.
@@ -109,6 +117,8 @@ Notes:
 - Check coverage may include `paintedSkipped: Record<string, number>`, keyed by full rule id. Counts are distinct rejected element selectors in that rule's input domain for that tuple, including zero when it ran on new evidence. Older evidence omits the field. Reasons and unavailable/skipped statuses are retained. JSON, Markdown and HTML reports expose these counts. Coverage may also include `inkSkipped: Record<string, number>`, keyed by full rule id: records dropped because the stored screenshot shows no ink where they were measured (currently `idiom:orphan-word`), present only when nonzero. Review/check JSON and MCP quick/check responses add `checkCoverage`, a coordinate-labelled array of check coverage records (without the DOM/observation payload), when painted or ink counts exist; legacy responses omit that field.
 - V2 `observations.json` optionally records craft-rule evidence: `fonts` (declared faces with status and stylesheet URLs, the families visible text uses with up to five selectors and a fallback flag, and failed font requests), `links` (visible http(s) links with absolute href, same-origin flag and the run's check result: `ok`, `broken` with code or DNS reason, or `unchecked` with a reason), `focusVisible` (each keyboard focus stop with the `node.property` keys that changed and an optional visible `proxy`), `lineLengths` (paragraphs over 45 rendered characters per line), `orphanWords` (headings and button labels whose last line holds one word; newer captures add optional `rect`, the union of the owner's measured painted word rects, `lastLine`, the stranded word's rect, both viewport-relative like element rects, and `ink`, `{status: "measured", share}` with share in [0, 1] of sampled screenshot pixels under `lastLine` that differ from their modal colour, or `{status: "unavailable", reason}`), `imageRenders` (broken images and `fill` images rendered off their natural ratio) and `layoutShift` (largest session-window score and up to 150 entries with source selectors). Scans use the `{status, reason?, records}` shape; older artifacts without these fields stay valid and the checks report unavailable coverage.
 - V2 `observations.json` optionally records `screenshot`: how the tuple screenshot was taken (`strategy` `viewport` | `full-page` | `tiled`, positive device `scale`, CSS `width`/`height`, `tiles` only when tiled) and, only when the full-page size changed between the start of observing and the screenshot, `drift` (`observed` and `captured` sizes) with `rects`, each observed selector's rect re-measured at screenshot time. Crops use `scale` and prefer `rects` over the observed element rect. `metadata.json` mirrors everything but `rects`. Older artifacts without it stay valid and crop as before.
+- Version-1 `run.json` optionally records the run's lifecycle: `status` (`running`, `complete` or `interrupted`), `runId`, `owner` (`pid` and, when available, the process `start` time; never its command line or environment), `startedAt`, `updatedAt`, `endedAt`, `completedTuples` (selected coordinates whose evidence is saved, unique, in selected order) and `interruption` (`reason`: `signal`, `process-gone` or `capture-failed`; `signal`: `SIGINT`/`SIGTERM`). A run writes `running` in its first second, adds each finished tuple to `completedTuples`, and writes `complete` (with every selected coordinate in `completedTuples`) as the very last step of publication. Completed is not successful: a tuple whose capture failed is still completed. Readers consume only `complete` runs; a record without `status` is a legacy completed run. `running` and `interrupted` runs are unverified evidence. Older records without these fields remain valid.
+- `baselines.ignoreDirty` — optional repository-root globs for safe dirty-path exclusions; syntax and static build-input validation are described under [Baselines](configuration.md#baselines). No exclusions are added by default. `run.json` and tuple `source` objects optionally carry `ignoredDirtyPaths: string[]` and `changedDuringCapture: boolean`; legacy version-1 records need neither field.
 - `baselines.directory` — optional project-relative or absolute local directory for compact finding baselines; defaults to `.idiom/baselines`. This location is not part of the checks hash.
 - `model.provider` — `claude-code` is the scaffold default and uses the authenticated local CLI without an API key. `anthropic` is the explicit direct-API path and requires `ANTHROPIC_API_KEY`; it sends no `thinking` setting and caps output at 16,000 tokens, so pick a model whose thinking is off by default. A response cut off at that limit is reported as truncation, not malformed output. `codex` uses the authenticated local Codex CLI. Existing files are not migrated or reinterpreted.
 - `model.fallback` — optional `{provider, model}` used, visibly, only when the primary provider fails; it must name a different provider. Review, sweep and configured page review honor it; `idiom explore` does not, and explore rejects `codex` as its provider.
@@ -118,7 +128,11 @@ Notes:
 
 Web tuple `metadata.json` records the actual served origin in `url.origin`. Literal URLs use `{ kind: "literal", origin, url }`; setup-derived URLs use `{ kind: "setup-stdout", origin, source, pattern, append, template }`, with private seed values replaced by a stable template. Both kinds optionally carry `canonicalOrigin: string` when the served origin differs from the configured one. Derived console, DOM, axe and observation evidence uses the configured origin to keep finding identity stable. Offline review applies the same origin mapping to its document URL, preserving expected-status console suppression. Older records without `canonicalOrigin` retain their original URL interpretation.
 
-Web `console.jsonl` records produced by a browser resource load carry `request: { resourceType, mainFrame }`, where `resourceType` uses Playwright's vocabulary (`document`, `script`, `image`, …) and `mainFrame` says whether the request came from the top-level frame. Script-originated records have no `request`. When capture recorded this provenance, `metadata.json` sets `consoleProvenance: true`, and expected-status suppression applies only to the record whose request is the main-frame document; a matching record without provenance is reported. Older artifacts and Electron tuples have no flag and keep the previous suppression by URL, status and message.
+Web `console.jsonl` records produced by a browser resource load carry `request: { resourceType, mainFrame }`, where `resourceType` uses Playwright's vocabulary (`document`, `script`, `image`, …) and `mainFrame` says whether the request came from the top-level frame. Script-originated records have no `request`. When capture recorded this provenance, `metadata.json` sets `consoleProvenance: true`, and expected-status suppression applies only to the record whose request is the main-frame document; a matching record without provenance is reported. Older artifacts and Electron tuples have no flag and keep the previous suppression by URL, status and message. The request also carries `method`, `url` (secret-named query values replaced with `[redacted]`, fragment dropped), `status` when a response arrived, and `at`/`endAt`, the epoch milliseconds the request started and its response ended.
+
+A record for a Content Security Policy violation carries `csp: { directive, violatedDirective, blocked, element?, frame?, sample?, sourceFile?, lineNumber?, columnNumber?, documentUrl }`, where `blocked` is `inline`, `eval` or the blocked URL, `element` is the offending element's selector in its frame and `frame` the owner iframe's selector. A violation with no matching console line is recorded as `{ type: "error", text: "Content Security Policy violation", csp }`.
+
+When Idiom started the application server, the run directory holds `server.log`: one line per server output line, `<ISO time> <stdout|stderr> <text>`, redacted and capped at 2 MB.
 
 ## 2. Flow manifest — `.idiom/flows/<id>.json`
 
@@ -136,6 +150,8 @@ const SharedFlow = {
   })),
   viewports: z.array(z.string()).optional(),
   colorSchemes: z.array(z.enum(["light", "dark"])).min(1).optional(),
+  hideWebdriver: z.boolean().optional(), // overrides capture.hideWebdriver
+  explicitDismiss: z.array(z.string().trim().min(1)).optional(), // modals the dismissal probe does not click outside
 }
 
 const WebFlow = z.object({
@@ -164,6 +180,9 @@ const WebFlow = z.object({
     }),
     mask: z.array(z.string()).default([]),  // CSS selectors for volatile regions
     settleMs: z.number().optional(),
+    loading: z.boolean().optional(), // true declares intentional loading
+    loadingSettleMs: z.number().int().positive().optional(), // default 5000 ms after ready
+    screenshotTimeoutMs: z.number().int().positive().optional(), // ms, default 30000
   })),
 })
 
@@ -198,6 +217,9 @@ const ElectronFlow = z.object({
     }),
     mask: z.array(z.string()).default([]),
     settleMs: z.number().optional(),
+    loading: z.boolean().optional(), // true declares intentional loading
+    loadingSettleMs: z.number().int().positive().optional(), // default 5000 ms after ready
+    screenshotTimeoutMs: z.number().int().positive().optional(), // ms, default 30000
   })),
 })
 
@@ -215,6 +237,7 @@ Notes:
 - Electron `launch` — exposes Playwright's executable, args, cwd, string environment, and timeout. `${dataDir}` expands in args, cwd, and environment values; every other placeholder is rejected, and `executablePath` accepts none. The directory is fresh per capture run and shared by every tuple in that run, so adopters that need per-tuple profile isolation must clear or namespace the profile themselves. Environment values and expanded private paths are never persisted.
 - Electron `window` and `steps` — one loaded renderer must have the exact unique title. Locator actions execute in order after native content sizing and live media synchronization. Electron `expect.status` is invalid.
 - Web `expect.path` optionally requires a leading-slash pathname without query, hash, or whitespace. After settling, capture compares that pathname ignoring trailing slashes and checks the navigation URL's runtime origin (including an allocated capture port), then checks again immediately before the screenshot. A mismatch fails at the expectation stage with a setup/redirect diagnostic and saves no DOM, accessibility, observation, or screenshot evidence for that tuple. Existing expectations without `path` and Electron expectations keep their behavior. `expectUrl` steps still assert an intermediate URL during the interaction sequence.
+- `explicitDismiss` — selectors of modal dialogs that intentionally need an explicit action. The probe's dismissal pass does not click outside a panel that matches one, contains one or sits inside one; it still presses Escape. `role="alertdialog"` and `<dialog closedby="none">` or `closedby="closerequest"` are exempt without it. See [`popover-dismissal`](rules.md#popover-dismissal).
 - `expect` — doubles as the `missing-state` check: a state that fails its `expect` block is itself a finding.
 - `mask` — applied at diff time only; screenshots always record the truth.
 - `kind: "published"` — a flow of rendered pages held to the `published-budget` check. It requires `pages`, which expand to states `page-<slug>` (`/` → `page-root`, `/p/abc` → `page-p-abc`) after any `routes` states. `pages` and `budget` are rejected on other flows, as are numeric viewports. A numeric viewport `1280` becomes the viewport name `"1280"` with a height of 800 (≥1024px wide), 1024 (≥600px) or 812; a published flow without `viewports` captures `1280`, `768` and `375`. The parsed flow carries these sizes in `viewportSizes`; a project viewport with the same name wins. States may narrow to these names like any other.
@@ -269,15 +292,16 @@ const Finding = z.object({
     "heading-structure", "token-drift", "console-error", "missing-state", "spacing-rhythm",
     "hierarchy", "density", "brand-alignment", "generic-pattern", "reference-mismatch",
   ]),
-  severity: z.enum(["blocker", "major", "minor"]),
+  severity: z.enum(["blocker", "major", "minor", "info"]),
   confidence: z.number().min(0).max(1),  // deterministic checks emit 1.0
-  rule: z.string().optional(),           // "axe:color-contrast" | "idiom:token-drift" | "impeccable:<id>"
+  rule: z.string().optional(),           // "axe:color-contrast" | "idiom:token-drift"
   evidence: z.object({
     screenshots: z.array(z.string()),    // paths relative to the report dir
     references: z.array(z.string()).optional(), // exact reference/anti-reference labels cited by model
     artifacts: z.array(z.string()).optional(), // metadata/observation/etc paths for nonvisual evidence
     domSnippet: z.string().optional(),
     consoleExcerpt: z.string().optional(),
+    serverLogExcerpt: z.string().optional(), // owned-server log lines around a 5xx; local only
     axeNodes: z.array(z.unknown()).optional(),
   }),
   explanation: z.string(),
@@ -291,6 +315,12 @@ const Finding = z.object({
     params: z.record(z.string(), z.unknown()).optional(),
   }),
   status: z.enum(["open", "approved", "rejected", "ticketed", "verified-fixed", "verify-failed"]),
+  acknowledgement: z.object({            // set while an acknowledgement is in force
+    reference: z.string(),
+    at: z.string().datetime(),
+    until: z.string().optional(),
+    note: z.string().optional(),
+  }).optional(),
 })
 ```
 
@@ -301,6 +331,7 @@ Notes:
 - `evidence.references` — optional for stored-history compatibility. New model findings copy locally validated exact labels here; `reference-mismatch` model output cannot omit them.
 - `suggestedArea` — deliberately surface language ("expired-state terminal copy block"), never a file path: the dogfood app's spec standard forbids path prediction in tickets, and the finding text flows into tickets verbatim.
 - `acceptance.doneWhen` — observable human criteria, retained unchanged in tickets. The surrounding versioned object records whether and how a machine can recheck the rule.
+- `acknowledgement` — written by the review run when the finding has an acknowledgement in force (`idiom decide <finding> --ack`); gates leave such a finding out of `--fail-on` and the new count. It is resolved fresh on every run and never carried forward from an earlier one.
 - `verification` — how `idiom verify` proves resolution: re-run a named deterministic check, do a masked visual/DOM comparison against this finding's evidence baseline, or (last resort) flag for manual confirmation.
 
 New findings always use the canonical short name. Historical findings without
@@ -421,6 +452,50 @@ const Decision = z.object({
 })
 ```
 
+Human reference choices can add `provenance: { build: string, escalation?: string }`.
+An additive `decision: "ruling"` variant carries `at`, `commit`, `findingId`,
+`fingerprint`, `actor`, a required nonblank `reason`, validated `resolution`
+(the existing RulingResolution), and optional provenance. Its fingerprint and
+findingId must match the resolution fingerprint/id. These records never enter
+finding judgment, lifecycle or acknowledgement reduction. Existing log bytes and
+unknown future variants are preserved. DESIGN.md and log resolutions form one
+effective law, with equivalent answers deduplicated and conflicts rejected.
+
+`check` summaries and executed gate JSON add `decisionNeeded` and
+`decisionQuestion`. Each pending question has `kind` (`reference-conflict`,
+`unruled`, `scaleCluster`), stable `key`, `fingerprint`, canonical `id`, optional `findingIds` (every finding occurrence
+the question stands for, across viewports and schemes), `flow`,
+`runDirectory`, source `artifact`, `question`, occurrence `coordinates`, resolved
+`evidence` paths, `missingCropEvidence`, `citations`, and `options` with labels
+and CLI `args` arrays (plus an optional custom-wording input marker). Artifact
+paths remain separate from command arguments. Reference questions require both
+`idiom:design-decision` and its structured evidence; category or prose alone
+never qualifies. `decide --pending --json` wraps these fields with
+`interfaceVersion: 1`. See [pending decisions](commands.md#pending-decisions-and-remembered-answers).
+
+The log also holds acknowledgements (`idiom decide <finding> --ack <reference>`): a finding that is a real problem tracked elsewhere. They are not judgments; every reader of accept/reject decisions ignores them.
+
+```ts
+const Acknowledgement = z.object({
+  at: z.string().datetime(),
+  commit: z.string(),
+  findingId: z.string(),
+  fingerprint: z.string(),
+  decision: z.enum(["acknowledge", "unacknowledge"]),
+  reference: z.string().trim().min(1).max(500),  // single line; unacknowledge echoes the one it removed
+  until: z.string().optional(),                   // YYYY-MM-DD, inclusive
+  note: z.string().optional(),
+  evidence: z.object({                            // required for acknowledge
+    severity: z.enum(["blocker", "major", "minor", "info"]),
+    rule: z.string().optional(),
+    category: z.string(),
+  }).optional(),
+  actor: z.string().default("human"),
+})
+```
+
+The latest acknowledge or unacknowledge line on a lineage is in force. It lapses after an unacknowledge, when its reference is a ticket in the local tracker that is done, the day after `until`, or when the observed finding is more severe than `evidence.severity` or under a different rule. Idiom versions before acknowledgements reject a log containing these lines.
+
 The file is append-only and committed — the decision history is part of the product context a future agent (or teammate) inherits.
 
 ## 10. Decision brief — `.idiom/briefs/<slug>.json`
@@ -434,6 +509,8 @@ const StoredBrief = z.object({
   title: z.string().trim().min(1).max(120),
   request: z.string().trim().min(1).max(20_000),   // verbatim
   decision: z.string().trim().min(1),              // the design question
+  screenQuestion: z.string().trim().min(1).optional(), // one line; CR/LF rejected
+  inventory: z.array(z.string().trim().min(1)).min(1).optional(), // real objects and magnitudes
   requestNamedIdea: z.boolean(),
   triage: z.object({ verdict, reason, questions }).optional(),
   research: z.array(z.object({
@@ -515,6 +592,8 @@ type BriefPlan = {
   standards: { topic: string; look_for: string; url: string }[];
   budget: { minutes: number; searches: { min: 3; max: 6 } };
   rules: string[];
+  inventoryInstructions: string[];                // gather screen question and real inventory before options
+  stateChecklist: string[];                       // all block/item states and a named opened-state JSON example
   recordShape: object;                            // the brief input skeleton, placeholders to replace
   recordRules: string[];
   next: string[];
@@ -553,7 +632,7 @@ The fingerprint is the identity of a *kind* of problem, independent of the run t
 
 The fingerprint serves two roles:
 
-1. **Dedup** — the same issue re-observed in a later run joins the existing finding's lineage rather than appearing as new; impeccable-adapter findings dedupe against native ones the same way.
+1. **Dedup** — the same issue re-observed in a later run joins the existing finding's lineage rather than appearing as new.
 2. **Decision-memory key** — rejections with `scope: "rule"` suppress *every future finding* with a matching fingerprint.
 
 ## Finding status lifecycle
@@ -599,7 +678,7 @@ An absent `.idiom/rules.json` means `{ "version": 1, "overrides": [] }`. If the 
 }
 ```
 
-Override IDs must be unique and nonblank. `match` must be nonempty and supports only `fingerprint`, `category`, `flow`, `state`, and `rule`; its fields are ANDed. `action` is exactly `suppress` or `severity`. `severity` is required only for a severity action and must be `blocker`, `major`, or `minor`. `reason` is required and nonblank. Overrides run in file order: suppression dominates any severity match, and the last matching severity override is effective.
+Override IDs must be unique and nonblank. `match` must be nonempty and supports only `fingerprint`, `category`, `flow`, `state`, and `rule`; its fields are ANDed. `action` is exactly `suppress` or `severity`. `severity` is required only for a severity action and must be `blocker`, `major`, `minor`, or `info`. `reason` is required and nonblank. Overrides run in file order: suppression dominates any severity match, and the last matching severity override is effective.
 
 ## Worked examples
 
@@ -819,6 +898,7 @@ Exact `urlFrom` patterns and the seed's real stdout labels are pinned down in ba
 ```jsonl
 {"at":"2026-08-14T19:01:12Z","commit":"b1946ac92492d2347c6235b4d2611184e0f7a8c3","findingId":"finding-3","fingerprint":"9f2c41d0e6b8a75c3d1f0e9b2a4c6d8e0f1a2b3c4d5e6f708192a3b4c5d6e7f8","decision":"accept","scope":"instance","reason":"Real readability problem on the only explanatory text in the state.","actor":"human"}
 {"at":"2026-08-14T19:03:40Z","commit":"b1946ac92492d2347c6235b4d2611184e0f7a8c3","findingId":"finding-5","fingerprint":"1a7e5c2b9d4f8036e1c7a9b5d3f2e8c4a6b0d9e7f5c3a1b8d6e4f2c0a9b7d5e3","decision":"reject","scope":"rule","reason":"The quiet single-column density on terminal states is intentional; do not raise density findings against booking terminal states again.","actor":"human"}
+{"at":"2026-11-06T15:20:02Z","commit":"b1946ac92492d2347c6235b4d2611184e0f7a8c3","findingId":"finding-12","fingerprint":"3c9d0e7a1b5f4826c0e8a6d4b2f1e9c7a5d3b0f8e6c4a2d1b9f7e5c3a0d8b6f4","decision":"acknowledge","reference":"ABC-123","until":"2026-12-01","note":"Tracked in Jira","evidence":{"severity":"major","rule":"idiom:target-size","category":"target-size"},"actor":"human"}
 ```
 
 ## Recorded finding baseline — `.idiom/baselines/<flow>.json`
@@ -973,6 +1053,46 @@ coverage reads it; records written before it existed fall back to a tuple's
 motion artifact, and otherwise report both modes missing until recaptured.
 
 
+## First-seen attribution — `.idiom/reports/<runId>/attribution.json`
+
+Written by `check` beside `digest.json`, before the report renders. It is a
+separate file so that a reader of `digest.json` never sees new fields. The
+report, `digest` and `decide --list` only read it.
+
+```ts
+const Cause = z.object({ commit: z.string(), subject: z.string(), tickets: z.array(z.string()) });
+const Attribution = z.object({
+  version: z.literal(1),
+  flow: z.string(),
+  runId: z.string(),
+  commit: z.string(),             // this run's commit
+  dirty: z.boolean(),
+  previous: z.object({ runId: z.string(), commit: z.string(), dirty: z.boolean(), completedAt: z.string() }).nullable(),
+  configChanged: z.boolean(),     // checks configuration hash differs from previous
+  introductions: z.array(z.object({
+    id: z.string(),
+    fingerprint: z.string(),
+    where: z.string(),            // state/viewport[/scheme][#combination]
+    state: z.string(),
+    range: z.object({
+      from: z.string(),           // full SHA, last seen without the finding
+      to: z.string(),             // full SHA, this run
+      commits: z.number().int().nullable(), // first-parent count; null when not linear
+      linear: z.boolean(),
+      fromDirty: z.boolean(),
+      toDirty: z.boolean(),
+    }),
+    candidates: z.array(Cause).optional(),     // oldest first
+    candidatesOmitted: z.string().optional(),  // why candidates were not computed
+    likely: Cause.optional(),                  // exactly one candidate
+  })),
+});
+```
+
+`previous: null` means there was no earlier complete full run of the flow; the
+file is still written. An introduction is recorded only for an open, non-info
+design occurrence that is new at a coordinate both runs captured.
+
 ## Design comparison evidence
 
 State `design` is optional. It is a nonblank string (a local HTML
@@ -1076,3 +1196,51 @@ A `manual` contract records judged human criteria without claiming executable pr
 
 
 New `run.json` records optionally retain `captureSettingsIdentity`, a hash of predicate-relevant capture settings and flow declarations. Loading a retained run reads its original hash rather than recomputing it from edited flow files; the contract separately pins the effective offline check configuration. No URLs, environment values or runtime resources are serialized into this identity. Current expectation declarations and captured invariant/component declarations must still prove that the original condition was rechecked. Design-image targets record their document region and reference; a transient cause element need not survive a repair.
+
+Informational (`info`) findings round-trip through findings, groups, hosted issues,
+acknowledgement evidence, rule overrides, baselines and digest records. Existing
+three-severity records remain valid without a version change. Effective info
+sorts below minor and never trips a severity gate; an override raising it to
+major restores normal gating. An acknowledgement at info lapses when severity
+rises. Baseline comparison still classifies info as new, pre-existing or fixed;
+digest diffs omit info before computing changes and counts.
+
+Version 2 observations add optional `adjacentGapExcluded` on elements,
+`textRect` on field-group labels, `cardAction: { card, group, status }` on overlap
+pairs (`status` is `intentional` or `ambiguous`), and `openedDisclosure` on probe
+results. The latter stores `root`, `kind` (`details`, `popup`, `expanded`), and
+paired `trigger`/`panel` rectangles in document coordinates. These fields preserve
+legacy replay when absent; recapture to obtain the new browser evidence.
+
+## Explicit size and spacing targets
+
+Additive to interface version 1: `checks.components[]` accepts optional `name`
+(defaults to selector) and `width`/`height`, requiring at least one positive finite
+dimension. Existing two-axis tolerance defaults are unchanged. One-axis entries
+accept exact `{px}` or `{ratio}` allowances; both units accept `mode` (`tighter`
+or `looser`). Omitted tolerance remains min(15%, 1px); explicit empty/mode-only
+objects keep 25%/4px legacy defaults.
+
+`checks.spacingTargets` defaults to `[]`. Each strict entry has exactly one of
+`between: [selectorA, selectorB]` (distinct nonblank selectors) or `within: selector`,
+finite nonnegative `gap`, optional `axis` (`vertical` default, or `horizontal`),
+and optional tolerance (`px`, `ratio`, `mode`). Single units are exact; omitted
+or empty tolerance is 1px. Both units default to the larger allowance. Zero
+values are valid. See [spacing targets](configuration.md#declare-spacing-targets).
+
+V2 `observations.components[]` may omit either target dimension but requires
+at least one; historical artifacts keep their saved tolerance numbers and mode.
+Optional V2 `spacingTargets[]` records `{target, pairs, status, reasons}`. `target`
+is the normalized declaration; `pairs` has `first` and `second`, each with concrete
+`selector` and unrounded `x`, `y`, `width`, `height`, plus `container` for within
+pairs. Status is `measured` or `unmeasurable`; reasons disclose unresolved selectors
+and containers while retaining measurable pairs. Absent evidence means an older
+capture; `[]` means no targets at capture. Offline review reads these saved
+boxes and targets. The appended check/category `spacing-target` emits rule
+`idiom:spacing-target` at major by default, with existing rule severity overrides.
+
+### Blank-media and persistent-loading evidence
+
+Project checks add strict, defaulted `visualBlank: { enabled: true, swatchSelectors: [] }` and `loadingStuck: { enabled: true }`. Selector lists contain trimmed nonempty CSS selectors. Both web and Electron states accept optional `loading` and positive integer `loadingSettleMs`, independently of `settleMs`. Readiness is DOM-ready navigation followed by completion of all declared steps. The default 5000 ms observation overlaps visual/animation settling; `loading: true` skips only the loading scan/wait.
+
+V2 observations add optional strict `visualBlank` and `loadingStuck` objects. Each records ran/partial/skipped/unavailable status and reasons. Blank-media evidence retains passing and exempt targets, layout/interior/clipped geometry, scroll origin, masks, swatch declarations, opacity, cover geometry/alpha, video poster/frame facts and measured histogram/crop or unavailability. It stores algorithm `rgb16-v1`, bucket size 16, dominant threshold 0.995, opacity threshold 0.01, overlay alpha threshold 0.98 and edge inset 2 CSS px. Loading evidence retains configured/observed duration, intentional declaration, node identities and continuous visible interval ages with final active/resolved state. Millisecond durations use an in-page monotonic clock. Absence in older V1/V2 observations means unavailable coverage, while a successful empty inventory means no eligible targets. No recapture migration is required to parse old artifacts.

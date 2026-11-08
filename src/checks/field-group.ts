@@ -81,7 +81,11 @@ export const fieldGroupCheck: DeterministicCheck = {
       for (let index = 1; index < group.members.length; index += 1) {
         const first = group.members[index - 1] as FieldGroupMember;
         const second = group.members[index] as FieldGroupMember;
-        const related = relation(first.rect, second.rect);
+        const innerRect = (member: FieldGroupMember) =>
+          member.role === "label"
+            ? (member.textRect ?? member.rect)
+            : member.rect;
+        const related = relation(innerRect(first), innerRect(second));
         // Negative gaps beyond a hairline are overlaps: element-overlap's.
         if (related === undefined || related.gap >= inner || related.gap < -1.5)
           continue;

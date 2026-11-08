@@ -13,6 +13,10 @@ import {
   renderHtmlDocument,
 } from "../report/html.js";
 import type { AttachmentManifest } from "./attachments.js";
+import {
+  type DesignAssetVerification,
+  designAssetHtml,
+} from "./design-assets.js";
 import type { FindingVerdict, VerificationEvaluation } from "./evaluate.js";
 import { TEXT_BOUNDARY } from "./profile.js";
 
@@ -28,6 +32,7 @@ export type VerificationHtmlOptions = {
   noFindings?: boolean | undefined;
   reportCoverage?: ReportCoverage | undefined;
   filmstripImages?: ReadonlyMap<string, string> | undefined;
+  designAssets?: DesignAssetVerification | undefined;
 };
 
 function pairSuppressionHtml(verdict: FindingVerdict): string {
@@ -68,10 +73,15 @@ function attachments(options: VerificationHtmlOptions): string {
 export function renderVerificationHtmlReport(
   options: VerificationHtmlOptions,
 ): string {
+  const assets =
+    options.designAssets === undefined
+      ? ""
+      : designAssetHtml(options.designAssets);
   if (options.noFindings === true) {
+    const passed = options.designAssets?.passed;
     return renderHtmlDocument({
       title: `Verification: ${options.flow}`,
-      body: `<header><h1>Verification: ${escapeHtml(options.flow)}</h1><div class="summary">${badge("not applicable", "good")}</div><p>No embedded findings. No setup, build, server, browser, provider, or external API was invoked.</p><p class="muted">This report is read-only. Decisions are recorded only through idiom decide.</p></header>${options.reportCoverage === undefined ? "" : renderCoverageHtml(options.reportCoverage)}`,
+      body: `<header><h1>Verification: ${escapeHtml(options.flow)}</h1><div class="summary">${passed === undefined ? badge("not applicable", "good") : badge(passed ? "passed" : "failed", passed ? "good" : "failed")}</div><p>No embedded findings. ${passed === undefined ? "No setup, build, server, browser, provider, or external API was invoked." : "The pinned design asset was checked."}</p><p class="muted">This report is read-only. Decisions are recorded only through idiom decide.</p></header>${options.reportCoverage === undefined ? "" : renderCoverageHtml(options.reportCoverage)}${assets}`,
       printable: true,
     });
   }
@@ -108,7 +118,7 @@ export function renderVerificationHtmlReport(
           .join("")}</section>`;
   return renderHtmlDocument({
     title: `Verification: ${options.flow}`,
-    body: `<header><h1>Verification: ${escapeHtml(options.flow)}</h1><div class="summary">${badge(outcome, failedDiagnostic || evaluation?.passed !== true ? "failed" : "good")}</div><p>Historical baseline: ${escapeHtml(options.baselineRunId)}. Current calibration runs: ${escapeHtml(options.currentRunA)} and ${escapeHtml(options.currentRunB)}.</p><p class="muted">This report is read-only. Decisions are recorded only through idiom decide.</p></header>${options.reportCoverage === undefined ? "" : renderCoverageHtml(options.reportCoverage)}${calibrations}${verdicts}${attachments(options)}`,
+    body: `<header><h1>Verification: ${escapeHtml(options.flow)}</h1><div class="summary">${badge(outcome, failedDiagnostic || evaluation?.passed !== true ? "failed" : "good")}</div><p>Historical baseline: ${escapeHtml(options.baselineRunId)}. Current calibration runs: ${escapeHtml(options.currentRunA)} and ${escapeHtml(options.currentRunB)}.</p><p class="muted">This report is read-only. Decisions are recorded only through idiom decide.</p></header>${options.reportCoverage === undefined ? "" : renderCoverageHtml(options.reportCoverage)}${calibrations}${verdicts}${assets}${attachments(options)}`,
     interactive: (options.comparisons?.length ?? 0) > 0,
     printable: true,
   });

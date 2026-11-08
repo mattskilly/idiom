@@ -6,6 +6,18 @@ Everything else Idiom does happens after the UI exists. The costliest design mis
 
 `idiom brief` is the pre-ticket decision brief. It is not `idiom context`, whose output is a write-time design brief for an agent that is already building; that brief does list the decisions made here.
 
+## Inventory and states before options
+
+Start with the one question the screen answers, in one line. Inventory its real objects and magnitudes: counts, ranges, units and sizes. Gather these facts before comparing options; mark unknowns instead of fabricating numbers. The record accepts optional `screenQuestion` (nonblank and single-line) and `inventory` (a nonempty array of nonblank strings). Both appear before alternatives in the rendered decision section, including custom decision headings. Existing records need neither field.
+
+Build every block's empty, zero, loading and error states and every row/item's hover, selected, focus and disabled states. Empty and zero are separate; loading does not replace error. Declare important cases as named flow states so Idiom captures them, especially opened drawers, dialogs and menus. With `editor` declared as a base state:
+
+```json
+{"id":"editor+menu","description":"Page menu open","from":"editor","steps":[{"action":"click","selector":"[data-testid=open-menu]"}],"expect":{"selectorPresent":["[data-testid=page-menu]"]}}
+```
+
+The plan exposes this preparation as `inventoryInstructions` and `stateChecklist` in JSON and MCP results. No-design-decision text and the research short circuit stay unchanged. See [opened-state configuration](configuration.md#capture-opened-drawers-dialogs-and-menus).
+
 ## The flow
 
 1. **Triage.** `idiom brief triage "<request or path to draft ticket>"` returns `no design decision` with a one-line reason, or `design decision` with the specific open questions it found, and a triage id. With no design decision, write the ticket as usual.
@@ -15,9 +27,10 @@ Everything else Idiom does happens after the UI exists. The costliest design mis
 5. **Ask or proceed.** The agent asks the requester that question verbatim (in Claude Code, with AskUserQuestion). Only a low-stakes, reversible decision may go ahead on the recommendation without asking.
 6. **Decide.** `idiom brief decide <slug> --option <id>` records the requester's choice, and the rendered Markdown becomes the ticket.
 7. **Gate.** When the ticket is filed, `idiom brief gate <ticket.md>` warns if it holds a design decision and carries no decided brief (see [Gate tickets](#gate-tickets)).
+   In an autobuild project, `idiom brief attach <slug> --ticket <id>` then pins the decided brief to the ticket as its design asset, so every build phase and Idiom's own checks judge the build against it ([Attach to an autobuild ticket](#attach-to-an-autobuild-ticket)).
 8. **Build, then check.** After the build, `idiom check <flow>` judges the decided brief's assertions against the shipped UI and reports a `brief-mismatch` finding for each criterion it breaks ([Checking the build](#checking-the-build)).
 
-Idiom owns the process: the rubric, the research plan, the answer shapes, validation, the question, storage and rendering. `triage` calls a model once, with a bounded text prompt: no tools, no capture, a 90-second limit and a 2,000-token answer. It uses the project's configured review provider (`model.provider`, with `model.fallback` tried once, visibly, if the primary fails). `plan` given a request without `--question` runs that same triage first. The only other command that calls a model is `idiom brief "<request>" --research`. `record`, `decide`, `list` and `show` never touch the network.
+Idiom owns the process: the rubric, the research plan, the answer shapes, validation, the question, storage and rendering. `triage` calls a model once, with a bounded text prompt: no tools, no capture, a 90-second limit and a 2,000-token answer. It uses the project's configured review provider (`model.provider`, with `model.fallback` tried once, visibly, if the primary fails). `plan` given a request without `--question` runs that same triage first. The only other command that calls a model is `idiom brief "<request>" --research`. `record`, `decide`, `export`, `list` and `show` never touch the network.
 
 ## Two ways to research
 
@@ -48,7 +61,7 @@ The run has three stages, all under one wall-clock budget:
 
 **Cost.** The stored brief records `researchRun`: the provider and model, the budget, the run's duration, the number of calls and, when the provider reports them, turns, searches and input/output tokens. A figure the provider does not report is left out, never shown as 0. The CLI prints it as a `Cost:` line, and the rendered Evidence section adds a `Research run:` line. Deciding a researched brief (with `decide`, or by recording it again) keeps its `researchRun`; recording a complete brief over an incomplete one drops the run, since it no longer describes the brief.
 
-A request whose whole text is `triage`, `plan`, `gate`, `record`, `decide`, `list` or `show` runs that subcommand instead (quoting does not help); put such a request in a draft-ticket file and pass its path.
+A request whose whole text is `triage`, `plan`, `gate`, `record`, `decide`, `export`, `attach`, `list` or `show` runs that subcommand instead (quoting does not help); put such a request in a draft-ticket file and pass its path.
 
 ## The rubric
 
@@ -356,6 +369,34 @@ Briefs whose assertions all name other flows are left out. A brief with no asser
 
 When a human rejects a build anyway, `idiom learn --from-brief <slug> "<what is wrong>"` turns the rejection into something checkable. The state comes from the brief when its assertions name exactly one flow state; otherwise pass `--state`. Words Idiom can measure become a check entry as usual. Otherwise the brief's size assertions for that state become state invariants in the flow manifest, judged by `layout-invariants` whatever happens to the brief later; when they are already declared, the rejection becomes a design-law ruling that names the brief. The `.idiom/learned.jsonl` line records the brief.
 
+## Attach to an autobuild ticket
+
+Autobuild judges every phase of a build against a ticket's `design` asset: plan, plan review, implement, code review and the verifiers all read it, and code review sees it before anything is rendered. A decided brief is exactly what that asset should hold.
+
+```sh
+idiom brief export pinned-group --out design/pinned-group   # write the asset
+idiom brief attach pinned-group --ticket file-281           # export and attach it
+```
+
+`idiom brief export <slug> --out <dir>` writes a self-contained directory:
+
+- `README.md`: the decision, the chosen option and its cost, the rejected options and why, each acceptance criterion as a checkbox with the Idiom rule that verifies it (`Verified by Idiom: brief-mismatch — …`) or a note that it is not machine-checked, the out-of-scope list, a table of the reference screenshots, and how the build is verified.
+- `criteria.json`: the machine-readable contract, `{"format": "idiom-design-asset", "version": 1, …}` with the brief's slug, title, decision, chosen option and decider; each criterion's statement, assertions and the `idiom:brief-mismatch:…` rule id each assertion produces; the screenshot list; and the capture run id and commit.
+- `screenshots/<flow>--<state>--<viewport>--<scheme>.png`: every state an assertion names, at every configured viewport and colour scheme. They come from the latest capture of each flow, so they show the UI **before** the build; `--capture` captures just those states now instead.
+
+A brief with no assertions exports only `README.md` and `criteria.json`; its criteria are for human or agent judgement. Paths in the export are relative, runs are named by id only, and an export that would contain the project path, home directory or temporary directory is refused, so the directory can be shared as it is.
+
+`idiom brief attach <slug> --ticket <id>` exports to a temporary directory, runs `ab ticket attach <id> design <dir> --name <slug>` from the directory that holds `autobuild.toml`, and removes the temporary directory. Autobuild copies the asset in and freezes it when the build is claimed. Idiom runs no other `ab` command, so the ticket's state never moves. On success the brief records the ticket, and its Markdown gains an `Autobuild tickets: file-281` line; attaching does not change `updatedAt`, so `brief list` order stays put.
+
+Both commands refuse, with the reason, a brief that is not decided, one decided as "don't build it", one decided on an option other than the recommendation its criteria were written for, a missing screenshot (naming the state, viewport and scheme, and suggesting `--capture`) and an output directory that is not empty. `attach` also refuses, before exporting or capturing anything, when there is no `autobuild.toml` above the project or no `ab` on PATH; export the asset and attach it yourself with `ab ticket attach <id> design <dir>`. When `ab` fails, its stderr is shown and the brief is left unchanged.
+
+Inside the build, Idiom reads the asset back. `.ab/assets/design/<name>/criteria.json` is found by walking up from the project to the build's worktree root, and design assets that are not Idiom exports are ignored. A malformed Idiom export is an error rather than silently skipped. Each pinned brief joins the decided briefs everywhere they are read (capture, `idiom check`, `idiom review`, `idiom context`); when a stored brief has the same slug, the pinned asset wins, since it is what the ticket was claimed with. Findings and coverage name it: `Brief "Pinned group in the Add drawer" (pinned-group, design asset pinned-group), criterion …` and `· design asset pinned-group`. The rule ids are the same as for the stored brief.
+
+- **The gate.** `idiom check --gate` adds every state the asset asserts to its plan, with a `design asset <name>: brief <slug> asserts <flow>/<state>` note, and does not skip for "no UI changes" while an asset asserts states. Those states are trimmed last when the budget is tight. The asset's `brief-mismatch` findings always count as new, even when a recorded baseline already holds them.
+- **The verifier.** `idiom verify` captures the asserted states once and judges the asset's assertions, whether or not the spec embeds findings. The report gains a `## Design asset` section naming each brief, its counts and every failure, and any mismatch fails the run. The `idiom-verify` skill does not skip a build that carries an Idiom design asset.
+
+MCP has the same: `idiom_brief_export`, `idiom_brief_attach`, and `ticket` on `idiom_brief_decide` to decide and attach in one call (a failed attach leaves the decision recorded).
+
 ## Reference products
 
 `brief.references` lists the products that set the bar for this project's UI. Triage reads them, together with PRODUCT.md (`design.productFile`, capped at 6,000 characters), as context for its questions. Each entry is `{ "name", "tier", "note" }` with an optional `url`. The tiers are:
@@ -374,7 +415,7 @@ Commit `.idiom/briefs/`: the briefs are the record of what was decided and why. 
 
 Agents reach the same flow three ways:
 
-- **MCP.** `idiom_brief_triage`, `idiom_brief_plan`, `idiom_brief_record` and `idiom_brief_decide` mirror the CLI ([mcp.md](mcp.md)). The triage tool's description tells agents to call it before writing a ticket, spec or code that adds or changes visible UI.
+- **MCP.** `idiom_brief_triage`, `idiom_brief_plan`, `idiom_brief_record`, `idiom_brief_decide`, `idiom_brief_export` and `idiom_brief_attach` mirror the CLI ([mcp.md](mcp.md)); `idiom_brief_decide` takes an optional `ticket` to attach the decided brief to an autobuild ticket. The triage tool's description tells agents to call it before writing a ticket, spec or code that adds or changes visible UI.
 - **The Idiom skill.** The vendored skill is model-invocable. Its description names the trigger ("before writing a ticket, spec or code that adds or changes UI, or when a request involves a design decision"), and its "Before you spec UI" section walks the flow above. `idiom upgrade` delivers it to existing installs.
 - **The instruction offer.** `idiom init` and `idiom upgrade` offer to append two lines to the project's CLAUDE.md or AGENTS.md:
 

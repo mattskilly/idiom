@@ -364,15 +364,18 @@ test("a failed selected capture remains in coverage and is never counted as chec
     await expect(
       access(join(f.directory, ".idiom/agent-hooks/state.json")),
     ).rejects.toThrow();
-    await expect(
-      checkChanged({
-        project: f.directory,
-        flow: "site",
-        changed: true,
-        all: true,
-        captureFailureIsError: true,
-      }),
-    ).rejects.toThrow("Capture failed");
+    const partial = await checkChanged({
+      project: f.directory,
+      flow: "site",
+      changed: true,
+      all: true,
+    });
+    expect(partial.checks[0]).toMatchObject({
+      status: "checked",
+      summary: {
+        captureFailures: [expect.objectContaining({ state: "failed" })],
+      },
+    });
   } finally {
     await f.cleanup();
   }

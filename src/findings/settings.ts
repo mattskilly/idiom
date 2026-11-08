@@ -23,6 +23,7 @@ export function capturePredicateIdentity(project: Project, flow: Flow): string {
   const {
     concurrency: _lanes,
     maxMinutes: _deadline,
+    hostPressureThreshold: _pressure,
     ...capture
   } = project.capture;
   const { gate: _gate, ...rest } = project.checks;
@@ -38,7 +39,10 @@ export function capturePredicateIdentity(project: Project, flow: Flow): string {
     states: flow.states.map((state) =>
       Object.fromEntries(
         Object.entries(state).filter(
-          ([key]) => !["description", "url", "urlFrom"].includes(key),
+          ([key]) =>
+            !["description", "url", "urlFrom", "screenshotTimeoutMs"].includes(
+              key,
+            ),
         ),
       ),
     ),

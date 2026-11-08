@@ -17,6 +17,7 @@ import { evaluateRules } from "../rules/index.js";
 import type { Decision } from "../schemas/decision.js";
 import { type Finding, findingSchema } from "../schemas/finding.js";
 import type { RuleOverride, Rules } from "../schemas/rules.js";
+import { severityRank as sharedSeverityRank } from "../schemas/severity.js";
 import { deriveVerificationLocus } from "../verify/locus.js";
 import { assertEvidencePaths } from "./artifacts.js";
 import type { ReviewCatalog } from "./catalog.js";
@@ -46,11 +47,7 @@ export type SuppressedFinding =
     }
   | { finding: Finding; source: "rule"; override: RuleOverride };
 
-const severityOrder = new Map([
-  ["blocker", 0],
-  ["major", 1],
-  ["minor", 2],
-]);
+const severityOrder = new Map(Object.entries(sharedSeverityRank));
 
 /**
  * Severity, then the optional priority (lower first; page reviews rank
@@ -179,6 +176,9 @@ function deterministicFinding(options: {
         ...(candidate.consoleExcerpt === undefined
           ? {}
           : { consoleExcerpt: candidate.consoleExcerpt }),
+        ...(candidate.serverLogExcerpt === undefined
+          ? {}
+          : { serverLogExcerpt: candidate.serverLogExcerpt }),
         ...(candidate.axeNodes === undefined
           ? {}
           : { axeNodes: candidate.axeNodes }),

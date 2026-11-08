@@ -341,3 +341,47 @@ test("a shape name matched only by its modifier resolves textless elements, neve
     { name: "override dot", selector: "", rects: [], unresolved: true },
   ]);
 }, 60_000);
+
+test("explicit one-axis tiles retain exact targets through browser capture and offline review", async () => {
+  const html = await readFile(
+    join(import.meta.dirname, "fixtures/component-size/tiles.html"),
+    "utf8",
+  );
+  const { tuples, findings } = await reviewStates(
+    browser,
+    [{ state: "tiles", html }],
+    {
+      checks: {
+        components: [
+          { selector: ".tile", height: 56, tolerance: { px: 8 } },
+          { selector: ".narrow", width: 56, tolerance: { px: 8 } },
+          { selector: ".too-wide", width: 56, tolerance: { px: 8 } },
+        ],
+      },
+      design: "Tiles are 90px high.",
+    },
+  );
+  const captured = tuples[0];
+  if (captured?.observations?.version !== 2) throw new Error("expected V2");
+  expect(captured.observations.components).toHaveLength(3);
+  expect(captured.observations.components?.[0]).not.toHaveProperty("width");
+  const reported = findings.filter(
+    ({ candidate }) => candidate.category === "component-size",
+  );
+  expect(reported).toHaveLength(2);
+  expect(reported[0]?.candidate.explanation).toContain(
+    '2 of 3 ".tile" elements render at 82px high, 105px high',
+  );
+  expect(reported[0]?.candidate.explanation).toContain("56px high (±8px)");
+  expect(reported[1]?.candidate.explanation).toContain("65px wide");
+  const persisted = observationArtifactSchema.parse(
+    JSON.parse(JSON.stringify(captured.observations)),
+  );
+  expect(
+    runDeterministicChecks([{ ...captured, observations: persisted }])
+      .candidates.filter(
+        ({ candidate }) => candidate.category === "component-size",
+      )
+      .map(({ candidate }) => candidate),
+  ).toEqual(reported.map(({ candidate }) => candidate));
+});

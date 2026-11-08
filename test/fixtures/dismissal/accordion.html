@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head>
+    <style>
+      body { margin: 0; font: 16px system-ui; padding: 16px; }
+      section[hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <h2>
+      <button id="shipping" aria-expanded="false" aria-controls="shipping-panel">Shipping details</button>
+    </h2>
+    <section id="shipping-panel" hidden>
+      <p>Orders ship within two working days.</p>
+    </section>
+    <p>Returns are free within thirty days.</p>
+    <script>
+      const trigger = document.getElementById("shipping");
+      const panel = document.getElementById("shipping-panel");
+      trigger.addEventListener("click", () => {
+        const open = panel.hidden;
+        panel.hidden = !open;
+        trigger.setAttribute("aria-expanded", String(open));
+      });
+    </script>
+  </body>
+</html>

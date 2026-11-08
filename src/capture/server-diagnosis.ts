@@ -10,19 +10,59 @@ export type ServerFailureCause =
 
 const TAIL_LINE_LIMIT = 240;
 
+/** Names of environment variables whose values are treated as secrets. */
+export const SECRET_NAME = /_(TOKEN|SECRET|KEY)$/;
+
 /** Replace the values of secret-named variables wherever they appear. */
 export function redact(value: string, environment: NodeJS.ProcessEnv): string {
   let result = value;
   for (const [name, secret] of Object.entries(environment)) {
-    if (
-      /_(TOKEN|SECRET|KEY)$/.test(name) &&
-      secret !== undefined &&
-      secret.length > 0
-    ) {
+    if (SECRET_NAME.test(name) && secret !== undefined && secret.length > 0) {
       result = result.split(secret).join(`[redacted ${name}]`);
     }
   }
   return result;
+}
+
+// The env-var secret suffix applied to query keys, also accepted as the whole
+// key, so `?token=` and `?api_key=` are both caught.
+const SECRET_QUERY_KEY = /(?:^|_)(TOKEN|SECRET|KEY)$/;
+
+/**
+ * A URL with the values of secret-named query keys replaced. Every other key,
+ * value and its encoding is kept in order; the fragment, which a browser
+ * never sends, is dropped. Unparseable input is returned unchanged.
+ */
+export function redactUrlSecrets(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  const hashAt = url.indexOf("#");
+  const withoutHash = hashAt === -1 ? url : url.slice(0, hashAt);
+  const queryAt = withoutHash.indexOf("?");
+  if (queryAt === -1 || parsed.search === "") return withoutHash;
+  const query = withoutHash
+    .slice(queryAt + 1)
+    .split("&")
+    .map((pair) => {
+      const equals = pair.indexOf("=");
+      if (equals === -1) return pair;
+      const rawKey = pair.slice(0, equals);
+      let key: string;
+      try {
+        key = decodeURIComponent(rawKey.replace(/\+/g, " "));
+      } catch {
+        key = rawKey;
+      }
+      return SECRET_QUERY_KEY.test(key.toUpperCase().replace(/-/g, "_"))
+        ? `${rawKey}=[redacted]`
+        : pair;
+    })
+    .join("&");
+  return `${withoutHash.slice(0, queryAt)}?${query}`;
 }
 
 function tailLines(value: string): string[] {

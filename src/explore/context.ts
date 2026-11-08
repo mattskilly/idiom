@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { selectColorSchemes, selectViewports } from "../capture/resolve.js";
 import { loadReferenceContext } from "../critique/context.js";
 import { IdiomError } from "../errors.js";
-import { parseRulingBlocks } from "../rulings/law.js";
+import { effectiveLaw } from "../rulings/effective.js";
 import { lookupUnruledDecision } from "../rulings/lookup.js";
 import { explorationSteeringSchema } from "../schemas/exploration.js";
 import { loadProjectContext, validateNamedFlow } from "../validation.js";
@@ -61,7 +61,7 @@ export async function loadExplorationContext(options: {
     context.project.design.designFile,
   );
   const designMd = await required(designPath, "design guidance");
-  const parsedLaw = parseRulingBlocks(designMd);
+  const parsedLaw = await effectiveLaw(designMd, context.projectDirectory);
   const decision =
     steering.data.decision === undefined
       ? undefined
@@ -90,7 +90,7 @@ export async function loadExplorationContext(options: {
       join(context.projectDirectory, context.project.design.productFile),
       "product guidance",
     ),
-    designMd,
+    designMd: parsedLaw.designMd,
     rulings: parsedLaw.resolutions,
     references: await loadReferenceContext(context.projectDirectory),
     tuples: viewports.flatMap((viewport) =>

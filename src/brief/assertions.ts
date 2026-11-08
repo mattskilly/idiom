@@ -20,6 +20,8 @@ export type BriefCheck = {
     statement: string;
     assertions: BriefAssertion[];
   }>;
+  /** Set when the brief came from a design asset pinned to the build. */
+  source?: { kind: "design-asset"; name: string } | undefined;
 };
 
 type CriteriaShape = Pick<StoredBrief, "acceptanceCriteria">;

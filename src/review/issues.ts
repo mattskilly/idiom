@@ -1,8 +1,10 @@
 import type { Finding } from "../schemas/finding.js";
+import { severityRank as sharedSeverityRank } from "../schemas/severity.js";
 import { normalizeSelectorHint } from "./fingerprint.js";
 import {
   affectedCounts,
   comparePriority,
+  type ImpactReason,
   type IssueRankingContext,
   type RankingExplanation,
   ruleFamily,
@@ -30,6 +32,9 @@ export type CheckIssue = {
   salience: number;
   prominence: number;
   score: number;
+  /** 1 unless the issue is single-state cosmetic; ranks within a severity. */
+  impact: 0 | 1;
+  impactReasons: ImpactReason[];
   explanation: RankingExplanation;
   rules: string[];
   family?: string | undefined;
@@ -61,7 +66,7 @@ type IssueGroup = {
   deferred?: true | undefined;
 };
 
-const severityOrder = { blocker: 0, major: 1, minor: 2 } as const;
+const severityOrder = sharedSeverityRank;
 
 export function collapseIssues<G extends IssueGroup>(
   groups: G[],
@@ -111,6 +116,17 @@ export function collapseIssues<G extends IssueGroup>(
           ),
         ),
       ];
+      const primaryAction =
+        context !== undefined
+          ? ranked.some(({ ranking }) => ranking.primaryAction)
+          : bucket.some(
+              (group) =>
+                group.selector !== undefined && primary.has(group.selector),
+            );
+      const reasons = mergeImpactReasons(
+        ranked.map(({ ranking }) => ranking.impactReasons),
+        primaryAction,
+      );
       return {
         id: example.id,
         ...(example.basis === undefined
@@ -134,6 +150,7 @@ export function collapseIssues<G extends IssueGroup>(
         salience: winner.ranking.salience,
         prominence: winner.ranking.prominence,
         score: winner.ranking.score,
+        ...impactOf(reasons),
         explanation: winner.ranking.explanation,
         groups: [
           example.id,
@@ -144,19 +161,37 @@ export function collapseIssues<G extends IssueGroup>(
         elements: bucket.length,
         places: counts.places,
         findings: bucket.reduce((sum, group) => sum + group.members.length, 0),
-        primaryAction:
-          context !== undefined
-            ? ranked.some(({ ranking }) => ranking.primaryAction)
-            : bucket.some(
-                (group) =>
-                  group.selector !== undefined && primary.has(group.selector),
-              ),
+        primaryAction,
         ...(bucket.every((group) => group.deferred === true)
           ? { deferred: true }
           : {}),
       };
     })
     .sort(comparePriority);
+}
+
+const impactOrder: readonly ImpactReason[] = [
+  "states",
+  "viewports",
+  "primary",
+  "interactive",
+  "broken",
+];
+
+/** Every reason any member holds, in documented order. */
+export function mergeImpactReasons(
+  lists: ReadonlyArray<readonly ImpactReason[]>,
+  primaryAction = false,
+): ImpactReason[] {
+  const held = new Set(lists.flat());
+  if (primaryAction) held.add("primary");
+  return impactOrder.filter((reason) => held.has(reason));
+}
+
+export function impactOf(
+  reasons: ImpactReason[],
+): Pick<CheckIssue, "impact" | "impactReasons"> {
+  return { impact: reasons.length > 0 ? 1 : 0, impactReasons: reasons };
 }
 
 export function categoryCounts(

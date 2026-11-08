@@ -412,15 +412,23 @@ export function createElectronLauncher(
             createAxe: runtime.createAxe,
             collectConsole: async () => await collectBufferedConsole(page),
             tokens: tuple.tokens ?? { status: "not-configured" },
-            screenshotOptions: deterministicScreenshotOptions(tuple.project),
+            screenshotOptions: {
+              ...deterministicScreenshotOptions(tuple.project),
+              timeout: tuple.state.screenshotTimeoutMs ?? 30000,
+            },
+            maxFullPageHeight: tuple.project.capture.maxFullPageHeight,
             now: runtime.now,
             explanation: tuple.project.checks.explanation,
             explanationWaitMs: tuple.project.checks.probe.waitMs,
             observe: {
+              components: tuple.project.checks.components,
+              spacingTargets: tuple.project.checks.spacingTargets,
               designComparison: tuple.state.design !== undefined,
               touchReachability: tuple.project.checks.touchReachability,
               liveness: tuple.project.checks.liveness,
               mediaFill: tuple.project.checks.mediaFill,
+              visualBlank: tuple.project.checks.visualBlank,
+              loadingStuck: tuple.project.checks.loadingStuck.enabled,
               ...(tuple.project.checks.collections.length === 0
                 ? {}
                 : {

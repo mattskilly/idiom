@@ -9,7 +9,7 @@ export function severityGateEligible(
   failOn: "never" | "blocker" | "major" | "minor",
   failOnJudged = false,
 ): boolean {
-  if (failOn === "never") return false;
+  if (failOn === "never" || finding.severity === "info") return false;
   if (
     (finding.basis ?? (finding.layer === "model" ? "judged" : "measured")) ===
       "judged" &&

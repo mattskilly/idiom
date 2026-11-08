@@ -1,5 +1,12 @@
-import { appendFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { briefSelectorsFor } from "../brief/assertions.js";
 import { loadBriefChecks } from "../brief/store.js";
 import { loadDesignComponents } from "../checks/design-components.js";
@@ -28,18 +35,27 @@ import {
   publishArtifacts,
   scanForSecrets,
   stateCombination,
+  tupleRelativeDirectory,
   writeBaselineReport,
   writeCombinationsReport,
   writeTupleArtifacts,
 } from "./artifacts.js";
 import { createBrowserLauncher } from "./browser.js";
 import { createElectronLauncher } from "./electron.js";
+import type { CaptureExecutionContext } from "./execution-context.js";
 import { mergeExplanations } from "./explanations.js";
 import { failureKey } from "./failure.js";
+import {
+  type HostRecord,
+  measureReadyUrl,
+  pressureReasons,
+  readHost,
+} from "./host-pressure.js";
 import { captureConcurrency, runCaptureLanes } from "./lanes.js";
 import { heldStepIndexes, replayKey } from "./loading.js";
 import { mergeMotion } from "./motion.js";
 import {
+  CaptureInterrupted,
   type CaptureLifetime,
   type CaptureOwnership,
   withCaptureOwnership,
@@ -80,6 +96,7 @@ import {
   selectViewports,
   snapshotSource,
 } from "./resolve.js";
+import { installArtifactTree } from "./run-lifecycle.js";
 import { type RunRecord, runRecordSchema } from "./run-record.js";
 import {
   type CaptureScope,
@@ -98,6 +115,7 @@ import type {
   BrowserSession,
   CaptureRunResult,
   CaptureTupleSelection,
+  CspViolation,
   ElectronLauncher,
   ElectronSession,
   MetadataUrl,
@@ -117,7 +135,12 @@ const PROBE_MIN_ROUND_MS = 10_000;
 
 export type CaptureDependencies = CaptureLifetime & {
   browserLauncher?: BrowserLauncher | undefined;
+  readHost?: typeof readHost | undefined;
+  measureReadyUrl?: typeof measureReadyUrl | undefined;
+  attemptTimeouts?: Partial<import("./types.js").AttemptTimeouts> | undefined;
   onProbeProgress?: ((event: ProbeProgress) => void) | undefined;
+  /** Interrupted-run notices; the CLI writes them to stderr. */
+  onLifecycleDiagnostic?: ((message: string) => void) | undefined;
   /** One line per server an earlier, killed run left behind and this run stopped. */
   onLeftoverServer?: ((message: string) => void) | undefined;
   electronLauncher?: ElectronLauncher;
@@ -455,6 +478,23 @@ function mapStrings(
   return value;
 }
 
+function mapCsp(
+  csp: CspViolation,
+  map: (value: string) => string,
+): CspViolation {
+  const optional = (value: string | undefined) =>
+    value === undefined ? undefined : map(value);
+  return {
+    ...csp,
+    blocked: map(csp.blocked),
+    documentUrl: map(csp.documentUrl),
+    element: optional(csp.element),
+    frame: optional(csp.frame),
+    sample: optional(csp.sample),
+    sourceFile: optional(csp.sourceFile),
+  };
+}
+
 /** Apply one string transform to every derived field of a captured tuple. */
 function mapResult(
   result: TupleResult,
@@ -470,6 +510,10 @@ function mapResult(
     ...(record.location === undefined
       ? {}
       : { location: { ...record.location, url: map(record.location.url) } }),
+    ...(record.request?.url === undefined
+      ? {}
+      : { request: { ...record.request, url: map(record.request.url) } }),
+    ...(record.csp === undefined ? {} : { csp: mapCsp(record.csp, map) }),
   }));
   const axe = mapStrings(result.axe, axeMap, undefined, axeKeyMap);
   const observations = mapStrings(
@@ -561,6 +605,7 @@ export function canonicalizeOrigin(
 }
 
 type CaptureOptions = {
+  executionContext?: CaptureExecutionContext | undefined;
   filmstripRequests?: import("./types.js").FilmstripRequest[] | undefined;
   projectDirectory: string;
   project: Project;
@@ -612,6 +657,7 @@ export async function runCapture(
     options.project.capture.maxMinutes ?? 30,
     options.dependencies,
     (owner) => captureOwned(options, owner),
+    { settle: options.executionContext !== undefined },
   );
 }
 
@@ -619,19 +665,20 @@ async function captureOwned(
   options: CaptureOptions,
   owner: CaptureOwnership,
 ): Promise<CaptureRunResult> {
+  const stateProjectDirectory =
+    options.executionContext?.stateProjectDirectory ?? options.projectDirectory;
+  if (options.executionContext && options.out !== undefined)
+    await snapshotSource(stateProjectDirectory, {
+      explicitOutputPath: options.out,
+    });
+  const hostStart = (options.dependencies?.readHost ?? readHost)();
+  let readyStartMs: number | null = null;
+  let readyEndMs: number | null = null;
+  const retries: NonNullable<RunRecord["retries"]> = [];
+  const retried = new Set<string>();
   const registry = serverRegistryFor(options.dependencies?.process);
-  if (registry !== undefined) {
-    owner.stage("leftover servers");
-    for (const leftover of await reapLeftoverServers(
-      options.projectDirectory,
-      registry,
-    ))
-      options.dependencies?.onLeftoverServer?.(leftoverServerMessage(leftover));
-    owner.check();
-  }
   const selection = resolveCaptureScope(options);
   const selectedTuples = selection.selected;
-  const briefChecks = await loadBriefChecks(options.projectDirectory);
   const probePolicy = probeCoordinates(
     options.project,
     options.flow,
@@ -683,7 +730,7 @@ async function captureOwned(
       ? undefined
       : resolve(options.projectDirectory, options.out);
   const managedReportsDirectory = resolve(
-    options.projectDirectory,
+    stateProjectDirectory,
     ".idiom",
     "reports",
   );
@@ -696,26 +743,44 @@ async function captureOwned(
         ...(resolvedOut === undefined ? [] : [resolvedOut]),
       ],
       explicitOutputPath: resolvedOut,
+      ignoreDirty: options.project.baselines?.ignoreDirty,
     },
-  );
-  owner.stage("tokens");
-  const tokens = await loadTokenDeclarations(
-    options.projectDirectory,
-    options.project.design.tokensFile,
-    options.project.design.tokens,
-  );
-  const designComponents = await loadDesignComponents(
-    options.projectDirectory,
-    options.project,
   );
   owner.stage("workspace initialization");
   const workspace = await owner.acquire(
     (options.dependencies?.createArtifactWorkspace ?? createArtifactWorkspace)({
-      projectDirectory: options.projectDirectory,
+      projectDirectory: stateProjectDirectory,
       out: resolvedOut,
       now: now(),
+      initialRecord: runRecordSchema.parse({
+        version: 1,
+        flow: options.flow.id,
+        source,
+        declared: selection.declared.map(coordinate),
+        selected: selectedTuples.map(coordinate),
+        viewports: selectViewports(options.project, options.flow),
+        probe: probePolicy,
+        timings: {
+          ...timings,
+          tuples: selectedTuples.map((selected) => ({
+            ...coordinate(selected),
+            total: { status: "unavailable", ms: 0 },
+            probe: { status: "unavailable", ms: 0 },
+          })),
+        },
+        capture: { reducedMotion: options.project.capture.reducedMotion },
+      }),
     }),
-    cleanupWorkspace,
+    async (workspace) => {
+      const reason = owner.signal.reason;
+      await workspace.lifecycle?.interrupt(
+        reason instanceof CaptureInterrupted
+          ? { reason: "signal", signal: reason.signal }
+          : { reason: "capture-failed" },
+        options.dependencies?.onLifecycleDiagnostic,
+      );
+      await cleanupWorkspace(workspace);
+    },
   );
   owner.check();
   const inherited = options.dependencies?.inheritedEnvironment ?? process.env;
@@ -769,10 +834,118 @@ async function captureOwned(
     );
   };
   const assertNotInterrupted = owner.check;
+  const sampleReady = async (): Promise<number | null> => {
+    try {
+      return await (options.dependencies?.measureReadyUrl ?? measureReadyUrl)(
+        project.server.readyUrl,
+        {
+          signal: owner.signal,
+          fetch: processDependencies.fetch,
+          monotonicNow: clock,
+        },
+      );
+    } catch (error) {
+      if (owner.signal.aborted) throw error;
+      return null;
+    }
+  };
 
   let completed: CaptureRunResult | undefined;
   let failure: unknown;
   try {
+    if (registry !== undefined) {
+      owner.stage("leftover servers");
+      for (const leftover of await reapLeftoverServers(
+        options.projectDirectory,
+        registry,
+      ))
+        options.dependencies?.onLeftoverServer?.(
+          leftoverServerMessage(leftover),
+        );
+      owner.check();
+    }
+    const briefChecks = await loadBriefChecks(stateProjectDirectory);
+    owner.stage("tokens");
+    const tokens = await loadTokenDeclarations(
+      options.projectDirectory,
+      options.project.design.tokensFile,
+      options.project.design.tokens,
+    );
+    const designComponents = await loadDesignComponents(
+      options.projectDirectory,
+      options.project,
+    );
+    const checkpoint = async (
+      tuple: ArtifactTuple,
+      timing?: RunRecord["timings"]["tuples"][number],
+      representativeScreenshot?: Buffer,
+    ) => {
+      // Freeze nested observations before the artifact writer annotates them. Keep
+      // buffers, frame recorders and non-enumerable recording keys intact.
+      const snapshot = (value: ArtifactTuple): ArtifactTuple => ({
+        ...value,
+        result: value.result
+          ? {
+              ...value.result,
+              observations: mapResult(value.result, (text) => text)
+                .observations,
+            }
+          : undefined,
+      });
+      const copy = snapshot(tuple);
+      await workspace.lifecycle?.checkpoint(
+        {
+          state: tuple.state.id,
+          viewport: tuple.viewport.name,
+          colorScheme: tuple.colorScheme ?? project.capture.colorScheme,
+        },
+        timing,
+        async () => {
+          const directory = await mkdtemp(
+            resolve(workspace.stagingDirectory, ".checkpoint-"),
+          );
+          // A collapsed tuple's metadata reads its representative's screenshot
+          // from staging. Stage only those bytes, and drop them before install:
+          // the representative's own checkpoint already holds its files.
+          const borrowed =
+            copy.layoutRepresentative !== undefined &&
+            representativeScreenshot !== undefined
+              ? {
+                  path: join(
+                    directory,
+                    tupleRelativeDirectory({
+                      ...copy,
+                      state: { ...copy.state, id: copy.layoutRepresentative },
+                    }),
+                    "screenshot.png",
+                  ),
+                  bytes: representativeScreenshot,
+                }
+              : undefined;
+          try {
+            if (borrowed !== undefined) {
+              await mkdir(dirname(borrowed.path), { recursive: true });
+              await writeFile(borrowed.path, borrowed.bytes);
+            }
+            await writeTupleArtifacts({
+              stagingDirectory: directory,
+              tuple: copy,
+              source,
+              browserVersion,
+              fallbackTimestamp: now().toISOString(),
+              build,
+              snapshot: true,
+            });
+            if (borrowed !== undefined)
+              await rm(borrowed.path, { force: true });
+            await scanForSecrets(directory, effectiveEnvironments);
+            await installArtifactTree(directory, workspace.finalDirectory);
+          } finally {
+            await rm(directory, { recursive: true, force: true });
+          }
+        },
+      );
+    };
     if (
       productionRequested &&
       (options.project.server.production?.reuseBuild ||
@@ -902,9 +1075,10 @@ async function captureOwned(
         };
         assertNotInterrupted();
       }
+      if (server) owner.own(server, (value) => value.stop());
+      readyStartMs = await sampleReady();
       owner.stage("browser launch");
       captureStarted = clock();
-      if (server) owner.own(server, (value) => value.stop());
       browser = await owner.acquire(
         (
           options.dependencies?.browserLauncher ??
@@ -995,6 +1169,7 @@ async function captureOwned(
               colorScheme: selected.colorScheme,
               navigationUrl: resolution.value.navigationUrl,
               hideWebdriver,
+              explicitDismiss: options.flow.explicitDismiss,
               health: tupleHealth(selected.state),
               tokens,
             },
@@ -1065,12 +1240,22 @@ async function captureOwned(
       const session = browser;
       // Filled by position, so the run reads as if captured in order.
       const laneResults: Array<LaneResult | undefined> = [];
+      const rawTimeouts = new Map<
+        number,
+        import("./types.js").TimeoutDiagnostic
+      >();
+      const terminalProbe = new Set<number>();
       const captureTuple = async (
         selected: (typeof selectedTuples)[number],
         index: number,
-        probePass = false,
+        phase: "capture" | "probe" = "capture",
+        retry = false,
       ) => {
-        const previous = probePass ? laneResults[index] : undefined;
+        const probePass = phase === "probe";
+        const priorAttempt = laneResults[index];
+        const previous = probePass ? priorAttempt : undefined;
+        const firstTimeout = rawTimeouts.get(index);
+        rawTimeouts.delete(index);
         let executed = false;
         let controls: ControlTiming[] = [];
         owner.coordinate(selected, "tuple");
@@ -1106,6 +1291,8 @@ async function captureOwned(
           const captureStarted = clock();
           const captured = await session.capture({
             signal: owner.signal,
+            timeoutFactor: retry ? 2 : 1,
+            timeouts: options.dependencies?.attemptTimeouts,
             onActivity: owner.stage,
             onProbeProgress: (event) =>
               options.dependencies?.onProbeProgress?.({
@@ -1137,6 +1324,7 @@ async function captureOwned(
             colorScheme: selected.colorScheme,
             navigationUrl: resolution.value.navigationUrl,
             hideWebdriver,
+            explicitDismiss: options.flow.explicitDismiss,
             health: tupleHealth(selected.state),
             tokens,
             designComponents,
@@ -1168,7 +1356,27 @@ async function captureOwned(
             ...(isPublishedFlow(options.flow) ? { published: true } : {}),
           });
           owner.check();
-          if (probePass && captured.probeMs === undefined)
+          if (!captured.ok && captured.timeout)
+            rawTimeouts.set(index, captured.timeout);
+          if (retry && firstTimeout)
+            retries.push({
+              ...coordinate(selected),
+              phase,
+              firstTimeout,
+              doubledDeadlineMs: firstTimeout.timeoutMs * 2,
+              outcome: captured.ok
+                ? "passed"
+                : captured.timeout
+                  ? "timed-out"
+                  : "failed",
+            });
+          if (!probePass && retry)
+            await priorAttempt?.artifact.result?.filmstrips?.dispose();
+          const pendingRetry =
+            !captured.ok && captured.timeout && !retried.has(tupleId(selected));
+          if (probePass && !captured.ok && !pendingRetry)
+            terminalProbe.add(index);
+          if (probePass && captured.probeMs === undefined && !pendingRetry)
             probeBudgets.get(tupleId(selected))?.finish(0);
           if (session.planProbes && !probePass) captured.probeMs = undefined;
           if (previous?.artifact.result?.observations?.version === 2) {
@@ -1179,10 +1387,15 @@ async function captureOwned(
               : undefined) ?? {
               status: "partial" as const,
               results: [],
+              ...(!captured.ok && captured.timeout
+                ? { stateReachTimeout: captured.timeout }
+                : {}),
               reason: captured.ok
                 ? "probe evidence unavailable"
                 : `probe context failed: ${captured.message}`,
             };
+            if (!captured.ok && captured.timeout)
+              round.stateReachTimeout = captured.timeout;
             const earlier = probedOnce.has(index)
               ? previous.artifact.result.observations.probe
               : undefined;
@@ -1278,8 +1491,9 @@ async function captureOwned(
             total: {
               status: "measured" as const,
               ms:
-                (previous?.timing.total.ms ?? 0) +
-                Math.max(0, clock() - captureStarted),
+                (probePass || retry
+                  ? (priorAttempt?.timing.total.ms ?? 0)
+                  : 0) + Math.max(0, clock() - captureStarted),
             },
             probe: probeTiming,
           };
@@ -1349,6 +1563,40 @@ async function captureOwned(
             controls: [],
           };
         }
+        const settled = laneResults[index];
+        if (settled) {
+          const artifact = settled.artifact;
+          const sanitized =
+            artifact.result && resolution.ok
+              ? {
+                  ...artifact,
+                  result: canonicalizeOrigin(
+                    sanitizeDerivedResult(
+                      artifact.result,
+                      resolution.value.navigationUrl,
+                      resolution.value.metadataUrl,
+                      resolution.value.sanitizationAliases,
+                    ),
+                    boundOrigin,
+                    configuredOrigin,
+                  ),
+                }
+              : artifact;
+          const representative = artifact.layoutRepresentative
+            ? capturedByKey.get(
+                `${artifact.layoutRepresentative}\0${selected.viewport.name}\0${selected.colorScheme}`,
+              )
+            : undefined;
+          // Representatives already have their own sanitized checkpoint; lend
+          // only their image so collapsed metadata can reference it.
+          await checkpoint(
+            sanitized,
+            settled.timing,
+            representative?.result?.ok && sanitized.result?.ok
+              ? representative.result.screenshot
+              : undefined,
+          );
+        }
         assertNotInterrupted();
       };
       await runCaptureLanes({
@@ -1358,8 +1606,30 @@ async function captureOwned(
         first: (selected) => probeKeys.has(tupleId(selected)),
         concurrency: captureConcurrency(project, inherited),
         owner,
-        work: captureTuple,
+        work: (selected, index) => captureTuple(selected, index),
       });
+      const retryBarrier = async (phase: "capture" | "probe") => {
+        const candidates = new Set(
+          [...rawTimeouts.keys()].filter((index) => {
+            const selected = selectedTuples[index];
+            return selected !== undefined && !retried.has(tupleId(selected));
+          }),
+        );
+        await runCaptureLanes({
+          tuples: selectedTuples,
+          lane: (selected) =>
+            `${selected.viewport.name}\0${selected.colorScheme}`,
+          concurrency: captureConcurrency(project, inherited),
+          owner,
+          work: async (selected, index) => {
+            if (!candidates.has(index)) return;
+            owner.check();
+            retried.add(tupleId(selected));
+            await captureTuple(selected, index, phase, true);
+          },
+        });
+      };
+      await retryBarrier("capture");
       if (session.planProbes) {
         const partitions = new Map<
           string,
@@ -1519,6 +1789,7 @@ async function captureOwned(
           const work = selectedTuples.flatMap((selected, index) => {
             if (
               !probeKeys.has(tupleId(selected)) ||
+              terminalProbe.has(index) ||
               !laneResults[index]?.artifact.result?.ok ||
               classifyDocument(
                 laneResults[index]?.artifact.result?.observations?.document
@@ -1565,9 +1836,17 @@ async function captureOwned(
             owner,
             work: async (selected, index) => {
               if (ids.has(tupleId(selected)))
-                await captureTuple(selected, index, true);
+                await captureTuple(selected, index, "probe");
             },
           });
+          await retryBarrier("probe");
+          for (const index of terminalProbe) {
+            const selected = selectedTuples[index];
+            if (!selected) continue;
+            runnable
+              .get(`${selected.viewport.name}\0${selected.colorScheme}`)
+              ?.delete(selected.state.id);
+          }
           // After the round's barrier: other states' web-step replays.
           fillAll();
           // Work stealing: whatever an assigned state left unprobed goes back
@@ -1778,9 +2057,23 @@ async function captureOwned(
           result: captured.result,
           runtimeVersion: captured.version,
         });
+        await checkpoint(
+          tuples[tuples.length - 1]!,
+          timings.tuples[timings.tuples.length - 1],
+        );
         assertNotInterrupted();
       }
     }
+    for (const tuple of tuples)
+      await checkpoint(
+        tuple,
+        timings.tuples.find(
+          (entry) =>
+            entry.state === tuple.state.id &&
+            entry.viewport === tuple.viewport.name &&
+            entry.colorScheme === tuple.colorScheme,
+        ),
+      );
 
     if (captureStarted !== undefined)
       timings.capture = {
@@ -1832,9 +2125,71 @@ async function captureOwned(
           entry.colorScheme === tuple.colorScheme,
       );
       if (timing) timing.total.ms += Math.max(0, clock() - started);
+      await checkpoint(tuple, timing);
     }
+    const hostEnd = (options.dependencies?.readHost ?? readHost)();
+    if (isWebFlow(options.flow)) readyEndMs = await sampleReady();
+    const host: HostRecord = {
+      loadStart: hostStart.load,
+      loadEnd: hostEnd.load,
+      coreCount: hostStart.coreCount,
+      threshold: options.project.capture.hostPressureThreshold ?? 1.5,
+      readyStartMs,
+      readyEndMs,
+      pressureReasons: [],
+    };
+    host.pressureReasons = pressureReasons(host);
+    const deferredTuples = host.pressureReasons.length
+      ? tuples.flatMap((tuple) =>
+          tuple.result?.ok === false &&
+          tuple.result.timeout &&
+          retries.some(
+            (retry) =>
+              captureTupleKey(retry) ===
+                captureTupleKey({
+                  state: tuple.state.id,
+                  viewport: tuple.viewport.name,
+                  colorScheme: tuple.colorScheme ?? project.capture.colorScheme,
+                }) &&
+              retry.phase === "capture" &&
+              retry.outcome === "timed-out",
+          )
+            ? [
+                {
+                  state: tuple.state.id,
+                  viewport: tuple.viewport.name,
+                  colorScheme: tuple.colorScheme ?? project.capture.colorScheme,
+                },
+              ]
+            : [],
+        )
+      : [];
     owner.stage("runtime teardown");
     await closeActive();
+    owner.stage("final source snapshot");
+    const finalSource = await (
+      options.dependencies?.snapshotSource ?? snapshotSource
+    )(options.projectDirectory, {
+      excludedPaths: [
+        managedReportsDirectory,
+        ...(resolvedOut === undefined ? [] : [resolvedOut]),
+      ],
+      explicitOutputPath: resolvedOut,
+      ignoreDirty: options.project.baselines?.ignoreDirty,
+    });
+    source.dirty ||= finalSource.dirty || finalSource.commit !== source.commit;
+    if (finalSource.commit !== source.commit)
+      source.changedDuringCapture = true;
+    if (
+      source.ignoredDirtyPaths !== undefined ||
+      finalSource.ignoredDirtyPaths !== undefined
+    )
+      source.ignoredDirtyPaths = [
+        ...new Set([
+          ...(source.ignoredDirtyPaths ?? []),
+          ...(finalSource.ignoredDirtyPaths ?? []),
+        ]),
+      ].sort();
     owner.stage("artifact writing");
     const fallbackTimestamp = now().toISOString();
     for (const tuple of tuples) {
@@ -1873,6 +2228,10 @@ async function captureOwned(
     };
     const scope = runRecordSchema.parse({
       version: 1,
+      host,
+      retryCount: retries.length,
+      retries,
+      deferredTuples,
       captureSettingsIdentity: capturePredicateIdentity(
         options.project,
         options.flow,
@@ -1902,10 +2261,16 @@ async function captureOwned(
         viewport: tuple.viewport.name,
         colorScheme: tuple.colorScheme,
         mismatches: tuple.result?.mismatches ?? [],
+        observations: tuple.result?.observations,
+        screenshotGeometry: tuple.result?.screenshotGeometry,
         failure: tuple.resolutionFailure
           ? { stage: "url-resolution", message: tuple.resolutionFailure }
           : tuple.result?.ok === false
-            ? { stage: tuple.result.stage, message: tuple.result.message }
+            ? {
+                stage: tuple.result.stage,
+                message: tuple.result.message,
+                timeout: tuple.result.timeout,
+              }
             : undefined,
         layoutRepresentative: tuple.layoutRepresentative,
       })),
@@ -1916,17 +2281,29 @@ async function captureOwned(
       resolve(workspace.stagingDirectory, "baseline.md"),
       `\n${renderCoverageMarkdown(coverage)}`,
     );
+    // Only a server this run started has a log; reused and external ones do not.
+    const serverLog = (server?.log ?? production?.serverLog())?.render();
+    if (serverLog !== undefined && serverLog.length > 0)
+      await writeFile(
+        resolve(workspace.stagingDirectory, "server.log"),
+        serverLog,
+      );
     owner.stage("secret scan");
     await scanForSecrets(workspace.stagingDirectory, effectiveEnvironments);
     assertNotInterrupted();
     owner.stage("artifact publication");
     await publishArtifacts(workspace, owner.signal);
     owner.check();
+    const publishedScope = runRecordSchema.parse(
+      JSON.parse(
+        await readFile(resolve(workspace.finalDirectory, "run.json"), "utf8"),
+      ),
+    );
     completed = {
       reportPath: resolve(workspace.finalDirectory, "baseline.md"),
       runDirectory: workspace.finalDirectory,
       counts,
-      scope,
+      scope: publishedScope,
       timings,
       ...(build === undefined ? {} : { build }),
     };

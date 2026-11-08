@@ -1,9 +1,12 @@
+import type { ServerLogLine } from "../capture/server-log.js";
 import type { ConsoleRecord, ExpectationMismatch } from "../capture/types.js";
 import type { LoadedDesign } from "../design/types.js";
 import type { DesignDriftConfig } from "../schemas/design.js";
 import type { DesignDriftEvidence } from "../schemas/finding.js";
 import type { EffectiveInvariant } from "../schemas/invariant.js";
 import type { ColorScheme } from "../schemas/project.js";
+import type { FindingSeverity } from "../schemas/severity.js";
+import type { SpacingTarget } from "../schemas/targets.js";
 import type {
   ActionTimeline,
   ActionTimelineArtifact,
@@ -69,6 +72,8 @@ export const deterministicCheckIds = [
   "touch-reachability",
   "liveness",
   "media-fill",
+  "visual-blank",
+  "loading-stuck",
   "collection-actions",
   "font-loading",
   "broken-link",
@@ -89,6 +94,10 @@ export const deterministicCheckIds = [
   "selection-outline",
   "disabled-highlight",
   "brief-mismatch",
+  "popover-dismissal",
+  "focus-return",
+  "spacing-target",
+  "detached-flyout",
 ] as const;
 
 export type DeterministicCheckId = (typeof deterministicCheckIds)[number];
@@ -182,6 +191,8 @@ export type ObservedElement = {
    * rules do not measure it. Absent in older artifacts.
    */
   spacingExcluded?: string | undefined;
+  /** Rule-specific hidden-state evidence; does not change generic visibility. */
+  adjacentGapExcluded?: string | undefined;
   /** Contributors and scroll extent excluding wholly unpainted content. */
   paintedContent?:
     | {
@@ -539,6 +550,15 @@ export type ProbeMenu = {
 };
 
 export type ProbeResult = {
+  /** Paired document-coordinate geometry, captured while the disclosure is open. */
+  openedDisclosure?:
+    | {
+        root: string;
+        kind: "details" | "popup" | "expanded";
+        trigger: Rect;
+        panel: Rect;
+      }
+    | undefined;
   timings?: ProbeAttemptTimings | undefined;
   /** This attempt left a persistent change that requires the next replay. */
   replayRequired?: boolean | undefined;
@@ -588,6 +608,55 @@ export type ProbeResult = {
   selectsAncestor?: SelectsAncestor | undefined;
   /** Present when the click opened a menu or listbox; absent in older artifacts. */
   menu?: ProbeMenu | undefined;
+  /**
+   * How the overlay this click opened closes: Escape, an outside click and
+   * an iframe click. Absent on reused results and in older artifacts.
+   */
+  dismissal?: ProbeDismissal | undefined;
+};
+
+export type DismissalMethod = "escape" | "outside" | "iframe";
+
+export type DismissalTest = {
+  method: DismissalMethod;
+  outcome:
+    | "closed"
+    | "stayed-open"
+    | "not-tested"
+    | "not-reached"
+    | "inconclusive";
+  reason?: string | undefined;
+  /** Viewport point clicked (outside / iframe). */
+  point?: { x: number; y: number } | undefined;
+  /** iframe test: the frame clicked into. */
+  iframe?: { selector: string; name: string } | undefined;
+  /** escape test, when it closed the panel: where focus went. */
+  focus?:
+    | {
+        returned: boolean;
+        /** `body`, or `tag#id "accessible name"`. */
+        active: string;
+        activeSelector?: string | undefined;
+        /** Focus was not on the trigger or panel, so the probe focused the trigger first. */
+        focusedTrigger?: boolean | undefined;
+      }
+    | undefined;
+};
+
+export type ProbeDismissal = {
+  /** Probe path of the control that opened the panel. */
+  trigger: string;
+  /** Selector of the opened panel. */
+  root: string;
+  kind: "popup" | "expanded" | "dialog" | "popover";
+  /** The panel's role, or its tag. */
+  role?: string | undefined;
+  status: "tested" | "partial" | "not-reached" | "not-applicable";
+  reason?: string | undefined;
+  /** Exempt from the outside and iframe clicks, and why. */
+  explicit?: string | undefined;
+  /** In run order: escape, outside, iframe. */
+  tests: DismissalTest[];
 };
 
 export type RevealedState = {
@@ -743,6 +812,9 @@ export type ProbeSafetyLedger = {
 };
 
 export type ProbeArtifact = {
+  stateReachTimeout?:
+    | import("../capture/types.js").TimeoutDiagnostic
+    | undefined;
   /** Present only for third-party (quick review) probes. */
   safety?: ProbeSafetyLedger | undefined;
   /** Read-only enumeration used to allocate this flow before any clicks. */
@@ -783,6 +855,11 @@ export type ProbeArtifact = {
         trials: SelectionTrial[];
       }
     | undefined;
+  /**
+   * The dismissal pass over opened overlays: panels tested, panels or tests
+   * not reached, and the per-state limit. Absent when the pass was off.
+   */
+  dismissal?: { tested: number; notReached: number; limit: number } | undefined;
   /** The held (slow-network) replay of actions that sent requests. */
   heldReplay?:
     | {
@@ -799,8 +876,8 @@ export type ProbeArtifact = {
 export type ComponentObservation = {
   name: string;
   selector: string;
-  width: number;
-  height: number;
+  width?: number | undefined;
+  height?: number | undefined;
   tolerance: {
     ratio: number;
     px: number;
@@ -826,6 +903,18 @@ export type ComponentObservation = {
     | undefined;
   /** No class or aria-label words matched; recorded so coverage can say so. */
   unresolved?: true | undefined;
+};
+
+/** Frozen declarations and raw border boxes, measured before interaction probing. */
+export type SpacingTargetObservation = {
+  target: SpacingTarget;
+  pairs: Array<{
+    first: Rect & { selector: string };
+    second: Rect & { selector: string };
+    container?: string | undefined;
+  }>;
+  status: "measured" | "unmeasurable";
+  reasons: string[];
 };
 
 export type InvariantObservation = EffectiveInvariant & {
@@ -917,6 +1006,10 @@ export type PopoverCoverObservation = {
 };
 
 export type OverlapObservation = {
+  /** One card-owned classification shared by both overlap rules. */
+  cardAction?:
+    | { card: string; group: string; status: "intentional" | "ambiguous" }
+    | undefined;
   /** Observed selectors, a < b lexically. */
   a: string;
   b: string;
@@ -948,6 +1041,8 @@ export type ClippedTextObservation = {
 };
 
 export type FieldGroupMember = {
+  /** Caption text-node fragments; rect remains the original layout rectangle. */
+  textRect?: Rect | undefined;
   selector: string;
   role: "label" | "control" | "helper";
   rect: Rect;
@@ -1356,6 +1451,7 @@ export type ObservationArtifactV2 = Omit<
   elements: ObservedElementV2[];
   maskMembership: Array<{ selector: string; paths: string[] }>;
   components?: ComponentObservation[] | undefined;
+  spacingTargets?: SpacingTargetObservation[] | undefined;
   invariants?: InvariantObservation[] | undefined;
   shellVisibility?: ShellVisibilityObservation | undefined;
   probe?: ProbeArtifact | undefined;
@@ -1387,6 +1483,8 @@ export type ObservationArtifactV2 = Omit<
   mediaFrames?: MediaFrameObservation[] | undefined;
   /** Measurement parameters used when sampling mediaFrames. */
   mediaFill?: { tolerance: number } | undefined;
+  visualBlank?: import("./blank-schema.js").VisualBlankEvidence | undefined;
+  loadingStuck?: import("./blank-schema.js").LoadingStuckEvidence | undefined;
   collections?: CollectionObservation[] | undefined;
   fonts?: FontObservation | undefined;
   links?: GeometryScan<LinkObservation> | undefined;
@@ -1407,6 +1505,7 @@ export type ObservationArtifactV2 = Omit<
  * selector's rect re-measured at screenshot time.
  */
 export type ScreenshotGeometry = {
+  croppedFromHeight?: number | undefined;
   strategy: "viewport" | "full-page" | "tiled";
   /** Device px per CSS px. */
   scale: number;
@@ -1458,7 +1557,7 @@ export type FindingCandidate = {
   fix?: string | undefined;
   designDrift?: DesignDriftEvidence | undefined;
   category: DeterministicCheckId;
-  severity: "blocker" | "major" | "minor";
+  severity: FindingSeverity;
   rule: string;
   selectorHint: string;
   /** Optional identity for multi-element checks; selectorHint remains the crop target. */
@@ -1471,6 +1570,8 @@ export type FindingCandidate = {
   };
   domSnippet?: string | undefined;
   consoleExcerpt?: string | undefined;
+  /** Owned-server log lines around a failed request; local evidence only. */
+  serverLogExcerpt?: string | undefined;
   axeNodes?: unknown[] | undefined;
   evidenceTuples?: CheckTuple[] | undefined;
   /** An action timeline id in the candidate's tuple. */
@@ -1503,6 +1604,7 @@ export type CheckTuple = {
   height: number;
   metadataPath: string;
   screenshotPath?: string | undefined;
+  screenshotGeometry?: ScreenshotGeometry | undefined;
   artifactPaths: string[];
   commit: string;
   createdAt: string;
@@ -1513,8 +1615,12 @@ export type CheckTuple = {
   axe?: unknown;
   console: ConsoleRecord[];
   consoleAvailable?: boolean | undefined;
+  /** The run's `server.log`, when Idiom started the server; shared across tuples. */
+  serverLog?: ServerLogLine[] | undefined;
   /** True when capture recorded request provenance for network console records. */
   consoleProvenance?: boolean | undefined;
+  /** The captured document's final URL at its actual origin, when recorded. */
+  documentUrl?: string | undefined;
   documentResponse?:
     | {
         url: string;
@@ -1528,7 +1634,14 @@ export type CheckTuple = {
       }
     | undefined;
   mismatches: ExpectationMismatch[];
-  failure?: { stage: string; message: string } | undefined;
+  failure?:
+    | {
+        stage: string;
+        message: string;
+        timeout?: import("../capture/types.js").TimeoutDiagnostic | undefined;
+        hostDeferred?: boolean | undefined;
+      }
+    | undefined;
   /**
    * The declared sibling-group key: `sibling:<name>` from a state's
    * siblingGroup, or `group:<flow>:<label>` from its flow-scoped group.
@@ -1576,6 +1689,8 @@ export type LinksConfig = {
 };
 
 export type ChecksConfig = {
+  visualBlank?: { enabled: boolean; swatchSelectors: string[] } | undefined;
+  loadingStuck?: { enabled: boolean } | undefined;
   /** The craft checks below read their defaults when a setting is absent. */
   fonts?: { enabled: boolean } | undefined;
   links?: LinksConfig | undefined;

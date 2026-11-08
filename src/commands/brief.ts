@@ -1,6 +1,13 @@
-import { readFile, stat } from "node:fs/promises";
-import { relative } from "node:path";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
+import { promisify } from "node:util";
 import { type BriefAsk, briefAsk } from "../brief/ask.js";
+import {
+  type DesignAssetExport,
+  exportDesignAsset,
+} from "../brief/design-asset-export.js";
 import {
   classifyBriefs,
   classifyTriage,
@@ -38,6 +45,7 @@ import {
   readBrief,
   readTriage,
   recordBrief,
+  recordBriefTicket,
   saveTriage,
   storeResearchedBrief,
 } from "../brief/store.js";
@@ -50,6 +58,7 @@ import {
   resolveTriageRequest,
   triageContext,
 } from "../brief/triage.js";
+import type { CaptureDependencies } from "../capture/run.js";
 import { IdiomError } from "../errors.js";
 import { jsonPayload } from "../interface/version.js";
 import {
@@ -63,12 +72,15 @@ import {
   briefInputSchema,
   type ResearchRun,
   type StoredTriage,
+  ticketIdSchema,
 } from "../schemas/brief.js";
 import { briefSettings } from "../schemas/project.js";
+import { findAutobuildRoot } from "../tickets/target.js";
 import {
   validateProject,
   validateProjectConfiguration,
 } from "../validation.js";
+import { executableOnPath } from "../wiring/detect.js";
 
 export const MAX_BRIEF_INPUT_BYTES = 1024 * 1024;
 
@@ -80,6 +92,8 @@ export type BriefDependencies = {
   research?: ResearchCaller;
   /** Milliseconds, for the research run's duration. */
   clock?: () => number;
+  /** For `export --capture` and `attach --capture`. */
+  capture?: CaptureDependencies | undefined;
 };
 
 type ProjectOptions = {
@@ -749,4 +763,158 @@ export function renderBriefResearch(
       ? []
       : [researchRun.incomplete.note]),
   ].join("\n");
+}
+
+type ExportOptions = ProjectOptions & {
+  slug: string;
+  capture?: boolean | undefined;
+  dependencies?: BriefDependencies | undefined;
+};
+
+/** `idiom brief export`: a decided brief as a self-contained design asset. */
+export async function briefExportCommand(
+  options: ExportOptions & { out: string },
+): Promise<DesignAssetExport> {
+  const validated = await validateProject({
+    project: options.project,
+    cwd: options.cwd,
+  });
+  return exportDesignAsset({
+    projectDirectory: validated.projectDirectory,
+    project: validated.project,
+    flows: validated.flows.map((record) => record.flow),
+    slug: options.slug,
+    out: options.out,
+    cwd: options.cwd,
+    capture: options.capture,
+    dependencies: { capture: options.dependencies?.capture },
+  });
+}
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+export function renderBriefExport(
+  exported: DesignAssetExport,
+  cwd: string,
+): string {
+  return `Exported brief ${exported.slug} to ${relative(cwd, exported.out) || "."}: ${plural(exported.screenshots, "screenshot")} of ${plural(exported.states, "state")}`;
+}
+
+export function briefExportJson(exported: DesignAssetExport, cwd: string) {
+  return {
+    slug: exported.slug,
+    out: relative(cwd, exported.out) || ".",
+    files: exported.files,
+    screenshots: exported.screenshots,
+    states: exported.states,
+  };
+}
+
+export type BriefAttachResult = {
+  slug: string;
+  ticket: string;
+  asset: { kind: "design"; name: string };
+  screenshots: number;
+  states: number;
+  /** What `ab ticket attach --json` printed, when it printed JSON. */
+  ab: unknown;
+};
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * `idiom brief attach`: export the brief and pin it to an autobuild ticket
+ * as a design asset with `ab ticket attach`. Idiom runs no other `ab` verb,
+ * so the ticket's state never moves.
+ */
+export async function briefAttachCommand(
+  options: ExportOptions & { ticket: string },
+): Promise<BriefAttachResult> {
+  const ticket = ticketIdSchema.safeParse(options.ticket);
+  if (!ticket.success)
+    throw new IdiomError(
+      `invalid ticket id ${JSON.stringify(options.ticket)}; pass the autobuild ticket id, such as file-281`,
+    );
+  const { projectDirectory, settings } = await projectSettings(options);
+  // Both refusals come before any export or capture.
+  const autobuildRoot = await findAutobuildRoot(projectDirectory);
+  if (autobuildRoot === undefined)
+    throw new IdiomError(
+      `idiom brief attach needs an autobuild project (no autobuild.toml above ${projectDirectory}); use idiom brief export ${options.slug} --out <dir>`,
+    );
+  const environment = options.dependencies?.environment ?? process.env;
+  if (!(await executableOnPath("ab", { environment })))
+    throw new IdiomError(
+      `idiom brief attach needs the autobuild CLI (ab) on PATH; export with idiom brief export ${options.slug} --out <dir> and attach it with ab ticket attach ${ticket.data} design <dir>`,
+    );
+  const staging = await mkdtemp(join(tmpdir(), "idiom-design-"));
+  try {
+    const exported = await briefExportCommand({
+      ...options,
+      out: join(staging, options.slug),
+    });
+    let stdout: string;
+    try {
+      ({ stdout } = await execFileAsync(
+        "ab",
+        [
+          "ticket",
+          "attach",
+          ticket.data,
+          "design",
+          exported.out,
+          "--name",
+          exported.slug,
+          "--json",
+        ],
+        { cwd: autobuildRoot, env: environment },
+      ));
+    } catch (error) {
+      const failure = error as { code?: unknown; stderr?: unknown };
+      const stderr =
+        typeof failure.stderr === "string" ? failure.stderr.trim() : "";
+      throw new IdiomError(
+        `ab ticket attach failed (exit ${typeof failure.code === "number" ? failure.code : "unknown"}): ${stderr || (error as Error).message}`,
+      );
+    }
+    await recordBriefTicket({
+      projectDirectory,
+      slug: exported.slug,
+      ticket: ticket.data,
+      settings,
+    });
+    let ab: unknown;
+    try {
+      ab = JSON.parse(stdout);
+    } catch {
+      ab = undefined;
+    }
+    return {
+      slug: exported.slug,
+      ticket: ticket.data,
+      asset: { kind: "design", name: exported.slug },
+      screenshots: exported.screenshots,
+      states: exported.states,
+      ab,
+    };
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
+}
+
+export function renderBriefAttach(attached: BriefAttachResult): string {
+  return `Attached brief ${attached.slug} to ticket ${attached.ticket} as design asset ${attached.asset.name} (${plural(attached.screenshots, "screenshot")}). The ticket's state is unchanged.`;
+}
+
+export function briefAttachJson(attached: BriefAttachResult) {
+  return {
+    slug: attached.slug,
+    ticket: attached.ticket,
+    asset: attached.asset,
+    screenshots: attached.screenshots,
+    states: attached.states,
+    ...(attached.ab === undefined ? {} : { ab: attached.ab }),
+  };
 }

@@ -65,12 +65,71 @@ test("nested wrapping captions retain their groups, excluding control and helper
     findings.filter(
       ({ candidate }) => candidate.rule === "idiom:field-group-inner-gap",
     ),
-  ).toHaveLength(4);
+  ).toHaveLength(2);
   expect(
     findings.find(
       ({ candidate }) => candidate.rule === "idiom:field-group-between-gap",
     )?.candidate.verification.params,
   ).toMatchObject({ gap: 0, minimum: 12 });
+  // Both caption line boxes touch, but the text fragments end 4px above
+  // their controls. The only inner violations are the unchanged helpers.
+  expect(
+    findings
+      .filter(
+        ({ candidate }) => candidate.rule === "idiom:field-group-inner-gap",
+      )
+      .map(({ candidate }) => candidate.verification.params),
+  ).toEqual([
+    expect.objectContaining({
+      selector: "#hint",
+      neighbour: "#name",
+      gap: 0,
+      minimum: 4,
+    }),
+    expect.objectContaining({
+      selector: "#other-hint",
+      neighbour: "#email",
+      gap: 0,
+      minimum: 4,
+    }),
+  ]);
+  for (const group of observations?.fieldGroups ?? []) {
+    const caption = group.members[0];
+    const control = group.members[1];
+    expect(caption?.textRect).toBeDefined();
+    if (!caption?.textRect || !control)
+      throw new Error("missing caption geometry");
+    expect(control.rect.y - caption.rect.y - caption.rect.height).toBe(0);
+    expect(control.rect.y - caption.textRect.y - caption.textRect.height).toBe(
+      4,
+    );
+  }
+  const crowded = await reviewFixture(
+    browser,
+    page(markup, `${css} input { margin-top:-2px; }`),
+  );
+  expect(
+    crowded
+      .filter(
+        ({ candidate }) =>
+          candidate.rule === "idiom:field-group-inner-gap" &&
+          ["#name", "#email"].includes(candidate.selectorHint ?? ""),
+      )
+      .map(({ candidate }) => candidate.verification.params),
+  ).toEqual([
+    expect.objectContaining({
+      selector: "#name",
+      neighbour: "#label",
+      gap: 2,
+      minimum: 4,
+    }),
+    expect.objectContaining({
+      selector: "#email",
+      neighbour: "#other",
+      gap: 2,
+      minimum: 4,
+    }),
+  ]);
   const after = await reviewFixture(
     browser,
     page(markup, `${css} section { gap:16px; } label { gap:4px; }`),

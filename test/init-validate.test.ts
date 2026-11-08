@@ -9,6 +9,7 @@ import {
   initValidateProblem,
   renderInitValidate,
 } from "../src/commands/init-validate.js";
+import type { SurfacesReport } from "../src/doctor/surfaces.js";
 import { RUN_FAILURE_EXIT_CODE } from "../src/errors.js";
 import { neverReadyProject, passingProject } from "./doctor-support.js";
 
@@ -51,7 +52,7 @@ test("a ready project exits 0, ends with ready and creates nothing", async () =>
   expect(await isPortOpen(port)).toBe(false);
 });
 
-test("--json prints { ready, validate, doctor } for a ready project", async () => {
+test("--json prints { ready, validate, doctor, surfaces } for a ready project", async () => {
   const { directory } = await passingProject(directories);
   const result = await initValidate(directory, "--validate", "--json");
   expect(result.code).toBe(0);
@@ -61,8 +62,13 @@ test("--json prints { ready, validate, doctor } for a ready project", async () =
     "ready",
     "validate",
     "doctor",
+    "surfaces",
   ]);
   expect(json.ready).toBe(true);
+  // Computed once, at the top level, not inside the doctor report.
+  expect(json.doctor?.surfaces).toBeUndefined();
+  expect(json.surfaces.initialized).toBe(true);
+  expect(json.surfaces.entries.map((entry) => entry.id)).toContain("github");
   if (!json.validate.ok) throw new Error("validate failed");
   expect(json.validate.flows[0]?.id).toBe("home");
   expect(json.doctor?.flow).toBe("home");
@@ -76,7 +82,9 @@ test("a validation error is not ready with the validate fix", async () => {
   );
   const result = await initValidate(directory, "--validate");
   expect(result.code).toBe(RUN_FAILURE_EXIT_CODE);
-  expect(result.stdout.trimEnd()).toBe("validate: failed");
+  const out = result.stdout.trimEnd().split("\n");
+  expect(out[0]).toBe("validate: failed");
+  expect(out).toContain("Where Idiom runs:");
   const [headline, fix, ...rest] = result.stderr.trimEnd().split("\n");
   expect(headline).toMatch(/^not ready: \.idiom\/flows\/home\.json: /);
   expect(fix).toBe("Fix: run idiom validate <flow> and fix the reported file");
@@ -120,6 +128,11 @@ test("an uninitialized directory points to idiom init and stays empty", async ()
     ),
     "Fix: run idiom init",
   ]);
+  // Honest about silence: nothing fires until init runs.
+  expect(result.stdout).toContain("Where Idiom runs:");
+  expect(result.stdout).toContain(
+    "! No .idiom/project.json: Claude Code hooks and the Autobuild gate are inactive until you run idiom init.",
+  );
   expect(await readdir(directory)).toEqual([]);
 });
 
@@ -152,6 +165,26 @@ test("--validate refuses scaffold flags, and --flow/--json need --validate", asy
 });
 
 test("rendering and the first problem for hand-built reports", () => {
+  const surfaces: SurfacesReport = {
+    root: "/app",
+    initialized: true,
+    ms: 0,
+    entries: [
+      {
+        id: "github",
+        label: "GitHub workflow",
+        status: "missing",
+        detail: "no workflow runs Idiom",
+        fix: "idiom init --wire",
+      },
+    ],
+  };
+  const surfaceLines = [
+    "",
+    "Where Idiom runs:",
+    "  ✗ missing         GitHub workflow  no workflow runs Idiom",
+    "                    fix: idiom init --wire",
+  ];
   const noFlows: InitValidateReport = {
     ready: false,
     validate: {
@@ -164,8 +197,13 @@ test("rendering and the first problem for hand-built reports", () => {
       },
     },
     doctor: null,
+    surfaces,
   };
-  expect(renderInitValidate(noFlows)).toEqual(["validate: failed"]);
+  // The section is printed even when validation failed.
+  expect(renderInitValidate(noFlows)).toEqual([
+    "validate: failed",
+    ...surfaceLines,
+  ]);
   expect(initValidateProblem(noFlows)).toEqual({
     headline: "not ready: .idiom/flows: no flow manifests found",
     hint: "generate a flow with idiom init --flows --yes, or author .idiom/flows/<id>.json",
@@ -184,10 +222,12 @@ test("rendering and the first problem for hand-built reports", () => {
       ],
     },
     doctor: { flow: "home", ok: true, steps: [] },
+    surfaces,
   };
   expect(renderInitValidate(ready)).toEqual([
     "validate: 2 flow(s) valid (home, site)",
     "idiom doctor home: ok",
+    ...surfaceLines,
     "ready",
   ]);
   expect(initValidateProblem(ready)).toBeUndefined();

@@ -9,10 +9,13 @@ Idiom remembers what you decided, in your repo, so a settled finding doesn't com
 
 ## Decisions
 
-`idiom decide` accepts or rejects a finding, with a reason.
+`idiom decide` accepts or rejects a finding, with a reason, or acknowledges one that is tracked somewhere else.
 
 - **Accept** marks it as work worth doing. Accepted findings become paste-ready instructions (`idiom instruction`), repair tickets (`idiom tickets`) or input to `idiom fix`.
 - **Reject** dismisses that occurrence. `--scope rule` suppresses the pattern in every later run.
+- **Acknowledge** (`idiom decide finding-12 --ack ABC-123`) says it is a real problem, tracked in your own tracker. It stays visible in every report, marked `acknowledged (ABC-123)`, but no longer fails `--fail-on` or counts as new. It lapses when you run `--unack`, when an optional `--until` date passes, when the finding gets worse or changes rule, or, for a ticket in the project's local ticket tracker, when that ticket is done. Then it counts again, and `idiom check` says why.
+
+So reject means "not a problem", accept means "fix it here", and acknowledge means "a known problem, handled elsewhere: stop failing on it for now".
 
 Decisions live in `.idiom/decisions.jsonl`. Commit it with your code.
 

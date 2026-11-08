@@ -11,16 +11,18 @@ import { join } from "node:path";
 import { PNG } from "pngjs";
 import { afterEach, expect, test } from "vitest";
 // @ts-expect-error Action helpers are dependency-free Node modules.
-import { renderComment } from "../scripts/github-action/comment.mjs";
+import * as commentHelpers from "../scripts/github-action/comment.mjs";
 // @ts-expect-error Action helpers are dependency-free Node modules.
 import * as evidenceHelpers from "../scripts/github-action/evidence.mjs";
 // @ts-expect-error Action helpers are dependency-free Node modules.
 import { presentation } from "../scripts/github-action/presentation.mjs";
 // @ts-expect-error Action helpers are dependency-free Node modules.
-import { renderIndex } from "../scripts/github-action/report.mjs";
+import * as reportHelpers from "../scripts/github-action/report.mjs";
 // @ts-expect-error Action helpers are dependency-free Node modules.
 import * as resolutionHelpers from "../scripts/github-action/resolution.mjs";
 
+const { publishNeutralCheck, publishResult, renderComment } = commentHelpers;
+const { renderIndex, renderRootIndex } = reportHelpers;
 const { stageCurrent, stageFinding, stageImage, tupleImages } = evidenceHelpers;
 const { previousHead, resolvedFindings } = resolutionHelpers;
 
@@ -465,4 +467,133 @@ test("comment and artifact keep tier precedence and incoming equal-severity orde
     expect(positions.every((p) => p >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
   }
+});
+
+const multiFlow = () => {
+  const { flow: _flow, summary, unavailable, ...shared } = report();
+  return {
+    ...shared,
+    mode: "pull_request",
+    notices: [],
+    flows: [
+      {
+        flow: "studio",
+        summary: {
+          ...summary,
+          flow: "studio",
+          baseline: { commit: "a".repeat(40) },
+        },
+        crops: [],
+        composites: [],
+        unavailable,
+        resolved: [],
+        evidence: {
+          "finding:0": {
+            images: [{ path: "crops/current/1.png", label: "Element crop" }],
+            reasons: [],
+          },
+        },
+      },
+      { flow: "checkout", deferred: { reason: "host busy: timed out" } },
+    ],
+  };
+};
+
+test("multi-flow comments add one section per checked flow and say why others were deferred or skipped", () => {
+  const result = multiFlow();
+  const body = renderComment(result, artifact);
+  expect(body).toContain("## Idiom regression check: studio, checkout");
+  expect(body).toContain("### Flow: studio");
+  expect(body).toContain("#### Blocks merge (1)");
+  expect(body).toContain("studio/crops/current/1\\.png");
+  expect(body).not.toContain("### Flow: checkout");
+  expect(body).toContain("Deferred checkout: host busy: timed out");
+  expect(body).toContain(
+    "Operational status: deferred (host busy) in 1 flow(s)",
+  );
+  expect(body).toContain("one directory per flow");
+  const skipped = renderComment(
+    {
+      ...result,
+      flows: [],
+      skipped: { line: "no UI changes since abcdef123456; skipped" },
+    },
+    artifact,
+  );
+  expect(skipped).toContain("Operational status: skipped");
+  expect(skipped).toContain("no UI changes since abcdef123456; skipped");
+  const index = renderRootIndex(result);
+  expect(index).toContain('href="studio/index.html"');
+  expect(index).toContain('href="checkout/index.html"');
+  expect(index).toContain("deferred — host busy: timed out");
+  expect(
+    renderIndex({ ...result, ...result.flows[0] }, { root: "../" }),
+  ).toContain('href="../diagnostics.log"');
+});
+
+test("push and schedule publish the job summary without PR comment calls; deferral posts a neutral check run", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-publish-"));
+  directories.push(directory);
+  const resultFile = join(directory, "result.json"),
+    summaryPath = join(directory, "summary.md");
+  const calls: Array<{ url: string; body?: string | undefined }> = [];
+  const fetch = async (url: string, options: { body?: string }) => {
+    calls.push({ url, body: options.body });
+    return { ok: true, status: 201, json: async () => ({}) };
+  };
+  const pushed = { ...multiFlow(), mode: "push" };
+  pushed.flows = pushed.flows.slice(0, 1);
+  await writeFile(resultFile, JSON.stringify({ ...pushed, failOn: "never" }));
+  const result = await publishResult({
+    resultFile,
+    artifactUrl: artifact,
+    uploadOutcome: "success",
+    token: "t",
+    repository: "o/r",
+    event: { before: "a".repeat(40), after: "b".repeat(40) },
+    summaryPath,
+    fetch,
+  });
+  expect(result.operationalErrors).toEqual([]);
+  expect(calls).toEqual([]);
+  expect(await readFile(summaryPath, "utf8")).toContain("### Flow: studio");
+  await writeFile(
+    resultFile,
+    JSON.stringify({ ...multiFlow(), mode: "schedule", failOn: "never" }),
+  );
+  const deferred = await publishResult({
+    resultFile,
+    artifactUrl: artifact,
+    uploadOutcome: "success",
+    token: "t",
+    repository: "o/r",
+    event: {},
+    summaryPath,
+    fetch,
+  });
+  expect(deferred.operationalErrors).toEqual([]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.url).toBe("https://api.github.com/repos/o/r/check-runs");
+  expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+    name: "Idiom",
+    head_sha: "b".repeat(40),
+    conclusion: "neutral",
+    output: {
+      title: "Idiom deferred: host busy",
+      summary: "checkout: host busy: timed out",
+    },
+  });
+  const warnings: string[] = [];
+  const forbidden = { notices: [] as string[] };
+  await publishNeutralCheck({
+    fetch: async () => ({ ok: false, status: 403 }),
+    repository: "o/r",
+    token: "t",
+    head: "b".repeat(40),
+    reason: "busy",
+    result: forbidden,
+    warn: (message: string) => warnings.push(message),
+  });
+  expect(forbidden.notices.join()).toContain("HTTP 403");
+  expect(warnings[0]).toMatch(/^::warning::/);
 });

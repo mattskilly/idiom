@@ -1,3 +1,4 @@
+import type { AcknowledgementLapse } from "../decisions/acknowledgements.js";
 import { basisDescription } from "../findings/presentation.js";
 import type { BaselineComparisonSummary, SummaryFinding } from "./summary.js";
 
@@ -8,6 +9,28 @@ export function baselineStaleWarning(
     ? undefined
     : `Warning: baseline ${baseline.commit.slice(0, 12)} was recorded with a different checks configuration — possibly stale; re-record on main. ${baseline.stale.reason}`;
 }
+/**
+ * Findings tracked elsewhere and acknowledgements that lapsed; empty when
+ * there are neither, so output without acknowledgements is unchanged.
+ */
+export function acknowledgementLines(
+  acknowledged: readonly SummaryFinding[],
+  lapses: readonly AcknowledgementLapse[],
+): string[] {
+  return [
+    ...(acknowledged.length === 0
+      ? []
+      : [
+          `Acknowledged (not counted): ${acknowledged.length}`,
+          ...acknowledged.map(
+            (finding) =>
+              `- ${finding.id} [${finding.severity}] ${finding.category} — ${finding.where}${finding.selector === undefined ? "" : ` — ${finding.selector}`} — acknowledged (${finding.acknowledged?.reference ?? "unknown"})${finding.acknowledged?.until === undefined ? "" : ` until ${finding.acknowledged.until}`}`,
+          ),
+        ]),
+    ...lapses.map((lapse) => lapse.message),
+  ];
+}
+
 export function renderFindingDetails(findings: SummaryFinding[]): string[] {
   return findings.flatMap((finding, index) => [
     `${index + 1}. [${finding.severity}] ${finding.category} — ${finding.where}${finding.selector === undefined ? "" : ` — ${finding.selector}`}`,
@@ -30,6 +53,10 @@ export function renderBaselineComparison(
 ): string {
   const { baseline } = summary;
   const warning = baselineStaleWarning(baseline);
+  const acknowledgements = acknowledgementLines(
+    summary.acknowledgedFindings ?? [],
+    summary.acknowledgementLapses ?? [],
+  );
   const compact = (finding: {
     severity: string;
     category: string;
@@ -55,5 +82,6 @@ export function renderBaselineComparison(
           "",
           `Uncovered tuples (no fixes inferred): ${baseline.uncoveredTuples.join(", ")}`,
         ]),
+    ...(acknowledgements.length === 0 ? [] : ["", ...acknowledgements]),
   ].join("\n");
 }

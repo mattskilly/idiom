@@ -126,6 +126,21 @@ export function renderClusterTicket(options: {
   id: string;
   ticketDirectory: string;
   availableImages: Map<string, string[]>;
+  /** false omits the `+++` block, for a tracker that writes its own. */
+  frontMatter?: boolean | undefined;
+  /** Front-matter labels; default design, idiom. */
+  labels?: readonly string[] | undefined;
+  /** Appended to the acceptance criteria. */
+  extraCriteria?: readonly string[] | undefined;
+  /** Lines under a member's coordinates, keyed by member id. */
+  memberNotes?: ReadonlyMap<string, readonly string[]> | undefined;
+  /** Paragraphs at the top of What and why. */
+  leadNotes?: readonly string[] | undefined;
+  /**
+   * Evidence as code paths relative to this directory instead of links
+   * relative to the ticket, for a ticket that has no file location.
+   */
+  evidenceRoot?: string | undefined;
 }): { id: string; title: string; body: string } {
   const { cluster, id, ticketDirectory } = options;
   const cause = cluster.cause;
@@ -159,15 +174,21 @@ export function renderClusterTicket(options: {
           "Every finding below is a symptom of this one cause.",
           "",
         ];
+  const labels = options.labels ?? ["design", "idiom"];
   const lines = [
-    "+++",
-    `id = ${JSON.stringify(id)}`,
-    `title = ${JSON.stringify(title)}`,
-    'labels = ["design", "idiom"]',
-    "+++",
-    "",
+    ...(options.frontMatter === false
+      ? []
+      : [
+          "+++",
+          `id = ${JSON.stringify(id)}`,
+          `title = ${JSON.stringify(title)}`,
+          `labels = [${labels.map((label) => JSON.stringify(label)).join(", ")}]`,
+          "+++",
+          "",
+        ]),
     "## What and why",
     "",
+    ...(options.leadNotes ?? []).flatMap((note) => [note, ""]),
     ...(cause === undefined
       ? [
           `Resolve the observed ${cluster.members[0]?.record.finding.category} problems in component ${JSON.stringify(cluster.component)} of flow ${JSON.stringify(cluster.members[0]?.record.finding.flow)}.`,
@@ -187,6 +208,7 @@ export function renderClusterTicket(options: {
           `- [ ] All ${cluster.members.length} symptoms below clear on recheck (one fix for the shared cause)`,
         ]),
     ...criteria.map((text) => `- [ ] ${text}`),
+    ...(options.extraCriteria ?? []).map((text) => `- [ ] ${text}`),
     "",
     "## Out of scope",
     "",
@@ -213,6 +235,7 @@ export function renderClusterTicket(options: {
       `Source review: ${member.record.runId}; captured commit: ${JSON.stringify(finding.commit)}; finding: ${JSON.stringify(member.id)}.`,
       `Coordinate: ${JSON.stringify({ flow: finding.flow, state: finding.state, viewport: finding.viewport, colorScheme: finding.colorScheme, combination: finding.combination })}`,
       `Selector: ${JSON.stringify(selector ?? "unavailable")}; component: ${JSON.stringify(member.component)}.`,
+      ...(options.memberNotes?.get(member.id) ?? []),
       "",
       "Acceptance criteria for this member:",
       ...acceptanceText(finding).map((text) => `- ${text}`),
@@ -223,10 +246,15 @@ export function renderClusterTicket(options: {
       lines.push("Crop unavailable for this finding.");
     if (images.length === 0)
       lines.push("No screenshot was available for this finding.");
-    for (const [index, path] of images.entries())
+    for (const [index, path] of images.entries()) {
+      const label = `${path.includes("/crops/") ? "Crop" : "Screenshot"} ${index + 1}`;
+      const absolute = resolve(member.record.runDirectory, path);
       lines.push(
-        `- [${path.includes("/crops/") ? "Crop" : "Screenshot"} ${index + 1}](${markdownPath(ticketDirectory, resolve(member.record.runDirectory, path))})`,
+        options.evidenceRoot === undefined
+          ? `- [${label}](${markdownPath(ticketDirectory, absolute)})`
+          : `- ${label}: \`${relative(options.evidenceRoot, absolute).split(sep).join("/")}\``,
       );
+    }
     const serialized = JSON.stringify(finding, null, 2);
     const fence = jsonFence(serialized);
     lines.push("", `${fence}idiom:finding`, serialized, fence, "");

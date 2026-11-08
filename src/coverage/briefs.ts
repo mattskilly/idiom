@@ -27,7 +27,11 @@ export type BriefAssertionCoverage = {
  * targeting states this run did not capture, holding no assertion at all
  * ("decided, not checkable"), or skipped as ineligible.
  */
-export type BriefCoverageEntry = { slug: string; title: string } & (
+export type BriefCoverageEntry = {
+  slug: string;
+  title: string;
+  source?: BriefCheck["source"];
+} & (
   | { status: "checked"; assertions: BriefAssertionCoverage[] }
   | { status: "not-captured"; states: string[] }
   | { status: "not-checkable" }
@@ -51,7 +55,11 @@ export function computeBriefCoverage(
     const all = brief.criteria.flatMap((criterion) => criterion.assertions);
     const here = all.filter((assertion) => assertion.flow === flow);
     if (all.length > 0 && here.length === 0) continue;
-    const head = { slug: brief.slug, title: brief.title };
+    const head = {
+      slug: brief.slug,
+      title: brief.title,
+      ...(brief.source === undefined ? {} : { source: brief.source }),
+    };
     if (brief.eligible !== true) {
       entries.push({
         ...head,
@@ -136,7 +144,7 @@ function assertionLabel(entry: BriefAssertionCoverage): string {
 }
 
 function entryLines(entry: BriefCoverageEntry): string[] {
-  const name = `- ${entry.title} (${entry.slug})`;
+  const name = `- ${entry.title} (${entry.slug})${entry.source === undefined ? "" : ` · design asset ${entry.source.name}`}`;
   if (entry.status === "not-checkable")
     return [`${name}: decided, not checkable`];
   if (entry.status === "skipped") return [`${name}: skipped (${entry.reason})`];

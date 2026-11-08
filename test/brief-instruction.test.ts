@@ -11,11 +11,11 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import {
   applyBriefInstruction,
-  BRIEF_INSTRUCTION,
   planBriefInstruction,
 } from "../src/brief/instruction.js";
 import { run } from "../src/cli.js";
 import { initProject, initSummaryLines } from "../src/commands/init.js";
+import { DESIGN_QA_LINES } from "../src/wiring/instructions.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -34,56 +34,63 @@ async function temporary(): Promise<string> {
 
 const original = "# Project\n\nUse bun.\n";
 
-test("--yes only reports the instruction as available and leaves CLAUDE.md alone", async () => {
+const block = [
+  "<!-- idiom:wiring:design-qa:begin -->",
+  ...DESIGN_QA_LINES,
+  "<!-- idiom:wiring:design-qa:end -->",
+  "",
+].join("\n");
+
+test("--yes writes the Design QA block to CLAUDE.md and a new AGENTS.md", async () => {
   const project = await temporary();
   await writeFile(join(project, "CLAUDE.md"), original);
   const confirm = vi.fn(async () => true);
-  const result = await initProject({ project, yes: true, confirm });
+  const result = await initProject({
+    project,
+    yes: true,
+    confirm,
+    write: () => {},
+  });
   expect(result.briefInstruction).toEqual([
-    {
-      kind: "available",
-      path: "CLAUDE.md",
-      lines: BRIEF_INSTRUCTION.trimEnd().split("\n"),
-    },
+    { kind: "added", path: "AGENTS.md" },
+    { kind: "added", path: "CLAUDE.md" },
   ]);
-  expect(confirm).not.toHaveBeenCalled();
-  expect(await readFile(join(project, "CLAUDE.md"), "utf8")).toBe(original);
-  const lines = initSummaryLines(result);
-  expect(lines).toContain(
-    "Optional: add these two lines to CLAUDE.md so agents triage design decisions first:",
+  expect(confirm).not.toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "apply-wiring" }),
   );
-  expect(lines).toContain("## Design decisions (Idiom)");
+  expect(await readFile(join(project, "CLAUDE.md"), "utf8")).toBe(
+    `${original}${block}`,
+  );
+  expect(await readFile(join(project, "AGENTS.md"), "utf8")).toBe(block);
+  expect(initSummaryLines(result).join("\n")).toContain(
+    "claude: wired — Existing Claude instructions receive Design QA too.",
+  );
 });
 
-test("an accepted offer appends once; a rerun finds it present", async () => {
+test("an accepted plan writes once; a rerun finds it present", async () => {
   const project = await temporary();
   await writeFile(join(project, "CLAUDE.md"), original);
   const confirm = vi.fn(
-    async (request: { kind: string }) =>
-      request.kind === "offer-brief-instruction",
+    async (request: { kind: string }) => request.kind === "apply-wiring",
   );
-  const result = await initProject({ project, confirm });
+  const result = await initProject({ project, confirm, write: () => {} });
   expect(result.briefInstruction).toEqual([
+    { kind: "added", path: "AGENTS.md" },
     { kind: "added", path: "CLAUDE.md" },
   ]);
-  expect(confirm).toHaveBeenCalledWith(
-    expect.objectContaining({
-      kind: "offer-brief-instruction",
-      path: "CLAUDE.md",
-      prompt: expect.stringMatching(
-        /^Add a two-line instruction to CLAUDE\.md telling agents to run idiom brief triage/,
-      ),
-    }),
-  );
+  expect(
+    confirm.mock.calls.filter(([request]) => request.kind === "apply-wiring"),
+  ).toHaveLength(1);
   expect(await readFile(join(project, "CLAUDE.md"), "utf8")).toBe(
-    `${original}\n${BRIEF_INSTRUCTION}`,
+    `${original}${block}`,
   );
-  const again = await initProject({ project, confirm });
+  const again = await initProject({ project, confirm, write: () => {} });
   expect(again.briefInstruction).toEqual([
+    { kind: "present", path: "AGENTS.md" },
     { kind: "present", path: "CLAUDE.md" },
   ]);
   expect(await readFile(join(project, "CLAUDE.md"), "utf8")).toBe(
-    `${original}\n${BRIEF_INSTRUCTION}`,
+    `${original}${block}`,
   );
 });
 
@@ -116,16 +123,7 @@ test("a CLAUDE.md link to AGENTS.md counts once; an @AGENTS.md import targets AG
   ).toEqual(["AGENTS.md"]);
 });
 
-test("no agent file creates nothing; an outside link is unsafe", async () => {
-  const project = await temporary();
-  const result = await initProject({ project, confirm: async () => true });
-  expect(result.briefInstruction).toEqual([
-    {
-      kind: "no-agent-file",
-      lines: BRIEF_INSTRUCTION.trimEnd().split("\n"),
-    },
-  ]);
-  await expect(readFile(join(project, "CLAUDE.md"))).rejects.toThrow();
+test("an outside CLAUDE.md link is unsafe for the legacy upgrade offer", async () => {
   const outside = await temporary();
   await writeFile(join(outside, "CLAUDE.md"), original);
   const linked = await temporary();
@@ -171,7 +169,12 @@ async function upgrade(
 
 test("upgrade offers the instruction; --json and --dry-run never prompt or write", async () => {
   const project = await temporary();
-  await initProject({ project, yes: true });
+  await initProject({
+    project,
+    yes: true,
+    wiring: { skipWiring: ["agents"] },
+    write: () => {},
+  });
   await writeFile(join(project, "CLAUDE.md"), original);
   const confirm = vi.fn(async () => true);
   const json = await upgrade(project, ["--json"], confirm);

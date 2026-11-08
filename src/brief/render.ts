@@ -253,7 +253,18 @@ function sectionBody(
 ): string[] {
   switch (section.content) {
     case "decision":
-      return isCompleteBrief(brief) ? decisionSection(brief) : [NOT_REACHED];
+      return [
+        ...(brief.screenQuestion === undefined
+          ? []
+          : [`**Screen question:** ${line(brief.screenQuestion)}`]),
+        ...(brief.inventory === undefined
+          ? []
+          : [
+              "**Inventory:**",
+              brief.inventory.map((item) => `- ${line(item)}`).join("\n"),
+            ]),
+        ...(isCompleteBrief(brief) ? decisionSection(brief) : [NOT_REACHED]),
+      ];
     case "options":
       return isCompleteBrief(brief) ? optionsSection(brief) : [NOT_REACHED];
     case "criteria":
@@ -302,6 +313,8 @@ export function renderBrief(
     `rubric v${brief.rubricVersion}`,
   ].join(" · ");
   const blocks = [`# ${line(brief.title)}`, status];
+  if (brief.tickets !== undefined && brief.tickets.length > 0)
+    blocks.push(`Autobuild tickets: ${brief.tickets.join(", ")}`);
   const incomplete = brief.researchRun?.incomplete;
   if (incomplete !== undefined)
     blocks.push(

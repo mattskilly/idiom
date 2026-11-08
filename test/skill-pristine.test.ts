@@ -46,32 +46,26 @@ test("init never fabricates a baseline from customized bytes or refreshes older 
   await initProject({ project: legacy, yes: true });
   expect((await tree(legacy))[manifestPath]).toBeUndefined();
 });
-test("confirmed wiring and already-wired exact verifier seed pristine", async () => {
+test("gate wiring records pristine provenance only for the verifier skill it installs", async () => {
   const root = await temporary();
-  await put(
-    root,
-    "autobuild.toml",
-    '[commands]\ntest="true"\n[verify]\nsteps=["test"]\n[verify.test]\nkind="check"\ncommand="test"\n',
-  );
-  const result = await initProject({
+  await put(root, "autobuild.toml", "[verify]\nsteps=[]\n");
+  await initProject({
     project: root,
-    confirm: async (request) =>
-      ["offer-autobuild-wiring", "apply-autobuild-config"].includes(
-        request.kind,
-      ),
+    confirm: async (request) => request.kind === "apply-wiring",
     write: () => {},
   });
-  expect(result.autobuild.kind).toBe("applied");
-  expect(await base(root, "ab-verify-idiom/SKILL.md")).toBe(
-    await read(root, ".agents/skills/ab-verify-idiom/SKILL.md"),
-  );
-  const { rm } = await import("node:fs/promises");
-  await rm(join(root, ".agents/skills/.idiom-pristine"), { recursive: true });
-  expect((await initProject({ project: root, yes: true })).autobuild.kind).toBe(
-    "already-wired",
-  );
-  expect((await metadata(root)).files["ab-verify-idiom/SKILL.md"].version).toBe(
-    IDIOM_VERSION,
+  // The agent gate recipe runs the shared idiom-verify skill, so consenting to
+  // gate wiring installs it; its record describes the bytes actually written.
+  const files = (await metadata(root)).files;
+  expect(Object.keys(files).sort()).toEqual([
+    "idiom-verify/SKILL.md",
+    "idiom/SKILL.md",
+    "idiom/init.md",
+  ]);
+  const skill = (await tree(root))[".agents/skills/idiom-verify/SKILL.md"];
+  expect(skill).toContain("name: idiom-verify");
+  expect(files["idiom-verify/SKILL.md"]?.digest).toBe(
+    digest(skill?.replace(/^file:/, "") ?? ""),
   );
 });
 test.each([".agents", ".agents/skills/.idiom-pristine"])(
@@ -93,12 +87,12 @@ test.each([".agents", ".agents/skills/.idiom-pristine"])(
 test("offline catalog blobs have exact digests, tag provenance and absence-aware file maps", async () => {
   const history = await readHistory();
   expect(history.schema).toBe(1);
-  expect(history.releases).toHaveLength(22);
+  expect(history.releases).toHaveLength(23);
   expect(history.releases[0]).toMatchObject({
     version: "0.0.1",
     tag: "v0.0.1",
   });
-  expect(history.releases.at(-1)?.version).toBe("0.19.0");
+  expect(history.releases.at(-1)?.version).toBe("0.20.0");
   const blobs = new Set<string>();
   for (const release of history.releases) {
     expect(release.commit).toMatch(/^[a-f0-9]{40}$/);
@@ -158,7 +152,7 @@ test("init preserves foreign verifier identity and symlinked discovery ancestors
   );
 });
 
-test("a protected Idiom canonical directory cannot block pristine records for an approved verifier", async () => {
+test("a protected Idiom canonical directory cannot block the gate", async () => {
   const root = await temporary();
   const outside = await temporary();
   await put(outside, "SKILL.md", "foreign sentinel");
@@ -172,16 +166,11 @@ test("a protected Idiom canonical directory cannot block pristine records for an
   );
   const result = await initProject({
     project: root,
-    confirm: async (request) =>
-      ["offer-autobuild-wiring", "apply-autobuild-config"].includes(
-        request.kind,
-      ),
+    confirm: async (request) => request.kind === "apply-wiring",
     write: () => {},
   });
   expect(result.autobuild.kind).toBe("applied");
-  expect((await metadata(root)).files["ab-verify-idiom/SKILL.md"].version).toBe(
-    IDIOM_VERSION,
-  );
+  expect(await read(root, "autobuild.toml")).toContain("idiom-check");
   expect(await read(outside, "SKILL.md")).toBe("foreign sentinel");
 });
 

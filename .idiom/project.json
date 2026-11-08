@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "app": {
+    "name": "idiom.build",
+    "framework": "other"
+  },
+  "server": {
+    "build": "IDIOM_HOSTED_REVIEW=off node scripts/build-site.mjs",
+    "start": "node scripts/serve-site.mjs",
+    "readyUrl": "http://127.0.0.1:4317/",
+    "port": 4317,
+    "env": {},
+    "startupTimeoutMs": 60000
+  },
+  "viewports": [
+    { "name": "desktop", "width": 1440, "height": 900 },
+    { "name": "tablet", "width": 768, "height": 1024 },
+    { "name": "phone", "width": 390, "height": 844 }
+  ],
+  "surfaces": [{ "id": "site", "name": "idiom.build landing page and docs" }],
+  "colorSchemes": ["light", "dark"],
+  "capture": {
+    "timezoneId": "America/New_York",
+    "locale": "en-US",
+    "colorScheme": "light",
+    "reducedMotion": true,
+    "fullPage": true,
+    "settleMs": 250
+  },
+  "checks": {
+    "probe": { "flowBudgetMs": 20000, "stateTimeoutMs": 10000 },
+    "gate": {
+      "nonUi": [
+        "src/**",
+        "dist/**",
+        "templates/**",
+        "skills/**",
+        "plugins/**",
+        "examples/**",
+        "api/**",
+        ".agents/**",
+        ".claude/**",
+        ".claude-plugin/**",
+        "scripts/hosted/**",
+        "scripts/fixtures/**",
+        "scripts/github-action/**",
+        "scripts/site-gate.mjs",
+        "scripts/idiom-local.mjs",
+        "scripts/brief-eval*.mjs",
+        "scripts/check-plugins.mjs",
+        "scripts/field-test*",
+        "scripts/fp-sweep.ts",
+        "scripts/generate-skill*.mjs",
+        "scripts/measure-*",
+        "scripts/mutation-bench.mjs",
+        "scripts/public-snapshot.mjs",
+        "scripts/render-readme-screenshots.mjs",
+        "scripts/scale-cluster-field.ts",
+        "autobuild.toml",
+        "action.yml",
+        "server.json",
+        "plugin.json",
+        "biome.json",
+        "tsconfig.json",
+        "tsup.config.ts",
+        "vitest.config.ts",
+        ".gitattributes",
+        ".gitignore",
+        "LICENSE"
+      ]
+    }
+  },
+  "design": {
+    "productFile": "PRODUCT.md",
+    "designFile": "DESIGN.md"
+  },
+  "brief": {
+    "$comment": "references: the products that set the bar for this project's UI, read by idiom brief. Each entry is { \"name\", \"tier\", \"note\" }; tiers: bar (match or beat it), always (always compare against it), floor (never fall below it). ticketTemplate.sections optionally changes the brief's headings; see docs/brief.md.",
+    "references": []
+  },
+  "model": {
+    "provider": "claude-code",
+    "model": "claude-sonnet-5-5",
+    "maxFindings": 5
+  }
+}

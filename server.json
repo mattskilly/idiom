@@ -3,7 +3,7 @@
   "name": "io.github.mattskilly/idiom",
   "title": "Idiom",
   "description": "Design acceptance for UI: capture flows, inspect findings, plan repairs and verify fixes.",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "websiteUrl": "https://idiom.build",
   "repository": {
     "url": "https://github.com/mattskilly/idiom",
@@ -14,7 +14,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@mattskilly/idiom",
-      "version": "0.20.0",
+      "version": "0.21.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -117,6 +117,14 @@
         {
           "name": "idiom_brief_decide",
           "description": "Record the requester's choice and regenerate the ticket-ready brief."
+        },
+        {
+          "name": "idiom_brief_export",
+          "description": "Export a decided brief with checkable criteria and captured reference screenshots."
+        },
+        {
+          "name": "idiom_brief_attach",
+          "description": "Attach a decided brief as an Autobuild ticket design asset without moving its state."
         }
       ]
     }

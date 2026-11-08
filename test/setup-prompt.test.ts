@@ -149,3 +149,15 @@ test("delimitedSetupPrompt wraps the prompt in copy-ready BEGIN/END lines", () =
     SETUP_PROMPT_END,
   ]);
 });
+
+test("setup suggests named opened overlay states", () => {
+  const flow = sections(setupPrompt(facts)).get(
+    "## 4. Write a first flow of 3–8 states",
+  );
+  expect(flow).toContain("drawers, dialogs and menus");
+  expect(flow).toContain("`from` and click `steps`");
+  expect(flow).toContain("edit-home+brand-drawer");
+  expect(flow).toContain(
+    "docs/configuration.md#capture-opened-drawers-dialogs-and-menus",
+  );
+});

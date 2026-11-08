@@ -25,7 +25,8 @@ for (const tag of tags) {
   )
     throw new Error(`Review the skill layout in ${tag} before cataloguing it`);
   const paths = ["idiom/SKILL.md", "idiom/init.md"];
-  if (init.includes("readAutobuildVerifierSkillTemplate"))
+  if (templates.includes('"idiom-verify"')) paths.push("idiom-verify/SKILL.md");
+  else if (init.includes("readAutobuildVerifierSkillTemplate"))
     paths.push("ab-verify-idiom/SKILL.md");
   const available = new Set(
     git("ls-tree", "-r", "--name-only", commit, "templates").trim().split("\n"),

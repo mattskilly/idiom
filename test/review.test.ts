@@ -2087,6 +2087,13 @@ test("project rules change review severity and audit deterministic and model sup
       version: 1,
       overrides: [
         {
+          id: "spacing-minor",
+          match: { rule: "idiom:spacing-target" },
+          action: "severity",
+          severity: "minor",
+          reason: "Low-impact layout",
+        },
+        {
           id: "ignore-console",
           match: { category: "console-error", flow: "booking" },
           action: "suppress",
@@ -2142,7 +2149,30 @@ test("project rules change review severity and audit deterministic and model sup
         ],
       }),
     ),
-    writeFile(join(tuple, "observations.json"), JSON.stringify(observations)),
+    writeFile(
+      join(tuple, "observations.json"),
+      JSON.stringify({
+        ...reviewSpacingObservations(),
+        spacingTargets: [
+          {
+            target: {
+              between: ["#a", "#b"],
+              gap: 8,
+              axis: "vertical",
+              tolerance: { ratio: 0, px: 1, mode: "looser" },
+            },
+            status: "measured",
+            reasons: [],
+            pairs: [
+              {
+                first: { selector: "#a", x: 0, y: 0, width: 20, height: 20 },
+                second: { selector: "#b", x: 0, y: 40, width: 20, height: 20 },
+              },
+            ],
+          },
+        ],
+      }),
+    ),
   ]);
 
   const result = await runReview({
@@ -2176,6 +2206,11 @@ test("project rules change review severity and audit deterministic and model sup
   expect(findings).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ category: "contrast", severity: "minor" }),
+      expect.objectContaining({
+        category: "spacing-target",
+        severity: "minor",
+        rule: "idiom:spacing-target",
+      }),
     ]),
   );
   expect(
@@ -2189,6 +2224,9 @@ test("project rules change review severity and audit deterministic and model sup
     ),
   ).toBe(false);
   const report = await readFile(result.reportPath, "utf8");
+  expect(report).toContain(
+    "Severity override: major -> minor by rule spacing-minor",
+  );
   expect(report).toContain(
     "Severity override: major -> minor by rule contrast-minor (Low-impact fixture copy)",
   );

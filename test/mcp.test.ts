@@ -16,10 +16,12 @@ import {
 import { afterEach, expect, test, vi } from "vitest";
 import type { BrowserSession } from "../src/capture/types.js";
 import { initProject } from "../src/commands/init.js";
+import { readAcknowledgements } from "../src/decisions/log.js";
 import { INTERFACE_VERSION } from "../src/interface/version.js";
 import { evidencePath } from "../src/mcp/evidence.js";
 import { createIdiomMcpServer } from "../src/mcp/server.js";
 import { writeUnruledDecisions } from "../src/rulings/artifacts.js";
+import { findingSchema } from "../src/schemas/finding.js";
 import { mcpClient, toolData } from "./mcp-support.js";
 
 const cleanups: Array<() => Promise<unknown>> = [];
@@ -42,7 +44,7 @@ const call = (
   args: Record<string, unknown> = {},
 ) => client.callTool({ name, arguments: args }) as Promise<CallToolResult>;
 
-test("uninitialized server advertises exactly twenty-two described strict schemas and survives tool errors", async () => {
+test("uninitialized server advertises exactly twenty-four described strict schemas and survives tool errors", async () => {
   const directory = await root();
   const client = await connect({ project: directory });
   expect(client.getServerCapabilities()?.experimental?.idiom).toEqual({
@@ -51,7 +53,9 @@ test("uninitialized server advertises exactly twenty-two described strict schema
   const { tools } = await client.listTools();
   expect(tools.map((tool) => tool.name).sort()).toEqual([
     "idiom_baseline",
+    "idiom_brief_attach",
     "idiom_brief_decide",
+    "idiom_brief_export",
     "idiom_brief_plan",
     "idiom_brief_record",
     "idiom_brief_triage",
@@ -123,7 +127,18 @@ test("uninitialized server advertises exactly twenty-two described strict schema
   expect(
     tools.find((tool) => tool.name === "idiom_decide")?.inputSchema.properties,
   ).toMatchObject({
-    decision: { enum: ["accept", "reject", "add-step", "drift"] },
+    decision: {
+      enum: [
+        "accept",
+        "reject",
+        "acknowledge",
+        "unacknowledge",
+        "add-step",
+        "drift",
+      ],
+    },
+    reference: { type: "string" },
+    until: { type: "string" },
     token: { type: "string" },
   });
   for (const name of ["idiom_context", "idiom_flows", "idiom_check"]) {
@@ -238,7 +253,7 @@ test.each([
         ? "npx playwright install chromium"
         : "Free the configured port",
     );
-    expect((await client.listTools()).tools).toHaveLength(22);
+    expect((await client.listTools()).tools).toHaveLength(24);
   },
 );
 
@@ -316,7 +331,7 @@ test("a persistent SDK session cancels active and queued work, closes late launc
   ).toBe(true);
   const error = await call(client, "idiom_flows");
   expect(error.isError).toBe(true);
-  expect((await client.listTools()).tools).toHaveLength(22);
+  expect((await client.listTools()).tools).toHaveLength(24);
   expect(
     await readFile(join(directory, "missing"), "utf8").catch(() => "absent"),
   ).toBe("absent");
@@ -563,4 +578,91 @@ test("idiom_decide answers a design system question by its ruling id", async () 
     "Add the `height-row` step: 36px height for control in main at desktop.",
   );
   expect(law).toContain("Reason: Dense rows are a real size.");
+});
+
+test("idiom_decide acknowledges a finding with a reference and removes it", async () => {
+  const directory = await root();
+  await initProject({ project: directory, yes: true });
+  const run = join(directory, ".idiom", "reports", "2026-11-06-check");
+  await mkdir(run, { recursive: true });
+  await writeFile(
+    join(run, "findings.json"),
+    JSON.stringify([
+      findingSchema.parse({
+        id: "finding-1",
+        fingerprint: "fp-1",
+        createdAt: "2026-11-06T12:00:00.000Z",
+        commit: "abc123",
+        flow: "booking",
+        state: "ready",
+        viewport: "mobile",
+        layer: "deterministic",
+        category: "contrast",
+        severity: "major",
+        confidence: 1,
+        rule: "idiom:contrast",
+        evidence: { screenshots: [] },
+        explanation: "Low contrast.",
+        acceptance: ["Contrast meets 4.5:1."],
+        verification: { kind: "deterministic-check", check: "contrast" },
+        status: "open",
+      }),
+    ]),
+  );
+  const client = await connect({ project: directory });
+  for (const [args, message] of [
+    [{ decision: "acknowledge" }, "acknowledge requires a reference"],
+    [
+      { decision: "accept", reference: "ABC-1" },
+      "reference is only used with acknowledge",
+    ],
+    [
+      { decision: "unacknowledge", until: "2099-01-01" },
+      "until is only used with acknowledge",
+    ],
+  ] as const) {
+    const refused = await call(client, "idiom_decide", {
+      id: "finding-1",
+      reason: "Tracked",
+      ...args,
+    });
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused.content)).toContain(message);
+  }
+  expect(await readAcknowledgements(directory)).toEqual([]);
+  const reason = "  Tracked in Jira  ";
+  const acknowledged = await call(client, "idiom_decide", {
+    id: "finding-1",
+    decision: "acknowledge",
+    reference: "ABC-123",
+    until: "2099-01-01",
+    reason,
+  });
+  expect(acknowledged.isError).not.toBe(true);
+  expect(JSON.stringify(acknowledged.content)).toContain(
+    "Acknowledged finding-1 for ABC-123 until 2099-01-01",
+  );
+  expect(await readAcknowledgements(directory)).toMatchObject([
+    {
+      decision: "acknowledge",
+      findingId: "finding-1",
+      reference: "ABC-123",
+      until: "2099-01-01",
+      note: reason,
+      evidence: { severity: "major", rule: "idiom:contrast" },
+    },
+  ]);
+  const removed = await call(client, "idiom_decide", {
+    id: "finding-1",
+    decision: "unacknowledge",
+    reason: "Closed upstream",
+  });
+  expect(removed.isError).not.toBe(true);
+  expect(JSON.stringify(removed.content)).toContain(
+    "Removed the acknowledgement on finding-1 (ABC-123)",
+  );
+  expect((await readAcknowledgements(directory)).at(-1)).toMatchObject({
+    decision: "unacknowledge",
+    reference: "ABC-123",
+  });
 });

@@ -1,6 +1,9 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { recordRunAttribution } from "../attribution/check.js";
+import type { RecordedIntroduction } from "../attribution/record.js";
 import { tupleCoordinateKey as importCoordinate } from "../baseline/coordinate.js";
+import type { CaptureExecutionContext } from "../capture/execution-context.js";
 import { snapshotSource } from "../capture/resolve.js";
 import type { CaptureDependencies } from "../capture/run.js";
 import { runCapture } from "../capture/run.js";
@@ -8,6 +11,7 @@ import type { RunRecord } from "../capture/run-record.js";
 import type { CaptureScope } from "../capture/scope.js";
 import type { RunTimings } from "../capture/timings.js";
 import type { ProductionBuild } from "../capture/types.js";
+import type { GitRead } from "../changed/git.js";
 import {
   type PaintedCoverageReport,
   reportedCheckCoverage,
@@ -44,15 +48,24 @@ import {
 import { validateCritiqueResult } from "../critique/schema.js";
 import type { CritiqueEvidenceLimits } from "../critique/types.js";
 import {
+  type AcknowledgementLapse,
+  type AcknowledgementTarget,
+  stampAcknowledgements,
+  ticketStateLookup,
+} from "../decisions/acknowledgements.js";
+import {
+  acknowledgements as acknowledgementEntries,
   decisionViews,
-  readDecisionLog,
+  judgments,
+  readDecisionLogEntries,
   ruleRejection,
 } from "../decisions/log.js";
 import { tupleDesigns } from "../design/evidence.js";
 import { IdiomError } from "../errors.js";
+import { findingsMissEvidence, summarizeMisses } from "../learn/misses.js";
 import type { ReportCoverage } from "../report/coverage.js";
 import { buildReviewCoverage } from "../report/coverage.js";
-import { pngDataUri, writeHtmlReport } from "../report/html.js";
+import { inlineReportImages, writeHtmlReport } from "../report/html.js";
 import {
   type AggregatedDecision,
   aggregateDecisionObservations,
@@ -89,6 +102,7 @@ import {
 } from "./catalog.js";
 import { attachCrops } from "./crops.js";
 import { attachFilmstrips } from "./filmstrips.js";
+import { trackerRootsFor } from "./lifecycle.js";
 import { scaleQuestionDecisions } from "./scale-questions.js";
 
 async function attachVisualEvidence(...args: Parameters<typeof attachCrops>) {
@@ -107,6 +121,7 @@ import {
   finalizeFindingSelection,
   finalizeFindings,
   nameFindingDrafts,
+  type SuppressedFinding,
   sortFindingDrafts,
   suppressFindingDrafts,
   writeFindings,
@@ -129,6 +144,8 @@ type ReviewCritiqueAdapter = CritiqueAdapterLike;
 
 export type ReviewDependencies = {
   monotonicNow?: (() => number) | undefined;
+  /** Wall clock for acknowledgement expiry. */
+  now?: (() => Date) | undefined;
   capture?: CaptureDependencies | undefined;
   critique?: ReviewCritiqueAdapter | undefined;
   createCritiqueAdapter?:
@@ -142,6 +159,8 @@ export type ReviewDependencies = {
   claudeCodeRunner?: ClaudeCodeRunner | undefined;
   codexRunner?: CritiqueProcessRunner | undefined;
   environment?: NodeJS.ProcessEnv | undefined;
+  /** Git reads for check's first-seen attribution (tests). */
+  attributionGit?: GitRead | undefined;
 };
 
 export type ReviewRunResult = PaintedCoverageReport & {
@@ -158,6 +177,12 @@ export type ReviewRunResult = PaintedCoverageReport & {
   /** Findings past the review's attention cap (model.maxFindings). */
   deferredFindings: Finding[];
   deterministicOccurrences?: Finding[];
+  /**
+   * Deterministic occurrences a rule-scope rejection or a rules.json
+   * suppression withheld, marked rejected. Collected with
+   * deterministicOccurrences; the digest counts them instead of calling them fixed.
+   */
+  rejectedOccurrences?: Finding[];
   /** Sweep evidence before viewport deduplication. Never a catalog input. */
   occurrences?: Finding[];
   probes?:
@@ -188,6 +213,10 @@ export type ReviewRunResult = PaintedCoverageReport & {
   advisory?: { path: string; review: AdvisoryReview } | undefined;
   /** One line when the primary checkout's finding names diverged. */
   findingNameWarning?: string | undefined;
+  /** Acknowledgements on findings seen this run that no longer hold. */
+  acknowledgementLapses: AcknowledgementLapse[];
+  /** One line when check's attribution.json could not be written. */
+  attributionWarning?: string | undefined;
 };
 
 /** Only capture execution failures are recoverable at the product controller. */
@@ -298,6 +327,7 @@ async function loadSpec(
 }
 
 export async function runReview(options: {
+  executionContext?: CaptureExecutionContext | undefined;
   flow: string;
   project?: string | undefined;
   cwd?: string | undefined;
@@ -338,6 +368,8 @@ export async function runReview(options: {
   advisory?: boolean | undefined;
   /** Ignore the primary checkout's finding names (throwaway worktrees). */
   isolatedRegistry?: boolean | undefined;
+  /** `check` only: tie new findings to their first-seen commit range. */
+  recordAttribution?: boolean | undefined;
   dependencies?: ReviewDependencies | undefined;
 }): Promise<ReviewRunResult> {
   if (options.materializeAllDeterministic && !options.deterministicOnly)
@@ -348,11 +380,13 @@ export async function runReview(options: {
   const checkCancelled = () =>
     options.dependencies?.capture?.signal?.throwIfAborted();
   checkCancelled();
-  const validated = await validateProject({
-    project: options.project,
-    flow: options.flow,
-    cwd: options.cwd,
-  });
+  const validated =
+    options.executionContext?.validated ??
+    (await validateProject({
+      project: options.project,
+      flow: options.flow,
+      cwd: options.cwd,
+    }));
   const record = validated.flows[0];
   if (record === undefined || record.flow.id !== options.flow) {
     throw new IdiomError(
@@ -404,7 +438,9 @@ export async function runReview(options: {
   if (options.latest === true && options.from !== undefined)
     throw new IdiomError("--latest and --from are mutually exclusive");
   if (options.latest === true) {
-    const source = await snapshotSource(validated.projectDirectory);
+    const source = await snapshotSource(validated.projectDirectory, {
+      ignoreDirty: validated.project.baselines?.ignoreDirty,
+    });
     runDirectory = resolveStoredRun(
       validated.projectDirectory,
       await findLatestCapture({
@@ -418,6 +454,7 @@ export async function runReview(options: {
   } else if (options.from === undefined) {
     const capture = await runCapture({
       projectDirectory: validated.projectDirectory,
+      executionContext: options.executionContext,
       project: validated.project,
       flow: record.flow,
       prod: options.prod,
@@ -506,12 +543,15 @@ export async function runReview(options: {
     historical,
   };
   const catalog = await loadReviewCatalog({
-    project: validated.projectDirectory,
+    project: validated.stateProjectDirectory ?? validated.projectDirectory,
     isolatedRegistry: options.isolatedRegistry,
   });
   const findingNameWarning = findingNameDivergenceWarning(catalog.names);
   const naming = new FindingNamingSession(catalog.names);
-  const decisions = await readDecisionLog(validated.projectDirectory);
+  const decisionLog = await readDecisionLogEntries(
+    validated.stateProjectDirectory ?? validated.projectDirectory,
+  );
+  const decisions = judgments(decisionLog);
   const views = decisionViews(decisions);
   const ruleRejections = [...views.byRuleFingerprint.values()].filter(
     (decision) => {
@@ -590,6 +630,7 @@ export async function runReview(options: {
       );
       const sweep = await sweepCritique({
         projectDirectory: validated.projectDirectory,
+        stateProjectDirectory: validated.stateProjectDirectory,
         runDirectory,
         project: validated.project,
         flow: record.flow,
@@ -665,6 +706,7 @@ export async function runReview(options: {
       });
       const context = await buildCritiqueContext({
         projectDirectory: validated.projectDirectory,
+        stateProjectDirectory: validated.stateProjectDirectory,
         runDirectory,
         project: validated.project,
         flow: record.flow,
@@ -731,6 +773,7 @@ export async function runReview(options: {
     const advisoryFallbacks: CritiqueFallbackEvent[] = [];
     const ran = await runAdvisoryReview({
       projectDirectory: validated.projectDirectory,
+      stateProjectDirectory: validated.stateProjectDirectory,
       runDirectory,
       project: validated.project,
       flow: contentFlow,
@@ -761,7 +804,8 @@ export async function runReview(options: {
 
   if (outcome.kind === "full" || scaleDecisions.length > 0) {
     const rulingNames = await loadRulingNames({
-      projectDirectory: validated.projectDirectory,
+      projectDirectory:
+        validated.stateProjectDirectory ?? validated.projectDirectory,
     });
     unruledDecisions = nameUnruledDecisions(rulingNames, [
       ...(outcome.kind === "full" ? aggregatedDecisions : []),
@@ -783,15 +827,28 @@ export async function runReview(options: {
         : validated.project.model.maxFindings,
     catalog,
   });
-  const findings = await attachVisualEvidence(
-    runDirectory,
-    selection.material,
-    loaded.tuples,
+  // Explicit reference choices remain addressable even beyond the presentation cap.
+  const questions = selection.deferred.filter(
+    (f) =>
+      f.rule === "idiom:design-decision" &&
+      f.evidence.designDrift?.designDecision !== undefined,
   );
-  const deferredFindings = await attachVisualEvidence(
-    runDirectory,
-    selection.deferred,
-    loaded.tuples,
+  selection.material.push(...questions);
+  selection.deferred = selection.deferred.filter((f) => !questions.includes(f));
+  // Acknowledgements are resolved against this run's observations and
+  // stamped before any artifact or gate reads the findings.
+  const acknowledged = acknowledgementStamper({
+    catalog,
+    entries: acknowledgementEntries(decisionLog),
+    projectDirectory:
+      validated.stateProjectDirectory ?? validated.projectDirectory,
+    now: options.dependencies?.now?.() ?? new Date(),
+  });
+  const findings = await acknowledged.stamp(
+    await attachVisualEvidence(runDirectory, selection.material, loaded.tuples),
+  );
+  const deferredFindings = await acknowledged.stamp(
+    await attachVisualEvidence(runDirectory, selection.deferred, loaded.tuples),
   );
   // This run overwrites its own findings.json with material findings only, so
   // an occurrence there cannot keep a deferred id decidable.
@@ -804,27 +861,45 @@ export async function runReview(options: {
   );
   const deterministicOccurrences =
     options.includeDeterministicOccurrences === true
-      ? await attachVisualEvidence(
+      ? await acknowledged.stamp(
+          await attachVisualEvidence(
+            runDirectory,
+            finalizeDeterministicOccurrences({
+              runId: loaded.runId,
+              drafts: deterministic.kept,
+              catalog,
+            }),
+            loaded.tuples,
+          ),
+        )
+      : undefined;
+  const rejectedOccurrences =
+    options.includeDeterministicOccurrences === true
+      ? rejectedDeterministicOccurrences({
+          runId: loaded.runId,
+          drafts: deterministicDrafts,
+          kept: deterministic.kept,
+          suppressed: [
+            ...deterministicRules.suppressed,
+            ...deterministic.suppressed,
+          ],
+          catalog,
+        })
+      : undefined;
+  const occurrences = sweepMode
+    ? await acknowledged.stamp(
+        await attachVisualEvidence(
           runDirectory,
-          finalizeDeterministicOccurrences({
+          finalizeFindingOccurrences({
             runId: loaded.runId,
-            drafts: deterministic.kept,
+            drafts: [...deterministic.kept, ...modelKeptDrafts],
             catalog,
           }),
           loaded.tuples,
-        )
-      : undefined;
-  const occurrences = sweepMode
-    ? await attachVisualEvidence(
-        runDirectory,
-        finalizeFindingOccurrences({
-          runId: loaded.runId,
-          drafts: [...deterministic.kept, ...modelKeptDrafts],
-          catalog,
-        }),
-        loaded.tuples,
+        ),
       )
     : undefined;
+  const acknowledgementLapses = acknowledged.lapses();
   if (occurrences !== undefined)
     await writeFile(
       join(runDirectory, "occurrences.json"),
@@ -845,7 +920,21 @@ export async function runReview(options: {
     runDirectory,
     unruledDecisions,
   );
+  const humanFound = await summarizeMisses({
+    projectDirectory: validated.projectDirectory,
+    extra: findingsMissEvidence(
+      [
+        ...findings,
+        ...deferredFindings,
+        ...(deterministicOccurrences ?? []),
+        ...(rejectedOccurrences ?? []),
+      ],
+      loaded.runId,
+    ),
+  }).catch(() => undefined);
   const reportOptions = {
+    humanFound,
+    now: options.dependencies?.now?.() ?? new Date(),
     flow: options.flow,
     commit: loaded.commit,
     build: loaded.build,
@@ -882,6 +971,7 @@ export async function runReview(options: {
     captureCoverage: reviewed.captureCoverage,
     deferred: deferredFindings,
     deferredDecisionTargets,
+    acknowledgementLapses,
     groups,
     ...(reviewed.narrowWidth === undefined
       ? {}
@@ -905,6 +995,25 @@ export async function runReview(options: {
           ],
     ),
   };
+  const attribution =
+    options.recordAttribution === true && deterministicOccurrences !== undefined
+      ? await recordRunAttribution({
+          validated,
+          flow: options.flow,
+          runDirectory,
+          occurrences: [
+            ...deterministicOccurrences,
+            ...(rejectedOccurrences ?? []),
+          ],
+          coverage: reportOptions.reportCoverage,
+          scope: loaded.record,
+          rankingContext: issueRankingContext,
+          now: options.dependencies?.now?.() ?? new Date(),
+          git: options.dependencies?.attributionGit,
+        })
+      : undefined;
+  const introductions: ReadonlyMap<string, RecordedIntroduction> | undefined =
+    attribution?.introductions;
   const screenshotPaths = [
     ...new Set([
       ...reportOptions.tuples.flatMap((tuple) =>
@@ -929,20 +1038,16 @@ export async function runReview(options: {
       ),
     ]),
   ];
-  const screenshots = new Map(
-    await Promise.all(
-      screenshotPaths.map(
-        async (path) =>
-          [path, pngDataUri(await readFile(join(runDirectory, path)))] as const,
-      ),
-    ),
-  );
+  const screenshots = await inlineReportImages(runDirectory, screenshotPaths);
   checkCancelled();
   const [reportPath, htmlReportPath] = await Promise.all([
-    writeReport(runDirectory, renderReport(reportOptions)),
+    writeReport(
+      runDirectory,
+      renderReport({ ...reportOptions, introductions }),
+    ),
     writeHtmlReport(
       runDirectory,
-      renderReviewHtmlReport({ ...reportOptions, screenshots }),
+      renderReviewHtmlReport({ ...reportOptions, screenshots, introductions }),
     ),
   ]);
   let sweep: ReviewRunResult["sweep"];
@@ -1000,6 +1105,7 @@ export async function runReview(options: {
     ...(deterministicOccurrences === undefined
       ? {}
       : { deterministicOccurrences }),
+    ...(rejectedOccurrences === undefined ? {} : { rejectedOccurrences }),
     unruledDecisionsPath,
     reportPath,
     htmlReportPath,
@@ -1018,5 +1124,80 @@ export async function runReview(options: {
     ...(sweep === undefined ? {} : { sweep }),
     ...(advisory === undefined ? {} : { advisory }),
     ...(findingNameWarning === undefined ? {} : { findingNameWarning }),
+    acknowledgementLapses,
+    ...(attribution?.warning === undefined
+      ? {}
+      : { attributionWarning: attribution.warning }),
+  };
+}
+
+/**
+ * One resolver per run: ticket states are probed once per reference, and each
+ * lapse is reported once per finding however many occurrences carry it.
+ */
+/**
+ * Re-finalize the deterministic drafts a rejection withheld, so a later
+ * digest can tell a rejected finding from a fixed one. Keyed by
+ * fingerprint and coordinate: suppression is the only filter between the
+ * drafts and the kept set.
+ */
+function rejectedDeterministicOccurrences(options: {
+  runId: string;
+  drafts: FindingDraft[];
+  kept: FindingDraft[];
+  suppressed: SuppressedFinding[];
+  catalog: Awaited<ReturnType<typeof loadReviewCatalog>>;
+}): Finding[] {
+  const key = (finding: Finding) =>
+    `${finding.fingerprint}\0${importCoordinate(finding)}`;
+  const kept = new Set(options.kept.map((draft) => key(draft.finding)));
+  const withheld = new Set(
+    options.suppressed
+      .map(({ finding }) => key(finding))
+      .filter((identity) => !kept.has(identity)),
+  );
+  return finalizeDeterministicOccurrences({
+    runId: options.runId,
+    drafts: options.drafts.filter((draft) => withheld.has(key(draft.finding))),
+    catalog: options.catalog,
+  }).map((finding) => ({ ...finding, status: "rejected" as const }));
+}
+
+function acknowledgementStamper(options: {
+  catalog: Awaited<ReturnType<typeof loadReviewCatalog>>;
+  entries: Parameters<typeof stampAcknowledgements>[1]["entries"];
+  projectDirectory: string;
+  now: Date;
+}) {
+  const ticketState = ticketStateLookup(
+    trackerRootsFor(options.projectDirectory),
+  );
+  const lapses = new Map<string, AcknowledgementLapse>();
+  // Matched by fingerprint, as finalizeFindingSelection assigns lineage ids.
+  const targetFor = (finding: Finding): AcknowledgementTarget => {
+    const lineage = options.catalog.lineages.find((candidate) =>
+      candidate.fingerprints.includes(finding.fingerprint),
+    );
+    return lineage === undefined
+      ? { id: finding.id, ids: [], fingerprints: [finding.fingerprint] }
+      : {
+          id: lineage.id,
+          ids: lineage.ids,
+          fingerprints: lineage.fingerprints,
+        };
+  };
+  return {
+    async stamp(findings: Finding[]): Promise<Finding[]> {
+      const result = await stampAcknowledgements(findings, {
+        targetFor,
+        entries: options.entries,
+        ticketState,
+        now: options.now,
+      });
+      for (const lapse of result.lapses)
+        if (!lapses.has(lapse.findingId)) lapses.set(lapse.findingId, lapse);
+      return result.findings;
+    },
+    lapses: () => [...lapses.values()],
   };
 }

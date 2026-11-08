@@ -1,6 +1,7 @@
 import type { Dirent } from "node:fs";
 import { access, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { isCompleteRun } from "../capture/run-lifecycle.js";
 import { readDecisionLog } from "../decisions/log.js";
 import { IdiomError } from "../errors.js";
 import { findProjectDirectory, resolveProjectArgument } from "../project.js";
@@ -293,6 +294,7 @@ export async function loadReviewCatalog(options: {
     for (const entry of entries.filter((candidate) =>
       candidate.isDirectory(),
     )) {
+      if (!(await isCompleteRun(resolve(root, entry.name)))) continue;
       if (merged.has(entry.name)) continue;
       merged.set(entry.name, { runDirectory: resolve(root, entry.name) });
     }

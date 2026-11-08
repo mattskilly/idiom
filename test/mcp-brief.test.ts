@@ -88,6 +88,15 @@ test("triage stores a record and returns its id; plan reads it; noModel returns 
   const plan = await call(client, "idiom_brief_plan", { triage: triage.id });
   expect(toolData<{ triageId: string }>(plan).triageId).toBe(triage.id);
   expect(JSON.stringify(plan.content)).toContain("# Research plan");
+  expect(
+    toolData<{ inventoryInstructions: string[] }>(
+      plan,
+    ).inventoryInstructions.join(" "),
+  ).toContain("real objects and magnitudes");
+  expect(
+    toolData<{ stateChecklist: string[] }>(plan).stateChecklist.join(" "),
+  ).toContain("editor+menu");
+  expect(JSON.stringify(plan.content)).toContain("## Build every state");
 
   await writeFile(join(root, "draft.md"), "add a pin to every tile");
   const fromFile = toolData<{ id: string }>(
@@ -139,7 +148,15 @@ test("record returns the ask; invalid input lists path: message; decide re-rende
   const recorded = toolData<{
     slug: string;
     ask: { askUserQuestion: { questions: Array<{ header: string }> } };
-  }>(await call(client, "idiom_brief_record", { brief: fixture }));
+  }>(
+    await call(client, "idiom_brief_record", {
+      brief: {
+        ...fixture,
+        screenQuestion: "What needs action?",
+        inventory: ["12 items"],
+      },
+    }),
+  );
   expect(recorded.slug).toBe("pinned-group-in-the-add-drawer");
   expect(recorded.ask.askUserQuestion.questions[0]?.header).toBe("Design call");
 
@@ -165,4 +182,21 @@ test("record returns the ask; invalid input lists path: message; decide re-rende
       "utf8",
     ),
   ).toContain("**Decision:** A small corner pin icon inside the tile");
+  expect(
+    JSON.parse(
+      await readFile(
+        join(root, ".idiom", "briefs", `${recorded.slug}.json`),
+        "utf8",
+      ),
+    ),
+  ).toMatchObject({
+    screenQuestion: "What needs action?",
+    inventory: ["12 items"],
+  });
+  expect(
+    await readFile(
+      join(root, ".idiom", "briefs", `${recorded.slug}.md`),
+      "utf8",
+    ),
+  ).toContain("**Screen question:** What needs action?");
 });

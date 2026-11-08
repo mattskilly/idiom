@@ -33,6 +33,7 @@ import {
   hasBriefAssertions,
   validateBriefAssertions,
 } from "./assertions.js";
+import { readDesignAssets } from "./design-asset.js";
 import { renderBrief } from "./render.js";
 
 export function briefsDirectory(projectDirectory: string): string {
@@ -179,11 +180,13 @@ export async function recordBrief(options: {
     fields: input,
     // Deciding a researched brief keeps what the research cost; an
     // incomplete run no longer describes a complete brief recorded over it.
-    carry: (prior) =>
-      prior.researchRun !== undefined &&
+    carry: (prior) => ({
+      ...(prior.researchRun !== undefined &&
       prior.researchRun.incomplete === undefined
         ? { researchRun: prior.researchRun }
-        : {},
+        : {}),
+      ...(prior.tickets === undefined ? {} : { tickets: prior.tickets }),
+    }),
   });
 }
 
@@ -327,6 +330,34 @@ export async function decideBrief(options: {
           ? `the decision is not to build it; ${brief.slug}.md says there is nothing to build, so do not write a ticket from it`
           : `the acceptance criteria were written for the recommendation (${recommended.id}); re-record the brief with criteria for ${chosen.id} before using it as a ticket`,
   };
+}
+
+/**
+ * Records that the brief was attached to an autobuild ticket. Attaching is
+ * not a decision change, so `updatedAt` (and `brief list` order) stays put.
+ */
+export async function recordBriefTicket(options: {
+  projectDirectory: string;
+  slug: string;
+  ticket: string;
+  settings: BriefSettings;
+}): Promise<StoredBrief> {
+  const { brief: prior } = await readBrief(
+    options.projectDirectory,
+    options.slug,
+  );
+  const tickets = prior.tickets ?? [];
+  if (tickets.includes(options.ticket)) return prior;
+  const brief = storedBriefSchema.parse({
+    ...prior,
+    tickets: [...tickets, options.ticket],
+  });
+  await writeBrief(
+    briefsDirectory(options.projectDirectory),
+    brief,
+    options.settings,
+  );
+  return brief;
 }
 
 export function triagesDirectory(projectDirectory: string): string {
@@ -476,19 +507,25 @@ export async function readBrief(
 }
 
 /**
- * Every decided brief in the project, sorted by slug. Briefs that fail to
- * parse are left to `idiom brief list`, which already reports them.
+ * Every decided brief in the project, plus every Idiom design asset pinned
+ * to the build, sorted by slug. The asset is the contract the ticket was
+ * claimed with, so it replaces a stored brief of the same slug. Briefs that
+ * fail to parse are left to `idiom brief list`, which already reports them.
  */
 export async function loadBriefChecks(
   projectDirectory: string,
 ): Promise<BriefCheck[]> {
-  return (await listBriefs(projectDirectory))
-    .flatMap((entry) =>
+  const assets = await readDesignAssets(projectDirectory);
+  const pinned = new Set(assets.map((brief) => brief.slug));
+  return [
+    ...(await listBriefs(projectDirectory)).flatMap((entry) =>
       "brief" in entry &&
       entry.brief.status === "decided" &&
-      isCompleteBrief(entry.brief)
+      isCompleteBrief(entry.brief) &&
+      !pinned.has(entry.slug)
         ? [briefCheckFrom(entry.brief)]
         : [],
-    )
-    .sort((left, right) => left.slug.localeCompare(right.slug));
+    ),
+    ...assets,
+  ].sort((left, right) => left.slug.localeCompare(right.slug));
 }

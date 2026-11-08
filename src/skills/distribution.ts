@@ -8,7 +8,7 @@ import {
 } from "../templates.js";
 import { IDIOM_VERSION } from "../version.js";
 import type { Distribution, SkillName } from "./types.js";
-export const skillNames: SkillName[] = ["idiom", "ab-verify-idiom"];
+export const skillNames: SkillName[] = ["idiom", "idiom-verify"];
 export const canonicalPath = (skill: SkillName) => `.agents/skills/${skill}`;
 export const discoveryPath = (skill: SkillName) => `.claude/skills/${skill}`;
 export const discoveryTarget = (skill: SkillName) =>
@@ -24,10 +24,10 @@ export async function readDistribution(): Promise<Distribution> {
     version: IDIOM_VERSION,
     skills: {
       idiom,
-      "ab-verify-idiom": {
+      "idiom-verify": {
         "SKILL.md": {
           content: await readAutobuildVerifierSkillTemplate(),
-          incomingPath: join(templatesDirectory(), "ab-verify-idiom/SKILL.md"),
+          incomingPath: join(templatesDirectory(), "idiom-verify/SKILL.md"),
         },
       },
     },

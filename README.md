@@ -10,7 +10,7 @@ Anyone building UI with AI coding agents such as Claude Code, Codex or Cursor. I
 
 ## How it works
 
-1. **Check**: `idiom check <flow>` renders every state you declare at each viewport and colour scheme (`idiom quick <url>` does the same for the pages you name, with no setup) and runs more than 60 measured checks: contrast, broken links and images, fonts that fail to load, missing focus styles, controls that do nothing, duplicate entry points, content that jumps when you act, actions with no loading state or that can be submitted twice, failures with no error message or no way to retry, changes that snap with no transition, spacing, alignment, sizes off your design system and more ([docs/rules.md](docs/rules.md)). Top issues come first, ranked by severity first, then prominence as measured by salience × prominence within each tier ([ranking](docs/ranking.md)); symptoms that share one cause are grouped into one issue. Capture waits for entrance animations to finish, then only what is actually on screen is judged: content in a closed menu or collapsed section, and hidden, fully transparent or clipped-away elements are skipped and counted in the report, not measured.
+1. **Check**: `idiom check <flow>` renders every state you declare at each viewport and colour scheme (`idiom quick <url>` does the same for the pages you name, with no setup) and runs more than 60 measured checks: contrast, broken links and images, fonts that fail to load, missing focus styles, controls that do nothing, duplicate entry points, content that jumps when you act, actions with no loading state or that can be submitted twice, failures with no error message or no way to retry, changes that snap with no transition, spacing, alignment, sizes off your design system and more ([docs/rules.md](docs/rules.md)). Top issues come first, ranked by severity first, then impact (more states or viewports, primary placement, interactive controls, broken behaviour), then prominence as measured by salience × prominence within each tier ([ranking](docs/ranking.md)); symptoms that share one cause are grouped into one issue. Capture waits for entrance animations to finish, then only what is actually on screen is judged: content in a closed menu or collapsed section, and hidden, fully transparent or clipped-away elements are skipped and counted in the report, not measured.
 2. **Fix**: every finding names the element, the measurement and when it counts as fixed, with a cropped screenshot. It also says how Idiom knows: measured by a rule, observed during an interaction, or judged by the model critique. Measured and observed findings gate by default; judged ones only with `--fail-on-judged`. `idiom verify` reports each finding's acceptance check as passed, failed or not re-checkable. `idiom fix <flow>` hands the top findings to Claude Code or Codex, then recaptures to verify each repair.
 3. **Guard**: `idiom check --changed` checks only the states your Git changes affect, following routes and imports, and lists the states it skipped. `idiom check --gate` is the build gate: it checks only what the change affects within a budget (3 minutes by default), skips docs-, test- and config-only changes in under a second, and lists anything it cut. Every check ends with a `Timing:` line saying where the time went. The first `idiom check` on a committed HEAD records today's findings as a baseline. After that, checks and the GitHub Action fail only on new findings. On a pull request, the Action posts one comment that sorts new findings into Blocks merge, Should fix and Opportunities, each with its fix and how to confirm it, and links the full HTML report. Accept and reject decisions are stored in the repo, so a settled finding stays settled.
 
@@ -59,16 +59,16 @@ For Codex, run in your shell:
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.20.0/mattskilly-idiom-0.20.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.21.0/mattskilly-idiom-0.21.0.tgz idiom mcp
 ```
 
-The Claude Code plugin bundles twenty-two MCP tools over stdio, the Idiom skill and UI-edit and stop reminders. In Codex the plugin supplies the skill and `codex mcp add` registers the tools, because Codex starts a plugin's own MCP server in the plugin directory rather than your project. No global Idiom install is needed for the plugin. You need Node 22.12 or newer, npm/npx and the matching browser: `npx playwright@1.62.1 install chromium`. The first MCP launch downloads the exact GitHub release named by the plugin, independently of the npm registry's current version.
+The Claude Code plugin bundles twenty-four MCP tools over stdio, the Idiom skill and UI-edit and stop reminders. In Codex the plugin supplies the skill and `codex mcp add` registers the tools, because Codex starts a plugin's own MCP server in the plugin directory rather than your project. No global Idiom install is needed for the plugin. You need Node 22.12 or newer, npm/npx and the matching browser: `npx playwright@1.62.1 install chromium`. The first MCP launch downloads the exact GitHub release named by the plugin, independently of the npm registry's current version.
 
 Update Claude Code with `/plugin marketplace update idiom`, then `/plugin update idiom@idiom`. Run `/reload-plugins` or start a new session to apply it. For Codex, run `codex plugin marketplace upgrade idiom`, then `codex plugin add idiom@idiom`, rerun the `codex mcp add` line above with the new release (it replaces the entry), and start a new session.
 
 [docs/mcp.md](docs/mcp.md) covers standalone MCP for Cursor and Claude Desktop, timeouts, credentials, and local plugin development with `claude --plugin-dir /path/to/checkout`. When switching from standalone MCP, remove the duplicate registration with `claude mcp remove idiom`.
 
-After an autonomous build, `idiom sweep --all` captures every flow and groups findings that share a cause into one cleanup set ranked by severity first, then the existing salience × prominence score within each tier, emitting at most 10 repair tickets for you to triage.
+After an autonomous build, `idiom sweep --all` captures every flow and groups findings that share a cause into one cleanup set ranked by severity first, then impact, then the existing salience × prominence score within each tier, emitting at most 10 repair tickets for you to triage.
 
 ## Before and after
 
@@ -87,7 +87,7 @@ npm install -g @mattskilly/idiom
 idiom --version
 ```
 
-`bun add -g @mattskilly/idiom` works too. The version command prints `<version> (<short source commit>) · interface <n>`, for example `0.20.0 (00663e4) · interface 1`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D --save-exact @mattskilly/idiom@0.20.0` or `bun add -d --exact @mattskilly/idiom@0.20.0`. Every release's tarball is also attached to its [GitHub release](https://github.com/mattskilly/idiom/releases).
+`bun add -g @mattskilly/idiom` works too. The version command prints `<version> (<short source commit>) · interface <n>`, for example `0.21.0 (00663e4) · interface 1`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D --save-exact @mattskilly/idiom@0.21.0` or `bun add -d --exact @mattskilly/idiom@0.21.0`. Every release's tarball is also attached to its [GitHub release](https://github.com/mattskilly/idiom/releases).
 
 ### Browser setup
 
@@ -157,7 +157,7 @@ For a global npm or bun install, `idiom upgrade` installs the latest release, th
 
 ## Data and privacy
 
-Idiom has no telemetry. Captures, reports and decisions stay in your repository. At most once a day it asks the npm registry whether a newer version exists, sending no project data (`IDIOM_NO_UPDATE_CHECK=1` turns it off). It sends screenshots, page excerpts and findings only to the model provider you configure, and only for the optional model steps such as the critique (`--deterministic-only` skips it); otherwise it fetches only what you ask for, such as your app, a Figma frame or a live reference. Details: [data and privacy](docs/architecture.md#data-and-privacy).
+Idiom has no telemetry. Captures, reports, decisions and the log of a server Idiom starts stay in your repository. At most once a day it asks the npm registry whether a newer version exists, sending no project data (`IDIOM_NO_UPDATE_CHECK=1` turns it off). It sends screenshots, page excerpts and findings only to the model provider you configure, and only for the optional model steps such as the critique (`--deterministic-only` skips it); otherwise it fetches only what you ask for, such as your app, a Figma frame or a live reference. Details: [data and privacy](docs/architecture.md#data-and-privacy).
 
 ## Local development
 

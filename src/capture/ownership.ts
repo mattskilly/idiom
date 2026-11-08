@@ -2,6 +2,12 @@ import { IdiomError } from "../errors.js";
 import { Deadline, DeadlineExpired } from "./deadline.js";
 import type { CaptureActivity } from "./types.js";
 
+export class CaptureInterrupted extends IdiomError {
+  constructor(readonly signal: "SIGINT" | "SIGTERM") {
+    super(`capture interrupted by ${signal}`);
+  }
+}
+
 export type CaptureLifetime = {
   signal?: AbortSignal | undefined;
   onActivity?: ((activity: CaptureActivity) => void) | undefined;
@@ -12,6 +18,7 @@ const CLEANUP_GRACE_MS = 5000;
 export class CaptureOwnership {
   private resources = new Map<object, () => Promise<unknown>>();
   private started = new Map<object, Promise<unknown>>();
+  private acquiring = new Set<Promise<unknown>>();
   activity: CaptureActivity = {
     state: "pending",
     viewport: "pending",
@@ -92,6 +99,10 @@ export class CaptureOwnership {
   ): Promise<T> {
     // A launcher/workspace adapter may resolve after the caller has failed.
     const registered = pending.then((value) => this.own(value, close));
+    this.acquiring.add(registered);
+    void registered
+      .finally(() => this.acquiring.delete(registered))
+      .catch(() => undefined);
     return this.deadline.run(() => registered);
   }
   close(value: object): Promise<unknown> {
@@ -102,6 +113,11 @@ export class CaptureOwnership {
       void pending.catch(() => undefined);
     }
     return pending;
+  }
+  /** Ref worktrees cannot disappear while a late acquisition still owns a process. */
+  async settle() {
+    await Promise.allSettled([...this.acquiring]);
+    await this.cleanup();
   }
   async cleanup() {
     await Promise.all(
@@ -114,16 +130,16 @@ export async function withCaptureOwnership<T>(
   maxMinutes: number,
   dependencies: CaptureLifetime | undefined,
   work: (owner: CaptureOwnership) => Promise<T>,
+  options: { settle?: boolean } = {},
 ): Promise<T> {
   const owner = new CaptureOwnership(maxMinutes, dependencies?.onActivity);
   const parentAbort = () =>
     owner.controller.abort(dependencies?.signal?.reason);
   dependencies?.signal?.addEventListener("abort", parentAbort, { once: true });
   if (dependencies?.signal?.aborted) parentAbort();
-  const sigint = () =>
-    owner.controller.abort(new IdiomError("capture interrupted by SIGINT"));
+  const sigint = () => owner.controller.abort(new CaptureInterrupted("SIGINT"));
   const sigterm = () =>
-    owner.controller.abort(new IdiomError("capture interrupted by SIGTERM"));
+    owner.controller.abort(new CaptureInterrupted("SIGTERM"));
   // A stray rejection from abandoned browser work must end this capture
   // through the normal path, so the application server is always stopped.
   const unhandled = (reason: unknown) =>
@@ -137,13 +153,17 @@ export async function withCaptureOwnership<T>(
   process.on("unhandledRejection", unhandled);
   let failure: unknown;
   let result: T | undefined;
+  let execution: Promise<T> | undefined;
   // Start cleanup at expiry, independently of the losing operation's finally.
   const abort = () => {
     void owner.cleanup().catch(() => undefined);
   };
   owner.signal.addEventListener("abort", abort, { once: true });
   try {
-    result = await owner.deadline.run(() => work(owner));
+    result = await owner.deadline.run(() => {
+      execution = work(owner);
+      return execution;
+    });
   } catch (error) {
     failure =
       error instanceof DeadlineExpired && error.scope === "capture"
@@ -154,6 +174,10 @@ export async function withCaptureOwnership<T>(
   } finally {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      if (options.settle) {
+        await execution?.catch(() => undefined);
+        await owner.settle();
+      }
       await Promise.race([
         owner.cleanup(),
         new Promise<void>((resolve) => {

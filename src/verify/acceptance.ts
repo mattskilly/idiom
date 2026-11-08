@@ -164,6 +164,50 @@ function targetEvidence(
       ? undefined
       : "Original component measurement or size declaration is missing, unresolved or changed.";
   }
+  if (target.kind === "selectors" && contract.check === "visual-blank") {
+    const scan = obs?.visualBlank;
+    const params = contract.condition.parameters;
+    if (
+      !scan ||
+      !["ran", "partial"].includes(scan.status) ||
+      scan.algorithm !== params.algorithm ||
+      scan.dominantThreshold !== params.dominantThreshold ||
+      scan.opacityThreshold !== params.opacityThreshold ||
+      scan.overlayAlphaThreshold !== params.overlayAlphaThreshold ||
+      stable(scan.swatchSelectors) !== stable(params.swatchSelectors)
+    )
+      return "Blank-media measurement settings changed or evidence is unavailable.";
+    for (const selector of target.selectors) {
+      const matches = scan.records.filter((r) => r.selector === selector);
+      const r = matches[0];
+      if (
+        matches.length !== 1 ||
+        !r?.pixels ||
+        r.masked ||
+        r.exempt ||
+        r.unavailable ||
+        r.overlay.uncertainty
+      )
+        return "The original media target lacks a usable, unmasked, non-exempt screenshot measurement.";
+    }
+    return undefined;
+  }
+  if (target.kind === "selectors" && contract.check === "loading-stuck") {
+    const scan = obs?.loadingStuck;
+    if (
+      scan?.status !== "ran" ||
+      scan.intentional ||
+      scan.windowMs !== contract.condition.parameters.windowMs ||
+      scan.observedMs < scan.windowMs
+    )
+      return "The original loading window or declaration changed, or the observer did not complete.";
+    for (const selector of target.selectors) {
+      const records = scan.records.filter((r) => r.selector === selector);
+      if (!records.length || records.some((r) => r.masked || r.active))
+        return "The original loading target has no completed, resolved interval in this scan.";
+    }
+    return undefined;
+  }
   if (target.kind === "selectors") {
     for (const selector of target.selectors) {
       const matches =

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { findingCategories } from "../schemas/finding.js";
+import { findingSeveritySchema } from "../schemas/severity.js";
 
 const fingerprint = z.string().regex(/^[0-9a-f]+$/);
 export const baselineFindingSchema = z
@@ -8,7 +9,7 @@ export const baselineFindingSchema = z
     aliases: z.array(fingerprint),
     category: z.enum(findingCategories),
     rule: z.string(),
-    severity: z.enum(["blocker", "major", "minor"]),
+    severity: findingSeveritySchema,
     selector: z.string(),
   })
   .strict();

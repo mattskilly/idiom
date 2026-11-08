@@ -18,9 +18,11 @@ import { crossSurfaceNamingCheck } from "./cross-surface-naming.js";
 import { deadAffordanceCheck } from "./dead-affordance.js";
 import { deadControlCheck } from "./dead-control.js";
 import { designDriftCheck } from "./design-drift.js";
+import { detachedFlyoutCheck } from "./detached-flyout.js";
 import { dialogShellCheck } from "./dialog-shell.js";
 import { disabledHighlightCheck } from "./disabled-highlight.js";
 import { disguisedControlCheck } from "./disguised-control.js";
+import { focusReturnCheck, popoverDismissalCheck } from "./dismissal.js";
 import { duplicateEntryCheck } from "./duplicate-entry.js";
 import { elementOverlapCheck } from "./element-overlap.js";
 import { emptyStateCheck } from "./empty-state.js";
@@ -44,6 +46,7 @@ import {
   doubleSubmitCheck,
   loadingStateMissingCheck,
 } from "./loading-state.js";
+import { loadingStuckCheck } from "./loading-stuck.js";
 import { luminanceParityCheck } from "./luminance-parity.js";
 import { mediaFillCheck } from "./media-fill.js";
 import { mirroredControlCheck } from "./mirrored-control.js";
@@ -75,6 +78,7 @@ import { selectionOutlineCheck } from "./selection-outline.js";
 import { shellVisibilityCheck } from "./shell-visibility.js";
 import { siblingChromeCheck } from "./sibling-chrome.js";
 import { spacingRhythmCheck } from "./spacing-rhythm.js";
+import { spacingTargetCheck } from "./spacing-target.js";
 import { targetSizeCheck } from "./target-size.js";
 import { textCenteringCheck } from "./text-centering.js";
 import { tokenDriftCheck } from "./token-drift.js";
@@ -88,6 +92,7 @@ import type {
 } from "./types.js";
 import { deterministicCheckIds } from "./types.js";
 import { unexplainedControlCheck } from "./unexplained-control.js";
+import { visualBlankCheck } from "./visual-blank.js";
 import { wordBreakCheck } from "./word-break.js";
 
 export const deterministicChecks: DeterministicCheck[] = [
@@ -148,6 +153,8 @@ export const signalChecks: DeterministicCheck[] = [
   touchReachabilityCheck,
   livenessCheck,
   mediaFillCheck,
+  visualBlankCheck,
+  loadingStuckCheck,
   collectionActionsCheck,
   fontLoadingCheck,
   brokenLinkCheck,
@@ -168,6 +175,10 @@ export const signalChecks: DeterministicCheck[] = [
   selectionOutlineCheck,
   disabledHighlightCheck,
   briefMismatchCheck,
+  popoverDismissalCheck,
+  focusReturnCheck,
+  spacingTargetCheck,
+  detachedFlyoutCheck,
 ];
 
 /**
@@ -188,6 +199,11 @@ export function checksConfigFrom(
 ): ChecksConfig {
   const merged = { ...defaultChecksSettings, ...settings };
   return {
+    visualBlank: {
+      ...merged.visualBlank,
+      swatchSelectors: [...merged.visualBlank.swatchSelectors],
+    },
+    loadingStuck: { ...merged.loadingStuck },
     fonts: { ...merged.fonts },
     links: { ...merged.links, ignore: [...merged.links.ignore] },
     focusVisible: {

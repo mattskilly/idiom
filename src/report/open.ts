@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import type { Dirent } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { assertCompleteRun, isCompleteRun } from "../capture/run-lifecycle.js";
 import { IdiomError } from "../errors.js";
 import { findProjectDirectory, resolveProjectArgument } from "../project.js";
 
@@ -35,6 +36,8 @@ async function regularReport(
   runId: string,
 ): Promise<{ runId: string; reportPath: string; mtimeMs: number } | undefined> {
   const runDirectory = join(reportsDirectory, runId);
+  if (runId.startsWith(".") || !(await isCompleteRun(runDirectory)))
+    return undefined;
   const reportPath = join(runDirectory, "report.html");
   try {
     const [run, report] = await Promise.all([
@@ -59,6 +62,7 @@ export async function resolveHtmlReport(options: {
   const reportsDirectory = join(projectDirectory, ".idiom", "reports");
   if (options.runId !== undefined) {
     validateRunId(options.runId);
+    await assertCompleteRun(join(reportsDirectory, options.runId));
     const selected = await regularReport(reportsDirectory, options.runId);
     if (selected === undefined)
       throw new IdiomError(

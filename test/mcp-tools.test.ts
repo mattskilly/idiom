@@ -229,7 +229,13 @@ test("idiom_ready returns the same verdict as idiom init --validate for a ready 
     validate: report.validate,
     steps: report.doctor?.steps.map((step) => [step.id, step.status]),
   });
-  expect(Object.keys(data)).toEqual(["ready", "validate", "doctor"]);
+  expect(Object.keys(data)).toEqual([
+    "ready",
+    "validate",
+    "doctor",
+    "surfaces",
+  ]);
+  expect(data.surfaces.initialized).toBe(true);
   expect(data.ready).toBe(true);
   expect(shape(data)).toEqual(shape(direct));
   expect(JSON.stringify(response.content)).toContain("ready");
