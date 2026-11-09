@@ -53,6 +53,7 @@ import {
   briefMarks,
   checkMarks,
   checksConfigSchema,
+  emptyOkMarks,
 } from "../src/schemas/project.js";
 
 const directory = fileURLToPath(
@@ -118,6 +119,8 @@ export type ReviewOptions = {
   scaleQuestions?: ChecksConfig["scaleQuestions"];
   /** Decided design briefs: their selectors are marked and brief-mismatch judges them. */
   decidedBriefs?: BriefCheck[];
+  /** The state's `intentionallyEmpty` selectors, marked as capture does. */
+  intentionallyEmpty?: string[];
 };
 
 /**
@@ -264,7 +267,13 @@ export async function reviewStates(
                   state,
                 ),
               ),
+              ...emptyOkMarks(options.intentionallyEmpty),
             ],
+            frameOrnaments: {
+              emptyFrame: settings.emptyFrame.enabled,
+              rowOrnament: settings.repeatedRowOrnament.enabled,
+              glyphOverIcon: settings.glyphOverIcon.enabled,
+            },
             ...(options.images === true ? { images: true } : {}),
             emptyState: settings.emptyState,
             mediaFill: settings.mediaFill,

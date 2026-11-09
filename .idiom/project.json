@@ -30,6 +30,7 @@
   "checks": {
     "probe": { "flowBudgetMs": 20000, "stateTimeoutMs": 10000 },
     "gate": {
+      "budgetMs": 480000,
       "nonUi": [
         "src/**",
         "dist/**",

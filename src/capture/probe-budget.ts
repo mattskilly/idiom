@@ -1,5 +1,8 @@
 import type { Deadline } from "./deadline.js";
 
+/** The not-reached reason for work the flow budget had no time left for. */
+export const FLOW_PROBE_EXHAUSTED = "flow probe time exhausted";
+
 export type ProbeBudgetLease = {
   shareMs(): number;
   start(deadline: Pick<Deadline, "extend">): void;

@@ -87,6 +87,51 @@
       ]
     },
     {
+      "path": "baseline advance",
+      "status": "experimental",
+      "arguments": [
+        {
+          "name": "flow",
+          "required": false,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "long": "--commit-file",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--prod",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--target",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        }
+      ]
+    },
+    {
       "path": "baseline record",
       "status": "stable",
       "arguments": [
@@ -898,6 +943,14 @@
           "negate": false
         },
         {
+          "long": "--actor",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
           "long": "--add-step",
           "short": null,
           "takesValue": false,
@@ -1011,6 +1064,14 @@
         },
         {
           "long": "--reason",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--reattribute",
           "short": null,
           "takesValue": true,
           "valueOptional": false,
@@ -2319,6 +2380,11 @@
       "status": "experimental"
     },
     {
+      "id": "baseline advance",
+      "command": "baseline advance",
+      "status": "experimental"
+    },
+    {
       "id": "baseline record",
       "command": "baseline record",
       "status": "experimental"
@@ -2565,6 +2631,96 @@
           "decisionQuestion": {
             "type": "string"
           },
+          "captureFailures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string"
+                },
+                "viewport": {
+                  "type": "string"
+                },
+                "colorScheme": {
+                  "type": "string",
+                  "enum": [
+                    "light",
+                    "dark"
+                  ]
+                },
+                "stage": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "hostDeferred": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "state",
+                "viewport",
+                "colorScheme",
+                "stage",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "baselineNotRecorded": {
+            "type": "object",
+            "properties": {
+              "failed": {
+                "type": "number"
+              },
+              "total": {
+                "type": "number"
+              },
+              "successful": {
+                "type": "number"
+              },
+              "coordinates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string"
+                    },
+                    "viewport": {
+                      "type": "string"
+                    },
+                    "colorScheme": {
+                      "type": "string",
+                      "enum": [
+                        "light",
+                        "dark"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "viewport",
+                    "colorScheme"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "failed",
+              "total",
+              "successful",
+              "coordinates",
+              "message"
+            ],
+            "additionalProperties": false
+          },
           "blocking": {
             "type": "number"
           },
@@ -2673,7 +2829,13 @@
                     "direction-drift",
                     "offer-change",
                     "unsupported-claim",
-                    "detached-flyout"
+                    "detached-flyout",
+                    "disclosure-affordance",
+                    "opener-cannot-close",
+                    "icon-meaning",
+                    "empty-frame",
+                    "repeated-row-ornament",
+                    "glyph-over-icon"
                   ]
                 },
                 "rule": {
@@ -3645,7 +3807,13 @@
                                 "direction-drift",
                                 "offer-change",
                                 "unsupported-claim",
-                                "detached-flyout"
+                                "detached-flyout",
+                                "disclosure-affordance",
+                                "opener-cannot-close",
+                                "icon-meaning",
+                                "empty-frame",
+                                "repeated-row-ornament",
+                                "glyph-over-icon"
                               ]
                             },
                             "rule": {
@@ -3762,6 +3930,10 @@
               "actor": {
                 "default": "human",
                 "type": "string"
+              },
+              "agent": {
+                "type": "string",
+                "minLength": 1
               },
               "provenance": {
                 "type": "object",
@@ -3889,6 +4061,10 @@
               "actor": {
                 "default": "human",
                 "type": "string"
+              },
+              "agent": {
+                "type": "string",
+                "minLength": 1
               }
             },
             "required": [
@@ -3925,6 +4101,10 @@
               "actor": {
                 "default": "human",
                 "type": "string"
+              },
+              "agent": {
+                "type": "string",
+                "minLength": 1
               },
               "reason": {
                 "type": "string",
@@ -4062,6 +4242,74 @@
               "decision",
               "reason",
               "resolution"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+              },
+              "commit": {
+                "type": "string"
+              },
+              "findingId": {
+                "type": "string"
+              },
+              "fingerprint": {
+                "type": "string"
+              },
+              "decision": {
+                "type": "string",
+                "const": "reattribute"
+              },
+              "target": {
+                "type": "object",
+                "properties": {
+                  "line": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "line",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              "actor": {
+                "type": "string",
+                "enum": [
+                  "human",
+                  "agent"
+                ]
+              },
+              "agent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "note": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "at",
+              "commit",
+              "findingId",
+              "fingerprint",
+              "decision",
+              "target",
+              "actor",
+              "note"
             ],
             "additionalProperties": false
           }
@@ -4448,7 +4696,13 @@
                 "direction-drift",
                 "offer-change",
                 "unsupported-claim",
-                "detached-flyout"
+                "detached-flyout",
+                "disclosure-affordance",
+                "opener-cannot-close",
+                "icon-meaning",
+                "empty-frame",
+                "repeated-row-ornament",
+                "glyph-over-icon"
               ]
             },
             "severity": {
@@ -6352,6 +6606,13 @@
                     "fresh": {
                       "type": "boolean"
                     },
+                    "intentionallyEmpty": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
                     "data": {
                       "type": "string",
                       "enum": [
@@ -7492,6 +7753,13 @@
                     },
                     "fresh": {
                       "type": "boolean"
+                    },
+                    "intentionallyEmpty": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
                     },
                     "data": {
                       "type": "string",
@@ -10068,6 +10336,47 @@
                 },
                 "additionalProperties": false
               },
+              "emptyFrame": {
+                "default": {},
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "ignore": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "repeatedRowOrnament": {
+                "default": {},
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "glyphOverIcon": {
+                "default": {},
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
               "images": {
                 "default": {},
                 "type": "object",
@@ -10463,7 +10772,13 @@
                         "direction-drift",
                         "offer-change",
                         "unsupported-claim",
-                        "detached-flyout"
+                        "detached-flyout",
+                        "disclosure-affordance",
+                        "opener-cannot-close",
+                        "icon-meaning",
+                        "empty-frame",
+                        "repeated-row-ornament",
+                        "glyph-over-icon"
                       ]
                     },
                     "flow": {
@@ -10539,9 +10854,15 @@
               "type": "string",
               "enum": [
                 "show",
-                "record"
+                "record",
+                "advance"
               ],
-              "description": "show reads the baseline; record writes a new record"
+              "description": "show reads the baseline; record writes a new record; advance records the target branch's tip in the base cache"
+            },
+            "target": {
+              "description": "advance only: branch or commit to record (default: the remote HEAD, else main or master)",
+              "type": "string",
+              "minLength": 1
             },
             "flow": {
               "description": "Configured flow ID; optional when exactly one flow exists",
@@ -11399,10 +11720,12 @@
     "detached-flyout",
     "dialog-shell",
     "disabled-highlight",
+    "disclosure-affordance",
     "disguised-control",
     "double-submit",
     "duplicate-entry",
     "element-overlap",
+    "empty-frame",
     "empty-state",
     "error-state-missing",
     "error-text",
@@ -11413,8 +11736,10 @@
     "frame",
     "fresh-state",
     "glyph-icon",
+    "glyph-over-icon",
     "group-invariants",
     "heading-structure",
+    "icon-meaning",
     "image-distortion",
     "interaction-shift",
     "layout-invariants",
@@ -11430,6 +11755,7 @@
     "motion",
     "native-control",
     "nested-border",
+    "opener-cannot-close",
     "orphan-word",
     "overflow-clip",
     "page-content",
@@ -11438,6 +11764,7 @@
     "primary-region",
     "progress-affordance",
     "published-budget",
+    "repeated-row-ornament",
     "responsive-break",
     "retry-blocked",
     "scale-conformance",

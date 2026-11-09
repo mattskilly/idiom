@@ -73,6 +73,7 @@ test("decision log appends schema-valid records without rewriting earlier bytes"
   const original = JSON.stringify(first);
   await writeFile(path, original);
   const appended = await appendDecision({
+    attribution: { actor: "human" },
     projectDirectory: directory,
     finding: finding(),
     decision: "accept",
@@ -214,6 +215,7 @@ test("malformed logs are line-numbered and cannot be extended", async () => {
 test("acknowledgement lines round-trip, and judgment readers return judgments only", async () => {
   const directory = await project();
   const judged = await appendDecision({
+    attribution: { actor: "human" },
     projectDirectory: directory,
     finding: finding("finding-2", "other"),
     decision: "reject",
@@ -221,6 +223,7 @@ test("acknowledgement lines round-trip, and judgment readers return judgments on
     now: () => new Date("2026-11-06T10:00:00.000Z"),
   });
   const acknowledged = await appendAcknowledgement({
+    attribution: { actor: "human" },
     projectDirectory: directory,
     finding: { ...finding(), id: "finding-1" },
     kind: "acknowledge",
@@ -234,6 +237,7 @@ test("acknowledgement lines round-trip, and judgment readers return judgments on
     now: () => new Date("2026-11-06T11:00:00.000Z"),
   });
   const removed = await appendAcknowledgement({
+    attribution: { actor: "human" },
     projectDirectory: directory,
     finding: { ...finding(), id: "finding-1" },
     kind: "unacknowledge",

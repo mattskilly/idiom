@@ -79,6 +79,8 @@ export type GatePlan = {
   minimumExceedsBudget: boolean;
   /** Per-flow baseline availability: false gates open findings instead. */
   baselines: Record<string, boolean>;
+  /** Per-flow: what new findings are judged against (the build's base). */
+  comparisons: Record<string, GateComparisonPlan>;
   notes: string[];
   /** Flows with at least one affected state, before budget trimming. */
   flows: string[];
@@ -102,4 +104,24 @@ export type GateReportSection = {
   skippedWork: GateSkip[];
   estimateMs: number;
   budgetMs: number;
+};
+
+/**
+ * How one gated flow's findings are judged: against a stored record that
+ * already speaks for the base, a cached or fresh capture of the base, or,
+ * when the base capture does not fit the budget, the nearest stored baseline
+ * behind it (fallback) or nothing (none: open findings are gated).
+ */
+export type GateComparisonPlan = {
+  mode: "baseline" | "base-cache" | "base-capture" | "fallback" | "none";
+  base: string;
+  /** The stored baseline leaned on, when not captured at the base. */
+  baselineCommit?: string | undefined;
+  behindBase?: number | undefined;
+  /** Planned tuples no stored record covers (captured at the base). */
+  missingTuples: number;
+  /** Estimated base capture, worktree preparation included. */
+  estimateMs?: number | undefined;
+  /** Measured base capture, after the run. */
+  baseCaptureMs?: number | undefined;
 };

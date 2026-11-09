@@ -10,9 +10,14 @@ import {
   type DeterministicCandidateRecord,
   deterministicCandidateRecords,
 } from "../verify/evaluate.js";
+import type { BaseComparison } from "./base.js";
 import { checksConfigHash } from "./config-hash.js";
 import { tupleCoordinate, tupleCoordinateKey } from "./coordinate.js";
-import { type GitAncestry, selectBaselineRecord } from "./resolve.js";
+import {
+  type GitAncestry,
+  gitAncestry,
+  selectBaselineRecord,
+} from "./resolve.js";
 import type { BaselineFinding, BaselineRecord } from "./schema.js";
 import { baselineDirectory, baselinePath, readBaselineFile } from "./store.js";
 
@@ -140,9 +145,27 @@ export async function compareRunToBaseline(options: {
   liveOccurrences: Finding[];
   git?: GitAncestry | undefined;
   comparisonCommit?: string | undefined;
+  /** An explicit comparison (the base record); skips baseline resolution. */
+  comparison?: BaseComparison | undefined;
 }) {
   const { validated, flow } = options;
-  const { path, selected } = await resolveRunBaseline(options);
+  const { path, selected } =
+    options.comparison === undefined
+      ? await resolveRunBaseline(options)
+      : {
+          path: options.comparison.path,
+          selected: {
+            record: options.comparison.record,
+            distance: await (options.git ?? gitAncestry).distance(
+              validated.projectDirectory,
+              options.comparison.record.commit,
+              options.comparisonCommit ??
+                (await (options.git ?? gitAncestry).head(
+                  validated.projectDirectory,
+                )),
+            ),
+          },
+        };
   if (selected === undefined)
     throw new IdiomError(
       `no recorded baseline for "${flow.id}" reachable from HEAD in ${path}; run \`idiom baseline record ${flow.id}\` on main and commit it (a shallow clone may need the baseline commit fetched)`,
@@ -181,6 +204,21 @@ export async function compareRunToBaseline(options: {
       configHash: selected.record.configHash,
       ...(comparison.stale === undefined ? {} : { stale: comparison.stale }),
       uncoveredTuples: comparison.uncoveredTuples,
+      ...(options.comparison === undefined
+        ? {}
+        : {
+            source: options.comparison.source,
+            base: options.comparison.base,
+            ...(options.comparison.baselineCommit === undefined
+              ? {}
+              : {
+                  baselineCommit: options.comparison.baselineCommit,
+                  behindBase: options.comparison.behindBase,
+                }),
+            ...(options.comparison.notes.length
+              ? { notes: options.comparison.notes }
+              : {}),
+          }),
     },
   };
 }

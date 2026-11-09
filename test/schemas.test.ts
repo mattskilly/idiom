@@ -282,6 +282,43 @@ describe("schema behavior", () => {
     expect(parsed.states[0]?.expect.status).toBeUndefined();
   });
 
+  test("states declare intentionallyEmpty selectors; blank ones are rejected", () => {
+    expect(
+      flowSchema.parse(
+        minimalFlow(minimalState({ intentionallyEmpty: ["#dropzone"] })),
+      ).states[0],
+    ).toMatchObject({ intentionallyEmpty: ["#dropzone"] });
+    expect(
+      flowSchema.safeParse(
+        minimalFlow(minimalState({ intentionallyEmpty: [" "] })),
+      ).success,
+    ).toBe(false);
+    const electron = {
+      id: "example",
+      title: "Example",
+      intent: [],
+      setup: [],
+      target: {
+        kind: "electron",
+        launch: { executablePath: "electron" },
+        window: { title: "Capture" },
+      },
+    };
+    const state = { id: "settings", description: "Settings", expect: {} };
+    expect(
+      flowSchema.parse({
+        ...electron,
+        states: [{ ...state, intentionallyEmpty: [".well"] }],
+      }).states[0],
+    ).toMatchObject({ intentionallyEmpty: [".well"] });
+    expect(
+      flowSchema.safeParse({
+        ...electron,
+        states: [{ ...state, intentionallyEmpty: [""] }],
+      }).success,
+    ).toBe(false);
+  });
+
   test("states declare siblingGroup or a flow-scoped group, not both", () => {
     for (const fields of [{ siblingGroup: "left" }, { group: "panels" }])
       expect(

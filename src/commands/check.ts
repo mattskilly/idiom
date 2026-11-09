@@ -195,6 +195,13 @@ export type CheckOptions = {
     | undefined;
   inputIdentity?: string | undefined;
   gateReport?: import("../gate/types.js").GateReportSection | undefined;
+  /**
+   * Controllers only (`--changed`, `--gate`): compare with this record (the
+   * build's base) instead of the newest baseline reachable from HEAD.
+   */
+  comparison?: import("../baseline/base.js").BaseComparison | undefined;
+  /** Controllers only: no comparison exists; gate open findings, say why. */
+  comparisonUnavailable?: string | undefined;
   from?: string | undefined;
   latest?: boolean | undefined;
   /** Report only findings this stored run did not already have. */
@@ -271,6 +278,8 @@ export async function checkWithReview(
     materializeAllDeterministic,
     recordAgentCheck,
     bootstrapBaseline,
+    comparison,
+    comparisonUnavailable,
     ...reviewOptions
   } = options;
   const selectors = [
@@ -291,7 +300,11 @@ export async function checkWithReview(
     options.executionContext?.validated ?? (await validateForRun(options));
   const flow = validated.flows[0]?.flow;
   if (flow === undefined) throw new IdiomError(`unknown flow ${options.flow}`);
-  if (recordedMode) {
+  if (recordedMode && comparison === undefined && comparisonUnavailable) {
+    recordedMode = false;
+    baselineNotApplied = `baseline not applied: ${comparisonUnavailable}`;
+  }
+  if (recordedMode && comparison === undefined) {
     const { selected, path } = await resolveRunBaseline({
       validated,
       flow,
@@ -436,6 +449,7 @@ export async function checkWithReview(
           ...options,
           validated,
           comparisonCommit: options.executionContext?.commit,
+          comparison,
         },
         result,
         findings,
@@ -714,6 +728,7 @@ async function recordDigest(options: {
           ...result.deterministicOccurrences,
           ...(result.rejectedOccurrences ?? []),
         ],
+        appliedDecisions: result.appliedDecisions,
         coverage: result.reportCoverage,
         scope: result.scope,
         captured: [...(result.issueRankingContext?.keys() ?? [])],

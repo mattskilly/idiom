@@ -34,7 +34,7 @@ import { fixtureCommand } from "./support/fixture-server.js";
 const execute = promisify(execFile);
 const directories: string[] = [];
 const fixtureRoot = resolve(import.meta.dirname, "fixtures/fix-loop");
-const cli = resolve(import.meta.dirname, "../dist/cli.js");
+const cli = resolve(import.meta.dirname, "../build/cli.js");
 afterEach(async () => {
   await Promise.all(
     directories

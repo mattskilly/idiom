@@ -204,10 +204,17 @@ test("on current main no rule catches a heading touching its cards or a placehol
       const findings = await reviewFixture(browser, await page(name), {
         checks,
       });
+      // The carousel's three image slots are grey fills with nothing in
+      // them: empty frames, not the heading-to-cards spacing the advisory
+      // pattern is about.
       expect(
         findings.map(({ candidate }) => candidate.category).sort(),
         `${name} ${JSON.stringify(checks)}`,
-      ).toEqual(["heading-structure"]);
+      ).toEqual(
+        name === "carousel-cards.html"
+          ? ["empty-frame", "empty-frame", "empty-frame", "heading-structure"]
+          : ["heading-structure"],
+      );
     }
   }
 }, 60_000);

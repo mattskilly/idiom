@@ -1,5 +1,12 @@
 import { relative, resolve, sep } from "node:path";
-import { resolveRunBaseline } from "../baseline/compare.js";
+import {
+  type BaseResolution,
+  fallbackComparison,
+  resolveBaseComparison,
+  type SettledComparison,
+  settleBaseComparison,
+} from "../baseline/base.js";
+import { checksConfigHash } from "../baseline/config-hash.js";
 import { assertedStates, readDesignAssets } from "../brief/design-asset.js";
 import { captureConcurrency } from "../capture/lanes.js";
 import type { ProbeRegion } from "../capture/probe.js";
@@ -9,6 +16,7 @@ import {
   probeCoordinates,
   resolveCaptureScope,
 } from "../capture/scope.js";
+import { formatDuration } from "../capture/timings.js";
 import { collectChanges, type GitRead, readGit } from "../changed/git.js";
 import {
   type ChangedSelection,
@@ -24,11 +32,18 @@ import {
   detectStyleScope,
   type FileClass,
 } from "./classify.js";
-import { costModel, loadFlowHistory, tupleKey } from "./estimate.js";
+import {
+  costModel,
+  estimateGate,
+  GATE_DEFAULTS,
+  loadFlowHistory,
+  tupleKey,
+} from "./estimate.js";
 import { reflectsBase, regionReference } from "./region.js";
 import { planServerReuse } from "./server-reuse.js";
 import { trimToBudget } from "./trim.js";
 import type {
+  GateComparisonPlan,
   GateFile,
   GatePlan,
   GateRank,
@@ -67,6 +82,15 @@ export type GateExecution = {
   probeDisabled: boolean;
   reuseServer: boolean;
   production: boolean;
+  /** Per gated flow: the resolution, settled unless the base is captured. */
+  baseComparisons: Map<string, GateBaseComparison>;
+  configHash: string;
+};
+
+export type GateBaseComparison = {
+  resolution: BaseResolution;
+  /** Undefined: capture the missing tuples at the base, then settle. */
+  settled?: SettledComparison | undefined;
 };
 
 const shortBase = (base: string) => base.slice(0, 12);
@@ -426,18 +450,100 @@ export async function planGate(
     probeBudgetMs: options.probeBudgetMs,
   });
   const baselines: Record<string, boolean> = {};
+  const comparisons: GatePlan["comparisons"] = {};
+  const baseComparisons = new Map<string, GateBaseComparison>();
+  const configHash = checksConfigHash(project.checks);
+  let baseSpentMs = 0;
   for (const flow of flows) {
-    if (!trimmed.states.some((state) => state.flow === flow.id)) continue;
-    const { selected } = await resolveRunBaseline({
+    const members = trimmed.states.filter((state) => state.flow === flow.id);
+    if (!members.length) continue;
+    const resolution = await resolveBaseComparison({
       validated,
-      flow,
-      cwd: options.cwd,
+      flow: flow.id,
+      base: changes.resolvedBase,
+      tuples: members.flatMap((state) =>
+        state.viewports.flatMap((viewport) =>
+          state.schemes.map((scheme) => ({
+            state: state.state,
+            viewport,
+            scheme,
+          })),
+        ),
+      ),
+      nonUi: gate.nonUi,
+      git,
     });
-    baselines[flow.id] = selected !== undefined;
-    if (!selected)
-      notes.push(
-        `no recorded baseline for ${flow.id}; gating open findings — run idiom baseline record ${flow.id}`,
-      );
+    notes.push(...resolution.notes);
+    let settled: SettledComparison | undefined;
+    let estimateMs: number | undefined;
+    if (resolution.missing.length === 0) {
+      settled = await settleBaseComparison({
+        resolution,
+        flow: flow.id,
+        configHash,
+      });
+    } else {
+      // Price the base like the head: same model and probe, owned server,
+      // plus the worktree and dependency install.
+      const missingStates = members.flatMap((state) => {
+        const tuples = resolution.missing.filter(
+          (tuple) => tuple.state === state.state,
+        );
+        if (!tuples.length) return [];
+        return [
+          {
+            ...state,
+            viewports: [...new Set(tuples.map((tuple) => tuple.viewport))],
+            schemes: [...new Set(tuples.map((tuple) => tuple.scheme))],
+          },
+        ];
+      });
+      estimateMs =
+        estimateGate({
+          states: missingStates,
+          model,
+          server: {
+            mode: "fresh",
+            reason: "the base runs in its own worktree",
+          },
+          concurrency,
+          probeBudgetMs: trimmed.probeBudgetMs,
+          probeTargetMs,
+        }).totalMs + GATE_DEFAULTS.refPrepareMs;
+      const over =
+        trimmed.estimate.totalMs + baseSpentMs + estimateMs - budgetMs;
+      if (over > 0) {
+        settled = fallbackComparison(
+          resolution,
+          `base capture skipped (~${formatDuration(over)} over the ${formatDuration(budgetMs)} budget)`,
+          flow.id,
+        );
+        if (settled.warning) notes.push(settled.warning);
+      } else baseSpentMs += estimateMs;
+    }
+    const comparison = settled?.comparison;
+    const mode: GateComparisonPlan["mode"] =
+      settled === undefined
+        ? "base-capture"
+        : comparison === undefined
+          ? "none"
+          : comparison.source === "base-capture"
+            ? "base-capture"
+            : comparison.source;
+    comparisons[flow.id] = {
+      mode,
+      base: changes.resolvedBase,
+      ...(comparison?.baselineCommit === undefined
+        ? {}
+        : {
+            baselineCommit: comparison.baselineCommit,
+            behindBase: comparison.behindBase,
+          }),
+      missingTuples: resolution.missing.length,
+      ...(estimateMs === undefined ? {} : { estimateMs }),
+    };
+    baselines[flow.id] = mode !== "none";
+    baseComparisons.set(flow.id, { resolution, settled });
   }
   const scopes = new Map<string, CaptureScope>();
   for (const flow of flows) {
@@ -484,6 +590,7 @@ export async function planGate(
       : { probeBudgetMs: trimmed.probeBudgetMs }),
     minimumExceedsBudget: trimmed.minimumExceedsBudget,
     baselines,
+    comparisons,
     notes,
     flows: affectedFlows,
     allFlows,
@@ -495,6 +602,8 @@ export async function planGate(
       probeDisabled: trimmed.probeDisabled,
       reuseServer: server.mode === "reused",
       production,
+      baseComparisons,
+      configHash,
     },
   };
 }

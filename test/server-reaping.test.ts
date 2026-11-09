@@ -16,7 +16,7 @@ import { fixtureCommand } from "./support/fixture-server.js";
 // An Idiom run killed mid-capture cannot stop its server. The next run in
 // the same project finds the record it left and stops that server.
 
-const CLI = join(import.meta.dirname, "..", "dist", "cli.js");
+const CLI = join(import.meta.dirname, "..", "build", "cli.js");
 const directories: string[] = [];
 const cleanups: Array<() => void> = [];
 

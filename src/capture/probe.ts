@@ -18,6 +18,7 @@ import type {
   ProbeCollection,
   ProbeDismissal,
   ProbeEffect,
+  ProbeReclick,
   ProbeResult,
   ProbeSafetyLedger,
   Rect,
@@ -51,6 +52,7 @@ import {
   replayFailure,
 } from "./failure.js";
 import { type ReplayRequest, replayRequests } from "./failure-identity.js";
+import { readIndicator } from "./indicator.js";
 import {
   type HeldItem,
   heldCandidate,
@@ -60,6 +62,7 @@ import {
 } from "./loading.js";
 import { menuInventory, triggerBox } from "./menu-inventory.js";
 import { MotionCollector, mergeMotion } from "./motion.js";
+import { FLOW_PROBE_EXHAUSTED } from "./probe-budget.js";
 import {
   identityKeys,
   ORDINARY_PRIORITY,
@@ -71,6 +74,7 @@ import {
   clickNetworkEffect,
   type InitiatedRequest,
 } from "./probe-network.js";
+import { MAX_RECLICKS, reclickLimitReason, testReclick } from "./reclick.js";
 import type { ReplayLedger } from "./replay-ledger.js";
 import {
   ignoredRequest,
@@ -2305,6 +2309,13 @@ async function confirmClick(
   }
 }
 
+/** A dismissal test navigated or opened a window. */
+function leftByDismissal(dismissal: ProbeDismissal | undefined): boolean {
+  return (
+    dismissal?.tests.some((test) => test.outcome === "inconclusive") === true
+  );
+}
+
 /** The trigger box feeds `menu`; it is never a probe result key itself. */
 function withoutTriggerBox<T extends { triggerBox?: unknown }>(
   outcome: T,
@@ -2931,6 +2942,19 @@ export async function probeControls(
   // Waiting for a click's late content never spends more than half of the
   // control's budget, so it cannot time the control out.
   const lateContentMs = Math.min(LATE_CONTENT_WINDOW_MS, controlTimeoutMs / 2);
+  // A flow whose wall-clock limit already passed leaves this state no time:
+  // that is exhaustion, not a failure, and no deadline can be built from it.
+  if (
+    options.flowBudget &&
+    !(Number.isFinite(stateTimeoutMs) && stateTimeoutMs > 0)
+  ) {
+    options.flowBudget.finish(0);
+    artifact.status = "partial";
+    artifact.reason = FLOW_PROBE_EXHAUSTED;
+    if (safety) artifact.safety = safety;
+    progress("complete");
+    return artifact;
+  }
   const state = new Deadline(
     "state",
     stateTimeoutMs,
@@ -4151,6 +4175,8 @@ export async function probeControls(
       timeoutScope: _scope,
       revealed: _revealed,
       dismissal: _dismissal,
+      reclick: _reclick,
+      indicator: _indicator,
       ...cached
     } = entry.result;
     const local = skippedResult(candidate, "", parent);
@@ -4169,6 +4195,8 @@ export async function probeControls(
         elapsedMs: _nestedElapsed,
         revealed: _nestedRevealed,
         dismissal: _nestedDismissal,
+        reclick: _nestedReclick,
+        indicator: _nestedIndicator,
         ...rest
       } = nested;
       publish(candidate, {
@@ -4185,6 +4213,21 @@ export async function probeControls(
     ? { tested: 0, notReached: 0, limit: MAX_DISMISSALS }
     : undefined;
   if (dismissalSummary) artifact.dismissal = dismissalSummary;
+  let reclickCount = 0;
+  const reclickSummary = options.dismissal
+    ? { tested: 0, notReached: 0, limit: MAX_RECLICKS }
+    : undefined;
+  if (reclickSummary) artifact.reclick = reclickSummary;
+  const indicatorSummary = options.dismissal ? { recorded: 0 } : undefined;
+  if (indicatorSummary) artifact.indicators = indicatorSummary;
+  /** A disclosure trigger's indicator, read inside the attempt's deadline. */
+  const indicatorOf = async (page: Page, deadline: Deadline, path: string) => {
+    if (indicatorSummary === undefined || options.enumerateOnly)
+      return undefined;
+    const snapshot = await readIndicator(page, path);
+    deadline.check();
+    return snapshot;
+  };
   /** Open a panel again: click its parents' paths, then its trigger. */
   const clickOpen = async (page: Page, paths: string[]) => {
     for (const path of paths) {
@@ -4252,6 +4295,54 @@ export async function probeControls(
       }
     }
     return dismissal;
+  };
+  /**
+   * Click the opener of the panel a click opened a second time, inside the
+   * attempt's deadline: after the dismissal tests, so Escape still runs on
+   * the probe's own opening. A plain control is tested only when it opened
+   * a dialog or popover; `original` is the opener's pre-click box.
+   */
+  const testOpenedReclick = async (
+    page: Page,
+    deadline: Deadline,
+    trigger: string,
+    opened: {
+      kind?: "popup" | "expanded" | undefined;
+      root?: string | undefined;
+      openedRoots: string[];
+      original: Rect | undefined;
+    },
+    reopen: (page: Page) => Promise<void>,
+  ): Promise<ProbeReclick | undefined> => {
+    if (reclickSummary === undefined || options.enumerateOnly) return undefined;
+    if (opened.original === undefined) return undefined;
+    const root = opened.root ?? (await dialogRoot(page, opened.openedRoots));
+    deadline.check();
+    if (root === undefined) return undefined;
+    if (reclickCount >= MAX_RECLICKS) {
+      reclickSummary.notReached += 1;
+      return {
+        trigger,
+        root,
+        outcome: "not-reached",
+        reason: reclickLimitReason,
+      };
+    }
+    progress("reclick");
+    const { reclick, disturbed } = await testReclick(page, {
+      trigger,
+      root,
+      original: opened.original,
+      waitMs: options.waitMs,
+      deadline,
+      reopen,
+    });
+    deadline.check();
+    if (disturbed) needsReplay = true;
+    reclickCount += 1;
+    if (reclick.outcome === "not-reached") reclickSummary.notReached += 1;
+    else reclickSummary.tested += 1;
+    return reclick;
   };
   /** Revealed roots of opened disclosures, for their mode-switch items. */
   const revealedRoots = new Map<Candidate, string | undefined>();
@@ -4721,6 +4812,10 @@ export async function probeControls(
           const positionedBefore = candidate.disclosure
             ? await positionedPaths(page)
             : [];
+          const indicatorBefore =
+            candidate.disclosure === undefined
+              ? undefined
+              : await indicatorOf(page, deadline, candidate.path);
           effects = new Set();
           let openedRoots: string[] = [];
           const outcome = await clickAndObserve(
@@ -4778,6 +4873,20 @@ export async function probeControls(
                 candidate.disclosure,
               );
               deadline.check();
+              const indicatorAfter =
+                indicatorBefore === undefined
+                  ? undefined
+                  : await indicatorOf(page, deadline, candidate.path);
+              if (
+                indicatorBefore !== undefined &&
+                indicatorAfter !== undefined
+              ) {
+                result.indicator = {
+                  before: indicatorBefore,
+                  after: indicatorAfter,
+                };
+                if (indicatorSummary) indicatorSummary.recorded += 1;
+              }
               revealedRoots.set(candidate, found.root);
               if (itemsRoot === "" && found.root !== undefined)
                 itemsRoot = found.root;
@@ -4821,6 +4930,22 @@ export async function probeControls(
               (active) => clickOpen(active, [candidate.path]),
             );
             if (dismissal) result.dismissal = dismissal;
+            // A dismissal test that left the page leaves nothing to re-click.
+            const reclick = leftByDismissal(dismissal)
+              ? undefined
+              : await testOpenedReclick(
+                  page,
+                  deadline,
+                  candidate.path,
+                  {
+                    kind: candidate.disclosure,
+                    root: disclosure,
+                    openedRoots,
+                    original: box?.trigger,
+                  },
+                  (active) => clickOpen(active, [candidate.path]),
+                );
+            if (reclick) result.reclick = reclick;
           }
           return {
             result,
@@ -5001,6 +5126,10 @@ export async function probeControls(
               item.disclosure !== undefined && item.disclosure !== "details"
                 ? await positionedPaths(page)
                 : [];
+            const indicatorBefore =
+              item.disclosure === undefined
+                ? undefined
+                : await indicatorOf(page, deadline, item.path);
             effects = new Set();
             let openedRoots: string[] = [];
             const result = await clickAndObserve(
@@ -5045,6 +5174,16 @@ export async function probeControls(
                   )
                 : undefined;
             deadline.check();
+            const indicatorAfter =
+              opened?.opened && indicatorBefore !== undefined
+                ? await indicatorOf(page, deadline, item.path)
+                : undefined;
+            const indicator =
+              indicatorBefore !== undefined && indicatorAfter !== undefined
+                ? { before: indicatorBefore, after: indicatorAfter }
+                : undefined;
+            if (indicator !== undefined && indicatorSummary)
+              indicatorSummary.recorded += 1;
             let revealed: RevealedState | undefined;
             if (
               disclosureParent &&
@@ -5104,6 +5243,25 @@ export async function probeControls(
                     ]),
                 )
               : undefined;
+            const reclick =
+              testable && !leftByDismissal(dismissal)
+                ? await testOpenedReclick(
+                    page,
+                    deadline,
+                    item.path,
+                    {
+                      kind: nestedDisclosure,
+                      root: opened?.opened ? opened.root : undefined,
+                      openedRoots,
+                      original: result.triggerBox?.trigger,
+                    },
+                    (active) =>
+                      clickOpen(active, [
+                        ...parents.map((parent) => parent.path),
+                        item.path,
+                      ]),
+                  )
+                : undefined;
             return {
               items,
               result: result.error
@@ -5121,6 +5279,8 @@ export async function probeControls(
                       : { openedDisclosure }),
                     ...(revealed === undefined ? {} : { revealed }),
                     ...(dismissal === undefined ? {} : { dismissal }),
+                    ...(indicator === undefined ? {} : { indicator }),
+                    ...(reclick === undefined ? {} : { reclick }),
                   },
             };
           },

@@ -98,6 +98,12 @@ export const deterministicCheckIds = [
   "focus-return",
   "spacing-target",
   "detached-flyout",
+  "disclosure-affordance",
+  "opener-cannot-close",
+  "icon-meaning",
+  "empty-frame",
+  "repeated-row-ornament",
+  "glyph-over-icon",
 ] as const;
 
 export type DeterministicCheckId = (typeof deterministicCheckIds)[number];
@@ -613,6 +619,54 @@ export type ProbeResult = {
    * an iframe click. Absent on reused results and in older artifacts.
    */
   dismissal?: ProbeDismissal | undefined;
+  /**
+   * How a disclosure trigger looked right before the click and once the
+   * opening was confirmed. Absent on reused results and in older artifacts.
+   */
+  indicator?:
+    | { before: IndicatorSnapshot; after: IndicatorSnapshot }
+    | undefined;
+  /**
+   * What a second click on the opener did to the panel it opened. Absent on
+   * reused results and in older artifacts.
+   */
+  reclick?: ProbeReclick | undefined;
+};
+
+/** One indicator candidate on or beside a disclosure trigger. */
+export type IndicatorGraphic = {
+  where: "inside" | "before" | "after" | "sibling";
+  /** Normalised geometry, composed transform and visibility; compared verbatim. */
+  signature: string;
+  visible: boolean;
+};
+
+/** The parts of a disclosure trigger that could show collapsed or expanded. */
+export type IndicatorSnapshot = {
+  /** aria-expanded, or "open"/"closed" for a details summary; null when absent. */
+  expanded: string | null;
+  /** A summary that paints its native disclosure marker. */
+  marker: boolean;
+  /** The trigger's visible text, whitespace-collapsed, at most 120 characters. */
+  text: string;
+  /** At most 12. */
+  graphics: IndicatorGraphic[];
+};
+
+/** A second click on the control that opened a panel. */
+export type ProbeReclick = {
+  /** Probe path of the opener. */
+  trigger: string;
+  root: string;
+  outcome:
+    | "closed"
+    | "stayed-open"
+    | "not-tested"
+    | "not-reached"
+    | "inconclusive";
+  reason?: string | undefined;
+  /** A close-equivalent control within 24px of the opener's original box. */
+  closeNearby?: { selector: string; name: string } | undefined;
 };
 
 export type DismissalMethod = "escape" | "outside" | "iframe";
@@ -860,6 +914,16 @@ export type ProbeArtifact = {
    * not reached, and the per-state limit. Absent when the pass was off.
    */
   dismissal?: { tested: number; notReached: number; limit: number } | undefined;
+  /**
+   * The re-click pass over opened panels. Absent when the pass was off and in
+   * older artifacts.
+   */
+  reclick?: { tested: number; notReached: number; limit: number } | undefined;
+  /**
+   * Disclosure triggers whose indicator was read collapsed and expanded.
+   * Absent when the pass was off and in older artifacts.
+   */
+  indicators?: { recorded: number } | undefined;
   /** The held (slow-network) replay of actions that sent requests. */
   heldReplay?:
     | {
@@ -987,6 +1051,22 @@ export type DisclosureObservation = {
   open: boolean;
 };
 
+/** An interactive control carrying exactly one visible icon. */
+export type IconControlObservation = {
+  selector: string;
+  /** The probe's `html > tag:nth-of-type(n) > …` path for the same element. */
+  path: string;
+  /** `#id` as the probe spells it, when the element has an id. */
+  id?: string | undefined;
+  name: string;
+  role: string;
+  /** `svg:<hash>` or `font:<family>|<glyph>`. */
+  fingerprint: string;
+  placement: "only" | "leading" | "trailing";
+  /** aria-expanded, aria-haspopup (not false) or a details summary. */
+  disclosure: boolean;
+};
+
 /**
  * An open overlay (menu, listbox, popover, non-modal dialog, positioned
  * disclosure content) whose box covers a field outside it or its own
@@ -1073,7 +1153,9 @@ export type SelectorMarkPurpose =
   | "adjacent-region"
   | "sibling-region"
   /** A decided brief's assertion selector; keeps hidden matches. */
-  | "brief";
+  | "brief"
+  /** A box the flow or project declares intentionally empty (empty-frame). */
+  | "empty-ok";
 
 /** A configured selector resolved at capture time to observed selectors. */
 export type SelectorMark = {
@@ -1106,6 +1188,56 @@ export type RepeatedContainerObservation = {
   /** aria-label, aria-labelledby, caption, or nearest heading or legend, at most 80 chars ("" when none). */
   name: string;
   items: number;
+};
+
+/** A bordered or filled box with nothing visible inside it. */
+export type EmptyFrameObservation = {
+  selector: string;
+  rect: Rect;
+  paint: "border" | "background" | "both";
+  /** Sides whose border draws; empty when only the background paints. */
+  borderSides: Array<"top" | "right" | "bottom" | "left">;
+  /** Element children present in the DOM but not painted at this viewport. */
+  hiddenChildren: number;
+};
+
+/** One identical decoration carried by most items of a collection. */
+export type RowOrnamentObservation = {
+  collection: string;
+  collectionKind:
+    | "list"
+    | "table"
+    | "grid"
+    | "feed"
+    | "tablist"
+    | "menu"
+    | "rail";
+  /** Painted items in the collection. */
+  items: number;
+  /** Items carrying the decoration. */
+  count: number;
+  kind: "icon" | "chip" | "mark";
+  /** Chip text ("" for icons and marks). */
+  text: string;
+  /** The first instance. */
+  example: string;
+  /** Chip text, icon name or hint, or "dot". */
+  name: string;
+  width: number;
+  height: number;
+};
+
+/** A small glyph drawn over another icon inside one small control. */
+export type GlyphOverlapObservation = {
+  control: string;
+  glyph: string;
+  icon: string;
+  controlRect: Rect;
+  glyphRect: Rect;
+  iconRect: Rect;
+  overlap: { width: number; height: number };
+  /** Intersection area over the smaller box's area, 0–1. */
+  ratio: number;
 };
 
 export type EmptyRegionsObservation = {
@@ -1225,6 +1357,8 @@ export type ObservedElementV2 = ObservedElement & {
   structuralPath: string;
   legacyRenderedPath?: string | undefined;
   directText: string;
+  /** Direct-node runs with precise inline boundaries and balanced quotation context. */
+  copyTextSegments?: Array<{ text: string; quoted: boolean }> | undefined;
   attributes: Record<string, string>;
   temporal: boolean;
   stableIslandPath: string;
@@ -1465,6 +1599,8 @@ export type ObservationArtifactV2 = Omit<
   overlaps?: OverlapObservation[] | undefined;
   /** Disclosure controls on the surface; absent in older captures. */
   disclosures?: DisclosureObservation[] | undefined;
+  /** Controls carrying one icon; absent in older captures. */
+  iconControls?: IconControlObservation[] | undefined;
   popoverCovers?: PopoverCoverObservation[] | undefined;
   clippedText?: ClippedTextObservation[] | undefined;
   fieldGroups?: FieldGroupObservation[] | undefined;
@@ -1474,6 +1610,12 @@ export type ObservationArtifactV2 = Omit<
   emptyRegions?: EmptyRegionsObservation | undefined;
   /** Absent in captures that predate the container inventory. */
   repeatedContainers?: RepeatedContainerObservation[] | undefined;
+  /** Absent in captures that predate the empty-frame scan (or when disabled). */
+  emptyFrames?: EmptyFrameObservation[] | undefined;
+  /** Absent in captures that predate the row-ornament scan (or when disabled). */
+  rowOrnaments?: RowOrnamentObservation[] | undefined;
+  /** Absent in captures that predate the glyph-over-icon scan (or when disabled). */
+  glyphOverlaps?: GlyphOverlapObservation[] | undefined;
   progress?: ProgressArtifact | undefined;
   bandEdges?: GeometryScan<BandEdgeObservation> | undefined;
   wordBreaks?: GeometryScan<WordBreakObservation> | undefined;
@@ -1698,6 +1840,9 @@ export type ChecksConfig = {
   lineLength?: { enabled: boolean; max: number } | undefined;
   orphanWord?: { enabled: boolean; maxChars: number } | undefined;
   nestedBorder?: { enabled: boolean } | undefined;
+  emptyFrame?: { enabled: boolean; ignore: string[] } | undefined;
+  repeatedRowOrnament?: { enabled: boolean } | undefined;
+  glyphOverIcon?: { enabled: boolean } | undefined;
   images?: { enabled: boolean; distortionTolerance: number } | undefined;
   layoutShift?: { enabled: boolean; max: number } | undefined;
   interactionShift?: { enabled: boolean; minDistance: number } | undefined;

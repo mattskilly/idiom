@@ -128,7 +128,36 @@ export function renderDigest(
   const humanFound = options.humanFound
     ? [humanFoundLine(options.humanFound, options.now ?? new Date())]
     : [];
-  const mandatory = verdicts.length + 1 + reports.length + humanFound.length;
+  const decisionLines = flows.map((flow) => {
+    const counts = flow.decisions;
+    if (!counts?.available)
+      return `${prefix(flow)}Decisions: attribution unavailable (legacy snapshot).`;
+    const show = (actor: "human" | "agent" | "unattributed") => {
+      const row = counts[actor];
+      return `${actor} ${row.accept} accept / ${row.reject} reject / ${row.acknowledge} acknowledge`;
+    };
+    return `${prefix(flow)}Decisions: ${show("human")}; ${show("agent")}${Object.values(counts.unattributed).some(Boolean) ? `; ${show("unattributed")}` : ""}.`;
+  });
+  const occurrenceCounts = [countsLine(total)];
+  // Eight flows fill the budget with mandatory metadata. Keep the independent
+  // learned-miss line by carrying the occurrence totals on the last verdict.
+  if (
+    verdicts.length +
+      reports.length +
+      humanFound.length +
+      decisionLines.length +
+      1 >
+    DIGEST_LINE_BUDGET
+  ) {
+    const last = verdicts.length - 1;
+    verdicts[last] = `${verdicts[last]} ${occurrenceCounts.pop()}`;
+  }
+  const mandatory =
+    verdicts.length +
+    occurrenceCounts.length +
+    reports.length +
+    humanFound.length +
+    decisionLines.length;
   let remaining = Math.max(0, DIGEST_LINE_BUDGET - mandatory);
   const coverageTake = Math.min(coverage.length, COVERAGE_LINES, remaining);
   remaining -= coverageTake;
@@ -154,7 +183,8 @@ export function renderDigest(
         }`,
     ),
     ...section(fixed, fixedTake, (more) => `…and ${more} more fixed`),
-    countsLine(total),
+    ...occurrenceCounts,
+    ...decisionLines,
     ...humanFound,
     ...reports,
   ];

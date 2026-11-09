@@ -19,6 +19,45 @@ export type ChangeSet = {
   files: Array<{ path: string; absolute: string }>;
 };
 
+/**
+ * The repository's target branch: the remote HEAD (origin first), else a
+ * local main or master. Undefined when none exists.
+ */
+export async function defaultBranch(
+  repository: string,
+  git: GitRead = readGit,
+): Promise<string | undefined> {
+  const optional = async (args: string[]) => {
+    try {
+      return (await git(repository, args)).trim();
+    } catch {
+      return undefined;
+    }
+  };
+  const remotes = (
+    await git(repository, [
+      "for-each-ref",
+      "--format=%(refname)",
+      "refs/remotes",
+    ])
+  )
+    .trim()
+    .split("\n")
+    .filter((ref) => ref.endsWith("/HEAD"))
+    .sort(
+      (a, b) =>
+        Number(b.startsWith("refs/remotes/origin/")) -
+          Number(a.startsWith("refs/remotes/origin/")) || a.localeCompare(b),
+    );
+  for (const ref of remotes) {
+    const branch = await optional(["symbolic-ref", "--quiet", ref]);
+    if (branch) return branch;
+  }
+  for (const ref of ["refs/heads/main", "refs/heads/master"])
+    if (await optional(["rev-parse", "--verify", ref])) return ref;
+  return undefined;
+}
+
 /** Read-only Git queries; compare immutable commit IDs and retain index-only edits. */
 export async function collectChanges(
   project: string,
@@ -61,33 +100,7 @@ export async function collectChanges(
         `invalid --changed base ${JSON.stringify(base)}; supply a commit or ref`,
       );
   } else {
-    const remotes = (
-      await git(repository, [
-        "for-each-ref",
-        "--format=%(refname)",
-        "refs/remotes",
-      ])
-    )
-      .trim()
-      .split("\n")
-      .filter((ref) => ref.endsWith("/HEAD"))
-      .sort(
-        (a, b) =>
-          Number(b.startsWith("refs/remotes/origin/")) -
-            Number(a.startsWith("refs/remotes/origin/")) || a.localeCompare(b),
-      );
-    let branch: string | undefined;
-    for (const ref of remotes) {
-      branch = await optional(["symbolic-ref", "--quiet", ref]);
-      if (branch) break;
-    }
-    if (!branch)
-      for (const ref of ["refs/heads/main", "refs/heads/master"]) {
-        if (await optional(["rev-parse", "--verify", ref])) {
-          branch = ref;
-          break;
-        }
-      }
+    const branch = await defaultBranch(repository, git);
     if (branch) resolvedBase = await optional(["merge-base", "HEAD", branch]);
     baseReason = branch ? `merge base with ${branch}` : "HEAD";
     if (!resolvedBase) {

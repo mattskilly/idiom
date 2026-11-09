@@ -303,7 +303,7 @@ Many screens are one interaction away from a state you already capture. A web st
 ]
 ```
 
-Exactly one of `url`, `urlFrom` and `from` is required. Chains may be several hops long (`named` from `versions` from `empty`) and may be declared in any order; an unknown id or a cycle fails `idiom validate` at `states[i].from`. A chained state inherits the root's URL source, every ancestor's `steps` (root first) and their `health.allow` rules; it does not inherit `expect`, `mask`, `settleMs`, `loading`, `loadingSettleMs`, `viewports`, `focus`, `probe`, `fresh`, `data` or `invariants`, so each state is judged on its own declaration. Every tuple still starts from a fresh browser context, and the probe's restoration replays the whole chain. A failing step names the state that declared it and the chain, for example `Step 1 (click) of "empty" reaching versions from empty: …`; steps of states without `from` keep the plain `Step 1 (click): …` form. Report coverage and `idiom coverage` show chained states as `versions from empty`, and capture metadata records `state.from` (the ancestors, nearest first). Toggles and `toggleStates` accept chained states as bases.
+Exactly one of `url`, `urlFrom` and `from` is required. Chains may be several hops long (`named` from `versions` from `empty`) and may be declared in any order; an unknown id or a cycle fails `idiom validate` at `states[i].from`. A chained state inherits the root's URL source, every ancestor's `steps` (root first) and their `health.allow` rules; it does not inherit `expect`, `mask`, `settleMs`, `loading`, `loadingSettleMs`, `viewports`, `focus`, `probe`, `fresh`, `intentionallyEmpty`, `data` or `invariants`, so each state is judged on its own declaration. Every tuple still starts from a fresh browser context, and the probe's restoration replays the whole chain. A failing step names the state that declared it and the chain, for example `Step 1 (click) of "empty" reaching versions from empty: …`; steps of states without `from` keep the plain `Step 1 (click): …` form. Report coverage and `idiom coverage` show chained states as `versions from empty`, and capture metadata records `state.from` (the ancestors, nearest first). Toggles and `toggleStates` accept chained states as bases.
 
 States that should share persistent chrome, such as the panels behind each rail button, can declare siblings for `sibling-chrome`. `siblingGroup: "<name>"` groups states across the whole run, including other flows; `group: "<label>"` groups states within the same flow. A state declares one or the other, not both (`idiom validate` reports `states[i].group`); Electron states accept both fields too. Toggle combinations inherit their base's declaration, while a state reached with `from` keeps only its own. Declarations are recorded in capture metadata (`state.siblingGroup` / `state.group`), so recapture after adding them. Groups are never inferred.
 
@@ -572,6 +572,9 @@ Besides the original ten checks, `check` and `review` run additional checks buil
 | `loading-state-missing` | on by default (needs the probe): an action whose result waits on a fetch/XHR request but shows no pending feedback within `checks.progressWithinMs` while the probe holds the response for `checks.loading.delayMs`; client-side route changes that leave the main content empty or unchanged |
 | `double-submit` | on by default (needs the probe): a trigger left enabled while its POST/PUT/PATCH/DELETE is pending, where a second activation issues a duplicate (observed and aborted, never sent) |
 | `nested-border` | on by default (`checks.nestedBorder`): a bordered box hugging one differently shaped bordered child within 4px |
+| `empty-frame` | on by default (`checks.emptyFrame`): a box at least 48×24px drawing a border or its own fill with nothing visible inside it, per viewport; `ignore` selectors, and a state's `intentionallyEmpty`, exempt boxes |
+| `repeated-row-ornament` | on by default (`checks.repeatedRowOrnament`), info: the same chip, badge, icon or mark on at least 80% of 5 or more items in a list, table, grid, menu or rail |
+| `glyph-over-icon` | on by default (`checks.glyphOverIcon`): a glyph or badge under 16px covering more than 25% of its box over another icon inside a control under 64px; count badges and status dots are exempt |
 | `spacing-target` | ordered border-box gaps outside declared spacing targets |
 
 Every rule, with why it matters, its severity, its source and how to configure or decide it, is listed in [rules.md](rules.md).
@@ -631,6 +634,9 @@ The font, link, focus, typography, image, layout-shift and interaction-shift che
     "lineLength": { "enabled": true, "max": 90 },
     "orphanWord": { "enabled": true, "maxChars": 7 },
     "nestedBorder": { "enabled": true },
+    "emptyFrame": { "enabled": true, "ignore": [".upload-target"] },
+    "repeatedRowOrnament": { "enabled": true },
+    "glyphOverIcon": { "enabled": true },
     "images": { "enabled": true, "distortionTolerance": 0.03 },
     "layoutShift": { "enabled": true, "max": 0.1 },
     "interactionShift": { "enabled": true, "minDistance": 4 }
@@ -934,6 +940,12 @@ Both checks use solid paint only: backgrounds composited through alpha and opaci
 { "id": "first-load", "description": "Editor opened cold", "url": "/editor", "expect": {}, "fresh": true }
 ```
 
+`empty-frame` reports a bordered or filled box with nothing visible inside it, at the viewports where it is empty. When a state shows a box empty on purpose, such as an upload area before anything is dropped, list it in the state's `intentionallyEmpty` selectors; the box and everything inside it are skipped for that state only. Use `checks.emptyFrame.ignore` for boxes that are meant to be empty everywhere:
+
+```json
+{ "id": "import", "description": "Import, nothing dropped yet", "url": "/import", "expect": {}, "intentionallyEmpty": ["#dropzone"] }
+```
+
 ### Layout invariants
 
 Declare structural layout constraints in a flow's optional `invariants` array. Web and Electron states can add their own assertions:
@@ -1056,6 +1068,8 @@ Both `directory` and `ignoreDirty` are optional. Omitting `directory` retains `.
 The same policy governs preflight, provenance and the final source snapshot after runtime teardown. `run.json` and tuple metadata retain `source.ignoredDirtyPaths`, a sorted audit of excluded dirty paths seen at either snapshot (including an empty array for an opted-in run). A rename is clean only if both old and new paths are excluded. Nonexcluded dirt at either snapshot keeps `source.dirty` true. If the source HEAD changes during capture, the initial commit remains the recorded identity, `source.changedDuringCapture` is true and baseline recording refuses. These are snapshots, not a continuous filesystem monitor. Older run records remain readable.
 
 To isolate capture from changes or merges in the invoking checkout, use [`capture` or `check --ref HEAD~1`](commands.md#capture-a-fixed-commit). Reports and baseline records still land in the invoking project.
+
+**The base cache.** `check --gate`, `check --changed` and `baseline advance` keep captures of a build's base commit in `<git-common-dir>/idiom/base-cache/<project key>/<flow>.json` (the project key hashes the project's path inside the repository). It sits inside Git's own directory, so it is never tracked, never makes a tree dirty, and is shared by every worktree of the checkout: a base one build captured is reused by the next. Entries use the baseline record format, keyed by commit, checks configuration hash and the Idiom build that wrote them (an entry from another Idiom version or build is never reused), with up to twenty records per flow. Deleting the directory is safe; the next gate captures the base again. See [Gate a build](commands.md#gate-a-build).
 
 ## Finding names
 

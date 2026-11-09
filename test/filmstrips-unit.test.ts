@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "playwright";
 import { PNG } from "pngjs";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { evidencePath } from "../src/artifact-path.js";
 import { summarizeFinding } from "../src/baseline/summary.js";
 import {
@@ -513,4 +513,106 @@ test("compressed caps cover idle baselines and earlier tuples in a lane, acknowl
   expect(budget.bytes).toBeGreaterThan(0);
   for (const capture of captures) capture.clear();
   expect(budget.bytes).toBe(0);
+});
+
+test("visual paints through 800ms preserve the frozen 120ms native boundary and settle pixels", async () => {
+  const directory = await root();
+  const pixel = (rgb: number[]) => {
+    const png = new PNG({ width: 1, height: 1 });
+    png.data.set([...rgb, 255]);
+    return PNG.sync.write(png).toString("base64");
+  };
+  const baseline = pixel([255, 0, 0]);
+  const native = pixel([0, 0, 255]);
+  const later = pixel([255, 255, 0]);
+  const last = pixel([255, 0, 255]);
+  const session = Object.assign(new EventEmitter(), {
+    send: async (command: string) => {
+      if (command === "Page.startScreencast") emit(baseline, 1000);
+      return {};
+    },
+    detach: async () => {},
+  });
+  const emit = (data: string, timestamp: number) =>
+    session.emit("Page.screencastFrame", {
+      data,
+      sessionId: 1,
+      metadata: {
+        timestamp: timestamp / 1000,
+        deviceWidth: 1,
+        deviceHeight: 1,
+        pageScaleFactor: 1,
+        scrollOffsetX: 0,
+        scrollOffsetY: 0,
+      },
+    });
+  let mark:
+    | ((_source: object, token: string, time: number) => void)
+    | undefined;
+  const page = Object.assign(new EventEmitter(), {
+    context: () => ({ newCDPSession: async () => session }),
+    viewportSize: () => ({ width: 1, height: 1 }),
+    exposeBinding: async (_name: string, fn: typeof mark) => {
+      mark = fn;
+    },
+    evaluate: async (
+      _fn: unknown,
+      arg?: { token?: string; requests?: string[] },
+    ) => {
+      if (arg?.requests) return true;
+      if (arg?.token) mark?.({}, arg.token, 1000);
+      return { time: 1900 };
+    },
+  }) as unknown as Page;
+  const capture = new FilmstripCapture(
+    filmstripConfigSchema.parse({
+      actions: ["#go"],
+      offsetsMs: [0, 100, 400, 800],
+    }),
+    checksConfigFrom(),
+  );
+  const source = linkRecording(
+    action({ durationMs: 120, frames: [] }),
+    "native",
+  );
+  const frozen = structuredClone(source);
+  const clock = vi.spyOn(Date, "now").mockReturnValue(1900);
+  try {
+    await capture.start(
+      page,
+      { source: source.source, kind: source.kind, selector: source.selector },
+      "native",
+    );
+    emit(pixel([0, 255, 0]), 1100);
+    emit(native, 1120);
+    capture.freeze(source);
+    emit(later, 1400);
+    emit(last, 1800);
+    await capture.finish(source);
+    await capture.dispose();
+    const manifest = await capture.publish(directory, tuple([source]));
+    const film = manifest.actions[0];
+    const diagnostic = JSON.stringify(manifest);
+    expect(film?.status, diagnostic).toBe("complete");
+    expect(film?.settleMs, diagnostic).toBe(120);
+    expect(film?.settleMs, diagnostic).toBeLessThan(400);
+    for (const [slot, timestamp, rgb] of [
+      ["settle", 1120, [0, 0, 255]],
+      [400, 1400, [255, 255, 0]],
+      [800, 1800, [255, 0, 255]],
+    ] as const) {
+      const frame = film?.frames.find((f) => f.slot === slot);
+      expect(frame?.timestamp, diagnostic).toBe(timestamp);
+      if (!frame?.path)
+        throw new Error(`Missing ${slot} pixels: ${diagnostic}`);
+      const png = decodeFrame(await readFile(join(directory, frame.path)));
+      expect([...png.data.subarray(0, 3)], diagnostic).toEqual(rgb);
+    }
+    expect(source).toEqual(frozen);
+    expect(source.durationMs).toBe(120);
+  } finally {
+    clock.mockRestore();
+    await capture.dispose();
+    capture.clear();
+  }
 });

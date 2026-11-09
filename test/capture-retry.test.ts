@@ -276,7 +276,12 @@ test("real navigation and readiness timeouts recover after other tuples, with do
   } finally {
     await rm(f.directory, { recursive: true, force: true });
   }
-}, 30000);
+  // Harness allowance, not a product deadline: max 36.8s measured under three
+  // concurrent gates (file-293 proof) and 14.8s with two
+  // (docs/testing/give-four-more.md), past the old 30s. ~3x headroom; the
+  // 500/1000ms navigation/readiness doubling and screenshot geometry are
+  // asserted unchanged.
+}, 120_000);
 
 test.each([
   [true, false],

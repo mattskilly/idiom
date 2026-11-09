@@ -12,6 +12,8 @@ export const GATE_DEFAULTS = {
   buildMs: 0,
   startMs: 30_000,
   checksMs: 5_000,
+  /** A detached worktree of the base plus its dependency install. */
+  refPrepareMs: 30_000,
 } as const;
 
 export const tupleKey = (state: string, viewport: string, scheme: string) =>

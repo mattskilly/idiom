@@ -107,7 +107,7 @@ test("busy capture skips baseline initialization, preserves failed coverage and 
     const replay = await exec(
       process.execPath,
       [
-        resolve("dist/cli.js"),
+        resolve("build/cli.js"),
         "check",
         "fixture",
         "--all",

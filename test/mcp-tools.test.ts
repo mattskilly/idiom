@@ -384,6 +384,8 @@ test("idiom_choose records exactly the human's reference with the reason verbati
     decision: "accept",
     reason,
     designChoice: { reference: "figma" },
+    actor: "agent",
+    agent: "mcp",
   });
 });
 

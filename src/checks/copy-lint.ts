@@ -1,6 +1,8 @@
 import { copyTermKey, mergeCopyTerms } from "../copy-policy.js";
+import { copyQuoteSegments } from "./copy-quotes.js";
 import { paintedGate } from "./painted.js";
 import {
+  codeContext,
   codeTags,
   isVisuallyHidden,
   ran,
@@ -204,13 +206,14 @@ export const copyLintCheck: DeterministicCheck = {
         verification: verify(this.id, { selector, rule, ...params }),
       });
     };
+    const { isCode, ancestry } = codeContext(
+      tuple.observations?.version === 2 ? tuple.observations.elements : [],
+    );
     const copy = observed.elements.filter(
       (element) =>
         !isVisuallyHidden(element) &&
         !codeTags.has(element.tag) &&
-        !/(?:^|\/)(?:pre|code|kbd|samp|textarea)\[/.test(
-          element.structuralPath,
-        ) &&
+        !isCode(element) &&
         element.directText.trim() !== "" &&
         element.attributes.translate !== "no",
     );
@@ -284,25 +287,6 @@ export const copyLintCheck: DeterministicCheck = {
           masked.replace(pattern, (match) => " ".repeat(match.length)),
         text,
       );
-    // Every observed element, not just signalled ones, so ancestors resolve.
-    const byPath = new Map(
-      (tuple.observations?.version === 2
-        ? tuple.observations.elements
-        : []
-      ).map((element) => [element.structuralPath, element]),
-    );
-    const ancestry = (path: string) => {
-      const chain = [];
-      for (
-        let end = path.length;
-        end > 0;
-        end = path.lastIndexOf("/", end - 1)
-      ) {
-        const element = byPath.get(path.slice(0, end));
-        if (element !== undefined) chain.push(element);
-      }
-      return chain;
-    };
     const anchorEvidence = (path: string) => {
       const chain = ancestry(path);
       const anchorIndex = chain.findIndex((element) => element.tag === "a");
@@ -379,7 +363,18 @@ export const copyLintCheck: DeterministicCheck = {
           `${element.selector} uses a human label instead of "${match[0]}".`,
         );
       }
-      const stutter = text.match(xOnX) ?? text.match(doubled);
+      const semanticQuote = ancestry(element.structuralPath).some(
+        (ancestor) => ancestor.tag === "q" || ancestor.tag === "blockquote",
+      );
+      const segments =
+        element.copyTextSegments ??
+        (semanticQuote ? [] : copyQuoteSegments(text));
+      const stutter =
+        segments
+          .filter((segment) => !segment.quoted)
+          .map((segment) => segment.text.replace(/\s+/g, " ").trim())
+          .map((segment) => segment.match(xOnX) ?? segment.match(doubled))
+          .find((match) => match !== null) ?? null;
       if (stutter !== null)
         report(
           "idiom:repeated-words",

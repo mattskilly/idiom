@@ -12,11 +12,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { afterEach, expect, test } from "vitest";
+import { chromium } from "playwright";
+import { afterEach, expect, test, vi } from "vitest";
 import {
   baselineGapDiagnostic,
   captureCompleteness,
 } from "../src/baseline/record.js";
+import { createBrowserLauncher } from "../src/capture/browser.js";
 import { CaptureInterrupted } from "../src/capture/ownership.js";
 import { runCapture } from "../src/capture/run.js";
 import {
@@ -26,6 +28,10 @@ import {
   runOwnerGone,
 } from "../src/capture/run-lifecycle.js";
 import { type RunRecord, runRecordSchema } from "../src/capture/run-record.js";
+import {
+  captureLaunchOptions,
+  scrollbarLaunchOptions,
+} from "../src/capture/scrollbars.js";
 import type { BrowserSession, BrowserTuple } from "../src/capture/types.js";
 import { freePort } from "./doctor-support.js";
 import { fixtureCommand } from "./support/fixture-server.js";
@@ -34,7 +40,7 @@ import { toggleFlow, toggleProject } from "./toggle-support.js";
 // A killed run leaves a visible record of what it finished. A graceful
 // interrupt says so at once; a hard kill is reported by the next command.
 
-const CLI = join(import.meta.dirname, "..", "dist", "cli.js");
+const CLI = join(import.meta.dirname, "..", "build", "cli.js");
 const SERVER = join(
   import.meta.dirname,
   "fixtures",
@@ -159,26 +165,35 @@ async function record(run: string): Promise<RunRecord> {
   );
 }
 
-/** Polls the visible ledger; never sleeps an assumed capture duration. */
+async function committedRun(directory: string): Promise<string | undefined> {
+  const [name] = await runDirectories(directory);
+  if (name === undefined) return undefined;
+  const run = join(directory, ".idiom", "reports", name);
+  try {
+    const current = await record(run);
+    if ((current.completedTuples?.length ?? 0) > 0) return run;
+  } catch {
+    // The record is replaced atomically, but may not exist yet.
+  }
+  return undefined;
+}
+
+/**
+ * Polls the visible ledger until a tuple commits or the CLI exits; the test
+ * timeout is the only bound. Never assumes how long a capture takes.
+ */
 async function committed(
   directory: string,
   child: ChildProcess,
   stderr: () => string,
 ) {
-  for (let attempt = 0; attempt < 600; attempt++) {
-    const [name] = await runDirectories(directory);
-    if (name !== undefined) {
-      const run = join(directory, ".idiom", "reports", name);
-      try {
-        const current = await record(run);
-        if ((current.completedTuples?.length ?? 0) > 0) return run;
-      } catch {
-        // The record is replaced atomically, but may not exist yet.
-      }
-    }
-    if (child.exitCode !== null) break;
+  while (child.exitCode === null && child.signalCode === null) {
+    const run = await committedRun(directory);
+    if (run !== undefined) return run;
     await delay(50);
   }
+  const run = await committedRun(directory);
+  if (run !== undefined) return run;
   throw new Error(`the capture never committed a tuple: ${stderr()}`);
 }
 
@@ -221,6 +236,28 @@ for (const signal of ["SIGTERM", "SIGINT"] as const)
       await completeRunNames(join(directory, ".idiom", "reports")),
     ).toEqual([]);
   }, 90_000);
+
+test("capture browsers leave SIGINT and SIGTERM to Idiom's interrupt", async () => {
+  // Playwright's handlers would race the interrupt record; on SIGINT they
+  // call process.exit(130) before run.json is sealed.
+  expect(captureLaunchOptions).toMatchObject({
+    ...scrollbarLaunchOptions,
+    handleSIGINT: false,
+    handleSIGTERM: false,
+  });
+  expect(captureLaunchOptions).not.toHaveProperty("handleSIGHUP");
+  const launch = vi
+    .spyOn(chromium, "launch")
+    .mockRejectedValue(new Error("no browser in this test"));
+  try {
+    await expect(createBrowserLauncher()()).rejects.toThrow(
+      "no browser in this test",
+    );
+    expect(launch).toHaveBeenCalledWith(captureLaunchOptions);
+  } finally {
+    launch.mockRestore();
+  }
+});
 
 test("a SIGKILLed run is reported once by the next check", async () => {
   const { directory, hold } = await heldProject();
@@ -418,6 +455,33 @@ test("two concurrent recoverers produce one notice, and a stale lock is reclaime
     "Run second was interrupted (process gone) after 0 of 3 tuples.",
   );
   await expect(access(join(second, ".recovery-lock"))).rejects.toThrow();
+});
+
+test("concurrent recoverers never fail on lock release and leave no lock", async () => {
+  // A contender's reclaim claim can land inside the holder's lock between the
+  // release's directory read and its rmdir; release must never fail on it.
+  for (let round = 0; round < 40; round++) {
+    const { directory } = await lifecycleDirectory();
+    const messages: string[] = [];
+    const deps = {
+      exists: (pid: number) => pid === process.pid,
+      diagnostic: (message: string) => messages.push(message),
+    };
+    const settled = await Promise.allSettled(
+      Array.from({ length: 6 }, () => recoverInterruptedRun(directory, deps)),
+    );
+    expect(
+      settled.filter((result) => result.status === "rejected"),
+      `round ${round}`,
+    ).toEqual([]);
+    expect(messages, `round ${round}`).toHaveLength(1);
+    expect(
+      (await readdir(directory)).filter((name) =>
+        name.startsWith(".recovery-lock"),
+      ),
+      `round ${round}`,
+    ).toEqual([]);
+  }
 });
 
 test("readers skip running and interrupted runs even with complete-looking files, and keep legacy runs", async () => {

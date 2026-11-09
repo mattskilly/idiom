@@ -148,8 +148,11 @@ export async function withCaptureOwnership<T>(
         `capture failed on an unhandled browser error: ${String(reason).split("\n")[0]}`,
       ),
     );
-  process.once("SIGINT", sigint);
-  process.once("SIGTERM", sigterm);
+  // Persistent, not once: a repeated signal during teardown must not fall
+  // through to Node's default action and kill the process before the record
+  // is sealed. Aborting is idempotent; teardown is bounded by the grace.
+  process.on("SIGINT", sigint);
+  process.on("SIGTERM", sigterm);
   process.on("unhandledRejection", unhandled);
   let failure: unknown;
   let result: T | undefined;

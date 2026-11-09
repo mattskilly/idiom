@@ -607,6 +607,21 @@ export const checksConfigSchema = z
       .object({ enabled: z.boolean().default(true) })
       .strict()
       .prefault({}),
+    emptyFrame: z
+      .object({
+        enabled: z.boolean().default(true),
+        ignore: z.array(z.string().trim().min(1)).default([]),
+      })
+      .strict()
+      .prefault({}),
+    repeatedRowOrnament: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    glyphOverIcon: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
     images: z
       .object({
         enabled: z.boolean().default(true),
@@ -653,13 +668,22 @@ export type CheckMark = {
     | "cta"
     | "adjacent-region"
     | "sibling-region"
-    | "brief";
+    | "brief"
+    | "empty-ok";
   selector: string;
 };
 
 /** A decided brief's assertion selectors, resolved like configured marks. */
 export function briefMarks(selectors: readonly string[] = []): CheckMark[] {
   return selectors.map((selector) => ({ purpose: "brief" as const, selector }));
+}
+
+/** Boxes declared intentionally empty; the empty-frame scan skips them. */
+export function emptyOkMarks(selectors: readonly string[] = []): CheckMark[] {
+  return [...new Set(selectors)].map((selector) => ({
+    purpose: "empty-ok" as const,
+    selector,
+  }));
 }
 
 /**
@@ -728,6 +752,7 @@ export function checkMarks(checks: ChecksSettings): CheckMark[] {
       purpose: "sibling-region" as const,
       selector,
     })),
+    ...emptyOkMarks(checks.emptyFrame.ignore),
   ];
 }
 

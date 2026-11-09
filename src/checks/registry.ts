@@ -21,10 +21,12 @@ import { designDriftCheck } from "./design-drift.js";
 import { detachedFlyoutCheck } from "./detached-flyout.js";
 import { dialogShellCheck } from "./dialog-shell.js";
 import { disabledHighlightCheck } from "./disabled-highlight.js";
+import { disclosureAffordanceCheck } from "./disclosure-affordance.js";
 import { disguisedControlCheck } from "./disguised-control.js";
 import { focusReturnCheck, popoverDismissalCheck } from "./dismissal.js";
 import { duplicateEntryCheck } from "./duplicate-entry.js";
 import { elementOverlapCheck } from "./element-overlap.js";
+import { emptyFrameCheck } from "./empty-frame.js";
 import { emptyStateCheck } from "./empty-state.js";
 import { errorTextCheck } from "./error-text.js";
 import { errorStateMissingCheck, retryBlockedCheck } from "./failure-state.js";
@@ -34,8 +36,10 @@ import { fontLoadingCheck } from "./font-loading.js";
 import { frameCheck } from "./frame.js";
 import { freshStateCheck } from "./fresh-state.js";
 import { glyphIconCheck } from "./glyph-icon.js";
+import { glyphOverIconCheck } from "./glyph-over-icon.js";
 import { groupInvariantsCheck } from "./group-invariants.js";
 import { headingStructureCheck } from "./heading-structure.js";
+import { iconMeaningCheck } from "./icon-meaning.js";
 import { imageDistortionCheck } from "./image-distortion.js";
 import { interactionShiftCheck } from "./interaction-shift.js";
 import { layoutInvariantsCheck } from "./layout-invariants.js";
@@ -57,6 +61,7 @@ import {
 import { motionCheck } from "./motion.js";
 import { nativeControlCheck } from "./native-control.js";
 import { nestedBorderCheck } from "./nested-border.js";
+import { openerCannotCloseCheck } from "./opener-cannot-close.js";
 import { orphanWordCheck } from "./orphan-word.js";
 import { overflowClipCheck } from "./overflow-clip.js";
 import { pageContentCheck } from "./page-content.js";
@@ -64,6 +69,7 @@ import { parentSelectionCheck } from "./parent-selection.js";
 import { primaryRegionCheck } from "./primary-region.js";
 import { progressAffordanceCheck } from "./progress-affordance.js";
 import { publishedBudgetCheck } from "./published-budget.js";
+import { repeatedRowOrnamentCheck } from "./repeated-row-ornament.js";
 import { responsiveBreakCheck } from "./responsive-break.js";
 import {
   revealedAncestor,
@@ -179,6 +185,12 @@ export const signalChecks: DeterministicCheck[] = [
   focusReturnCheck,
   spacingTargetCheck,
   detachedFlyoutCheck,
+  disclosureAffordanceCheck,
+  openerCannotCloseCheck,
+  iconMeaningCheck,
+  emptyFrameCheck,
+  repeatedRowOrnamentCheck,
+  glyphOverIconCheck,
 ];
 
 /**
@@ -213,6 +225,12 @@ export function checksConfigFrom(
     lineLength: { ...merged.lineLength },
     orphanWord: { ...merged.orphanWord },
     nestedBorder: { ...merged.nestedBorder },
+    emptyFrame: {
+      enabled: merged.emptyFrame.enabled,
+      ignore: [...merged.emptyFrame.ignore],
+    },
+    repeatedRowOrnament: { ...merged.repeatedRowOrnament },
+    glyphOverIcon: { ...merged.glyphOverIcon },
     images: { ...merged.images },
     layoutShift: { ...merged.layoutShift },
     interactionShift: { ...merged.interactionShift },

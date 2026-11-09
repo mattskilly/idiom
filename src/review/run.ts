@@ -57,10 +57,12 @@ import {
   acknowledgements as acknowledgementEntries,
   decisionViews,
   judgments,
-  readDecisionLogEntries,
+  readIdentifiedDecisions,
   ruleRejection,
 } from "../decisions/log.js";
 import { tupleDesigns } from "../design/evidence.js";
+import { appliedDecisions } from "../digest/decisions.js";
+import type { AppliedDecision } from "../digest/record.js";
 import { IdiomError } from "../errors.js";
 import { findingsMissEvidence, summarizeMisses } from "../learn/misses.js";
 import type { ReportCoverage } from "../report/coverage.js";
@@ -177,6 +179,7 @@ export type ReviewRunResult = PaintedCoverageReport & {
   /** Findings past the review's attention cap (model.maxFindings). */
   deferredFindings: Finding[];
   deterministicOccurrences?: Finding[];
+  appliedDecisions?: AppliedDecision[];
   /**
    * Deterministic occurrences a rule-scope rejection or a rules.json
    * suppression withheld, marked rejected. Collected with
@@ -548,9 +551,10 @@ export async function runReview(options: {
   });
   const findingNameWarning = findingNameDivergenceWarning(catalog.names);
   const naming = new FindingNamingSession(catalog.names);
-  const decisionLog = await readDecisionLogEntries(
+  const identifiedDecisions = await readIdentifiedDecisions(
     validated.stateProjectDirectory ?? validated.projectDirectory,
   );
+  const decisionLog = identifiedDecisions.map((entry) => entry.record);
   const decisions = judgments(decisionLog);
   const views = decisionViews(decisions);
   const ruleRejections = [...views.byRuleFingerprint.values()].filter(
@@ -1106,6 +1110,19 @@ export async function runReview(options: {
       ? {}
       : { deterministicOccurrences }),
     ...(rejectedOccurrences === undefined ? {} : { rejectedOccurrences }),
+    ...(deterministicOccurrences === undefined
+      ? {}
+      : {
+          appliedDecisions: appliedDecisions({
+            catalog,
+            identified: identifiedDecisions,
+            occurrences: [
+              ...deterministicOccurrences,
+              ...(rejectedOccurrences ?? []),
+            ],
+            suppressed: deterministic.suppressed,
+          }),
+        }),
     unruledDecisionsPath,
     reportPath,
     htmlReportPath,

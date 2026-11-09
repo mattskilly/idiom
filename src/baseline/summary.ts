@@ -4,6 +4,7 @@ import { acceptanceText } from "../findings/presentation.js";
 import type { ReviewRunResult } from "../review/run.js";
 import type { Finding } from "../schemas/finding.js";
 import { type ValidationResult, validateProject } from "../validation.js";
+import type { BaseComparison } from "./base.js";
 import { compareRunToBaseline } from "./compare.js";
 import { tupleCoordinateKey } from "./coordinate.js";
 
@@ -108,6 +109,7 @@ export async function summarizeBaselineComparison(
     baselineFile?: string | undefined;
     project?: string | undefined;
     cwd?: string | undefined;
+    comparison?: BaseComparison | undefined;
   },
   result: ReviewRunResult,
   material: Finding[],
@@ -124,6 +126,7 @@ export async function summarizeBaselineComparison(
     flow,
     baselineFile: options.baselineFile,
     comparisonCommit: options.comparisonCommit,
+    comparison: options.comparison,
     cwd: options.cwd,
     runDirectory: result.runDirectory,
     // Acknowledged occurrences never enter the comparison: neither new nor,

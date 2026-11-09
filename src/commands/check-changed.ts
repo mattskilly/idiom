@@ -2,7 +2,15 @@ import {
   beginCheckRecording,
   completeCheckRecording,
 } from "../agent/check-state.js";
+import {
+  captureBaseRecord,
+  missingScope,
+  resolveBaseComparison,
+  type SettledComparison,
+  settleBaseComparison,
+} from "../baseline/base.js";
 import { resolveRunBaseline } from "../baseline/compare.js";
+import { checksConfigHash } from "../baseline/config-hash.js";
 import { resolveCaptureScope } from "../capture/scope.js";
 import { collectChanges } from "../changed/git.js";
 import {
@@ -13,9 +21,12 @@ import {
 import { IdiomError } from "../errors.js";
 import { loadRunTuples, resolveStoredRun } from "../review/artifacts.js";
 import type { ReviewRunResult } from "../review/run.js";
-import { isWebFlow } from "../schemas/flow.js";
-import { productionConfigExample } from "../schemas/project.js";
-import { validateProject } from "../validation.js";
+import { type Flow, isWebFlow } from "../schemas/flow.js";
+import {
+  productionConfigExample,
+  resolveGateConfig,
+} from "../schemas/project.js";
+import { type ValidationResult, validateProject } from "../validation.js";
 import {
   type CheckOptions,
   type CheckSummary,
@@ -26,6 +37,11 @@ export type ChangedCheckOptions = Omit<CheckOptions, "flow"> & {
   flow?: string | undefined;
   changed: true | string;
   materializeAllDeterministic?: boolean;
+  /**
+   * The gate's own comparison per flow (decided within its budget); unset,
+   * the default mode resolves and, when needed, captures the base itself.
+   */
+  comparisonFor?: ((flow: string) => SettledComparison) | undefined;
 };
 export type ChangedCheckEntry =
   | { flow: string; status: "not-checked"; reason: string }
@@ -122,17 +138,18 @@ export async function checkChanged(
       throw new IdiomError(
         `production capture requires server.production; ${productionConfigExample}`,
       );
-    if (!options.all && options.baseline === undefined) {
+    if (
+      !options.all &&
+      options.baseline === undefined &&
+      (options.sinceBaseline || options.baselineFile !== undefined)
+    ) {
       const { selected, path } = await resolveRunBaseline({
         validated,
         flow,
         baselineFile: options.baselineFile,
         cwd: options.cwd,
       });
-      if (
-        !selected &&
-        (options.sinceBaseline || options.baselineFile !== undefined)
-      )
+      if (!selected)
         throw new IdiomError(
           `no recorded baseline for "${flow.id}" reachable from HEAD in ${path}; run idiom baseline record ${flow.id}`,
         );
@@ -149,7 +166,19 @@ export async function checkChanged(
     (state) => !selectedKeys.has(stateKey(state)),
   );
   const checks: ChangedCheckEntry[] = [];
-  const { changed: _changed, flow: _flow, ...checkOptions } = options;
+  const {
+    changed: _changed,
+    flow: _flow,
+    comparisonFor,
+    ...checkOptions
+  } = options;
+  // Default mode judges findings against the build's base: present there,
+  // a finding is pre-existing, whatever the recorded baseline says.
+  const baseMode =
+    !options.all &&
+    options.baseline === undefined &&
+    !options.sinceBaseline &&
+    options.baselineFile === undefined;
   let checkedStates = 0;
   const combined = {
     selectedTuples: 0,
@@ -173,12 +202,25 @@ export async function checkChanged(
       continue;
     }
     options.dependencies?.capture?.signal?.throwIfAborted();
+    const settled = !baseMode
+      ? undefined
+      : comparisonFor !== undefined
+        ? comparisonFor(flow.id)
+        : await changedBaseComparison(options, validated, flow, scope, {
+            base: changes.resolvedBase,
+          });
     const checked = await checkWithReview({
       ...checkOptions,
       flow: flow.id,
       scope,
       bootstrapBaseline: false,
       recordAgentCheck: false,
+      ...(settled?.comparison === undefined
+        ? {}
+        : { comparison: settled.comparison }),
+      ...(settled?.unavailable === undefined
+        ? {}
+        : { comparisonUnavailable: settled.unavailable }),
     });
     checks.push({ flow: flow.id, status: "checked", ...checked });
     const coverage = checked.summary.coverage;
@@ -217,6 +259,51 @@ export async function checkChanged(
     checkedStates,
     ...(findingNameWarning === undefined ? {} : { findingNameWarning }),
   };
+}
+
+/** `check --changed` has no budget: it captures the base whenever needed. */
+async function changedBaseComparison(
+  options: ChangedCheckOptions,
+  validated: ValidationResult,
+  flow: Flow,
+  scope: NonNullable<CheckOptions["scope"]>,
+  { base }: { base: string },
+): Promise<SettledComparison> {
+  const resolution = await resolveBaseComparison({
+    validated,
+    flow: flow.id,
+    base,
+    tuples: resolveCaptureScope({
+      project: validated.project,
+      flow,
+      scope,
+    }).selected.map((tuple) => ({
+      state: tuple.state.id,
+      viewport: tuple.viewport.name,
+      scheme: tuple.colorScheme,
+    })),
+    nonUi: resolveGateConfig(validated.project).nonUi,
+  });
+  return settleBaseComparison({
+    resolution,
+    flow: flow.id,
+    configHash: checksConfigHash(validated.project.checks),
+    capture: () =>
+      captureBaseRecord({
+        base,
+        flow: flow.id,
+        project: options.project,
+        cwd: options.cwd,
+        scope: missingScope(resolution.missing),
+        prod: options.prod,
+        probeBudgetMs: options.probeBudgetMs,
+        probeDisabled: options.probeDisabled,
+        probeRegions: options.probeRegions,
+        cachePath: resolution.cachePath,
+        dependencies: options.dependencies,
+      }),
+    signal: options.dependencies?.capture?.signal,
+  });
 }
 
 export function renderChangedSelection(

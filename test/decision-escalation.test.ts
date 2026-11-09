@@ -6,8 +6,10 @@ import { run } from "../src/cli.js";
 import { initProject } from "../src/commands/init.js";
 import {
   appendDecision,
+  appendDecisionBatch,
   readDecisionLog,
   readDecisionLogEntries,
+  readRawDecisionLog,
 } from "../src/decisions/log.js";
 import { pendingDecisions, pendingForRun } from "../src/decisions/pending.js";
 import { decisionQuestion } from "../src/decisions/question.js";
@@ -409,4 +411,59 @@ test("current checkout wins a run collision; otherwise newest observation wins a
       (q) => q.kind === "unruled",
     )?.question,
   ).toBe("Newest primary question?");
+});
+
+test("reattribution and changing transports keep identical ruling/reference retries idempotent", async () => {
+  for (const mode of [
+    ["--finding", "finding-1", "--choose", "prototype"],
+    ["--decision", "ruling-1", "--candidate", "1"],
+  ]) {
+    const f = await fixture();
+    const args = [
+      ...mode,
+      "--reason",
+      "Approved answer",
+      "--build",
+      "external-build",
+      "--escalation",
+      "same-answer",
+      "--actor",
+      "human",
+    ];
+    expect((await cli(f.root, args)).status).toBe(0);
+    const first = (await readRawDecisionLog(f.root))[0];
+    if (!first || first.record.decision === "reattribute")
+      throw new Error("missing original answer");
+    await appendDecisionBatch(f.root, [
+      {
+        decision: "reattribute",
+        at: new Date().toISOString(),
+        commit: first.record.commit,
+        findingId: first.record.findingId,
+        fingerprint: first.record.fingerprint,
+        target: first.source,
+        actor: "agent",
+        agent: "mcp",
+        note: "correct transport",
+      },
+    ]);
+    const path = join(f.root, ".idiom/decisions.jsonl");
+    const corrected = await readFile(path, "utf8");
+    expect((await cli(f.root, args)).status).toBe(0);
+    expect(await readFile(path, "utf8")).toBe(corrected);
+    expect(
+      (
+        await cli(
+          f.root,
+          args.map((value) =>
+            value === "Approved answer" ? "Changed answer" : value,
+          ),
+        )
+      ).status,
+    ).toBe(1);
+    expect((await readDecisionLogEntries(f.root))[0]).toMatchObject({
+      actor: "agent",
+      agent: "mcp",
+    });
+  }
 });

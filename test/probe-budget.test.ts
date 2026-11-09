@@ -78,3 +78,18 @@ test("a wall-clock limit caps each share from the moment its state starts", () =
   expect(a.shareMs()).toBe(700);
   expect(extended).toBe(200);
 });
+
+test("a past flow deadline gives the starting state a share of zero", () => {
+  const leases = createFlowProbeBudget(1000, [{ id: "landing", count: 2 }], {
+    deadlineAt: 100,
+    now: () => 500,
+  });
+  expect(leases.get("landing")?.shareMs()).toBe(0);
+});
+
+test("the deadline constructor still rejects non-positive and non-finite durations", () => {
+  for (const ms of [0, -1, Number.NaN, Number.POSITIVE_INFINITY])
+    expect(() => new Deadline("state", ms, () => "x")).toThrow(
+      "deadline duration must be finite and positive",
+    );
+});

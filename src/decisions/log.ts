@@ -5,15 +5,24 @@ import { noteUnknownRecord } from "../records/unknown.js";
 import {
   type Acknowledgement,
   acknowledgementSchema,
+  attributionCorrectionSchema,
   type Decision,
   type DecisionLogEntry,
   decisionLogEntrySchema,
   decisionSchema,
   isAcknowledgement,
+  type OrdinaryDecision,
   type RulingDecision,
   rulingDecisionSchema,
 } from "../schemas/decision.js";
 import type { Finding } from "../schemas/finding.js";
+
+import { type ActorMetadata, newActor, resolveActor } from "./actor.js";
+import {
+  effectiveAttribution,
+  type IdentifiedDecision,
+  lineHash,
+} from "./attribution.js";
 
 export type DecisionViews = {
   byFindingId: Map<string, Decision>;
@@ -28,6 +37,7 @@ export function decisionLogPath(projectDirectory: string): string {
 
 export const knownDecisionTypes: readonly string[] = [
   "ruling",
+  "reattribute",
   ...decisionSchema.shape.decision.options,
   ...acknowledgementSchema.shape.decision.options,
 ];
@@ -57,7 +67,7 @@ function parseJson(source: string, path: string, lineNumber: number): unknown {
     return JSON.parse(source);
   } catch (error) {
     throw new IdiomError(
-      `invalid decision log ${path} at line ${lineNumber}: ${error instanceof Error ? error.message : String(error)}`,
+      `invalid decision log ${path} at line ${lineNumber}: malformed JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -94,17 +104,19 @@ export function entryIssues(
   const schema =
     kind === "acknowledge" || kind === "unacknowledge"
       ? acknowledgementSchema
-      : kind === "ruling"
-        ? rulingDecisionSchema
-        : decisionSchema;
+      : kind === "reattribute"
+        ? attributionCorrectionSchema
+        : kind === "ruling"
+          ? rulingDecisionSchema
+          : decisionSchema;
   const branch = schema.safeParse(value);
   return branch.success ? issues : branch.error.issues;
 }
 
 /** Every known line: judgments and acknowledgements, in log order. */
-export async function readDecisionLogEntries(
+export async function readRawDecisionLog(
   projectDirectory: string,
-): Promise<DecisionLogEntry[]> {
+): Promise<IdentifiedDecision<DecisionLogEntry>[]> {
   const path = decisionLogPath(projectDirectory);
   let source: string;
   try {
@@ -115,7 +127,14 @@ export async function readDecisionLogEntries(
       `cannot read decision log ${path}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  const records: DecisionLogEntry[] = [];
+  return parseDecisionLogSource(source, path);
+}
+
+function parseDecisionLogSource(
+  source: string,
+  path: string,
+): IdentifiedDecision<DecisionLogEntry>[] {
+  const records: IdentifiedDecision<DecisionLogEntry>[] = [];
   for (const [index, line] of source.split(/\r?\n/).entries()) {
     if (line.trim() === "") continue;
     const value = parseJson(line, path, index + 1);
@@ -124,9 +143,30 @@ export async function readDecisionLogEntries(
       noteUnknownRecord({ family: "decision", path, line: index + 1, type });
       continue;
     }
-    records.push(validateEntry(value, path, index + 1));
+    records.push({
+      source: { line: index + 1, sha256: lineHash(line) },
+      record: validateEntry(value, path, index + 1),
+    });
   }
+  effectiveAttribution(records, path);
   return records;
+}
+
+export async function readIdentifiedDecisions(
+  projectDirectory: string,
+): Promise<IdentifiedDecision[]> {
+  return effectiveAttribution(
+    await readRawDecisionLog(projectDirectory),
+    decisionLogPath(projectDirectory),
+  );
+}
+
+export async function readDecisionLogEntries(
+  projectDirectory: string,
+): Promise<OrdinaryDecision[]> {
+  return (await readIdentifiedDecisions(projectDirectory)).map(
+    (entry) => entry.record,
+  );
 }
 
 /** Judgments only (accept/reject); acknowledgements never read as either. */
@@ -203,6 +243,7 @@ export async function appendDecision(options: {
   reason?: string | undefined;
   designChoice?: Decision["designChoice"] | undefined;
   provenance?: Decision["provenance"] | undefined;
+  attribution?: ActorMetadata | undefined;
   now?: (() => Date) | undefined;
 }): Promise<{ path: string; record: Decision }> {
   // Validate the complete existing boundary before extending it.
@@ -215,7 +256,10 @@ export async function appendDecision(options: {
     decision: options.decision,
     scope: options.scope,
     ...(options.reason === undefined ? {} : { reason: options.reason }),
-    actor: "human",
+    ...newActor(
+      options.attribution ??
+        (await resolveActor({ projectDirectory: options.projectDirectory })),
+    ),
     ...(options.provenance === undefined
       ? {}
       : { provenance: options.provenance }),
@@ -233,7 +277,16 @@ async function appendLine(
   projectDirectory: string,
   record: DecisionLogEntry,
 ): Promise<string> {
+  return appendDecisionBatch(projectDirectory, [record]);
+}
+
+export async function appendDecisionBatch(
+  projectDirectory: string,
+  records: DecisionLogEntry[],
+): Promise<string> {
+  await readRawDecisionLog(projectDirectory);
   const path = decisionLogPath(projectDirectory);
+  if (records.length === 0) return path;
   let source = "";
   try {
     source = await readFile(path, "utf8");
@@ -245,8 +298,10 @@ async function appendLine(
     }
   }
   const prefix = source.length > 0 && !source.endsWith("\n") ? "\n" : "";
+  const addition = `${prefix}${records.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+  parseDecisionLogSource(source + addition, path);
   try {
-    await appendFile(path, `${prefix}${JSON.stringify(record)}\n`, "utf8");
+    await appendFile(path, addition, "utf8");
   } catch (error) {
     throw new IdiomError(
       `cannot append decision log ${path}: ${error instanceof Error ? error.message : String(error)}`,
@@ -263,6 +318,7 @@ export async function appendAcknowledgement(options: {
   until?: string | undefined;
   note?: string | undefined;
   evidence?: Acknowledgement["evidence"] | undefined;
+  attribution?: ActorMetadata | undefined;
   now?: (() => Date) | undefined;
 }): Promise<{ path: string; record: Acknowledgement }> {
   await readDecisionLogEntries(options.projectDirectory);
@@ -276,7 +332,10 @@ export async function appendAcknowledgement(options: {
     ...(options.until === undefined ? {} : { until: options.until }),
     ...(options.note === undefined ? {} : { note: options.note }),
     ...(options.evidence === undefined ? {} : { evidence: options.evidence }),
-    actor: "human",
+    ...newActor(
+      options.attribution ??
+        (await resolveActor({ projectDirectory: options.projectDirectory })),
+    ),
   });
   const path = await appendLine(options.projectDirectory, record);
   return { path, record };
@@ -313,7 +372,13 @@ async function identicalApplication(
   );
   if (!previous) return false;
   const content = (entry: DecisionLogEntry) => {
-    const { at: _at, commit: _commit, ...answer } = entry;
+    const {
+      at: _at,
+      commit: _commit,
+      actor: _actor,
+      agent: _agent,
+      ...answer
+    } = entry;
     if (answer.decision === "ruling")
       return JSON.stringify({
         ...answer,
@@ -338,7 +403,10 @@ export async function appendRulingDecision(
   projectDirectory: string,
   record: RulingDecision,
 ): Promise<string> {
-  const parsed = rulingDecisionSchema.parse(record);
+  const parsed = rulingDecisionSchema.parse({
+    ...record,
+    ...newActor(record as ActorMetadata),
+  });
   await readDecisionLogEntries(projectDirectory);
   if (await identicalApplication(projectDirectory, parsed))
     return decisionLogPath(projectDirectory);

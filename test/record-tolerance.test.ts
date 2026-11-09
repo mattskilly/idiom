@@ -18,6 +18,7 @@ import { readLearnedLog } from "../src/learn/misses.js";
 import { withRecordNotes } from "../src/records/unknown.js";
 import {
   acknowledgementSchema,
+  attributionCorrectionSchema,
   decisionSchema,
   rulingDecisionSchema,
 } from "../src/schemas/decision.js";
@@ -100,6 +101,7 @@ test("the known decision types are exactly the schema's", () => {
   expect([...knownDecisionTypes].sort()).toEqual(
     [
       rulingDecisionSchema.shape.decision.value,
+      attributionCorrectionSchema.shape.decision.value,
       ...decisionSchema.shape.decision.options,
       ...acknowledgementSchema.shape.decision.options,
     ].sort(),

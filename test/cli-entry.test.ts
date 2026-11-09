@@ -13,7 +13,7 @@ const buildCommit = execFileSync("git", ["rev-parse", "--verify", "HEAD"], {
   cwd: repositoryRoot,
   encoding: "utf8",
 }).trim();
-const builtEntry = join(repositoryRoot, "dist", "cli.js");
+const builtEntry = join(repositoryRoot, "build", "cli.js");
 let temporaryBin: string;
 let linkedEntry: string;
 

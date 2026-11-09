@@ -256,6 +256,9 @@ const webStateSchema = z
     focus: z.string().trim().min(1).optional(),
     probe: z.boolean().optional(),
     fresh: z.boolean().optional(),
+    // Boxes this state shows empty on purpose (a drop zone before a drop);
+    // the empty-frame check skips them and their descendants.
+    intentionallyEmpty: z.array(nonblank).optional(),
     data: dataStateSchema.optional(),
     invariants: z.array(invariantSchema).optional(),
     // Declared siblings for sibling-chrome: run-wide, or within this flow.
@@ -427,6 +430,9 @@ const electronStateSchema = z
     focus: z.string().trim().min(1).optional(),
     probe: z.boolean().optional(),
     fresh: z.boolean().optional(),
+    // Boxes this state shows empty on purpose (a drop zone before a drop);
+    // the empty-frame check skips them and their descendants.
+    intentionallyEmpty: z.array(nonblank).optional(),
     data: dataStateSchema.optional(),
     invariants: z.array(invariantSchema).optional(),
     siblingGroup: nonblank.optional(),

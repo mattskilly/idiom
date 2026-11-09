@@ -1,5 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import {
+  access,
+  chmod,
   copyFile,
   mkdir,
   mkdtemp,
@@ -111,6 +113,17 @@ beforeAll(async () => {
   await execFileAsync("tar", ["-xzf", tarball, "-C", extractionDirectory]);
   runtimeRoot = join(extractionDirectory, "package");
   runtimeEntry = join(runtimeRoot, "dist", "cli.js");
+  // The pack proves the allowlisted layout; the development bundle in build/
+  // supplies this commit's code in that layout. At release the two are
+  // byte-identical, so the release gate tests the shipped bytes.
+  for (const name of ["cli.js", "main.js"]) {
+    const built = join(repositoryRoot, "build", name);
+    await access(built).catch(() => {
+      throw new Error(`${built} is missing: run bun run build first`);
+    });
+    await copyFile(built, join(runtimeRoot, "dist", name));
+  }
+  await chmod(runtimeEntry, 0o755);
   packedFiles = await listFiles(runtimeRoot);
 
   // The packed payload receives only package.json's declared runtime
@@ -167,6 +180,18 @@ test("Git tracks both distribution files despite the dist/ ignore", async () => 
   ]);
 });
 
+test("the committed release bundle still runs", async () => {
+  // A Git-ref install runs the tracked dist/, which is the last release's
+  // bundle; it reads package.json at runtime, so the version still matches.
+  const result = await invoke(join(repositoryRoot, "dist", "cli.js"), [
+    "--version",
+  ]);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toMatch(
+    new RegExp(`^${originalVersion.replaceAll(".", "\\.")} \\([a-f0-9]{7}`),
+  );
+});
+
 test("minimal packed payload excludes repository-development inputs", async () => {
   // Bun's Git installer copies the checkout. This pack assertion proves that
   // the allowlisted runtime payload works without development files; it does
@@ -180,6 +205,7 @@ test("minimal packed payload excludes repository-development inputs", async () =
   expect(files).toContain("package.json");
   expect(files).toContain("README.md");
   expect(files).not.toContain("src/cli.ts");
+  expect(files.some((file) => file.startsWith("build/"))).toBe(false);
   expect(files).not.toContain("test/distribution.test.ts");
   expect(files.some((file) => file.startsWith("docs/"))).toBe(false);
   expect(files.some((file) => file.startsWith("docs/images/"))).toBe(false);

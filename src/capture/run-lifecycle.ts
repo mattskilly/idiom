@@ -270,8 +270,31 @@ export async function recoverInterruptedRun(
       `Run ${latest.runId ?? basename(directory)} was interrupted (process gone) after ${latest.completedTuples?.length ?? 0} of ${latest.selected.length} tuples.`,
     );
   } finally {
-    await rm(lock, { recursive: true, force: true });
+    await releaseLock(lock);
   }
+}
+/**
+ * Release a held recovery lock by renaming its generation away, then removing
+ * it. A plain recursive rm reads the directory, unlinks what it saw and calls
+ * rmdir; a contender's `reclaim` claim landing in between fails that rmdir with
+ * ENOTEMPTY and left an ownerless lock behind. After the rename a contender's
+ * claim fails ENOENT, which is correct: the holder already recovered. Release
+ * never turns a recovery into a failure; the record is already committed.
+ */
+async function releaseLock(lock: string): Promise<void> {
+  const released = `${lock}.${randomUUID()}.released`;
+  try {
+    await rename(lock, released);
+  } catch {
+    return;
+  }
+  // A claim already in flight against the renamed inode may still land.
+  await rm(released, {
+    recursive: true,
+    force: true,
+    maxRetries: 3,
+    retryDelay: 10,
+  }).catch(() => undefined);
 }
 /** The raw lifecycle status, so a record that fails validation still gates readers. */
 async function recordedStatus(directory: string): Promise<unknown> {

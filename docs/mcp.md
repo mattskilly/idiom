@@ -29,7 +29,7 @@ For Codex (see [plugin packaging and marketplaces](https://developers.openai.com
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.21.0/mattskilly-idiom-0.21.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.22.0/mattskilly-idiom-0.22.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.
@@ -142,7 +142,7 @@ Every input is a strict JSON object. Lists, when present, must be nonempty and d
 | `idiom_sweep` | `{"flow":"checkout","latest":false,"emitTickets":".autobuild/tickets/triage"}`; from/latest/emitTickets optional | Same as `idiom sweep`: every ranked deterministic and model finding, per-surface status, report paths, optional ticket outcomes and `degraded` with the reason when the critique could not run. Choose exactly one of optional `flow` or `all:true`. `deterministicOnly:true` skips model credentials; `maxTickets` is a positive safe integer (default 10). All-mode makes fresh captures and rejects `from`/`latest`; its typed `scope:"all"` result includes flow/probe/check coverage, bounded cross-flow root-cause proposals, omission counts and Markdown/HTML/JSON polish paths. |
 | `idiom_coverage` | `{"crawl":"http://localhost:3000"}` or `{"states":true}`; both optional | Same as `idiom coverage`: every discovered route with the flows/states that capture it, exclusions and unmatched runtime-URL states, plus `states` (each flow's state coverage, as `idiom coverage --states --json`) and one state-coverage line per flow. `states:true` returns only the state coverage and skips route discovery. |
 | `idiom_doctor` | `{"flow":"checkout"}`; flow optional | Same as `idiom doctor`: boots the server once and returns `ok`, every step (`config`, `registry`, `tree`, `port`, `setup`, `build`, `start`, `ready`, `shutdown`) with status, milliseconds, detail and fix, the first `failure`, and `surfaces` (where Idiom is wired, as in [doctor](commands.md#where-idiom-runs)). A failed step is a result, not a tool error. |
-| `idiom_baseline` | `{"action":"show","flow":"checkout"}`; `{"action":"record","flow":"checkout","latest":true}` | `show`: recorded commits with counts and which record applies at HEAD. `record`: same as `idiom baseline record`, with the file path and the deliberate-commit guidance. |
+| `idiom_baseline` | `{"action":"show","flow":"checkout"}`; `{"action":"record","flow":"checkout","latest":true}` | `show`: recorded commits with counts and which record applies at HEAD. `record`: same as `idiom baseline record`, with the file path and the deliberate-commit guidance. `{"action":"advance","target":"main"}`: same as `idiom baseline advance`, recording the target branch tip in the untracked base cache the build gate compares with. |
 | `idiom_brief_triage` | `{"request":"Add a pinned group to the Add drawer"}` or `{"file":"tickets/draft.md"}`; `noModel` optional | Same as `idiom brief triage --json`: `{id, verdict, reason, questions}` plus `warnings`, stored under `.idiom/briefs/triage/`. With `noModel:true`, the rubric, context and answer shape instead, and nothing is stored. Call it before writing a ticket, spec or code that adds or changes visible UI. |
 | `idiom_brief_plan` | `{"triage":"triage-0123abcdef"}` or `{"request":"…","questions":["How large is the pin?"]}`; `minutes` optional (1–60, default 10) | Same as `idiom brief plan --json`: open questions with per-input checks, reference products by tier, standards to look for, the time budget, the research rules and the exact record shape. A request without questions runs (and stores) a model triage first. |
 | `idiom_brief_record` | `{"brief":{…}}` | Same as `idiom brief record --json`: `{slug, outcome, status, markdownPath, ask}`. Invalid input is a tool error listing every `path: message`. `ask.askUserQuestion` is ready for AskUserQuestion; `ask.proceed` says whether you may proceed without asking. |
@@ -203,6 +203,7 @@ Every CLI command is either reachable as an MCP tool or deliberately CLI-only. A
 | `design add` | `idiom_design_add` | |
 | `baseline record` | `idiom_baseline` | `action:"record"`; `action:"show"` reads the file. `--out`, `--prod` and `--port` are CLI-only. |
 | `baseline accept` | `idiom_baseline` | Alias of `baseline record`. |
+| `baseline advance` | `idiom_baseline` | `action:"advance"` with optional `target`. `--commit-file` and `--prod` are CLI-only. |
 | `review` | CLI-only | Page review with interactive page and brief options; use `idiom_check` (deterministic) or `idiom_sweep` (model) for flows. |
 | `fix` | `idiom_fix_plan` | MCP returns the repair prompt and selected findings; launching a repair agent is CLI-only. |
 | `check` | `idiom_check`, `idiom_issue` | `idiom_issue` reads the full evidence for findings `idiom_check` returns. |
@@ -251,7 +252,7 @@ claude plugin validate /path/to/checkout
 claude --plugin-dir /path/to/checkout
 ```
 
-The skill is namespaced as `/idiom:idiom`, for example `/idiom:idiom check checkout`. The release manifest still starts its pinned release server even with `--plugin-dir`. To develop changed MCP code, build the checkout with `bun run build` and register it separately with `claude mcp add idiom-dev -- node /path/to/checkout/dist/cli.js mcp`, using one MCP connection at a time. See the [plugin manifest reference](https://code.claude.com/docs/en/plugins/manifest-reference).
+The skill is namespaced as `/idiom:idiom`, for example `/idiom:idiom check checkout`. The release manifest still starts its pinned release server even with `--plugin-dir`. To develop changed MCP code, build the checkout with `bun run build` and register it separately with `claude mcp add idiom-dev -- node /path/to/checkout/build/cli.js mcp`, using one MCP connection at a time. See the [plugin manifest reference](https://code.claude.com/docs/en/plugins/manifest-reference).
 
 ## Claude Code reminders
 

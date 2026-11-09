@@ -1112,6 +1112,42 @@ const probeDismissalSchema = z
     tests: z.array(dismissalTestSchema),
   })
   .strict();
+const indicatorSnapshotSchema = z
+  .object({
+    expanded: z.string().nullable(),
+    marker: z.boolean(),
+    text: z.string(),
+    graphics: z
+      .array(
+        z
+          .object({
+            where: z.enum(["inside", "before", "after", "sibling"]),
+            signature: z.string(),
+            visible: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(12),
+  })
+  .strict();
+const probeReclickSchema = z
+  .object({
+    trigger: z.string().min(1),
+    root: z.string().min(1),
+    outcome: z.enum([
+      "closed",
+      "stayed-open",
+      "not-tested",
+      "not-reached",
+      "inconclusive",
+    ]),
+    reason: z.string().optional(),
+    closeNearby: z
+      .object({ selector: z.string().min(1), name: z.string() })
+      .strict()
+      .optional(),
+  })
+  .strict();
 const selectionTrialsSchema = z
   .object({
     status: z.enum(["ran", "partial"]),
@@ -1168,6 +1204,15 @@ const probeSchema = z
       })
       .strict()
       .optional(),
+    reclick: z
+      .object({
+        tested: countSchema,
+        notReached: countSchema,
+        limit: countSchema,
+      })
+      .strict()
+      .optional(),
+    indicators: z.object({ recorded: countSchema }).strict().optional(),
     fingerprints: z.record(z.string(), z.string()).optional(),
     heldReplay: z
       .object({
@@ -1245,6 +1290,14 @@ const probeSchema = z
           selectsAncestor: selectsAncestorSchema.optional(),
           menu: probeMenuSchema.optional(),
           dismissal: probeDismissalSchema.optional(),
+          indicator: z
+            .object({
+              before: indicatorSnapshotSchema,
+              after: indicatorSnapshotSchema,
+            })
+            .strict()
+            .optional(),
+          reclick: probeReclickSchema.optional(),
         })
         .strict(),
     ),
@@ -1423,6 +1476,18 @@ const overlapSchema = z
   })
   .strict();
 
+const iconControlSchema = z
+  .object({
+    selector: z.string().min(1),
+    path: z.string().min(1),
+    id: z.string().min(1).optional(),
+    name: z.string(),
+    role: z.string(),
+    fingerprint: z.string().min(1),
+    placement: z.enum(["only", "leading", "trailing"]),
+    disclosure: z.boolean(),
+  })
+  .strict();
 const disclosureSchema = z
   .object({
     selector: z.string().min(1),
@@ -1483,6 +1548,52 @@ const repeatedContainerSchema = z
     kind: z.enum(["list", "table", "grid", "feed", "editor", "configured"]),
     name: z.string().max(80),
     items: z.number().int().min(0),
+  })
+  .strict();
+
+const emptyFrameSchema = z
+  .object({
+    selector: z.string().min(1),
+    rect: rectSchema,
+    paint: z.enum(["border", "background", "both"]),
+    borderSides: z.array(z.enum(["top", "right", "bottom", "left"])).max(4),
+    hiddenChildren: z.number().int().min(0),
+  })
+  .strict();
+
+const rowOrnamentSchema = z
+  .object({
+    collection: z.string().min(1),
+    collectionKind: z.enum([
+      "list",
+      "table",
+      "grid",
+      "feed",
+      "tablist",
+      "menu",
+      "rail",
+    ]),
+    items: z.number().int().min(0),
+    count: z.number().int().min(0),
+    kind: z.enum(["icon", "chip", "mark"]),
+    text: z.string().max(80),
+    example: z.string().min(1),
+    name: z.string().max(80),
+    width: dimension,
+    height: dimension,
+  })
+  .strict();
+
+const glyphOverlapSchema = z
+  .object({
+    control: z.string().min(1),
+    glyph: z.string().min(1),
+    icon: z.string().min(1),
+    controlRect: rectSchema,
+    glyphRect: rectSchema,
+    iconRect: rectSchema,
+    overlap: z.object({ width: dimension, height: dimension }).strict(),
+    ratio: z.number().min(0).max(1),
   })
   .strict();
 
@@ -1618,6 +1729,9 @@ const elementV2Schema = elementSchema.extend({
   structuralPath: z.string().min(1),
   legacyRenderedPath: z.string().min(1).optional(),
   directText: z.string(),
+  copyTextSegments: z
+    .array(z.object({ text: z.string(), quoted: z.boolean() }).strict())
+    .optional(),
   attributes: z.record(z.string(), z.string()),
   temporal: z.boolean(),
   stableIslandPath: z.string().min(1),
@@ -2045,6 +2159,7 @@ const observationArtifactV2Schema = z
               "adjacent-region",
               "sibling-region",
               "brief",
+              "empty-ok",
             ]),
             selector: z.string().min(1),
             matches: z.array(z.string().min(1)),
@@ -2055,6 +2170,7 @@ const observationArtifactV2Schema = z
       .optional(),
     overlaps: z.array(overlapSchema).optional(),
     disclosures: z.array(disclosureSchema).optional(),
+    iconControls: z.array(iconControlSchema).max(400).optional(),
     popoverCovers: z.array(popoverCoverSchema).optional(),
     clippedText: z.array(clippedTextSchema).optional(),
     bandEdges: geometryScan(bandEdgeSchema).optional(),
@@ -2080,6 +2196,9 @@ const observationArtifactV2Schema = z
       .optional(),
     emptyRegions: emptyRegionsSchema.optional(),
     repeatedContainers: z.array(repeatedContainerSchema).max(100).optional(),
+    emptyFrames: z.array(emptyFrameSchema).max(50).optional(),
+    rowOrnaments: z.array(rowOrnamentSchema).max(100).optional(),
+    glyphOverlaps: z.array(glyphOverlapSchema).max(50).optional(),
     progress: progressArtifactSchema.optional(),
     touchReachability: touchReachabilityArtifactSchema.optional(),
     liveness: livenessArtifactSchema.optional(),

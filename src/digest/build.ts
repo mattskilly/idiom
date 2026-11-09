@@ -6,12 +6,15 @@ import {
   type RecordedIntroduction,
   readAttributionRecord,
 } from "../attribution/record.js";
+import type { IdentifiedDecision } from "../decisions/attribution.js";
+import { readIdentifiedDecisions } from "../decisions/log.js";
 import { IdiomError } from "../errors.js";
 import { storedRunsNewestFirst } from "../review/artifacts.js";
 import { mergeImpactReasons } from "../review/issues.js";
 import { comparePriority, type ImpactReason } from "../review/ranking.js";
 import { severityRank as sharedSeverityRank } from "../schemas/severity.js";
 import { validateProjectConfiguration } from "../validation.js";
+import { countAppliedDecisions, type DecisionCounts } from "./decisions.js";
 import {
   coordinateCovers,
   type DigestCoverageProblem,
@@ -63,6 +66,7 @@ export type DigestFlow = {
   newFindings: DigestItem[];
   fixed: DigestItem[];
   counts: DigestCounts;
+  decisions: DecisionCounts;
   /** The commits the latest run's attribution compared; null when it has none. */
   attribution: { previousCommit: string | null; commit: string } | null;
 };
@@ -316,7 +320,7 @@ export function diffRecords(
 
 type DigestDiff = Omit<
   DigestFlow,
-  "flow" | "run" | "since" | "verdict" | "text" | "attribution"
+  "flow" | "run" | "since" | "verdict" | "text" | "attribution" | "decisions"
 >;
 
 function diffWithItems(
@@ -381,6 +385,7 @@ export function digestFlow(
   records: readonly DigestRecord[],
   since?: string,
   attribution?: AttributionRecord | undefined,
+  effectiveDecisions?: IdentifiedDecision[] | undefined,
 ): DigestFlow {
   const selected = selectRuns(flow, records, since);
   const { latest } = selected;
@@ -429,6 +434,10 @@ export function digestFlow(
     verdict,
     text,
     ...diff,
+    decisions: countAppliedDecisions(
+      latest.appliedDecisions,
+      effectiveDecisions,
+    ),
     attribution:
       recorded === undefined
         ? null
@@ -450,6 +459,7 @@ export async function digestFlows(options: {
   since?: string | undefined;
 }): Promise<DigestFlow[]> {
   const { projectDirectory } = await validateProjectConfiguration(options);
+  const effectiveDecisions = await readIdentifiedDecisions(projectDirectory);
   const records = await loadFlowRecords(
     resolve(projectDirectory, ".idiom", "reports"),
   );
@@ -471,7 +481,13 @@ export async function digestFlows(options: {
   if (flow !== undefined) {
     const list = records.get(flow) ?? [];
     return [
-      digestFlow(flow, list, options.since, await latestAttribution(list)),
+      digestFlow(
+        flow,
+        list,
+        options.since,
+        await latestAttribution(list),
+        effectiveDecisions,
+      ),
     ];
   }
   const flows = [...records.entries()]
@@ -485,7 +501,13 @@ export async function digestFlows(options: {
   return Promise.all(
     flows.map(async (id) => {
       const list = records.get(id) ?? [];
-      return digestFlow(id, list, options.since, await latestAttribution(list));
+      return digestFlow(
+        id,
+        list,
+        options.since,
+        await latestAttribution(list),
+        effectiveDecisions,
+      );
     }),
   );
 }

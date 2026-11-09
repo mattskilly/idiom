@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Settings with a rotating chevron</title>
+    <style>
+      body { margin: 0; font: 16px system-ui, sans-serif; padding: 24px; color: #1d1d1f; background: #fff; }
+      button { font: inherit; display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #c7c7cc; border-radius: 6px; background: #fff; color: inherit; cursor: pointer; }
+      ul[hidden], section[hidden], aside[hidden] { display: none; }
+      #settings[aria-expanded=true] .chev { transform: rotate(90deg); }
+    </style>
+  </head>
+  <body>
+    <nav aria-label="Account">
+      <button id="settings" aria-expanded="false" aria-controls="settings-list"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2" stroke="currentColor"/></svg><span>Settings</span><svg class="chev" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor"/></svg></button>
+      <ul id="settings-list" hidden>
+        <li><a href="#profile">Profile</a></li>
+        <li><a href="#billing">Billing</a></li>
+      </ul>
+    </nav>
+    <script>
+      for (const trigger of document.querySelectorAll("[aria-controls]")) {
+        const panel = document.getElementById(trigger.getAttribute("aria-controls"));
+        trigger.addEventListener("click", () => {
+          const open = panel.hidden;
+          panel.hidden = !open;
+          trigger.setAttribute("aria-expanded", String(open));
+        });
+      }
+    </script>
+  </body>
+</html>

@@ -7,8 +7,8 @@
 // nothing about the change, so the step retries once and, if the retry defers
 // too, passes with a warning rather than failing an unrelated build.
 //
-// The CLI is built out of tree (scripts/idiom-local.mjs) so the tracked dist/
-// is never written. Refuse pre-existing tracked .idiom/ edits before building,
+// The CLI is built out of tree (scripts/idiom-local.mjs) so a concurrent
+// in-tree build cannot delete it mid-gate. Refuse pre-existing tracked .idiom/ edits before building,
 // then restore only the finding-name registry the gate can rewrite: a dirty
 // tracked tree blocks reconcile, but existing decisions/config must survive.
 import { spawn } from "node:child_process";

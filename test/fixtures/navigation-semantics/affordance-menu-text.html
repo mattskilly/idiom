@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Menu buttons</title>
+    <style>
+      body { margin: 0; font: 16px system-ui, sans-serif; padding: 24px; color: #1d1d1f; background: #fff; }
+      button { font: inherit; display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #c7c7cc; border-radius: 6px; background: #fff; color: inherit; cursor: pointer; }
+      ul[hidden], section[hidden], aside[hidden] { display: none; }
+      .menu { position: absolute; margin-top: 4px; padding: 4px; background: #fff; border: 1px solid #c7c7cc; border-radius: 6px; list-style: none; }
+      .menu li { padding: 4px 8px; }
+      .row { display: flex; gap: 24px; align-items: flex-start; }
+      .cell { position: relative; }
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <div class="cell">
+        <button id="more" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">More</button>
+        <ul id="more-menu" class="menu" role="menu" hidden>
+          <li role="menuitem">Archive</li>
+        </ul>
+      </div>
+      <div class="cell">
+        <button id="sort" aria-haspopup="menu" aria-expanded="false" aria-controls="sort-menu">Sort</button>
+        <ul id="sort-menu" class="menu" role="menu" hidden>
+          <li role="menuitem">By name</li>
+        </ul>
+      </div>
+      <div class="cell">
+        <button id="kebab" aria-label="More options" aria-haspopup="menu" aria-expanded="false" aria-controls="kebab-menu"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg></button>
+        <ul id="kebab-menu" class="menu" role="menu" hidden>
+          <li role="menuitem">Rename</li>
+        </ul>
+      </div>
+    </div>
+    <script>
+      for (const trigger of document.querySelectorAll("[aria-controls]")) {
+        const panel = document.getElementById(trigger.getAttribute("aria-controls"));
+        trigger.addEventListener("click", () => {
+          const open = panel.hidden;
+          panel.hidden = !open;
+          trigger.setAttribute("aria-expanded", String(open));
+        });
+      }
+    </script>
+  </body>
+</html>

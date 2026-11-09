@@ -21,12 +21,14 @@ try {
 }
 
 export default defineConfig({
-  // dist/cli.js is the bin: a launcher that checks the Node version with no imports, then loads dist/main.js.
+  // Development builds write the untracked build/; `bun run build:release` writes the tracked dist/ from this same config.
+  // cli.js is the bin: a launcher that checks the Node version with no imports, then loads main.js.
   entry: { cli: "src/entry.ts", main: "src/cli.ts" },
   format: ["esm"],
   target: "node22",
   // Two self-contained files: releases commit only dist/cli.js and dist/main.js, so dynamic imports must not split into chunks.
   splitting: false,
+  outDir: "build",
   clean: true,
   define: {
     __IDIOM_BUILD_COMMIT__: JSON.stringify(buildCommit),

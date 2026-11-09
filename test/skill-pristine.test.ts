@@ -87,12 +87,12 @@ test.each([".agents", ".agents/skills/.idiom-pristine"])(
 test("offline catalog blobs have exact digests, tag provenance and absence-aware file maps", async () => {
   const history = await readHistory();
   expect(history.schema).toBe(1);
-  expect(history.releases).toHaveLength(23);
+  expect(history.releases).toHaveLength(24);
   expect(history.releases[0]).toMatchObject({
     version: "0.0.1",
     tag: "v0.0.1",
   });
-  expect(history.releases.at(-1)?.version).toBe("0.20.0");
+  expect(history.releases.at(-1)?.version).toBe("0.21.0");
   const blobs = new Set<string>();
   for (const release of history.releases) {
     expect(release.commit).toMatch(/^[a-f0-9]{40}$/);
@@ -112,9 +112,16 @@ test("offline catalog blobs have exact digests, tag provenance and absence-aware
   expect(
     history.releases[0]?.files["ab-verify-idiom/SKILL.md"],
   ).toBeUndefined();
+  // 0.21.0 renamed the verifier skill; the catalog keeps each release's own path.
+  expect(
+    history.releases.find((release) => release.version === "0.20.0")?.files[
+      "ab-verify-idiom/SKILL.md"
+    ],
+  ).toBeDefined();
   expect(
     history.releases.at(-1)?.files["ab-verify-idiom/SKILL.md"],
-  ).toBeDefined();
+  ).toBeUndefined();
+  expect(history.releases.at(-1)?.files["idiom-verify/SKILL.md"]).toBeDefined();
   // Pinned fixture from v0.0.1; protects against cataloguing today's bytes as history.
   expect(history.releases[0]?.files["idiom/SKILL.md"]).toBe(
     "e0de111da6a429fb795b56e52d768b022bea2983983e9283f4879b2cf4469f82",

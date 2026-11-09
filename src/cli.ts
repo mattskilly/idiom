@@ -22,7 +22,9 @@ import {
   renderTimings,
 } from "./capture/timings.js";
 import {
+  baselineAdvanceCommand,
   baselineRecordCommand,
+  renderBaselineAdvance,
   renderBaselineRecord,
 } from "./commands/baseline.js";
 import { bisectCommand } from "./commands/bisect.js";
@@ -1045,6 +1047,52 @@ export function createProgram(
       );
   }
 
+  baselineCommand
+    .command("advance [flow]")
+    .description(
+      "capture the target branch's tip in its own worktree and record it as the base the gate compares with (shared, untracked base cache)",
+    )
+    .option(
+      "--target <ref>",
+      "branch or commit to record (default: the remote HEAD, else main or master)",
+    )
+    .option(
+      "--commit-file",
+      "also write the committed baseline file (for a job that commits it on the target branch)",
+    )
+    .option("--prod", "capture a fresh production build")
+    .option("--json", "print machine-readable record metadata")
+    .action(
+      async (
+        flow: string | undefined,
+        options: {
+          target?: string;
+          commitFile?: boolean;
+          prod?: boolean;
+          json?: boolean;
+        },
+        command: Command,
+      ) => {
+        const shared = command.optsWithGlobals<SharedOptions>();
+        const result = await withFailureJson(options.json, flow, writeOut, () =>
+          baselineAdvanceCommand({
+            flow,
+            target: options.target,
+            commitFile: options.commitFile,
+            project: shared.project,
+            cwd: dependencies.cwd,
+            prod: options.prod,
+            dependencies: reviewDependencies,
+          }),
+        );
+        writeOut(
+          options.json === true
+            ? jsonPayload(result)
+            : renderBaselineAdvance(result),
+        );
+      },
+    );
+
   program
     .command("review")
     .description(
@@ -1608,6 +1656,7 @@ export function createProgram(
                       estimateMs: result.estimateMs,
                       budgetMs: result.budgetMs,
                       server: result.server,
+                      comparisons: result.comparisons,
                       timing: result.timing,
                     },
                     ...aggregateDeferral(checked),
@@ -2476,6 +2525,16 @@ export function createProgram(
       "record accept or reject decisions for reviewed findings, or acknowledge one tracked elsewhere",
     )
     .argument("[finding]", "finding id; the same as --finding")
+    .option(
+      "--reattribute <range>",
+      "correct attribution for original observed commits in from..to",
+    )
+    .addOption(
+      new Option("--actor <actor>", "execution actor override").choices([
+        "human",
+        "agent",
+      ]),
+    )
     .option("--list", "list finding lifecycles without writing decisions")
     .option(
       "--json",
@@ -2517,7 +2576,10 @@ export function createProgram(
       "acknowledge the finding as tracked elsewhere (a ticket id or URL): it stays in reports but no longer counts toward --fail-on or as new",
     )
     .option("--unack", "remove the finding's acknowledgement; it counts again")
-    .option("--note <text>", "with --ack, a note recorded with it")
+    .option(
+      "--note <text>",
+      "with --ack or --reattribute, a required correction note or acknowledgement note",
+    )
     .option(
       "--until <date>",
       "with --ack, the last day (YYYY-MM-DD) the acknowledgement holds",
@@ -2526,6 +2588,8 @@ export function createProgram(
       async (
         positional: string | undefined,
         options: {
+          actor?: "human" | "agent";
+          reattribute?: string;
           pending?: boolean;
           decision?: string;
           candidate?: string;
@@ -2604,7 +2668,11 @@ export function createProgram(
           return;
         }
         const acknowledgement = result.acknowledgement;
-        if (result.acknowledged === 1 && acknowledgement !== undefined)
+        if (result.corrected !== undefined)
+          writeOut(
+            `Attribution: ${result.corrected} corrected — ${result.path}`,
+          );
+        else if (result.acknowledged === 1 && acknowledgement !== undefined)
           writeOut(
             `Acknowledged ${acknowledgement.findingId} for ${acknowledgement.reference}${acknowledgement.until === undefined ? "" : ` until ${acknowledgement.until}`}. It stays in reports and no longer counts toward --fail-on or as new — ${result.path}`,
           );

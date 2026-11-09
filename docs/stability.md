@@ -55,6 +55,7 @@ A command's status covers its flags and positional arguments. It is not a promis
 | `baseline` | stable |
 | `baseline record` | stable |
 | `baseline accept` | stable |
+| `baseline advance` | experimental |
 | `review` | stable |
 | `report` | stable |
 | `decide` | stable |
@@ -120,6 +121,7 @@ Every payload except `brief list` is an object that starts with `"interfaceVersi
 | `upgrade` | `upgrade` | experimental |
 | `baseline record` | `baseline record` | experimental |
 | `baseline accept` | `baseline accept` | experimental |
+| `baseline advance` | `baseline advance` | experimental |
 | `review` | `review` | experimental |
 | `review --page` | `review` | experimental |
 | `sweep` | `sweep` | experimental |
@@ -202,6 +204,14 @@ Field-by-field definitions are in [record schemas](schemas.md).
 | Every other capture artifact in a run directory (`dom.html`, `axe.json`, `observations.json`, timelines, crops, …) and the layout of `.idiom/reports/` beyond the three names | output | experimental |
 
 Commit `.idiom/project.json`, the flow manifests, `decisions.jsonl`, baselines, rule overrides and the finding-name registry. A newer Idiom with the same interface version keeps reading what an older one wrote.
+
+### Decision actor attribution
+
+At interface version 1, judgments, acknowledgements and ruling log records add optional `agent` metadata. New writes record `actor: "human" | "agent"`; historical inputs still accept arbitrary actor strings and default missing actors to human. Unrecognized historical actors stay unattributed in reporting. Existing history is never redetected or rewritten.
+
+MCP always records agent execution (`agent: "mcp"`), including when it relays a human answer. CLI `--actor human` overrides runtime hints; otherwise Idiom checks Autobuild (`AB_BUILD`, an `.ab/context.json` naming a `build`, `AB_PHASE`/`AB_SESSION`), then Claude Code (`CLAUDECODE=1`, `CLAUDE_CODE_CHILD_SESSION=1`), then Codex (nonblank `CODEX_THREAD_ID`/`CODEX_SESSION_ID`, `CODEX_CI=1`). Context discovery stops at the project/Git boundary and checks an explicit project too. An `.ab/` directory without a build-naming context (a leftover harvest run, a bare or broken directory) is not a hint; live Autobuild sessions are caught by their `AB_*` environment. `--actor agent` forces agent and retains a detected label when available. API keys, generic CI, installed binaries, `CODEX_HOME` and answer `--build` provenance are not identity hints. These hints are not authenticated identity. A TTY without a known agent environment is human; TTY presence alone never overrides a known agent.
+
+`decide --reattribute from..to --actor human|agent --note text` appends strict correction records targeting original physical line/hash identities. It preserves original bytes, decision order and all non-actor semantics. Effective readers apply the latest valid correction in place; raw records remain auditable. Corrections are an additive log variant. Older tolerant readers skip them and keep the original attribution. Precision uses human decisions only; agent evidence and unattributed legacy inputs are separate. The learned-entry human-miss metric remains independent of decisions.
 
 ### Records a newer Idiom wrote
 

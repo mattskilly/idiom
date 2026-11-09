@@ -55,7 +55,7 @@ import {
 } from "./field-test-lib.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const cli = join(root, "dist", "cli.js");
+const cli = join(root, "build", "cli.js");
 const paths = {
   targets: join(root, "scripts", "field-test.targets.json"),
   results: join(root, "docs", "field-test", "results.json"),
@@ -558,7 +558,7 @@ async function checkTarget(target, directory, record, options) {
 
 async function runCommand(args) {
   if (!existsSync(cli)) {
-    log("dist/cli.js is missing: run bun run build first");
+    log("build/cli.js is missing: run bun run build first");
     process.exit(1);
   }
   // --targets/--results let a screening run use candidate targets without
@@ -662,7 +662,8 @@ async function feel() {
   const labels = existsSync(paths.labels)
     ? await readJson(paths.labels)
     : { version: 1, labels: {} };
-  const rows = feelPrecision(results, labels);
+  const rows = feelPrecision(results, labels, "human");
+  const agentRows = feelPrecision(results, labels, "agent");
   const measuredAt = results.startedAt;
   for (const row of rows) {
     const path = join(paths.rules, `${row.rule.replace(/^idiom:/, "")}.json`);
@@ -676,6 +677,7 @@ async function feel() {
       ...rest,
       precision: {
         source: "node scripts/field-test.mjs feel",
+        actor: "human",
         measuredAt,
         idiomCommit: results.idiomCommit,
         threshold: 0.8,
@@ -684,6 +686,10 @@ async function feel() {
         fieldApp: row.fieldApp,
         combined: row.combined,
         met: row.met,
+      },
+      agentEvidence: {
+        actor: "agent",
+        ...agentRows.find((item) => item.rule === row.rule),
       },
       history,
     });
@@ -694,8 +700,10 @@ async function feel() {
       : `${counts.agree}/${counts.n} = ${(counts.precision * 100).toFixed(0)}%`;
   for (const row of rows)
     log(
-      `${row.rule}: public ${show(row.public)}; field app ${show(row.fieldApp)}; combined ${show(row.combined)}${row.met ? "" : " (gate not met)"}`,
+      `${row.rule} (human): public ${show(row.public)}; field app ${show(row.fieldApp)}; combined ${show(row.combined)}${row.met ? "" : " (gate not met)"}`,
     );
+  for (const row of agentRows)
+    log(`${row.rule} (agent evidence): combined ${show(row.combined)}`);
   log(`wrote ${FEEL_RULES.length} rule file(s) under ${paths.rules}`);
 }
 

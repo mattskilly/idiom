@@ -51,7 +51,7 @@ const inputs = {
     "node -e 'if(process.env.IDIOM_ACTION_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN) process.exit(1)'",
 };
 const fixture = join(import.meta.dirname, "fixtures/github-action");
-const cli = [process.execPath, resolve("dist/cli.js")];
+const cli = [process.execPath, resolve("build/cli.js")];
 async function graph(temporal = false) {
   const { project, configPath } = await baselineProject();
   directories.push(project);
@@ -899,7 +899,11 @@ test("a real synchronize fix updates the same comment, stages temporal before/af
     await git(context.project, "worktree", "list", "--porcelain"),
   ).not.toContain("scratch");
   expect(await readdir(dirname(fixed.evidence))).toEqual(["evidence"]);
-}, 90_000);
+  // Harness allowance, not a product deadline: over 90s under three concurrent
+  // gates (file-293 proof) and max 58.1s with two
+  // (docs/testing/give-four-more.md). ~3x headroom; still a real end-to-end
+  // synchronize with the same comment and temporal before/after.
+}, 270_000);
 
 test("read-only fork publication retains tiered job summary, artifact result and gate with a warning", async () => {
   const directory = await mkdtemp(join(tmpdir(), "idiom-fork-summary-"));

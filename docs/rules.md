@@ -191,6 +191,10 @@ The tier never crosses severities: a minor finding on every state still ranks be
 - **Source:** Craft convention: copy is written for people, consistently.
 - **Configure or decide:** `checks.copy` sets `locale`, `retired`, `jargon`, `glossary`, `schemaWords` and `properNouns` (also readable from `.idiom/glossary.json`); decide findings with `idiom decide`.
 
+Every sub-check excludes `pre`, `code`, `kbd`, `samp`, `textarea`, the effective ARIA `code` role and their descendants. Both copy-lint and error-text also exclude block elements with page-applied monospace typography (generic `monospace`/`ui-monospace`, Menlo, Monaco, Consolas, Courier/Courier New or SFMono-Regular). This requires an authored font declaration or an observed font-family change from the parent; inline emphasis and inline-block controls stay eligible. Custom font names alone do not establish code context.
+
+Balanced straight or curly single/double quotes, `q` and `blockquote` exempt only the repetitions wholly inside the quotation. Other copy checks still inspect quoted wording. Figure captions need quoted content; an unquoted caption remains copy. Fresh captures preserve nested quote context and separate text on either side of inline code. Recapture older observations for those precise boundaries; their fallback uses local balanced quotes and semantic quotation ancestry.
+
 ### `glyph-icon`
 
 - **Catches:** Unicode glyphs (`▾ ◉ ▣ ×`) standing in for icons inside controls.
@@ -206,6 +210,26 @@ The tier never crosses severities: a minor finding on every state still ranks be
 - **Severity:** major.
 - **Source:** Craft convention: failures should be explained in human terms.
 - **Configure or decide:** `checks.errorPatterns` adds your own patterns to the built-in ones; decide findings with `idiom decide`.
+
+Uses the same semantic tags, effective `code` role and authored block-monospace exclusions as copy-lint, including nested highlighted spans. Inline monospace emphasis and inline-block controls remain eligible. These exclusions also apply to configured signatures.
+
+Error-text reports a failure message and skips documentation prose that explains one. Text is a failure message when it sits on a failure surface: an element (or ancestor) with role `alert`, `alertdialog`, `status` or `log`, a `polite` or `assertive` live region, an `output`, or a class name with an error-ish part such as `error-banner`, `toast`, `form__error`, `empty-state` or `thumb-failed` (`banner` alone does not count). A short standalone line, any sentence under 8 words, is a failure message wherever it sits. Text is explanatory prose when it sits inside `main` or `article`, off every failure surface, and the sentence naming the signature has 8 or more words and mentions it mid-sentence or in quotes, or the whole paragraph runs to 40 words or more.
+
+Only phrase signatures can be explanatory: render and load failures, generic errors, exception names and messages, and system error codes. Stack traces, `[object Object]`, an unrendered `undefined` or `null`, raw JSON and every `checks.errorPatterns` entry always report, wherever they sit and whatever else the text says.
+
+Still reported:
+
+- An alert banner reading `Renderer failed`.
+- A toast showing `TypeError: x is not a function at render (app.js:12:7)`.
+- The line `Failed to load images` under an image grid, even inside `main`.
+- A help paragraph that prints `[object Object]`, because leaks always report.
+
+Skipped as explanation:
+
+- A help paragraph explaining that when a thumbnail says “Failed to load”, the browser could not fetch the image file.
+- A reference entry noting that visible images that failed to load or decode render as broken images.
+
+The trade-off: a real failure written as a long sentence inside `main`, with no alert role, live region or error class, reads as explanation, so give failure messages one of those. Captures without ancestor records still find `main` and `article` by tag, but roles and classes on missing ancestors are not seen; recapture for precise boundaries.
 
 ### `native-control`
 
@@ -669,3 +693,51 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 - **Severity:** minor.
 - **Source:** Craft convention: disclosure content stays near its trigger.
 - **Configure or decide:** Needs successful interaction-probe geometry, captured while the panel is open. Recapture stored runs without this evidence; missing or timed-out geometry is unavailable, not a passing measurement. The 24px threshold is fixed; decide findings with `idiom decide` or override them in `.idiom/rules.json`.
+
+### `disclosure-affordance`
+
+- **Catches:** A disclosure trigger (a control whose `aria-expanded` toggles from false to true, or a `<details>` summary) where nothing inside or next to it looks different collapsed and expanded (`idiom:disclosure-affordance`). The probe reads the trigger just before its click and again once the opening is confirmed: graphics inside it (SVG geometry, images, background or mask images, one- or two-character glyphs such as ▸ or +), its own `::before` and `::after`, and an adjacent non-interactive sibling within 8px. Each graphic's shape, composed transform and visibility are compared. A rotated chevron, swapped plus/minus, an icon that appears or disappears, a native `<details>` marker or a change in the trigger's own text ("Show details" to "Hide details") all pass. Colour changes alone do not count. Menu buttons whose label says what they open are exempt: a text-only trigger that advertises a popup (`aria-haspopup`, such as "Sort" or "File"), a text-only trigger named "More", "Menu", "Options" or "Actions", and an icon-only popup trigger with such a name (a ⋯ button labelled "More options"). So is a help toggletip whose whole visible text is a help glyph (`?`, `ⓘ`, `ℹ`), which already says it reveals an explanation. A text-only expander that reveals content in place, such as a "Settings" section, is not exempt.
+- **Why it matters:** Without an indicator, people can't tell that an item has more below it or that it is open. They find the content by accident or not at all.
+- **Severity:** minor.
+- **Source:** WAI-ARIA Authoring Practices disclosure pattern: the expanded state is shown visually as well as programmatically.
+- **Configure or decide:** Needs the interaction probe (`checks.probe`, on by default) with disclosures on (`checks.probe`'s `disclosures`). Captures from before this check have no indicator readings and report it unavailable; recapture to pick it up. Decide findings with `idiom decide` or a `.idiom/rules.json` override.
+
+### `opener-cannot-close`
+
+- **Catches:** A control that opened a panel, where a second click on the same control leaves the panel open and no close control sits within 24px of where the control was (`idiom:opener-cannot-close`). After the dismissal tests, the probe reopens the panel if needed and clicks the opener again at its original position. It only clicks when the opener is still visible at the same place (each edge within 4px) and is what a click there would hit. A covered or moved opener, or a modal panel (`aria-modal="true"` or a modal `<dialog>`), is recorded as not tested and never reported. A close control is any visible control within 24px of the opener's original box named close, dismiss, hide, collapse, cancel, done or back, an `×`, one with `aria-expanded="true"`, or one whose `aria-controls` names the panel. Disclosure triggers are tested, and so are plain controls that open a dialog or popover; `<details>` toggles natively and is skipped.
+- **Why it matters:** People close things the way they opened them. A logo or menu button that opens a drawer but ignores the next click leaves them looking for another way out.
+- **Severity:** minor.
+- **Source:** Craft convention: a toggle closes what it opened.
+- **Configure or decide:** Measured by the interaction probe (`checks.probe`) with disclosures on, inside each control's probe budget. At most 12 panels per state are re-clicked; the rest are counted as not reached in probe coverage. Captures from before this check report it unavailable; recapture to pick it up. Decide findings with `idiom decide` or a `.idiom/rules.json` override.
+
+### `icon-meaning`
+
+- **Catches:** One icon that stands for two or more different things across a flow's states (`idiom:icon-meaning`). Capture fingerprints the single icon of each interactive control: an SVG by its `viewBox` and shape geometry (paths, circles, rects, lines, polygons, and `<use>` references resolved), an icon font by its glyph and font family. Colour, class and size are ignored, so the same shape in two colours is one icon. Controls whose icon is their only visible content count, and so do leading icons on controls that are not disclosures. Trailing icons (row chevrons, external-link arrows, dropdown carets) and icons on disclosure triggers with text are affordances, not meanings, and are skipped. Two controls mean the same thing when their accessible names share a meaning word after case, stopwords, numbers, plurals and a small synonym table ("Close" and "Close panel", "Dismiss" and "Close"); same-named controls are split when the probe saw both clicked and their effects share nothing. Repeated identical controls, such as "Delete" on every row, count once. The finding is reported once per icon, on the first state that carries it, and lists each meaning with the states it appears in, including probe-opened panels.
+- **Why it matters:** When one icon means "collapse panel" in one place and "3-column layout" in another, people can't learn what it does and hesitate every time they see it.
+- **Severity:** minor.
+- **Source:** WCAG 2.2 success criterion 3.2.4 Consistent Identification.
+- **Configure or decide:** Runs on every capture; it does not judge whether an icon suits its meaning, only whether it keeps one. Captures from before icon fingerprints report it unavailable; recapture to pick it up. Decide findings with `idiom decide` or a `.idiom/rules.json` override.
+
+### `empty-frame`
+
+- **Catches:** A visible box at least 48px wide and 24px tall that draws a border, or a background different from the one behind it, with nothing visible inside it: no text, image, icon, form field or focusable element, and no drawn `::before`/`::after`. It is judged per viewport, so a header bar whose only child is hidden above some width is reported at the widths where it is empty, and the explanation counts the children hidden there (`idiom:empty-frame`). Spacers without border or fill, loading placeholders (`aria-busy`, skeleton or shimmer classes, running animations), named graphics (an `aria-label` or `title`, `role="img"`, progress and meter parts), fills drawn by an image, background-only overlays, table cells and boxes inside a control are not reported. Content faded to opacity 0 for a scroll reveal counts as content. When an empty box contains another, only the outer one is reported.
+- **Why it matters:** A frame promises content. An empty bar or card reads as broken or still loading, and takes space without telling anyone anything.
+- **Severity:** minor.
+- **Source:** Craft convention: a drawn container holds something.
+- **Configure or decide:** On by default; `checks.emptyFrame` sets `enabled`, and its `ignore` selectors exempt boxes everywhere. Mark a box that a state shows empty on purpose (a drop zone before a drop) with the state's `intentionallyEmpty` selectors; the box and everything inside it is skipped. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `repeated-row-ornament`
+
+- **Catches:** In a list, table, grid, feed, tab list, menu or navigation rail of at least 5 visible items, a chip, badge, icon or status mark that appears on at least 80% of the items in the same position with identical size, colours, text and icon (`idiom:repeated-row-ornament`). It is reported once per collection and decoration, naming the decoration and how many items carry it, such as `repeats on 6 of 6 items`. A decoration whose value differs between items (a status column of Paid and Pending) never counts, and neither does an icon inside a per-row action button such as copy or a row menu. Decorations inside the item's own link count. A rail whose links sit in a list is judged once, as the list.
+- **Why it matters:** A mark every item carries tells items apart from nothing. It adds noise to every row and dilutes the marks that do carry meaning.
+- **Severity:** info.
+- **Source:** Craft convention: per-item marks distinguish items; a fact true of every item is stated once.
+- **Configure or decide:** On by default; `checks.repeatedRowOrnament` sets `enabled`. Whether a repeated decoration is wanted is a design call: decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `glyph-over-icon`
+
+- **Catches:** Inside a link, button, tab, menu item or option smaller than 64×64px, a small glyph or badge under 16px (an icon, or a unicode symbol such as an arrow) whose box overlaps another, larger icon's box by more than 25% of its own area (`idiom:glyph-over-icon`). The finding names the control, the glyph and the icon, with the overlap. Numeric count badges (`3`, `9+`), plain status dots and live regions (`role="status"`, `aria-live`) are the usual unread indicators drawn over an icon on purpose and are not reported.
+- **Why it matters:** A badge drawn over an icon's corner merges with it, so neither shape reads cleanly at small sizes, and the icon looks damaged.
+- **Severity:** minor.
+- **Source:** Craft convention: small icons keep clear space; only count and status indicators sit over them.
+- **Configure or decide:** On by default; `checks.glyphOverIcon` sets `enabled`. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.

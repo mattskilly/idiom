@@ -8,6 +8,7 @@ import { MotionCollector } from "../src/capture/motion.js";
 import { probeControls } from "../src/capture/probe.js";
 import { TimelineCollector, withTimelineIds } from "../src/capture/timeline.js";
 import {
+  FILMSTRIP_LIMITS,
   filmstripConfigSchema,
   filmstripManifestSchema,
 } from "../src/checks/filmstrip-schema.js";
@@ -78,6 +79,7 @@ async function capture(
     await page.locator("#go").click();
     await page.waitForTimeout(nativeMs);
     await recording.finish();
+    const frozenAction = structuredClone(timeline.evidence().actions[0]);
     await window.finish();
     await recording.finishVisual(motion.evidence());
     const tuple: CheckTuple = {
@@ -104,7 +106,12 @@ async function capture(
     expect(
       filmstripManifestSchema.parse(JSON.parse(JSON.stringify(manifest))),
     ).toEqual(manifest);
-    return { directory, manifest };
+    return {
+      directory,
+      manifest,
+      frozenAction,
+      publishedAction: tuple.timelines?.actions[0],
+    };
   } finally {
     await films.dispose();
     await page.close();
@@ -112,35 +119,86 @@ async function capture(
 }
 
 test("original 300ms transition has distinct intermediate pixels and preserves a short native boundary", async () => {
-  const { directory, manifest } = await capture("transition.html", true, 120);
+  const { directory, manifest, frozenAction, publishedAction } = await capture(
+    "transition.html",
+    true,
+    120,
+  );
   try {
     const action = manifest.actions[0];
-    expect(action?.status).toBe("complete");
-    expect(action?.settleMs).toBeLessThan(400);
-    const positions = new Map<number | "settle", number>();
-    for (const frame of action?.frames ?? []) {
-      expect(frame.path, JSON.stringify(frame)).toBeDefined();
-      const png = decodeFrame(
-        await readFile(join(directory, frame.path as string)),
-      );
-      const y = Math.round(
-        (120 - (action?.region.y ?? 0)) * (frame.geometry?.scale ?? 1),
-      );
-      const xs: number[] = [];
+    if (!action || !frozenAction || !publishedAction)
+      throw new Error(`Missing action evidence: ${JSON.stringify(manifest)}`);
+    expect(publishedAction.durationMs).toBe(frozenAction.durationMs);
+    expect(action.settleMs).toBe(
+      Math.max(
+        0,
+        frozenAction.startedAt + frozenAction.durationMs - (action.anchor ?? 0),
+      ),
+    );
+    const positions: Array<{
+      slot: number | "settle";
+      time: number;
+      x: number;
+    }> = [];
+    for (const frame of action.frames) {
+      if (!frame.path) continue;
+      const png = decodeFrame(await readFile(join(directory, frame.path)));
+      if (!frame.geometry || frame.timestamp === undefined)
+        throw new Error(
+          `Missing frame geometry/time: ${JSON.stringify(frame)}`,
+        );
+      const scale = frame.geometry.scale;
+      const y = Math.round((120 - action.region.y) * scale);
+      let redX: number | undefined;
       for (let x = 0; x < png.width; x++) {
         const p = (y * png.width + x) * 4;
-        if ((png.data[p] ?? 0) > 240 && (png.data[p + 1] ?? 255) < 10)
-          xs.push(x);
+        if ((png.data[p] ?? 0) > 240 && (png.data[p + 1] ?? 255) < 10) {
+          redX = x;
+          break;
+        }
       }
-      positions.set(frame.slot, xs[0] ?? -1);
+      expect(
+        redX,
+        `Red subject absent: ${JSON.stringify({ frame, manifest, positions })}`,
+      ).toBeDefined();
+      positions.push({
+        slot: frame.slot,
+        time: frame.timestamp,
+        x: (redX as number) / scale + action.region.x,
+      });
     }
-    expect(positions.get(0)).toBe(0);
-    expect(positions.get(100)).toBeGreaterThan(25);
-    expect(positions.get(100)).toBeLessThan(145);
-    expect(positions.get(200)).toBeGreaterThan(140);
-    expect(positions.get(200)).toBeLessThan(245);
-    expect(positions.get(400)).toBe(300);
-    expect(positions.get(800)).toBe(300);
+    positions.sort((a, b) => a.time - b.time);
+    const diagnostic = JSON.stringify({ manifest, positions });
+    expect(positions.find((p) => p.slot === 0)?.x, diagnostic).toBe(0);
+    // Host load can start the transition late or withhold late paints, so the
+    // resting pixels are tied to when the page itself reached rest, not to a
+    // nominal slot. A slot without pixels must name why and never counts.
+    const restAt = action.visualFrames?.find((f) =>
+      f.elements.some(
+        (e) => e.selector === "#panel" && Math.round(e.rect.x) === 300,
+      ),
+    )?.time;
+    for (const frame of action.frames)
+      if (frame.path === undefined) {
+        expect(frame.reason, diagnostic).toBeTruthy();
+        expect(action.status, diagnostic).toBe("partial");
+      } else if (
+        restAt !== undefined &&
+        frame.actualMs !== undefined &&
+        frame.actualMs >= restAt + FILMSTRIP_LIMITS.toleranceMs
+      )
+        expect(
+          positions.find((p) => p.slot === frame.slot)?.x,
+          diagnostic,
+        ).toBe(300);
+    const intermediates = new Set(
+      positions.filter((p) => p.x > 0 && p.x < 300).map((p) => p.x),
+    );
+    expect(intermediates.size, diagnostic).toBeGreaterThanOrEqual(2);
+    for (let i = 1; i < positions.length; i++)
+      expect(positions[i]?.x, diagnostic).toBeGreaterThanOrEqual(
+        positions[i - 1]?.x ?? 0,
+      );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

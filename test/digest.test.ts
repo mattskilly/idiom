@@ -154,6 +154,7 @@ test("new and fixed: majors get a line, minors are counted, fixed findings are l
     "+ wide-1 [major] idiom:clipped-text — cart, checkout — The label is clipped",
     "- id-gone [minor] idiom:token-drift — cart — fixed",
     "Also: 1 new minor, 1 open unchanged.",
+    "Decisions: attribution unavailable (legacy snapshot).",
     `Report: .idiom/reports/${run(2)}/report.md`,
   ]);
 });
@@ -357,10 +358,10 @@ test("a large run stays within the line budget with overflow lines; JSON stays c
   const lines = renderDigest([flow]);
   expect(lines.length).toBeLessThanOrEqual(DIGEST_LINE_BUDGET);
   expect(lines).toHaveLength(DIGEST_LINE_BUDGET);
-  // 25 − verdict, counts, report = 22: coverage 5, fixed reserves 3, new 14.
+  // 25 − verdict, counts, decision attribution, report = 21: coverage 5, fixed reserves 3, new 14.
   expect(lines).toContain("…and 8 more coverage problems");
   expect(lines).toContain(
-    `…and 107 more new findings at major or above — idiom check shop or .idiom/reports/${run(2)}/report.md`,
+    `…and 108 more new findings at major or above — idiom check shop or .idiom/reports/${run(2)}/report.md`,
   );
   expect(lines).toContain("…and 38 more fixed");
   const three = renderDigest([
@@ -495,4 +496,53 @@ test("human-found metric shares the 25-line budget across eight busy flows", () 
     lines.findIndex((line) => line.startsWith("Human-found misses:")),
   ).toBeLessThan(lines.findIndex((line) => line.startsWith("Report (")));
   expect(renderDigest(flows).join("\n")).not.toContain("Human-found misses:");
+});
+
+test("digest decision partitions retain mixed actors, deduplicate sources, and disclose legacy attribution", () => {
+  const source = (line: number) => ({ line, sha256: String(line).repeat(64) });
+  const snapshot = (
+    line: number,
+    actor: string,
+    decision: "accept" | "reject" | "acknowledge",
+  ) => ({
+    source: source(line),
+    actor,
+    decision,
+    occurrences: [
+      { fingerprint: "a", where: "cart/mobile" },
+      { fingerprint: "a", where: "cart/desktop" },
+    ],
+  });
+  const snapshots = [
+    snapshot(1, "human", "accept"),
+    snapshot(2, "agent", "reject"),
+    snapshot(3, "human", "acknowledge"),
+    snapshot(4, "historical-bot", "reject"),
+  ];
+  const records = [
+    record(
+      run(2),
+      [occurrence({ fingerprint: "config-only", disposition: "rejected" })],
+      { appliedDecisions: [...snapshots, snapshot(1, "human", "accept")] },
+    ),
+    record(run(1), []),
+  ];
+  const flow = digestFlow("shop", records);
+  expect(flow.decisions).toEqual({
+    available: true,
+    human: { accept: 1, reject: 0, acknowledge: 1 },
+    agent: { accept: 0, reject: 1, acknowledge: 0 },
+    unattributed: { accept: 0, reject: 1, acknowledge: 0 },
+  });
+  expect(flow.counts.rejected).toBe(1); // Configuration affects occurrence totals, never judgment counts.
+  const text = renderDigest([flow]).join("\n");
+  expect(text).toContain(
+    "human 1 accept / 0 reject / 1 acknowledge; agent 0 accept / 1 reject / 0 acknowledge; unattributed 0 accept / 1 reject / 0 acknowledge",
+  );
+  const unrelated = digestFlow("other", [
+    record(run(2), [], { flow: "other", appliedDecisions: [] }),
+  ]);
+  expect(unrelated.decisions.human.accept).toBe(0);
+  const legacy = digestFlow("shop", [record(run(2), [])]);
+  expect(legacy.decisions.available).toBe(false);
 });

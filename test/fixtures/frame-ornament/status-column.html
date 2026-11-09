@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Billing</title>
+<style>
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; color: #1d232b; background: #fff; padding: 24px; }
+  table { border-collapse: collapse; width: 560px; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eceff2; }
+  .status { display: inline-block; padding: 0 8px; border-radius: 9px; font-size: 12px; line-height: 18px; }
+  .paid { background: #e3f4e8; color: #1f6b36; }
+  .pending { background: #fdf1d8; color: #7a5300; }
+  .updates { list-style: none; padding: 0; width: 560px; margin-top: 24px; }
+  .updates li { padding: 8px 0; border-bottom: 1px solid #eceff2; }
+  .new { display: inline-block; margin-left: 8px; padding: 0 6px; border-radius: 9px; font-size: 11px; line-height: 18px; background: #e7eefc; color: #23468c; }
+</style>
+</head>
+<body>
+  <h1>Billing</h1>
+  <table>
+    <thead><tr><th>Invoice</th><th>Customer</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>INV-1041</td><td>Northwind</td><td><span class="status paid">Paid</span></td></tr>
+      <tr><td>INV-1042</td><td>Halcyon</td><td><span class="status pending">Pending</span></td></tr>
+      <tr><td>INV-1043</td><td>Larkspur</td><td><span class="status paid">Paid</span></td></tr>
+      <tr><td>INV-1044</td><td>Meridian</td><td><span class="status paid">Paid</span></td></tr>
+      <tr><td>INV-1045</td><td>Quillon</td><td><span class="status paid">Paid</span></td></tr>
+      <tr><td>INV-1046</td><td>Solstice</td><td><span class="status paid">Paid</span></td></tr>
+    </tbody>
+  </table>
+  <h2>Updates</h2>
+  <ul class="updates">
+    <li>Exports now include tax lines<span class="new">New</span></li>
+    <li>Reminders can be scheduled<span class="new">New</span></li>
+    <li>Credit notes link to invoices<span class="new">New</span></li>
+    <li>Customers can pay by bank transfer<span class="new">New</span></li>
+    <li>Statements show running balances<span class="new">New</span></li>
+    <li>Receipts carry your logo<span class="new">New</span></li>
+  </ul>
+</body>
+</html>

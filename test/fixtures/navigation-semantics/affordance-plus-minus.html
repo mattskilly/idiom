@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Plus and minus</title>
+    <style>
+      body { margin: 0; font: 16px system-ui, sans-serif; padding: 24px; color: #1d1d1f; background: #fff; }
+      button { font: inherit; display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #c7c7cc; border-radius: 6px; background: #fff; color: inherit; cursor: pointer; }
+      ul[hidden], section[hidden], aside[hidden] { display: none; }
+      #faq::after { content: "+"; }
+      #faq[aria-expanded=true]::after { content: "−"; }
+    </style>
+  </head>
+  <body>
+    <h2><button id="faq" aria-expanded="false" aria-controls="faq-answer">Can I change my booking?</button></h2>
+    <section id="faq-answer" hidden><p>Yes, up to a day before.</p></section>
+    <script>
+      for (const trigger of document.querySelectorAll("[aria-controls]")) {
+        const panel = document.getElementById(trigger.getAttribute("aria-controls"));
+        trigger.addEventListener("click", () => {
+          const open = panel.hidden;
+          panel.hidden = !open;
+          trigger.setAttribute("aria-expanded", String(open));
+        });
+      }
+    </script>
+  </body>
+</html>

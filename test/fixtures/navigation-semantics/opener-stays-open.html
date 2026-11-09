@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Logo opens a drawer it cannot close</title>
+    <style>
+      body { margin: 0; font: 16px system-ui, sans-serif; color: #1d1d1f; background: #fff; }
+      header { height: 64px; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid #e5e5ea; }
+      #logo { display: inline-flex; align-items: center; gap: 8px; padding: 8px; border: 0; background: none; font: 600 18px system-ui, sans-serif; color: inherit; cursor: pointer; }
+      #drawer { position: fixed; left: 0; top: 64px; bottom: 0; width: 280px; background: #fff; border-right: 1px solid #e5e5ea; padding: 16px; box-sizing: border-box; }
+      #drawer[hidden] { display: none; }
+      #drawer a { display: block; padding: 8px 0; color: inherit; }
+      main { padding: 24px 24px 24px 320px; }
+
+    </style>
+  </head>
+  <body>
+    <header>
+      <button id="logo" aria-expanded="false" aria-controls="drawer">Northwind</button>
+    </header>
+    <aside id="drawer" role="dialog" aria-label="Navigation" hidden>
+      <a href="#bookings">Bookings</a>
+      <a href="#clients">Clients</a>
+    </aside>
+    <main><h1>Bookings</h1><p>Your upcoming bookings appear here.</p></main>
+    <script>
+      const logo = document.getElementById("logo");
+      const drawer = document.getElementById("drawer");
+      const setOpen = (open) => {
+        drawer.hidden = !open;
+        logo.setAttribute("aria-expanded", String(open));
+      };
+      logo.addEventListener("click", () => {
+        setOpen(true);
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") setOpen(false);
+      });
+      document.addEventListener("click", (event) => {
+        if (!drawer.hidden && !drawer.contains(event.target) && !logo.contains(event.target)) setOpen(false);
+      });
+      for (const close of document.querySelectorAll("[data-close]"))
+        close.addEventListener("click", () => setOpen(false));
+    </script>
+  </body>
+</html>

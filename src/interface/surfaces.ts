@@ -39,6 +39,7 @@ export const commandStatus: Record<string, SurfaceStatus> = {
   baseline: "stable",
   "baseline record": "stable",
   "baseline accept": "stable",
+  "baseline advance": "experimental",
   review: "stable",
   fix: "experimental",
   check: "stable",
@@ -295,6 +296,12 @@ export const jsonOutputs: JsonOutput[] = [
     id: "baseline accept",
     command: "baseline accept",
     description: "the accepted baseline",
+    status: "experimental",
+  },
+  {
+    id: "baseline advance",
+    command: "baseline advance",
+    description: "the target branch tip recorded in the base cache",
     status: "experimental",
   },
   {

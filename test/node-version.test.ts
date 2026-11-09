@@ -12,7 +12,7 @@ import {
 import { IDIOM_VERSION } from "../src/version.js";
 
 const repositoryRoot = join(import.meta.dirname, "..");
-const builtEntry = join(repositoryRoot, "dist", "cli.js");
+const builtEntry = join(repositoryRoot, "build", "cli.js");
 
 const message = (version: string) =>
   `Idiom needs Node 22.12 or newer; this is Node ${version}. Install Node 22.12+ (https://nodejs.org) and run again.`;

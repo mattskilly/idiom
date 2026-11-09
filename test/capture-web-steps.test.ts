@@ -1440,7 +1440,10 @@ test("shell and overlay evidence survives a multi-tuple capture with chained and
         tuple.observations.shellVisibility?.shell.status,
     ).toBe("measured");
   }
-}, 60000);
+  // Harness allowance, not a product deadline: max 60.2s measured with two full
+  // gates at once (docs/testing/stabilise-the-browser.md), past the old 60s.
+  // ~3x headroom absorbs heavier load and keeps all 24 tuples.
+}, 180_000);
 
 test("persisted failed visibility assertion remains a missing-state finding", async () => {
   const { loaded } = await captureRun(

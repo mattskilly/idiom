@@ -67,9 +67,14 @@ test("20-state public CLI captures only the changed route and never bootstraps a
       "never",
     ]);
     expect(defaultMode.status, defaultMode.err).toBe(0);
-    expect(
-      JSON.parse(defaultMode.out).checks[0].summary.baselineNotApplied,
-    ).toContain("never initialize");
+    // Default mode judges against the base (here HEAD): captured in its own
+    // worktree, never recorded as a committed baseline.
+    const defaultSummary = JSON.parse(defaultMode.out).checks[0].summary;
+    expect(defaultSummary.baselineNotApplied).toBeUndefined();
+    expect(defaultSummary.baseline).toMatchObject({
+      source: "base-capture",
+      base: (await f.git("rev-parse", "HEAD")).trim(),
+    });
     await expect(
       access(join(f.directory, ".idiom/baselines/site.json")),
     ).rejects.toThrow();

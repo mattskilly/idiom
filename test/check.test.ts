@@ -11,7 +11,12 @@ import { run as runCli } from "../src/cli.js";
 import { baselineRecordCommand } from "../src/commands/baseline.js";
 import { checkCommand, renderCheckSummary } from "../src/commands/check.js";
 import { initProject } from "../src/commands/init.js";
-import { readDecisionLog } from "../src/decisions/log.js";
+import {
+  appendDecisionBatch,
+  readDecisionLog,
+  readRawDecisionLog,
+} from "../src/decisions/log.js";
+import { digestFlows } from "../src/digest/build.js";
 import { type DigestRecord, digestRecordSchema } from "../src/digest/record.js";
 import { comparePriority } from "../src/review/ranking.js";
 import type { Finding } from "../src/schemas/finding.js";
@@ -1049,4 +1054,72 @@ test("a finding rejected between two checks is counted as rejected, not fixed", 
     target.id,
   );
   expect(flow.counts.rejected).toBeGreaterThan(0);
+}, 120_000);
+
+test("stored digest deduplicates a decision across coordinates and follows later attribution corrections without another check", async () => {
+  const { project, commit } = await studioProject();
+  const from = "2026-10-22T12-00-00-000Z";
+  await storedRun(project, from, commit);
+  await withMobileTuple(project, from);
+  const summary = await checkCommand({
+    project,
+    flow: "studio-lab",
+    from,
+    all: true,
+  });
+  const target = summary.findings[0];
+  if (!target) throw new Error("fixture has findings");
+  const errors: string[] = [];
+  expect(
+    await runCli(
+      [
+        "node",
+        "idiom",
+        "decide",
+        target.id,
+        "--reject",
+        "--scope",
+        "rule",
+        "--actor",
+        "human",
+        "--project",
+        project,
+      ],
+      { stdout: () => {}, stderr: (s) => errors.push(s) },
+    ),
+    errors.join("\n"),
+  ).toBe(0);
+  await checkCommand({ project, flow: "studio-lab", from, all: true });
+  const record = await digestRecordOf(project, from);
+  expect(record.appliedDecisions).toHaveLength(1);
+  expect(record.appliedDecisions?.[0]?.occurrences.length).toBeGreaterThan(1);
+  const before = (await digestFlows({ project, flow: "studio-lab" }))[0];
+  expect(before?.decisions).toMatchObject({
+    available: true,
+    human: { reject: 1 },
+    agent: { reject: 0 },
+  });
+  const raw = (await readRawDecisionLog(project))[0];
+  if (!raw) throw new Error("missing decision");
+  await appendDecisionBatch(project, [
+    {
+      at: new Date().toISOString(),
+      decision: "reattribute",
+      commit: raw.record.commit,
+      findingId: raw.record.findingId,
+      fingerprint: raw.record.fingerprint,
+      target: raw.source,
+      actor: "agent",
+      note: "build agent correction",
+    },
+  ]);
+  // No capture/check between the correction and this digest read.
+  const after = (await digestFlows({ project, flow: "studio-lab" }))[0];
+  expect(after?.decisions).toMatchObject({
+    human: { reject: 0 },
+    agent: { reject: 1 },
+  });
+  expect(after?.counts).toEqual(before?.counts);
+  expect(after?.newFindings).toEqual(before?.newFindings);
+  expect(await digestRecordOf(project, from)).toEqual(record);
 }, 120_000);

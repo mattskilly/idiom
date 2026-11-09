@@ -8,7 +8,7 @@ import { fixtureCommand } from "./support/fixture-server.js";
 
 const exec = promisify(execFile);
 const fixtures = join(import.meta.dirname, "fixtures/decision-escalation");
-const cli = resolve(import.meta.dirname, "../dist/cli.js");
+const cli = resolve(import.meta.dirname, "../build/cli.js");
 
 test("real gate -> escalation -> explicit guidance/commit -> revalidation -> no repeat question", async () => {
   const f = await changedFixture({}, 1);

@@ -8,7 +8,7 @@ import {
 } from "playwright";
 import { IdiomError } from "../errors.js";
 import type { ElectronFlow } from "../schemas/flow.js";
-import { briefMarks, checkMarks } from "../schemas/project.js";
+import { briefMarks, checkMarks, emptyOkMarks } from "../schemas/project.js";
 import { deterministicScreenshotOptions } from "./browser.js";
 import { type AxeFactory, collectPageEvidence } from "./page.js";
 import { expandDataDirectory, expandEnvironment } from "./process.js";
@@ -444,7 +444,13 @@ export function createElectronLauncher(
               marks: [
                 ...checkMarks(tuple.project.checks),
                 ...briefMarks(tuple.briefSelectors),
+                ...emptyOkMarks(tuple.state.intentionallyEmpty),
               ],
+              frameOrnaments: {
+                emptyFrame: tuple.project.checks.emptyFrame.enabled,
+                rowOrnament: tuple.project.checks.repeatedRowOrnament.enabled,
+                glyphOverIcon: tuple.project.checks.glyphOverIcon.enabled,
+              },
               emptyState: tuple.project.checks.emptyState,
               bandEdges: tuple.project.checks.bandEdges?.enabled === true,
               wordBreak: tuple.project.checks.wordBreak?.enabled === true,

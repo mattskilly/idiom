@@ -750,7 +750,7 @@ test.each(["tailwind-v3", "tailwind-v3-extend"])(
     const { stdout } = await promisify(execFile)(
       process.execPath,
       [
-        join(import.meta.dirname, "..", "dist", "cli.js"),
+        join(import.meta.dirname, "..", "build", "cli.js"),
         "--project",
         root,
         "system",

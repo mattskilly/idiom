@@ -59,7 +59,7 @@ For Codex, run in your shell:
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.21.0/mattskilly-idiom-0.21.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.22.0/mattskilly-idiom-0.22.0.tgz idiom mcp
 ```
 
 The Claude Code plugin bundles twenty-four MCP tools over stdio, the Idiom skill and UI-edit and stop reminders. In Codex the plugin supplies the skill and `codex mcp add` registers the tools, because Codex starts a plugin's own MCP server in the plugin directory rather than your project. No global Idiom install is needed for the plugin. You need Node 22.12 or newer, npm/npx and the matching browser: `npx playwright@1.62.1 install chromium`. The first MCP launch downloads the exact GitHub release named by the plugin, independently of the npm registry's current version.
@@ -87,7 +87,7 @@ npm install -g @mattskilly/idiom
 idiom --version
 ```
 
-`bun add -g @mattskilly/idiom` works too. The version command prints `<version> (<short source commit>) · interface <n>`, for example `0.21.0 (00663e4) · interface 1`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D --save-exact @mattskilly/idiom@0.21.0` or `bun add -d --exact @mattskilly/idiom@0.21.0`. Every release's tarball is also attached to its [GitHub release](https://github.com/mattskilly/idiom/releases).
+`bun add -g @mattskilly/idiom` works too. The version command prints `<version> (<short source commit>) · interface <n>`, for example `0.22.0 (00663e4) · interface 1`. To pin a project to an exact release instead, add it as a dev dependency and run it with `bunx idiom` or `npx idiom`: `npm install -D --save-exact @mattskilly/idiom@0.22.0` or `bun add -d --exact @mattskilly/idiom@0.22.0`. Every release's tarball is also attached to its [GitHub release](https://github.com/mattskilly/idiom/releases).
 
 ### Browser setup
 
@@ -169,7 +169,7 @@ bun run build
 bun link
 ```
 
-`npm link` is the Node-only alternative. These clone/link instructions are for repository development, not external installation.
+`bun run build` writes the development CLI to the gitignored `build/cli.js`; run it with `node build/cli.js …`. `bun link` links the package `bin`, which is `dist/cli.js`: the last release's committed bundle, written only by `bun run build:release`. `npm link` is the Node-only alternative. These clone/link instructions are for repository development, not external installation.
 
 ## Documentation
 

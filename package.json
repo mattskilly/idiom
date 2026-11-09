@@ -1,6 +1,6 @@
 {
   "name": "@mattskilly/idiom",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "description": "Design acceptance for AI-built software.",
   "type": "module",
   "license": "Apache-2.0",
@@ -44,6 +44,7 @@
     "contract:update": "IDIOM_UPDATE_CONTRACT=1 vitest run test/interface-contract.test.ts",
     "lint": "biome check .",
     "build": "node scripts/check-plugins.mjs && tsup --config tsup.config.ts",
+    "build:release": "node scripts/check-plugins.mjs && tsup --config tsup.config.ts --out-dir dist",
     "build:site": "node scripts/build-site.mjs",
     "build:hosted-runner": "node scripts/hosted/build-runner.mjs",
     "measure:hosted-review": "node scripts/hosted/measure.mjs",

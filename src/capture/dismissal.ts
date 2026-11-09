@@ -247,7 +247,7 @@ async function classify(
  * Whether the panel is still open: its root renders, the trigger is not
  * `aria-expanded="false"`, a dialog keeps `open` and a popover stays open.
  */
-async function panelOpen(
+export async function panelOpen(
   page: Page,
   trigger: string,
   root: string,
@@ -274,7 +274,7 @@ async function panelOpen(
 }
 
 /** Poll every 50ms until the panel reaches `open`, or the window ends. */
-async function waitFor(
+export async function waitFor(
   page: Page,
   trigger: string,
   root: string,

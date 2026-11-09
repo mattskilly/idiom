@@ -16,11 +16,21 @@ import { type DesignToken, tokenIdentity } from "../system/learn/schema.js";
 import type { ExtractedToken } from "../system/learn/types.js";
 import { ensureAuthoredRuleIndex } from "./authored-rules-dom.js";
 import { menuTriggerPattern } from "./collection-actions.js";
+import {
+  type CopyContextWindow,
+  ensureCopyContextDom,
+} from "./copy-context-dom.js";
 import type { InferredComponentInput } from "./design-components.js";
 import {
   type ExplanationDomWindow,
   ensureExplanationDom,
 } from "./explanation-dom.js";
+import {
+  ensureFrameOrnamentDom,
+  type FrameOrnamentResult,
+  type FrameOrnamentWindow,
+} from "./frame-ornament-dom.js";
+import { glyphCharacter } from "./glyph-icon.js";
 import { type LayoutShiftEntry, layoutShiftScore } from "./layout-shift.js";
 import { sampleLiveness } from "./liveness-dom.js";
 import {
@@ -551,6 +561,13 @@ export type ObserveOptions = {
    */
   revealedRoot?: string | undefined;
   revealedTrigger?: string | undefined;
+  /**
+   * The empty-frame, repeated-row-ornament and glyph-over-icon scans to run;
+   * a scan left out records no field (its check then reports unavailable).
+   */
+  frameOrnaments?:
+    | { emptyFrame: boolean; rowOrnament: boolean; glyphOverIcon: boolean }
+    | undefined;
   /** Regions judged by the empty-state check (resolved at capture time). */
   emptyState?:
     | {
@@ -619,8 +636,10 @@ async function observeWithTokens(
 ): Promise<ObservationArtifact> {
   const axeHeadingTargets = extractAxeHeadingTargets(axe);
   await ensureExplanationDom(page);
+  await ensureCopyContextDom(page);
   await ensureVisibilityDom(page);
   await ensureAuthoredRuleIndex(page);
+  if (observeOptions.frameOrnaments) await ensureFrameOrnamentDom(page);
   const artifact: ObservationArtifact = await page.evaluate(
     async ({
       tokenInput,
@@ -642,6 +661,7 @@ async function observeWithTokens(
       collectionInput,
       menuTriggerSource,
       revealedInput,
+      frameInput,
     }) => {
       const generatedClass = (value: string): boolean =>
         /__[A-Za-z0-9_-]{5,}$/.test(value) ||
@@ -2785,6 +2805,9 @@ async function observeWithTokens(
         document.body,
         ...document.body.querySelectorAll("*"),
       ];
+      const copySegments = (window as CopyContextWindow).__idiomCopyContext?.(
+        all,
+      );
       const structuralPaths = elementPaths(all);
       const renderedPaths = elementPaths(all.filter(isRendered));
       const adornments = new Map<Element, Adornment>();
@@ -2804,6 +2827,17 @@ async function observeWithTokens(
       for (const { mark, elements } of markMatches)
         if (mark.purpose === "primary-action")
           for (const element of elements) primaryMarked.add(element);
+      const frameOrnaments: FrameOrnamentResult =
+        frameInput.enabled === undefined
+          ? {}
+          : ((window as FrameOrnamentWindow).__idiomFrameOrnaments?.({
+              selectorFor,
+              exempt: markMatches
+                .filter(({ mark }) => mark.purpose === "empty-ok")
+                .flatMap(({ elements }) => elements),
+              glyphSource: frameInput.glyphSource,
+              enabled: frameInput.enabled,
+            }) ?? {});
       const paintedFacts = new Map<
         Element,
         ReturnType<typeof window.__idiomVisibility.painted>
@@ -3291,6 +3325,9 @@ async function observeWithTokens(
             structuralPath,
             ...(legacyRenderedPath === undefined ? {} : { legacyRenderedPath }),
             directText,
+            ...(copySegments?.has(element)
+              ? { copyTextSegments: copySegments.get(element) }
+              : {}),
             attributes,
             temporal: temporalPattern.test(
               `${directText} ${(html.innerText ?? "").slice(0, 500)}`,
@@ -4775,6 +4812,217 @@ async function observeWithTokens(
             ? (parent as HTMLDetailsElement).open
             : element.getAttribute("aria-expanded") === "true",
         });
+      }
+      // Icon controls: interactive controls carrying exactly one visible
+      // icon, fingerprinted by its geometry (SVG) or glyph and font (icon
+      // font), so one icon's meanings can be compared across a flow.
+      const iconControls: Array<{
+        selector: string;
+        path: string;
+        id?: string;
+        name: string;
+        role: string;
+        fingerprint: string;
+        placement: "only" | "leading" | "trailing";
+        disclosure: boolean;
+      }> = [];
+      {
+        const iconFamily = /icon|symbol|awesome|glyph|material/i;
+        const firstFamily = (element: Element) =>
+          (getComputedStyle(element).fontFamily.split(",")[0] ?? "")
+            .trim()
+            .replace(/^["']|["']$/g, "")
+            .toLowerCase();
+        const roundNumbers = (value: string) =>
+          value
+            .replace(/-?\d*\.\d+|-?\d+/g, (number) =>
+              String(Math.round(Number(number) * 100) / 100),
+            )
+            .replace(/\s+/g, " ")
+            .trim();
+        const shapeAttributes: Record<string, string[]> = {
+          path: ["d"],
+          circle: ["cx", "cy", "r"],
+          ellipse: ["cx", "cy", "rx", "ry"],
+          rect: ["x", "y", "width", "height", "rx", "ry"],
+          line: ["x1", "y1", "x2", "y2"],
+          polyline: ["points"],
+          polygon: ["points"],
+        };
+        const shapesOf = (scope: Element, depth: number): string[] => {
+          const parts: string[] = [];
+          const own = scope.matches(
+            "path, circle, ellipse, rect, line, polyline, polygon",
+          )
+            ? [scope]
+            : [];
+          for (const shape of [
+            ...own,
+            ...scope.querySelectorAll(
+              "path, circle, ellipse, rect, line, polyline, polygon, use",
+            ),
+          ]) {
+            const tag = shape.tagName.toLowerCase();
+            if (tag === "use") {
+              if (depth > 1) continue;
+              const href =
+                shape.getAttribute("href") ??
+                shape.getAttribute("xlink:href") ??
+                "";
+              let target: Element | null = null;
+              if (href.startsWith("#"))
+                try {
+                  target = document.querySelector(href);
+                } catch {
+                  target = null;
+                }
+              if (target !== null) parts.push(...shapesOf(target, depth + 1));
+              continue;
+            }
+            const values = (shapeAttributes[tag] ?? []).map((name) =>
+              roundNumbers(shape.getAttribute(name) ?? ""),
+            );
+            if (values.every((value) => value === "")) continue;
+            parts.push(`${tag}:${values.join(",")}`);
+          }
+          return parts;
+        };
+        const fnv = (value: string) => {
+          let hash = 0x811c9dc5;
+          for (let index = 0; index < value.length; index += 1) {
+            hash ^= value.charCodeAt(index);
+            hash = Math.imul(hash, 0x01000193) >>> 0;
+          }
+          return hash.toString(16).padStart(8, "0");
+        };
+        const shown = (element: Element) => {
+          if (
+            !element.checkVisibility({
+              checkOpacity: true,
+              checkVisibilityCSS: true,
+            }) ||
+            !isVisibleContent(element)
+          )
+            return false;
+          const rect = element.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+        const privateUse = /^["'][\uE000-\uF8FF]{1,2}["']$/u;
+        const iconsOf = (control: Element) => {
+          const icons: Array<{ element: Element; fingerprint: string }> = [];
+          const svgs =
+            control instanceof SVGSVGElement
+              ? [control]
+              : [...control.querySelectorAll("svg")].filter(
+                  (svg) => svg.parentElement?.closest("svg") === null,
+                );
+          for (const svg of svgs) {
+            if (!shown(svg)) continue;
+            const shapes = shapesOf(svg, 0);
+            if (shapes.length === 0) continue;
+            const viewBox = roundNumbers(svg.getAttribute("viewBox") ?? "");
+            icons.push({
+              element: svg,
+              fingerprint: `svg:${fnv(`${viewBox};${shapes.join(";")}`)}`,
+            });
+          }
+          for (const element of [control, ...control.querySelectorAll("*")]) {
+            if (element instanceof SVGElement) continue;
+            const before = getComputedStyle(element, "::before").content;
+            let glyph: string | undefined;
+            if (privateUse.test(before)) glyph = before.slice(1, -1);
+            else {
+              const family = firstFamily(element);
+              if (
+                iconFamily.test(family) &&
+                element.children.length === 0 &&
+                (element === control ||
+                  !iconFamily.test(
+                    firstFamily(element.parentElement ?? element),
+                  ) ||
+                  element.parentElement === control)
+              ) {
+                const own = (element.textContent ?? "").trim();
+                if (own !== "" && own.length <= 40) glyph = own;
+              }
+            }
+            if (glyph === undefined || !shown(element)) continue;
+            icons.push({
+              element,
+              fingerprint: `font:${firstFamily(element)}|${glyph}`,
+            });
+          }
+          return icons;
+        };
+        const roleOf = (element: Element) => {
+          const explicit = element.getAttribute("role");
+          if (explicit) return explicit;
+          const tag = element.tagName.toLowerCase();
+          if (tag === "a") return "link";
+          return "button";
+        };
+        for (const control of document.querySelectorAll(
+          "a[href], button, summary, [role=button], [role=link], [role=menuitem], [role=tab], [role=option], [role=switch], input[type=button], input[type=submit]",
+        )) {
+          if (iconControls.length >= 400) break;
+          if (control.closest("[aria-hidden=true], [inert]") !== null) continue;
+          if (!control.checkVisibility() || !isVisibleContent(control))
+            continue;
+          const icons = iconsOf(control);
+          const icon = icons[0];
+          if (icons.length !== 1 || icon === undefined) continue;
+          let textBox: { left: number; top: number } | undefined;
+          const walker = document.createTreeWalker(
+            control,
+            NodeFilter.SHOW_TEXT,
+          );
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const parent = node.parentElement;
+            if (
+              parent === null ||
+              icon.element.contains(parent) ||
+              !/[\p{L}\p{N}]/u.test(node.textContent ?? "") ||
+              !isVisibleContent(parent)
+            )
+              continue;
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            const rect = range.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) continue;
+            textBox =
+              textBox === undefined
+                ? { left: rect.left, top: rect.top }
+                : {
+                    left: Math.min(textBox.left, rect.left),
+                    top: Math.min(textBox.top, rect.top),
+                  };
+          }
+          const iconBox = icon.element.getBoundingClientRect();
+          const placement =
+            textBox === undefined
+              ? ("only" as const)
+              : iconBox.right <= textBox.left + 2 ||
+                  iconBox.bottom <= textBox.top + 2
+                ? ("leading" as const)
+                : ("trailing" as const);
+          const haspopup = control.getAttribute("aria-haspopup");
+          iconControls.push({
+            selector: selectorFor(control),
+            path: probePathFor(control),
+            ...(control.id ? { id: `#${CSS.escape(control.id)}` } : {}),
+            name: accessibleName(control)
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 120),
+            role: roleOf(control),
+            fingerprint: icon.fingerprint,
+            placement,
+            disclosure:
+              control.hasAttribute("aria-expanded") ||
+              (haspopup !== null && haspopup !== "false") ||
+              control.tagName.toLowerCase() === "summary",
+          });
+        }
       }
       // Clipped text: painted lines that run past a box which hides them for
       // good, with no ellipsis or line clamp to say so.
@@ -9806,6 +10054,7 @@ async function observeWithTokens(
         dialogs,
         overlaps,
         disclosures,
+        iconControls,
         popoverCovers,
         selectionOutlines,
         clippedText,
@@ -9814,6 +10063,7 @@ async function observeWithTokens(
         fieldGroups,
         emptyRegions,
         repeatedContainers,
+        ...frameOrnaments,
         ...(components.length === 0 ? {} : { components }),
         spacingTargets,
         ...(mediaFrames === undefined ? {} : { mediaFrames }),
@@ -9868,6 +10118,10 @@ async function observeWithTokens(
       revealedInput: {
         root: observeOptions.revealedRoot,
         trigger: observeOptions.revealedTrigger,
+      },
+      frameInput: {
+        enabled: observeOptions.frameOrnaments,
+        glyphSource: glyphCharacter.source,
       },
     },
   );

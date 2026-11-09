@@ -78,9 +78,9 @@ async function exists(path: string): Promise<boolean> {
 }
 
 export function lineageDecision(
-  lineage: FindingLineage,
+  lineage: Pick<FindingLineage, "ids" | "fingerprints">,
   decisions: readonly Decision[],
-  occurrence?: CatalogFinding | undefined,
+  occurrence?: Pick<CatalogFinding, "finding"> | undefined,
 ): Decision | undefined {
   return decisions
     .filter((decision) => {
@@ -372,7 +372,7 @@ export function renderLifecycleList(lifecycles: FindingLifecycle[]): string {
       `  Decision: ${
         lifecycle.decision === undefined
           ? "none"
-          : `${lifecycle.decision.decision} (${lifecycle.decision.scope})${lifecycle.decision.reason === undefined ? "" : ` — ${lifecycle.decision.reason}`}`
+          : `${lifecycle.decision.decision} (${lifecycle.decision.scope}) [${lifecycle.decision.actor}${lifecycle.decision.agent ? `: ${lifecycle.decision.agent}` : ""}]${lifecycle.decision.reason === undefined ? "" : ` — ${lifecycle.decision.reason}`}`
       }`,
       ...(lifecycle.acknowledgement === undefined
         ? []

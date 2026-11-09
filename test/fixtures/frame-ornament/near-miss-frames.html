@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Board</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1d232b; background: #fff; padding: 16px; }
+  .toolbar { height: 48px; width: 240px; border: 1px solid #d6dbe1; display: flex; align-items: center; padding: 0 8px; }
+  .icon-only { width: 32px; height: 32px; border: 0; background: none; padding: 0; }
+  .icon-only::before { content: "\2630"; font-size: 20px; }
+  .row-loading { height: 40px; width: 320px; background: #eceff2; margin: 8px 0; }
+  .swatch { width: 64px; height: 64px; background: #3a6ea5; display: inline-block; }
+  .scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.001); pointer-events: none; }
+  .chip { display: inline-block; width: 40px; height: 20px; border: 1px solid #b9c0c8; }
+  .tile { width: 160px; height: 96px; border: 1px solid #d6dbe1; }
+  .reveal-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; width: 480px; border: 1px solid #d6dbe1; background: #d6dbe1; }
+  .reveal-grid > div { background: #fff; padding: 16px; opacity: 0; }
+  .tile .art { width: 100%; height: 100%; background-image: linear-gradient(#cfe0f3, #9fbfe2); }
+</style>
+</head>
+<body>
+  <h1>Board</h1>
+  <div class="toolbar"><span class="icon-only" aria-hidden="true"></span></div>
+  <div aria-busy="true"><div class="row-loading"></div><div class="row-loading"></div></div>
+  <div class="swatch" aria-label="Harbour blue"></div>
+  <span class="chip"></span>
+  <div class="tile"><div class="art"></div></div>
+  <div class="reveal-grid"><div>Plans are billed monthly.</div><div>Seats can be added any time.</div></div>
+  <div class="scrim"></div>
+</body>
+</html>

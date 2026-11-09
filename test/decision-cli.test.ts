@@ -2,7 +2,21 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { run } from "../src/cli.js";
+import { run as runCli } from "../src/cli.js";
+
+const run: typeof runCli = (args, dependencies = {}) =>
+  runCli(args, {
+    ...dependencies,
+    decide: {
+      actor: {
+        env: {},
+        isDirectory: async () => false,
+        exists: async () => false,
+      },
+      ...dependencies.decide,
+    },
+  });
+
 import { initProject } from "../src/commands/init.js";
 import { readDecisionLog } from "../src/decisions/log.js";
 import { decisionSchema } from "../src/schemas/decision.js";

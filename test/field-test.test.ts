@@ -252,7 +252,7 @@ const rate = (rating: string, human?: string) => ({
   rules: [],
   title: "",
   agent: { rating, reason: "agent" },
-  human: human ? { rating: human, reason: "human" } : null,
+  human: { rating: human ?? rating, reason: "human" },
 });
 
 describe("precisionByRule", () => {
@@ -314,7 +314,7 @@ describe("precisionByRule", () => {
       ["y", 1],
     ]);
   });
-  test("human ratings override agent ratings", () => {
+  test("human and agent ratings remain independent", () => {
     const rows = precisionByRule(
       results([issue("a", ["r"]), issue("b", ["r"])]),
       { labels: { a: rate("disagree", "agree"), b: rate("agree") } },
@@ -322,7 +322,7 @@ describe("precisionByRule", () => {
     expect(rows[0]).toMatchObject({
       agree: 2,
       disagree: 0,
-      source: "mixed",
+      source: "human",
     });
   });
 });
@@ -592,7 +592,7 @@ describe("feel issues", () => {
       { labels: { "app:a": rate("agree") } },
     );
     expect(markdown).toContain(
-      "### Feel rules (all findings, not just Top 10)",
+      "### Human feel rules (all findings, not just Top 10)",
     );
     expect(markdown).toContain(
       "| `idiom:double-submit` | n=0 (unmeasured) | n=1 / 100% | n=1 / 100% | no |",
@@ -650,7 +650,8 @@ describe("generated section", () => {
       },
       { labels: { "t:a": rate("agree") } },
     );
-    expect(markdown).toContain("### Precision by rule");
+    expect(markdown).toContain("### Human precision by rule");
+    expect(markdown).toContain("### Agent precision by rule");
     expect(markdown).toContain("| `r` | 1 | 0 | 0 | 1 | 100% | agent |  |");
     expect(markdown).toContain("#### t");
   });
@@ -843,4 +844,53 @@ describe("human rating pass", () => {
       /no label slot/,
     );
   });
+});
+
+test("agent-only evidence cannot satisfy human precision and opposite ratings are retained separately", () => {
+  const rule = "idiom:motion-snap";
+  const issues = Array.from({ length: 5 }, (_, index) =>
+    issue(`a${index}`, [rule]),
+  );
+  const results = {
+    targets: [
+      { id: "t", kind: "field-app", topIssues: issues, feelIssues: issues },
+    ],
+  };
+  const labels = {
+    labels: Object.fromEntries(
+      issues.map((item) => [
+        item.key,
+        {
+          ...rate("agree"),
+          human: null as ReturnType<typeof rate>["human"] | null,
+        },
+      ]),
+    ),
+  };
+  expect(precisionByRule(results, labels)).toEqual([]);
+  expect(
+    feelPrecision(results, labels).find((row: Row) => row.rule === rule),
+  ).toMatchObject({ combined: { n: 0, precision: null }, met: false });
+  expect(
+    feelPrecision(results, labels, "agent").find(
+      (row: Row) => row.rule === rule,
+    ),
+  ).toMatchObject({ combined: { n: 5, precision: 1 }, met: true });
+  labels.labels.a0 = { ...rate("agree", "disagree") };
+  expect(precisionByRule(results, labels)[0]).toMatchObject({
+    agree: 0,
+    disagree: 1,
+    precision: 0,
+    source: "human",
+  });
+  expect(precisionByRule(results, labels, "agent")[0]).toMatchObject({
+    agree: 5,
+    disagree: 0,
+    precision: 1,
+    source: "agent",
+  });
+  const text = renderGenerated(results, labels);
+  expect(text).toContain("Human precision");
+  expect(text).toContain("Agent precision");
+  expect(text).toContain("disagree | human | agree | agent");
 });

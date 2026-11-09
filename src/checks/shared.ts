@@ -39,6 +39,101 @@ export const codeTags: ReadonlySet<string> = new Set([
   "input",
 ]);
 
+// Keep codeTags above stable: other checks use its broader input/tag policy.
+const semanticCodeTags = new Set(["pre", "code", "kbd", "samp", "textarea"]);
+const ariaRoles = new Set(
+  `alert alertdialog application article banner blockquote button caption cell checkbox code columnheader combobox complementary contentinfo definition deletion dialog directory document emphasis feed figure form generic grid gridcell group heading img insertion link list listbox listitem log main marquee math menu menubar menuitem menuitemcheckbox menuitemradio meter navigation none note option paragraph presentation progressbar radio radiogroup region row rowgroup rowheader scrollbar search searchbox separator slider spinbutton status strong subscript suggestion superscript switch tab table tablist tabpanel term textbox time timer toolbar tooltip tree treegrid treeitem`.split(
+    " ",
+  ),
+);
+const blockDisplays = new Set([
+  "block",
+  "flow-root",
+  "list-item",
+  "flex",
+  "grid",
+  "table",
+  "table-caption",
+  "table-cell",
+  "table-row",
+  "table-row-group",
+  "table-header-group",
+  "table-footer-group",
+]);
+const monospaceFamilies = new Set([
+  "monospace",
+  "ui-monospace",
+  "menlo",
+  "monaco",
+  "consolas",
+  "courier",
+  "courier new",
+  "sfmono-regular",
+]);
+
+function fontFamilies(value: string): string[] {
+  return (value.match(/"[^"]*"|'[^']*'|[^,]+/g) ?? []).map((family) =>
+    family
+      .trim()
+      .replace(/^["']|["']$/g, "")
+      .trim()
+      .toLowerCase(),
+  );
+}
+
+/** All structural ancestors, including invisible and unsignalled records. */
+export function codeContext(elements: readonly ObservedElementV2[]) {
+  const byPath = new Map(
+    elements.map((element) => [element.structuralPath, element]),
+  );
+  const ancestry = (path: string): ObservedElementV2[] => {
+    const chain: ObservedElementV2[] = [];
+    for (let end = path.length; end > 0; end = path.lastIndexOf("/", end - 1)) {
+      const element = byPath.get(path.slice(0, end));
+      if (element !== undefined) chain.push(element);
+    }
+    return chain;
+  };
+  const own = (element: ObservedElementV2): boolean => {
+    if (semanticCodeTags.has(element.tag)) return true;
+    const role = (element.attributes.role ?? "")
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .find((token) => ariaRoles.has(token));
+    if (role === "code") return true;
+    if (!blockDisplays.has(element.styles.display)) return false;
+    const families = fontFamilies(element.styles.fontFamily);
+    if (!families.some((family) => monospaceFamilies.has(family))) return false;
+    if (
+      element.authoredProperties?.some(
+        (property) => property === "fontFamily" || property === "font",
+      )
+    )
+      return true;
+    const parent = byPath.get(
+      element.structuralPath.slice(0, element.structuralPath.lastIndexOf("/")),
+    );
+    return (
+      parent !== undefined &&
+      parent.styles.fontFamily !== "" &&
+      families.join(",") !== fontFamilies(parent.styles.fontFamily).join(",")
+    );
+  };
+  const known = new Map<string, boolean>();
+  const isCode = (element: ObservedElementV2): boolean => {
+    const cached = known.get(element.structuralPath);
+    if (cached !== undefined) return cached;
+    // Semantic tags still resolve when legacy captures omit an ancestor record.
+    const result =
+      /(?:^|\/)(?:pre|code|kbd|samp|textarea)\[/.test(element.structuralPath) ||
+      ancestry(element.structuralPath).some(own);
+    known.set(element.structuralPath, result);
+    return result;
+  };
+  return { ancestry, isCode };
+}
+
 export function axeViolations(value: unknown): AxeViolation[] {
   if (value === null || typeof value !== "object") return [];
   const raw = (value as { violations?: unknown }).violations;

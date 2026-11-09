@@ -182,6 +182,7 @@ const WebFlow = z.object({
     settleMs: z.number().optional(),
     loading: z.boolean().optional(), // true declares intentional loading
     loadingSettleMs: z.number().int().positive().optional(), // default 5000 ms after ready
+    intentionallyEmpty: z.array(z.string().trim().min(1)).optional(), // boxes empty on purpose
     screenshotTimeoutMs: z.number().int().positive().optional(), // ms, default 30000
   })),
 })
@@ -219,6 +220,7 @@ const ElectronFlow = z.object({
     settleMs: z.number().optional(),
     loading: z.boolean().optional(), // true declares intentional loading
     loadingSettleMs: z.number().int().positive().optional(), // default 5000 ms after ready
+    intentionallyEmpty: z.array(z.string().trim().min(1)).optional(), // boxes empty on purpose
     screenshotTimeoutMs: z.number().int().positive().optional(), // ms, default 30000
   })),
 })
@@ -448,13 +450,14 @@ const Decision = z.object({
   decision: z.enum(["accept", "reject"]),
   scope: z.enum(["instance", "rule"]).default("instance"),
   reason: z.string().optional(),
-  actor: z.string().default("human"),
+  actor: z.string().default("human"), // historical input compatibility
+  agent: z.string().min(1).optional(),
 })
 ```
 
 Human reference choices can add `provenance: { build: string, escalation?: string }`.
 An additive `decision: "ruling"` variant carries `at`, `commit`, `findingId`,
-`fingerprint`, `actor`, a required nonblank `reason`, validated `resolution`
+`fingerprint`, `actor`, optional `agent`, a required nonblank `reason`, validated `resolution`
 (the existing RulingResolution), and optional provenance. Its fingerprint and
 findingId must match the resolution fingerprint/id. These records never enter
 finding judgment, lifecycle or acknowledgement reduction. Existing log bytes and
@@ -490,13 +493,43 @@ const Acknowledgement = z.object({
     rule: z.string().optional(),
     category: z.string(),
   }).optional(),
-  actor: z.string().default("human"),
+  actor: z.string().default("human"), // historical input compatibility
+  agent: z.string().min(1).optional(),
 })
 ```
 
 The latest acknowledge or unacknowledge line on a lineage is in force. It lapses after an unacknowledge, when its reference is a ticket in the local tracker that is done, the day after `until`, or when the observed finding is more severe than `evidence.severity` or under a different rule. Idiom versions before acknowledgements reject a log containing these lines.
 
 The file is append-only and committed — the decision history is part of the product context a future agent (or teammate) inherits.
+
+New writes use `actor: "human" | "agent"`; `agent` is an optional runtime label on agent records only. Readers retain historical missing-actor defaults and arbitrary historical actor strings. Other historical strings are unattributed in reports. Runtime detection applies only at write time; reading history never infers an actor from the current process.
+
+Attribution corrections are additional raw log records:
+
+```ts
+const AttributionCorrection = z.object({
+  at: z.iso.datetime(),
+  commit: z.string(),
+  findingId: z.string(),
+  fingerprint: z.string(),
+  decision: z.literal("reattribute"),
+  target: z.object({ line: z.number().int().positive(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+  actor: z.enum(["human", "agent"]),
+  agent: z.string().min(1).optional(), // agent corrections only
+  note: z.string().trim().min(1),
+}).strict()
+```
+
+`target.line` is the original physical one-based line, counting blank and unknown records. `target.sha256` hashes that exact original UTF-8 JSON line, excluding its LF or CRLF terminator. The target must be an earlier ordinary judgment, acknowledgement or ruling with matching commit, findingId and fingerprint. Corrections cannot target corrections, unknown lines or themselves. For example, these two exact lines form a valid original and correction:
+
+```jsonl
+{"at":"2026-08-14T12:00:00.000Z","commit":"abc123","findingId":"finding-3","fingerprint":"fp","decision":"accept","scope":"instance","actor":"human"}
+{"at":"2026-11-07T12:00:00.000Z","commit":"abc123","findingId":"finding-3","fingerprint":"fp","decision":"reattribute","target":{"line":1,"sha256":"f7eeb7213c3633e0579b64a8b95d8e72e3f03fe87248a80baab705db94f81ed9"},"actor":"agent","note":"Historical build agent; PR #299."}
+```
+
+Both effective readers project corrections onto the original event in append order: last correction wins, a human correction clears the agent label. They return ordinary events only, retaining original order, timestamp, observed commit, reason and decision semantics. Raw history remains available for audit. A correction is never a fresh acceptance, rejection, acknowledgement or ruling.
+
+New `digest.json` records optionally carry `appliedDecisions`: exact raw source identities, decision kind, actor/agent and associated fingerprint/coordinate pairs for the deterministic occurrences actually affected. One source is counted once across coordinates. Rules-file suppression has no decision actor. Digest reads consult effective attribution for those exact sources without changing captured dispositions; older snapshots disclose attribution unavailable. Human, agent and other legacy actors have separate counts, with acknowledgements counted separately from accept/reject judgments.
 
 ## 10. Decision brief — `.idiom/briefs/<slug>.json`
 
@@ -1238,6 +1271,12 @@ and containers while retaining measurable pairs. Absent evidence means an older
 capture; `[]` means no targets at capture. Offline review reads these saved
 boxes and targets. The appended check/category `spacing-target` emits rule
 `idiom:spacing-target` at major by default, with existing rule severity overrides.
+
+### Empty-frame, row-ornament and glyph-over-icon evidence
+
+Project checks add strict, defaulted `emptyFrame: { enabled: true, ignore: [] }`, `repeatedRowOrnament: { enabled: true }` and `glyphOverIcon: { enabled: true }`. Web and Electron states accept optional `intentionallyEmpty`, a list of trimmed nonempty CSS selectors; a chained state does not inherit it. Both `ignore` and `intentionallyEmpty` resolve through selector marks with purpose `empty-ok`, and the capture skips matched boxes and their descendants.
+
+V2 observations add three optional strict arrays, measured in the page at capture time: `emptyFrames` (at most 50: `selector`, `rect`, `paint` of `border`, `background` or `both`, `borderSides`, and `hiddenChildren`, the element children present but unpainted at that viewport), `rowOrnaments` (at most 100: `collection`, `collectionKind` of `list`, `table`, `grid`, `feed`, `tablist`, `menu` or `rail`, painted `items`, `count` carrying the decoration, `kind` of `icon`, `chip` or `mark`, `text`, `example` selector, `name`, `width`, `height`) and `glyphOverlaps` (at most 50: `control`, `glyph` and `icon` selectors with their rects, the intersection `overlap` and `ratio`, the intersection area over the smaller box, 0 to 1). A disabled check's array is not recorded. Absence in older observations means unavailable coverage; `[]` means the scan ran and found nothing. The appended checks and categories `empty-frame`, `repeated-row-ornament` and `glyph-over-icon` emit `idiom:empty-frame` (minor), `idiom:repeated-row-ornament` (info) and `idiom:glyph-over-icon` (minor).
 
 ### Blank-media and persistent-loading evidence
 

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Projects</title>
+<style>
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; color: #1d232b; background: #fff; display: flex; }
+  .rail { width: 56px; border-right: 1px solid #d6dbe1; display: flex; flex-direction: column; align-items: center; padding: 8px 0; }
+  .rail ul { list-style: none; margin: 0; padding: 0; }
+  .rail-item { position: relative; width: 56px; height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #1d232b; text-decoration: none; }
+  .rail-item .label { font-size: 10px; }
+  .rail-item .icon-wrap { position: relative; width: 24px; height: 24px; }
+  .rail-item .ext { position: absolute; top: -3px; right: -3px; background: #fff; }
+  .collapse { margin-top: auto; width: 32px; height: 32px; border: 0; background: none; padding: 0; display: flex; align-items: center; justify-content: center; color: #1d232b; }
+  main { padding: 24px; flex: 1; }
+  .projects { list-style: none; margin: 16px 0 0; padding: 0; width: 480px; }
+  .projects li { display: flex; align-items: center; gap: 8px; height: 40px; border-bottom: 1px solid #eceff2; }
+  .projects .open { flex: 1; color: #1d232b; text-decoration: none; display: flex; align-items: center; gap: 8px; height: 40px; }
+  .beta { display: inline-block; padding: 0 6px; font-size: 11px; line-height: 18px; border-radius: 9px; background: #e7eefc; color: #23468c; }
+  .more { width: 28px; height: 28px; border: 0; background: none; padding: 0; display: flex; align-items: center; justify-content: center; }
+</style>
+</head>
+<body>
+<nav class="rail" aria-label="Workspace">
+  <ul>
+  <li><a class="rail-item" href="/home"><span class="icon-wrap"><svg class="nav-icon" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 11l9-7 9 7v9h-6v-6H9v6H3z"/></svg><svg class="ext" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M3 1h6v6 M9 1L4 6" stroke="currentColor" fill="none"/></svg></span><span class="label">Home</span></a></li>
+  <li><a class="rail-item" href="/inbox"><span class="icon-wrap"><svg class="nav-icon" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h18v14H3z M3 13h5l2 3h4l2-3h5"/></svg><svg class="ext" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M3 1h6v6 M9 1L4 6" stroke="currentColor" fill="none"/></svg></span><span class="label">Inbox</span></a></li>
+  <li><a class="rail-item" href="/reports"><span class="icon-wrap"><svg class="nav-icon" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 20V10 M12 20V4 M19 20v-7"/></svg><svg class="ext" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M3 1h6v6 M9 1L4 6" stroke="currentColor" fill="none"/></svg></span><span class="label">Reports</span></a></li>
+  <li><a class="rail-item" href="/team"><span class="icon-wrap"><svg class="nav-icon" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20c0-4 3-6 6-6s6 2 6 6"/></svg><svg class="ext" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M3 1h6v6 M9 1L4 6" stroke="currentColor" fill="none"/></svg></span><span class="label">Team</span></a></li>
+  <li><a class="rail-item" href="/files"><span class="icon-wrap"><svg class="nav-icon" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3h8l4 4v14H6z"/></svg><svg class="ext" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M3 1h6v6 M9 1L4 6" stroke="currentColor" fill="none"/></svg></span><span class="label">Files</span></a></li>
+  <li><a class="rail-item" href="/settings"><span class="icon-wrap"><svg class="nav-icon" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v3 M12 19v3 M2 12h3 M19 12h3"/></svg><svg class="ext" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M3 1h6v6 M9 1L4 6" stroke="currentColor" fill="none"/></svg></span><span class="label">Settings</span></a></li>
+  </ul>
+  <button class="collapse" type="button" aria-label="Collapse sidebar"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"/></svg></button>
+</nav>
+<main><h1>Projects</h1>
+  <ul class="projects">
+    <li><a class="open" href="/p/atlas">Atlas<span class="beta">Beta</span></a><button class="more" type="button" aria-label="More actions for Atlas"><svg class="more-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg></button></li>
+    <li><a class="open" href="/p/beacon">Beacon<span class="beta">Beta</span></a><button class="more" type="button" aria-label="More actions for Beacon"><svg class="more-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg></button></li>
+    <li><a class="open" href="/p/cobalt">Cobalt<span class="beta">Beta</span></a><button class="more" type="button" aria-label="More actions for Cobalt"><svg class="more-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg></button></li>
+    <li><a class="open" href="/p/delta">Delta<span class="beta">Beta</span></a><button class="more" type="button" aria-label="More actions for Delta"><svg class="more-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg></button></li>
+    <li><a class="open" href="/p/ember">Ember<span class="beta">Beta</span></a><button class="more" type="button" aria-label="More actions for Ember"><svg class="more-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg></button></li>
+    <li><a class="open" href="/p/fjord">Fjord<span class="beta">Beta</span></a><button class="more" type="button" aria-label="More actions for Fjord"><svg class="more-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg></button></li>
+  </ul>
+</main>
+</body>
+</html>

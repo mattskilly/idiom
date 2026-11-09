@@ -220,6 +220,8 @@ export function buildRuleContract(
             "adjacent-gap",
             "nested-border",
             "selection-outline",
+            "empty-frame",
+            "glyph-over-icon",
           ].includes(candidate.category)
             ? { units: { distance: "CSS px" } }
             : {}),

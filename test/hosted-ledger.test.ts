@@ -442,5 +442,10 @@ describe("finite page and image resources", () => {
       4 * LIMITS.deliveryAttempts * PRICES.blobSimpleOperation;
     expect(subtotal).toBeCloseTo(0.37331533824, 10);
     expect(subtotal).toBeLessThan(RUN_RESERVATION / 1e6);
-  }, 60_000);
+    // Harness allowance, not a product deadline: max 72.2s measured under three
+    // concurrent gates (file-293 proof) and 22.1s with two
+    // (docs/testing/give-four-more.md), past the old 60s. ~2.5x the three-gate
+    // worst case, ~8x the two-gate one; the ledger stays near 4MiB and drains
+    // the full 1GiB.
+  }, 180_000);
 });

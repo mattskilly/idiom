@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Repeated rows</title>
+    <style>
+      body { margin: 0; font: 16px system-ui, sans-serif; padding: 24px; color: #1d1d1f; background: #fff; }
+      button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 32px; min-height: 32px; padding: 6px; border: 1px solid #c7c7cc; border-radius: 6px; background: #fff; color: inherit; font: inherit; cursor: pointer; }
+      .toolbar { display: flex; gap: 12px; margin-bottom: 24px; }
+      ul { list-style: none; padding: 0; }
+      li { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+      a { display: inline-flex; align-items: center; gap: 6px; color: inherit; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <ul>
+      <li><span>Alice</span><button aria-label="Delete Alice" data-hide="row-a"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M6 4V2.5h4V4M4.5 4l.75 9.5h5.5L11.5 4" fill="none" stroke="currentColor"/></svg></button></li>
+      <li><span>Bob</span><button aria-label="Delete Bob" data-hide="row-b"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M6 4V2.5h4V4M4.5 4l.75 9.5h5.5L11.5 4" fill="none" stroke="currentColor"/></svg></button></li>
+      <li><span>Carol</span><button aria-label="Delete Carol" data-hide="row-c"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M6 4V2.5h4V4M4.5 4l.75 9.5h5.5L11.5 4" fill="none" stroke="currentColor"/></svg></button></li>
+    </ul>
+    <span id="row-a"></span><span id="row-b"></span><span id="row-c"></span>
+    <nav aria-label="Settings">
+      <ul>
+        <li><a href="#billing">Billing<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor"/></svg></a></li>
+        <li><a href="#team">Team<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor"/></svg></a></li>
+        <li><a href="#security">Security<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor"/></svg></a></li>
+      </ul>
+    </nav>
+    <script>
+      for (const button of document.querySelectorAll("button[data-toggle]"))
+        button.addEventListener("click", () => document.body.classList.toggle(button.dataset.toggle));
+      for (const button of document.querySelectorAll("button[data-hide]"))
+        button.addEventListener("click", () => document.getElementById(button.dataset.hide).classList.add("hidden"));
+    </script>
+  </body>
+</html>

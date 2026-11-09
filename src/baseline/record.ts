@@ -21,7 +21,7 @@ import { IDIOM_VERSION } from "../version.js";
 import { checksConfigHash } from "./config-hash.js";
 import { tupleCoordinate, tupleCoordinateKey } from "./coordinate.js";
 import { gitAncestry } from "./resolve.js";
-import type { BaselineTuple } from "./schema.js";
+import type { BaselineRecord, BaselineTuple } from "./schema.js";
 import {
   baselineDirectory,
   baselinePath,
@@ -131,6 +131,74 @@ export function baselineGapDiagnostic(
   };
 }
 
+async function assembleBaselineRecord(
+  validated: ValidationResult,
+  loaded: Awaited<ReturnType<typeof loadRunTuples>>,
+  options: { excludeFailed?: boolean } = {},
+): Promise<{ record: BaselineRecord; failedTupleKeys: string[] }> {
+  const failedTupleKeys = loaded.tuples
+    .filter((tuple) => tuple.failure !== undefined)
+    .map((tuple) => tupleCoordinateKey(tupleCoordinate(tuple)));
+  const failed = new Set(options.excludeFailed ? failedTupleKeys : []);
+  const candidates = deterministicCandidateRecords({
+    tuples: loaded.tuples,
+    expectedTupleKeys: loaded.expectedTupleKeys,
+    legacyColorScheme: validated.project.capture.colorScheme,
+    config: await projectChecksConfig(validated),
+  });
+  const tuples = new Map<string, BaselineTuple>(
+    loaded.tuples.map((tuple) => {
+      const coordinate = tupleCoordinate(tuple);
+      return [tupleCoordinateKey(coordinate), { ...coordinate, findings: [] }];
+    }),
+  );
+  for (const { key, coordinate, ...finding } of candidates) {
+    const tuple = tuples.get(key) ?? { ...coordinate, findings: [] };
+    if (
+      !tuple.findings.some(
+        (existing) => existing.fingerprint === finding.fingerprint,
+      )
+    )
+      tuple.findings.push(finding);
+    tuples.set(key, tuple);
+  }
+  for (const key of failed) tuples.delete(key);
+  return {
+    record: {
+      commit: loaded.commit,
+      recordedAt: new Date().toISOString(),
+      idiomVersion: IDIOM_VERSION,
+      configHash: checksConfigHash(validated.project.checks),
+      tuples: [...tuples.values()],
+    },
+    failedTupleKeys,
+  };
+}
+
+/**
+ * A baseline record from a stored run without writing it: the base
+ * comparison and `baseline advance` build one per capture. Tuples whose
+ * capture failed are left out (no evidence either way) and named.
+ */
+export async function buildBaselineRecord(options: {
+  validated: ValidationResult;
+  flow: Flow;
+  runDirectory: string;
+}): Promise<{ record: BaselineRecord; failedTupleKeys: string[] }> {
+  const loaded = await loadRunTuples(
+    options.validated,
+    options.flow,
+    options.runDirectory,
+  );
+  if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(loaded.commit))
+    throw new IdiomError(
+      "baseline record needs a capture with a valid Git commit; capture a committed tree first",
+    );
+  return assembleBaselineRecord(options.validated, loaded, {
+    excludeFailed: true,
+  });
+}
+
 export async function recordBaseline(options: {
   validated: ValidationResult;
   flow: Flow;
@@ -178,29 +246,9 @@ export async function recordBaseline(options: {
         "automatic baseline needs a successful capture; fix capture failures and retry, or inspect with --all",
       );
   }
-  const candidates = deterministicCandidateRecords({
-    tuples: loaded.tuples,
-    expectedTupleKeys: loaded.expectedTupleKeys,
-    legacyColorScheme: validated.project.capture.colorScheme,
-    config: await projectChecksConfig(validated),
-  });
-  const tuples = new Map<string, BaselineTuple>(
-    loaded.tuples.map((tuple) => {
-      const coordinate = tupleCoordinate(tuple);
-      return [tupleCoordinateKey(coordinate), { ...coordinate, findings: [] }];
-    }),
-  );
-  for (const { key, coordinate, ...finding } of candidates) {
-    const tuple = tuples.get(key) ?? { ...coordinate, findings: [] };
-    if (
-      !tuple.findings.some(
-        (existing) => existing.fingerprint === finding.fingerprint,
-      )
-    )
-      tuple.findings.push(finding);
-    tuples.set(key, tuple);
-  }
-  const configHash = checksConfigHash(validated.project.checks);
+  const { record } = await assembleBaselineRecord(validated, loaded);
+  const tuples = record.tuples;
+  const configHash = record.configHash;
   const path = baselinePath(
     options.out ??
       baselineDirectory(
@@ -209,13 +257,7 @@ export async function recordBaseline(options: {
       ),
     flow.id,
   );
-  const { replaced } = await writeBaselineRecord(path, flow.id, {
-    commit: loaded.commit,
-    recordedAt: new Date().toISOString(),
-    idiomVersion: IDIOM_VERSION,
-    configHash,
-    tuples: [...tuples.values()],
-  });
+  const { replaced } = await writeBaselineRecord(path, flow.id, record);
   const pixelDirectory = pixelBaselineDirectory(
     options.out ??
       baselineDirectory(
@@ -233,11 +275,8 @@ export async function recordBaseline(options: {
     pixelDirectory,
     flow: flow.id,
     commit: loaded.commit,
-    findingCount: [...tuples.values()].reduce(
-      (sum, tuple) => sum + tuple.findings.length,
-      0,
-    ),
-    tupleCount: tuples.size,
+    findingCount: tuples.reduce((sum, tuple) => sum + tuple.findings.length, 0),
+    tupleCount: tuples.length,
     configHash,
     replaced,
   };

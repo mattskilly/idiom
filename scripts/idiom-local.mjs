@@ -3,11 +3,11 @@
 //
 //   node scripts/idiom-local.mjs <idiom args…>
 //
-// Why out of tree: Idiom records a baseline only from a clean tree, and an
-// in-tree rebuild rewrites the tracked dist/cli.js and dist/main.js (the
-// bundle embeds HEAD). baselines.ignoreDirty cannot cover dist/ either: the
-// site build reads it, so validation protects it. Building into a temp package
-// directory whose other package files link back here leaves dist/ untouched.
+// Why out of tree: the in-tree development build (build/, gitignored) is
+// cleaned and rewritten by any concurrent `bun run build` or `bun run test`,
+// which can delete the CLI while a review runs. Building into a temp package
+// directory whose other package files link back here keeps this run
+// independent of the checkout's build/ and of the tracked release dist/.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";

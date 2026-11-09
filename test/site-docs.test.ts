@@ -121,7 +121,7 @@ describe("docs", () => {
     }
     const mcp = await readFile(markdownFile("mcp"), "utf8");
     expect(mcp).toContain("claude --plugin-dir /path/to/checkout");
-    expect(mcp).toContain("node /path/to/checkout/dist/cli.js mcp");
+    expect(mcp).toContain("node /path/to/checkout/build/cli.js mcp");
     for (const { slug } of docPages) {
       const twin = `https://idiom.build/docs${slug === "" ? "" : `/${slug}`}.md`;
       expect(llms).toContain(`](${twin})`);

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { actorSchema } from "../decisions/actor.js";
 import { rulingResolutionSchema } from "./ruling.js";
 import { findingSeveritySchema } from "./severity.js";
 
@@ -17,6 +18,7 @@ export const rulingDecisionSchema = z
     fingerprint: z.string(),
     decision: z.literal("ruling"),
     actor: z.string().default("human"),
+    agent: z.string().min(1).optional(),
     reason: z.string().trim().min(1),
     resolution: rulingResolutionSchema,
     provenance: decisionProvenanceSchema.optional(),
@@ -40,6 +42,7 @@ export const decisionSchema = z
     scope: z.enum(["instance", "rule"]).default("instance"),
     reason: z.string().optional(),
     actor: z.string().default("human"),
+    agent: z.string().min(1).optional(),
     provenance: decisionProvenanceSchema.optional(),
     /** `decide --choose`: the reference a person chose where several disagreed. */
     designChoice: z
@@ -97,6 +100,7 @@ export const acknowledgementSchema = z
       .strict()
       .optional(),
     actor: z.string().default("human"),
+    agent: z.string().min(1).optional(),
   })
   .strict()
   .superRefine((record, context) => {
@@ -110,11 +114,37 @@ export const acknowledgementSchema = z
 
 export type Acknowledgement = z.infer<typeof acknowledgementSchema>;
 
-/** Every line of .idiom/decisions.jsonl: a judgment or an acknowledgement. */
+export const attributionCorrectionSchema = z
+  .object({
+    at: z.iso.datetime(),
+    commit: z.string(),
+    findingId: z.string(),
+    fingerprint: z.string(),
+    decision: z.literal("reattribute"),
+    target: z
+      .object({
+        line: z.number().int().positive(),
+        sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+    actor: actorSchema,
+    agent: z.string().min(1).optional(),
+    note: z.string().trim().min(1),
+  })
+  .strict()
+  .refine(
+    (record) => record.actor !== "human" || record.agent === undefined,
+    "human corrections cannot carry an agent label",
+  );
+export type AttributionCorrection = z.infer<typeof attributionCorrectionSchema>;
+export type OrdinaryDecision = Decision | Acknowledgement | RulingDecision;
+
+/** Every known physical log record, including attribution corrections. */
 export const decisionLogEntrySchema = z.union([
   decisionSchema,
   acknowledgementSchema,
   rulingDecisionSchema,
+  attributionCorrectionSchema,
 ]);
 
 export type DecisionLogEntry = z.infer<typeof decisionLogEntrySchema>;

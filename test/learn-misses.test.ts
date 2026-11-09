@@ -24,6 +24,10 @@ import {
   learnFixtureCommand,
   learnListCommand,
 } from "../src/commands/learn-misses.js";
+import {
+  appendDecisionBatch,
+  readRawDecisionLog,
+} from "../src/decisions/log.js";
 import { type DigestRecord, writeDigestRecord } from "../src/digest/record.js";
 import {
   humanFoundLine,
@@ -680,4 +684,37 @@ test("digest CLI JSON carries humanFound counts and open entries when a log is p
   expect((await cli(project, ["digest"])).text).toContain(
     "Human-found misses: 1 logged, 0 now covered by a rule, 1 open (latest: 2 days ago).",
   );
+});
+
+test("decision reattribution never creates learned human misses", async () => {
+  const project = await temp();
+  await log(project, [entry()]);
+  const before = await summarizeMisses({ projectDirectory: project });
+  await writeFile(
+    join(project, ".idiom/decisions.jsonl"),
+    `${JSON.stringify({
+      at: recordedAt,
+      commit: "unknown",
+      findingId: "one",
+      fingerprint: "fp",
+      decision: "accept",
+      scope: "instance",
+      actor: "human",
+    })}\n`,
+  );
+  const raw = (await readRawDecisionLog(project))[0];
+  if (!raw) throw new Error("missing original");
+  await appendDecisionBatch(project, [
+    {
+      at: later,
+      commit: "unknown",
+      findingId: "one",
+      fingerprint: "fp",
+      decision: "reattribute",
+      target: raw.source,
+      actor: "agent",
+      note: "historical build",
+    },
+  ]);
+  expect(await summarizeMisses({ projectDirectory: project })).toEqual(before);
 });

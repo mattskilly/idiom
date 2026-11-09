@@ -102,12 +102,12 @@ const targets = results.targets.map(
     }
     const feelIssues = uniqueFeelKeys(issues).map((issue: { key: string }) => ({
       ...issue,
-      rating: effectiveRating(labels.labels[issue.key]) ?? null,
+      rating: effectiveRating(labels.labels[issue.key], "human") ?? null,
     }));
     return { id: target.id, kind: target.kind, tuples, coverage, feelIssues };
   },
 );
-const precision = feelPrecision({ targets }, labels).find(
+const precision = feelPrecision({ targets }, labels, "human").find(
   (row: { rule: string }) => row.rule === rule,
 );
 writeFileSync(
@@ -128,6 +128,10 @@ writeFileSync(
       ),
       targets,
       precision,
+      actor: "human",
+      agentEvidence: feelPrecision({ targets }, labels, "agent").find(
+        (row: { rule: string }) => row.rule === rule,
+      ),
     },
     null,
     2,

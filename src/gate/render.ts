@@ -1,5 +1,5 @@
 import { formatDuration } from "../capture/timings.js";
-import type { GatePlan, GateSkip } from "./types.js";
+import type { GateComparisonPlan, GatePlan, GateSkip } from "./types.js";
 
 const plural = (count: number, word: string) =>
   `${count} ${word}${count === 1 ? "" : "s"}`;
@@ -43,6 +43,31 @@ export function gatePlanLine(plan: GatePlan): string {
   ].join("");
 }
 
+/** One flow's comparison: what its new findings are judged against. */
+export function describeComparison(
+  flow: string,
+  comparison: GateComparisonPlan,
+): string {
+  const base = comparison.base.slice(0, 12);
+  const tuples = plural(comparison.missingTuples, "tuple");
+  const stored =
+    comparison.baselineCommit === undefined
+      ? undefined
+      : `${comparison.baselineCommit.slice(0, 12)}, ${comparison.behindBase ?? 0} commit(s) behind with no UI changes since`;
+  switch (comparison.mode) {
+    case "base-capture":
+      return `${flow}: judged against base ${base} (base capture, ${tuples}${comparison.estimateMs === undefined ? "" : `, est. ~${formatDuration(comparison.estimateMs)} incl. worktree preparation`}${comparison.baseCaptureMs === undefined ? "" : `, took ${formatDuration(comparison.baseCaptureMs)}`})`;
+    case "base-cache":
+      return `${flow}: judged against base ${base} (cached base capture${stored === undefined ? "" : ` at ${stored}`})`;
+    case "baseline":
+      return `${flow}: judged against base ${base} (baseline ${stored ?? "recorded at the base"})`;
+    case "fallback":
+      return `${flow}: judged against baseline ${comparison.baselineCommit?.slice(0, 12)}, ${comparison.behindBase ?? "?"} commit(s) behind base ${base} (base capture skipped)`;
+    case "none":
+      return `${flow}: no baseline reachable from base ${base}; gating open findings`;
+  }
+}
+
 /** Every stderr line of the plan: headline, widening, skips, notes. */
 export function renderGatePlan(plan: GatePlan): string[] {
   const states = plan.states.map(
@@ -53,6 +78,9 @@ export function renderGatePlan(plan: GatePlan): string[] {
     gatePlanLine(plan),
     `Base: ${plan.base} (${plan.baseReason})`,
     ...states,
+    ...Object.entries(plan.comparisons ?? {}).map(([flow, comparison]) =>
+      describeComparison(flow, comparison),
+    ),
     ...(plan.styleScope.responsive.length
       ? [
           `widened viewports: responsive styles in ${plan.styleScope.responsive.join(", ")}`,

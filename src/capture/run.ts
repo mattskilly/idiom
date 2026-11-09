@@ -70,6 +70,7 @@ import {
 import type { ProbeRegion } from "./probe.js";
 import {
   createFlowProbeBudget,
+  FLOW_PROBE_EXHAUSTED,
   type ProbeBudgetLease,
 } from "./probe-budget.js";
 import { createProbeLedger } from "./probe-ledger.js";
@@ -1870,8 +1871,8 @@ async function captureOwned(
           if (requeued === 0) break;
         }
         for (const partition of runnable.keys()) {
-          probeLedger.exhaust(partition, "flow probe time exhausted");
-          replayLedger?.exhaust(partition, "flow probe time exhausted");
+          probeLedger.exhaust(partition, FLOW_PROBE_EXHAUSTED);
+          replayLedger?.exhaust(partition, FLOW_PROBE_EXHAUSTED);
         }
         fillAll();
         // A holder that got neither its own replay nor a copy says why.

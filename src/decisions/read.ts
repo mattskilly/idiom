@@ -1,52 +1,19 @@
-import { readFile } from "node:fs/promises";
-import { join, relative } from "node:path";
-import { IdiomError } from "../errors.js";
-import { noteUnknownRecord } from "../records/unknown.js";
-import { type Decision, decisionLogEntrySchema } from "../schemas/decision.js";
-import { entryIssues, unknownDecisionType } from "./log.js";
+import type { Decision } from "../schemas/decision.js";
+import { readDecisionLog } from "./log.js";
 
 export async function readDecisions(
   projectDirectory: string,
 ): Promise<Decision[]> {
-  const path = join(projectDirectory, ".idiom", "decisions.jsonl");
-  let source: string;
   try {
-    source = await readFile(path, "utf8");
+    return await readDecisionLog(projectDirectory);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw new IdiomError(
-      `${relative(projectDirectory, path)}: could not be read: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  const decisions: Decision[] = [];
-  for (const [index, line] of source.split(/\r?\n/).entries()) {
-    if (line.trim() === "") continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch (error) {
-      throw new IdiomError(
-        `.idiom/decisions.jsonl:${index + 1}: malformed JSON: ${error instanceof Error ? error.message : String(error)}`,
+    if (error instanceof Error)
+      error.message = error.message.replace(
+        /invalid decision log .*?decisions.jsonl at line (\d+): /,
+        ".idiom/decisions.jsonl:$1: ",
       );
-    }
-    const type = unknownDecisionType(value);
-    if (type !== undefined) {
-      noteUnknownRecord({ family: "decision", path, line: index + 1, type });
-      continue;
-    }
-    const parsed = decisionLogEntrySchema.safeParse(value);
-    if (!parsed.success) {
-      const issues = entryIssues(value, parsed.error.issues)
-        .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
-        .join("; ");
-      throw new IdiomError(`.idiom/decisions.jsonl:${index + 1}: ${issues}`);
-    }
-    // Acknowledgements are not judgments; this reader returns judgments only.
-    if (parsed.data.decision === "accept" || parsed.data.decision === "reject")
-      decisions.push(parsed.data);
+    throw error;
   }
-  return decisions;
 }
 
 export function standingRuleRejections(decisions: Decision[]): Decision[] {

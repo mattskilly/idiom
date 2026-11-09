@@ -16,7 +16,7 @@ async function cli(directory: string, args: string[], timeoutMs = 12000) {
   const child = spawn(
     process.execPath,
     [
-      join(import.meta.dirname, "..", "dist", "cli.js"),
+      join(import.meta.dirname, "..", "build", "cli.js"),
       "--project",
       directory,
       ...args,

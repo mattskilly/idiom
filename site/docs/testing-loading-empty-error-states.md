@@ -7,7 +7,7 @@ description: A fast happy path hides waiting, missing content and failed request
 
 A fast happy path hides waiting, missing content and failed requests. Make those conditions repeatable, check their feedback and keep the evidence through repair.
 
-_For Idiom v0.21.0_
+_For Idiom v0.22.0_
 
 ## Start by looking
 

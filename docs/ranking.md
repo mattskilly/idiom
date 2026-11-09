@@ -90,6 +90,9 @@ All unlisted rules within a known category use its category default.
 | `brief-mismatch` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `popover-dismissal` | All rules | 9 | Broken behaviour or obstructed content. |
 | `focus-return` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
+| `empty-frame` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
+| `repeated-row-ornament` | All rules | 4 | General consistency, semantics or contextual quality. |
+| `glyph-over-icon` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
 | `hierarchy` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `density` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `brand-alignment` | All rules | 4 | General consistency, semantics or contextual quality. |

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>One icon, one meaning</title>
+    <style>
+      body { margin: 0; font: 16px system-ui, sans-serif; padding: 24px; color: #1d1d1f; background: #fff; }
+      button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 32px; min-height: 32px; padding: 6px; border: 1px solid #c7c7cc; border-radius: 6px; background: #fff; color: inherit; font: inherit; cursor: pointer; }
+      .toolbar { display: flex; gap: 12px; margin-bottom: 24px; }
+      ul { list-style: none; padding: 0; }
+      li { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+      a { display: inline-flex; align-items: center; gap: 6px; color: inherit; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <section id="dialog" role="dialog" aria-label="Invite">
+      <header style="display:flex;justify-content:space-between;align-items:center"><h2>Invite people</h2><button aria-label="Close" data-hide="dialog"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor"/></svg></button></header>
+      <p>Send an invitation by email.</p>
+    </section>
+    <aside id="sidebar" aria-label="Activity">
+      <div style="display:flex;justify-content:space-between;align-items:center"><h2>Activity</h2><button aria-label="Close panel" data-hide="sidebar"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor"/></svg></button></div>
+      <p>No activity yet.</p>
+    </aside>
+    <script>
+      for (const button of document.querySelectorAll("button[data-toggle]"))
+        button.addEventListener("click", () => document.body.classList.toggle(button.dataset.toggle));
+      for (const button of document.querySelectorAll("button[data-hide]"))
+        button.addEventListener("click", () => document.getElementById(button.dataset.hide).classList.add("hidden"));
+    </script>
+  </body>
+</html>

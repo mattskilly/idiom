@@ -227,6 +227,12 @@ export const findingCategories = [
   "offer-change",
   "unsupported-claim",
   "detached-flyout",
+  "disclosure-affordance",
+  "opener-cannot-close",
+  "icon-meaning",
+  "empty-frame",
+  "repeated-row-ornament",
+  "glyph-over-icon",
 ] as const;
 
 /** Critique focus areas a page review can request (`idiom review --page --focus`). */

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "next": 1165,
+  "next": 1182,
   "entries": [
     {
       "name": "finding-244",
@@ -5263,6 +5263,62 @@
       "name": "finding-1164",
       "fingerprints": [
         "c5ebd6e3b03fe32a103e678d443668731dd62ce24c0bbaa8249e79be1bd55909"
+      ],
+      "legacyIds": []
+    },
+    {
+      "name": "finding-1166",
+      "fingerprints": [
+        "3659511cd47c6528ac4873d331261a8abdc66345a1cc1aa7bc9a9636b9b39b92"
+      ],
+      "legacyIds": []
+    },
+    {
+      "name": "finding-1167",
+      "fingerprints": [
+        "53eee51e0af411c6afb6f001cadbead4ad2b0c2016b11d9a2818c6d8a859d2d8"
+      ],
+      "legacyIds": []
+    },
+    {
+      "name": "finding-1171",
+      "fingerprints": [
+        "6ba4cd7aac893e3ccf45360493b066ac9e94d345a2843b82143d60fbeeaff66d"
+      ],
+      "legacyIds": []
+    },
+    {
+      "name": "finding-1174",
+      "fingerprints": [
+        "86b28f52f902f8770c71f0e71a0e4e1fc57e9a6fe6d163d4e12664e0df4cea0a"
+      ],
+      "legacyIds": []
+    },
+    {
+      "name": "finding-1175",
+      "fingerprints": [
+        "c5bfeac45aa9e8a6f41f525559341760212f29344d77acafaa75772562ddfb95"
+      ],
+      "legacyIds": []
+    },
+    {
+      "name": "finding-1176",
+      "fingerprints": [
+        "2e424765d18609767b752b91af461fa61ab3bc8d315dfab377c9277ec6b7d033"
+      ],
+      "legacyIds": []
+    },
+    {
+      "name": "finding-1179",
+      "fingerprints": [
+        "1d34cc0fa3770dc4cb6037779a125ba96b112368143e62b29d4fefb2bf01886b"
+      ],
+      "legacyIds": []
+    },
+    {
+      "name": "finding-1181",
+      "fingerprints": [
+        "0c771aa9524e670ea8bd683c275f6f78c6884af44793e8f2afe44d579608ee9e"
       ],
       "legacyIds": []
     }

@@ -9,7 +9,8 @@ import {
 import type { DeterministicCheck, FindingCandidate } from "./types.js";
 
 /** Arrows, geometric shapes, bullets, box drawing and the multiplication sign. */
-const glyph = /[←-⇿─-╿■-◿☀-⛿✀-➿•·×⋮⋯…‹›«»☰-☷✕-✗➕-➗⬀-⯿]/u;
+export const glyphCharacter = /[←-⇿─-╿■-◿☀-⛿✀-➿•·×⋮⋯…‹›«»☰-☷✕-✗➕-➗⬀-⯿]/u;
+const glyph = glyphCharacter;
 const onlyGlyphs = new RegExp(`^(?:${glyph.source}|\\s)+$`, "u");
 const leadingGlyph = new RegExp(`^(${glyph.source})\\s+\\S`, "u");
 

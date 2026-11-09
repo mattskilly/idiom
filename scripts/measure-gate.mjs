@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const root = join(import.meta.dirname, "..");
-const cli = join(root, "dist", "cli.js");
+const cli = join(root, "build", "cli.js");
 const fixture = join(root, "test", "fixtures", "gate-app");
 const budgetMs = 180_000;
 

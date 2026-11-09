@@ -29,7 +29,7 @@ import {
 } from "./brief-eval-lib.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const cli = join(root, "dist", "cli.js");
+const cli = join(root, "build", "cli.js");
 const fixture = join(root, "scripts", "fixtures", "brief-eval");
 const TIMEOUT_MS = 10 * 60 * 1000;
 

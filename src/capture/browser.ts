@@ -15,6 +15,7 @@ import {
   briefMarks,
   type ColorScheme,
   checkMarks,
+  emptyOkMarks,
   type Project,
 } from "../schemas/project.js";
 import { ConsoleProvenance } from "./console-provenance.js";
@@ -47,7 +48,7 @@ import {
   revealedObserver,
   revealedProbeOptions,
 } from "./revealed.js";
-import { ScrollbarController, scrollbarLaunchOptions } from "./scrollbars.js";
+import { captureLaunchOptions, ScrollbarController } from "./scrollbars.js";
 import { TimelineCollector } from "./timeline.js";
 import { attemptTimeouts, navigate } from "./timeouts.js";
 import type {
@@ -522,7 +523,13 @@ async function captureInContext(
             marks: [
               ...checkMarks(tuple.project.checks),
               ...briefMarks(tuple.briefSelectors),
+              ...emptyOkMarks(tuple.state.intentionallyEmpty),
             ],
+            frameOrnaments: {
+              emptyFrame: tuple.project.checks.emptyFrame.enabled,
+              rowOrnament: tuple.project.checks.repeatedRowOrnament.enabled,
+              glyphOverIcon: tuple.project.checks.glyphOverIcon.enabled,
+            },
             ...(tuple.published ? { images: true } : {}),
             emptyState: tuple.project.checks.emptyState,
             bandEdges: tuple.project.checks.bandEdges?.enabled === true,
@@ -645,6 +652,7 @@ async function captureInContext(
                       marks: [
                         ...checkMarks(tuple.project.checks),
                         ...briefMarks(tuple.briefSelectors),
+                        ...emptyOkMarks(tuple.state.intentionallyEmpty),
                       ],
                     }),
                   )),
@@ -734,8 +742,7 @@ export function createBrowserLauncher(
   return async (options): Promise<BrowserSession> => {
     options?.signal?.throwIfAborted();
     const runtime: BrowserRuntime = {
-      launch:
-        overrides.launch ?? (() => chromium.launch(scrollbarLaunchOptions)),
+      launch: overrides.launch ?? (() => chromium.launch(captureLaunchOptions)),
       createAxe:
         overrides.createAxe ??
         ((page) => new AxeBuilder({ page }) as { analyze(): Promise<unknown> }),

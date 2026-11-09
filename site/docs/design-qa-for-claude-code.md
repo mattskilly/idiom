@@ -7,7 +7,7 @@ description: Give your coding agent a repeatable UI review: capture the intended
 
 Give your coding agent a repeatable UI review: capture the intended states, inspect the findings, repair the source and verify the same evidence.
 
-_For Idiom v0.21.0_
+_For Idiom v0.22.0_
 
 ## Start by looking
 
@@ -153,7 +153,7 @@ In Codex, the plugin supplies the portable skill and one more line adds the MCP 
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.21.0/mattskilly-idiom-0.21.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.22.0/mattskilly-idiom-0.22.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.
@@ -177,7 +177,7 @@ claude plugin validate /path/to/checkout
 claude --plugin-dir /path/to/checkout
 ```
 
-The release manifest still starts the pinned release server. To develop changed MCP code, run `bun run build` in the checkout, then use a separate `claude mcp add idiom-dev -- node /path/to/checkout/dist/cli.js mcp` registration. Use one connection at a time. The project-vendored skill remains `/idiom`.
+The release manifest still starts the pinned release server. To develop changed MCP code, run `bun run build` in the checkout, then use a separate `claude mcp add idiom-dev -- node /path/to/checkout/build/cli.js mcp` registration. Use one connection at a time. The project-vendored skill remains `/idiom`.
 
 ## Reminders
 

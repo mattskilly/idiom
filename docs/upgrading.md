@@ -62,6 +62,11 @@ What you must do after moving past each release, newest first. Everything else i
 
 None.
 
+### v0.22.0
+
+- **Shared decision logs:** this release can append attribution corrections (`idiom decide --reattribute`). Idiom 0.21.0 and older skip those records with a "written by a newer Idiom" note and show the original actor, so upgrade every machine that shares the log.
+- **Autobuild gates:** none required. To keep gates from capturing the base branch, optionally run `idiom baseline advance` after merges or nightly ([Gate a build](commands.md#gate-a-build)).
+
 ### v0.21.0
 
 - **Shared decision logs:** upgrade every machine and CI runner that reads `.idiom/decisions.jsonl` before anyone runs `idiom decide --ack`. Idiom 0.20.0 and older refuse a log that contains an acknowledgement; 0.21.0 and later skip record types they don't know.

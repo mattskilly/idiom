@@ -193,7 +193,7 @@ test("the bundled CLI forwards --ref HEAD~1", async () => {
   const { stdout } = await exec(
     process.execPath,
     [
-      resolve("dist/cli.js"),
+      resolve("build/cli.js"),
       "capture",
       "studio",
       "--ref",
@@ -407,7 +407,7 @@ test("SIGINT during ref preparation joins the child before removing the worktree
   await commit(root, "interruptible build");
   const child = spawn(
     process.execPath,
-    [resolve("dist/cli.js"), "capture", "studio", "--ref", "HEAD"],
+    [resolve("build/cli.js"), "capture", "studio", "--ref", "HEAD"],
     {
       cwd: root,
       env: { ...process.env, IDIOM_NO_UPDATE_CHECK: "1" },

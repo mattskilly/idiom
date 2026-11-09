@@ -578,7 +578,11 @@ test("static DOM, observations and screenshot are saved before the disposable pr
   } finally {
     await session.close();
   }
-}, 7000);
+  // Harness allowance, not a product deadline: over 7s under concurrent gates
+  // (file-293 proof) and max 6.1s with two (docs/testing/give-four-more.md).
+  // The probe's own deadlines live in product config and are unchanged, as is
+  // the static-before-probe ordering assertion.
+}, 30_000);
 
 test("a probe deadline retains the interrupted click's timeline", async () => {
   const context = await browser.newContext();

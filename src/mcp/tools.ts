@@ -24,7 +24,9 @@ import { MAX_TRIAGE_REQUEST_BYTES } from "../brief/triage.js";
 import { selectColorSchemes, selectViewports } from "../capture/resolve.js";
 import type { CaptureDependencies } from "../capture/run.js";
 import {
+  baselineAdvanceCommand,
   baselineRecordCommand,
+  renderBaselineAdvance,
   renderBaselineRecord,
 } from "../commands/baseline.js";
 import {
@@ -843,7 +845,7 @@ export function registerIdiomTools(
   );
   register(
     "idiom_decide",
-    "Record an explicit human accept/reject judgment with a reason for one canonical finding or exactly one durable group's members. Writes the project decision log with instance scope; never accepts siblings implicitly, changes Git or repairs source. Quick-only evidence cannot receive project decisions. acknowledge marks one finding as a real problem tracked elsewhere under reference (a ticket id or URL; reason is recorded as its note, until an optional last YYYY-MM-DD day): it stays in reports but stops counting toward fail-on and as new until it lapses (unacknowledge, until passes, its local tracker ticket reaches done, or its evidence changes materially). For a design system question (a ruling-N id from idiom_check), add-step records the value as a token step for its context in the design file (token optional, defaults to the suggestion) and drift keeps reporting it as one grouped issue; skip by not answering.",
+    "Record an explicit human accept/reject judgment with a reason for one canonical finding or exactly one durable group's members. Writes the project decision log with instance scope and agent execution attribution (mcp), including relayed human answers; never accepts siblings implicitly, changes Git or repairs source. Quick-only evidence cannot receive project decisions. acknowledge marks one finding as a real problem tracked elsewhere under reference (a ticket id or URL; reason is recorded as its note, until an optional last YYYY-MM-DD day): it stays in reports but stops counting toward fail-on and as new until it lapses (unacknowledge, until passes, its local tracker ticket reaches done, or its evidence changes materially). For a design system question (a ruling-N id from idiom_check), add-step records the value as a token step for its context in the design file (token optional, defaults to the suggestion) and drift keeps reporting it as one grouped issue; skip by not answering.",
     z.strictObject({
       id: identifier.describe(
         "Canonical finding or group ID, or a design system question's ruling-N",
@@ -905,7 +907,7 @@ export function registerIdiomTools(
           drift: decision === "drift",
           ...(token === undefined ? {} : { token }),
           reason,
-          // The tool call is the recorded human answer, as for decisions.
+          // Preserve the relayed answer; execution through MCP is attributed to the agent.
           dependencies: { confirm: async () => true },
         });
         return result(
@@ -931,6 +933,7 @@ export function registerIdiomTools(
             `${decision} applies to one finding, not a group; pass a finding id`,
           );
         const output = await decideCommand({
+          source: "mcp",
           ...configured,
           finding: found.representative.id,
           ...(decision === "acknowledge"
@@ -951,6 +954,7 @@ export function registerIdiomTools(
         );
       }
       const output = await decideCommand({
+        source: "mcp",
         ...configured,
         ...(isGroup ? { group: id } : { finding: found.representative.id }),
         accept: decision === "accept",
@@ -1177,6 +1181,7 @@ export function registerIdiomTools(
       const found = await evidence.lookup(id);
       const isGroup = found.run.groups.some((group) => group.id === id);
       const output = await decideCommand({
+        source: "mcp",
         ...configured,
         cwd: root,
         ...(isGroup ? { group: id } : { finding: found.representative.id }),
@@ -1450,12 +1455,21 @@ export function registerIdiomTools(
   );
   register(
     "idiom_baseline",
-    "Show or record a flow's compact deterministic finding baseline. show reads recorded commits and which record applies at HEAD; record captures (or reuses from/latest) a clean committed HEAD and writes the baseline file. Commit that file deliberately, only after intentional changes. Never changes Git.",
+    "Show, record or advance a flow's compact deterministic finding baseline. show reads recorded commits and which record applies at HEAD; record captures (or reuses from/latest) a clean committed HEAD and writes the baseline file — commit that file deliberately, only after intentional changes; advance captures the target branch's tip (target, default the remote HEAD or main) in its own worktree into the untracked shared base cache the build gate compares with. Never changes Git.",
     z
       .strictObject({
         action: z
-          .enum(["show", "record"])
-          .describe("show reads the baseline; record writes a new record"),
+          .enum(["show", "record", "advance"])
+          .describe(
+            "show reads the baseline; record writes a new record; advance records the target branch's tip in the base cache",
+          ),
+        target: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "advance only: branch or commit to record (default: the remote HEAD, else main or master)",
+          ),
         flow: identifier
           .optional()
           .describe(
@@ -1476,9 +1490,23 @@ export function registerIdiomTools(
           args.action === "record" ||
           (args.from === undefined && args.latest !== true),
         "from and latest apply only to action record",
+      )
+      .refine(
+        (args) => args.action === "advance" || args.target === undefined,
+        "target applies only to action advance",
       ),
     false,
-    async ({ action, flow, from, latest }, execution) => {
+    async ({ action, flow, from, latest, target }, execution) => {
+      if (action === "advance") {
+        const output = await baselineAdvanceCommand({
+          flow,
+          target,
+          project: root,
+          cwd: root,
+          dependencies: review(execution),
+        });
+        return result(renderBaselineAdvance(output), output);
+      }
       if (action === "record") {
         const output = await baselineRecordCommand({
           flow,

@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { font: 16px/24px sans-serif; }
+  .grid { display: grid; grid-template-columns: repeat(3, 40px); gap: 8px; }
+  .grid div { width: 40px; height: 40px; background: #ddd; }
+</style>
+<main>
+  <div role="alert" id="banner">Renderer failed</div>
+  <div class="toast" id="toast-trace">TypeError: x is not a function at render (app.js:12:7)</div>
+  <div class="toast" role="status" id="status-prose">We could not finish the export because the renderer failed while drawing page three.</div>
+  <article>
+    <p id="help">When a thumbnail says “Failed to load”, the browser could not fetch the image file, so check its address and try again.</p>
+    <p id="long-help">Something went wrong is the message people see when the service cannot tell them anything more specific, and this page explains each of the reasons it can appear, what you can check on your side before contacting support, how long a retry usually takes, and which settings change how often the message is shown to the people using your product.</p>
+  </article>
+  <section>
+    <div class="grid"><div></div><div></div><div></div></div>
+    <p id="grid-error">Failed to load images</p>
+  </section>
+  <ul>
+    <li id="site-images">Visible images that failed to load or decode and render as broken images.</li>
+    <li id="site-engineering">Engineering failures shown on screen, such as "Renderer failed", stack traces, and raw JSON.</li>
+  </ul>
+  <table>
+    <tbody>
+      <tr><td>images</td><td id="site-config">on by default (<code>x</code>): visible images that failed to load or decode</td></tr>
+    </tbody>
+  </table>
+  <p id="trace-dump">TypeError: x is not a function at render (app.js:12:7) at commit (react.js:40:3) at flush (react.js:41:3) at batch (react.js:42:3) at run (react.js:43:3) at loop (react.js:44:3) at tick (react.js:45:3) at work (react.js:46:3) at perform (react.js:47:3) at schedule (react.js:48:3) at start (react.js:49:3) at boot (index.js:50:3)</p>
+  <p id="mixed-leak">The settings panel showed a TypeError and then printed [object Object] where the name belongs.</p>
+  <p id="custom-prose">This page explains what it means when your quota exhausted message appears in the header.</p>
+  <p id="short-embedded">Images failed to load.</p>
+  <p id="prose-object">The value printed as [object Object] in this sentence describes something.</p>
+  <p class="form-error" id="form-error">Your card could not be saved because the payment service failed to load in time.</p>
+</main>
+<footer>
+  <p id="footer-prose">Visible images that failed to load or decode and render as broken images.</p>
+</footer>

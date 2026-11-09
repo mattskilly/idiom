@@ -274,4 +274,7 @@ test("web-step evidence survives screenshot, storage, offline review and combine
     server.close();
     await rm(directory, { recursive: true, force: true });
   }
-}, 30_000);
+  // Harness allowance, not a product deadline: max 29.1s measured with two full
+  // gates at once (docs/testing/stabilise-the-browser.md), against the old 30s.
+  // ~4x headroom absorbs heavier load without cutting captures, review or replay.
+}, 120_000);

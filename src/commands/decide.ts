@@ -7,6 +7,11 @@ import {
   parseUntil,
 } from "../decisions/acknowledgements.js";
 import {
+  type Actor,
+  type ActorDependencies,
+  resolveActor,
+} from "../decisions/actor.js";
+import {
   acknowledgements as acknowledgementEntries,
   appendAcknowledgement,
   appendDecision,
@@ -17,8 +22,10 @@ import {
 } from "../decisions/log.js";
 import { pendingDecisions } from "../decisions/pending.js";
 import { decisionQuestion } from "../decisions/question.js";
+import { reattributeDecisions } from "../decisions/reattribute.js";
 import { IdiomError } from "../errors.js";
 import { acceptanceText } from "../findings/presentation.js";
+import { findProjectDirectory, resolveProjectArgument } from "../project.js";
 import {
   type CatalogFinding,
   findCatalogFinding,
@@ -57,6 +64,7 @@ export type DecisionPrompt = (
 ) => Promise<PromptedDecision>;
 
 export type DecideDependencies = {
+  actor?: ActorDependencies | undefined;
   prompt?: DecisionPrompt | undefined;
   now?: (() => Date) | undefined;
 };
@@ -64,6 +72,7 @@ export type DecideDependencies = {
 export type DecideResult = {
   projectDirectory: string;
   path: string;
+  corrected?: number | undefined;
   accepted: number;
   rejected: number;
   skipped: number;
@@ -213,6 +222,9 @@ async function findGroup(
 
 export async function decideCommand(
   options: RulingAnswer & {
+    actor?: Actor | undefined;
+    source?: "cli" | "mcp" | undefined;
+    reattribute?: string | undefined;
     pending?: boolean | undefined;
     decision?: string | undefined;
     build?: string | undefined;
@@ -253,6 +265,60 @@ export async function decideCommand(
     options.token,
     options.drift,
   ].some((value) => value !== undefined);
+  const attributionFor = (projectDirectory: string) =>
+    resolveActor({
+      actor: options.actor,
+      source: options.source,
+      cwd: options.cwd,
+      projectDirectory,
+      dependencies: options.dependencies?.actor,
+    });
+  if (options.reattribute !== undefined) {
+    if (
+      [
+        options.finding,
+        options.group,
+        options.accept,
+        options.reject,
+        options.choose,
+        options.scope,
+        options.pending,
+        options.list,
+        options.decision,
+        options.build,
+        options.escalation,
+        options.reason,
+        options.ack,
+        options.unack,
+        options.until,
+      ].some((value) => value !== undefined) ||
+      rulingFlags
+    )
+      throw new IdiomError(
+        "--reattribute cannot be combined with other decision modes or answer flags",
+      );
+    if (!options.actor)
+      throw new IdiomError("--reattribute requires an explicit --actor");
+    if (!options.note?.trim())
+      throw new IdiomError("--reattribute requires a nonblank --note");
+    const projectDirectory = await findProjectDirectory(
+      resolveProjectArgument(options.project, options.cwd),
+    );
+    const result = await reattributeDecisions({
+      projectDirectory,
+      range: options.reattribute,
+      actor: options.actor,
+      note: options.note,
+      now: options.dependencies?.now,
+    });
+    return {
+      ...result,
+      projectDirectory,
+      accepted: 0,
+      rejected: 0,
+      skipped: 0,
+    };
+  }
   if (options.escalation !== undefined && !options.build?.trim())
     throw new IdiomError("--escalation requires --build");
   if (options.build !== undefined && !options.build.trim())
@@ -353,13 +419,14 @@ export async function decideCommand(
     } catch {
       /* A project need not be a Git checkout. */
     }
+    const attribution = await attributionFor(context.projectDirectory);
     const path = await appendRulingDecision(context.projectDirectory, {
       at,
       commit,
       findingId: decision.id,
       fingerprint: decision.fingerprint,
       decision: "ruling",
-      actor: "human",
+      ...attribution,
       reason,
       resolution,
       ...(provenance ? { provenance } : {}),
@@ -383,6 +450,7 @@ export async function decideCommand(
       "external answers require an explicit nonblank --reason",
     );
   const catalog = await loadReviewCatalog(options);
+  const attribution = await attributionFor(catalog.projectDirectory);
   const entries = await readDecisionLogEntries(catalog.projectDirectory);
   const decisions = judgments(entries);
   const acknowledgementMode =
@@ -494,6 +562,7 @@ export async function decideCommand(
         throw new IdiomError(`${lineage.id} has no acknowledgement to remove`);
       await persistCatalogFindingNames(catalog);
       const result = await appendAcknowledgement({
+        attribution,
         projectDirectory: catalog.projectDirectory,
         finding: { ...latest, id: lineage.id },
         kind: "unacknowledge",
@@ -515,6 +584,7 @@ export async function decideCommand(
     }
     await persistCatalogFindingNames(catalog);
     const result = await appendAcknowledgement({
+      attribution,
       projectDirectory: catalog.projectDirectory,
       finding: { ...latest, id: lineage.id },
       kind: "acknowledge",
@@ -576,6 +646,7 @@ export async function decideCommand(
         // Members past the review cap are in no findings.json; their
         // registry id and fingerprint are what suppression matches on.
         const result = await appendDecision({
+          attribution,
           projectDirectory: catalog.projectDirectory,
           finding:
             lineage === undefined
@@ -611,6 +682,7 @@ export async function decideCommand(
         : designChoiceFor(record.finding, options.choose);
     await persistCatalogFindingNames(catalog);
     const result = await appendDecision({
+      attribution,
       projectDirectory: catalog.projectDirectory,
       finding: { ...record.finding, id: lineage.id },
       decision: options.reject ? "reject" : "accept",
@@ -660,6 +732,7 @@ export async function decideCommand(
         : undefined;
     await persistCatalogFindingNames(catalog);
     const result = await appendDecision({
+      attribution,
       projectDirectory: catalog.projectDirectory,
       finding: { ...record.finding, id: lineage.id },
       decision: response.action === "reject" ? "reject" : "accept",

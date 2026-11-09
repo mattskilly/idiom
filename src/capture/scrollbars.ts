@@ -10,6 +10,19 @@ export const scrollbarLaunchOptions = {
   ignoreDefaultArgs: ["--hide-scrollbars"],
 } satisfies LaunchOptions;
 
+/**
+ * Capture browsers leave SIGINT and SIGTERM to Idiom. Capture ownership turns
+ * either signal into an abort that records the interruption and closes the
+ * browser; Playwright's own handlers would race that teardown, and on SIGINT
+ * Playwright calls `process.exit(130)` before the record is sealed. SIGHUP,
+ * which Idiom does not handle, stays with Playwright.
+ */
+export const captureLaunchOptions = {
+  ...scrollbarLaunchOptions,
+  handleSIGINT: false,
+  handleSIGTERM: false,
+} satisfies LaunchOptions;
+
 /** Page-local emulation: capture stays hidden; only click replays get a gutter. */
 export class ScrollbarController {
   private script: Disposable | undefined;

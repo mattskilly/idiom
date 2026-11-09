@@ -1,8 +1,18 @@
+import {
+  captureBaseRecord,
+  missingScope,
+  type SettledComparison,
+  settleBaseComparison,
+} from "../baseline/base.js";
 import { type CheckTiming, combineCheckTimings } from "../capture/timings.js";
 import { workingTreeIdentity } from "../changed/git.js";
 import { IdiomError } from "../errors.js";
 import { type GatePlanOptions, planGate } from "../gate/plan.js";
-import { gatePlanLine, renderGatePlan } from "../gate/render.js";
+import {
+  describeComparison,
+  gatePlanLine,
+  renderGatePlan,
+} from "../gate/render.js";
 import type {
   GatePlan,
   GateServer,
@@ -34,6 +44,8 @@ export type GateRunResult = {
   estimateMs: number;
   budgetMs: number;
   server: GateServer;
+  /** Per flow: what findings were judged against, with base capture time. */
+  comparisons: GatePlan["comparisons"];
   changed: ChangedCheckResult;
   timing: CheckTiming;
 };
@@ -86,6 +98,64 @@ export async function checkGate(
   const inputIdentity = execution.production
     ? await workingTreeIdentity(execution.selection.git.repository)
     : undefined;
+  // Capture the base before the head: a failure here degrades the flow to
+  // the fallback comparison with a warning, never fails the gate.
+  const comparisons: GatePlan["comparisons"] = { ...plan.comparisons };
+  const settled = new Map<string, SettledComparison>();
+  for (const [flow, entry] of execution.baseComparisons) {
+    if (entry.settled !== undefined) {
+      settled.set(flow, entry.settled);
+      continue;
+    }
+    const signal = options.dependencies?.capture?.signal;
+    signal?.throwIfAborted();
+    const scope = execution.scopes.get(flow);
+    const result = await settleBaseComparison({
+      resolution: entry.resolution,
+      flow,
+      configHash: execution.configHash,
+      capture: () =>
+        captureBaseRecord({
+          base: entry.resolution.base,
+          flow,
+          project: options.project,
+          cwd: options.cwd,
+          scope: missingScope(entry.resolution.missing),
+          prod: options.prod,
+          ...(plan.probeBudgetMs === undefined
+            ? {}
+            : { probeBudgetMs: plan.probeBudgetMs }),
+          ...(execution.probeDisabled ? { probeDisabled: true } : {}),
+          probeRegions: scope ? execution.probeRegions.get(flow) : undefined,
+          cachePath: entry.resolution.cachePath,
+          dependencies: options.dependencies,
+        }),
+      signal,
+    });
+    settled.set(flow, result);
+    const previous = comparisons[flow];
+    if (previous !== undefined)
+      comparisons[flow] = {
+        ...previous,
+        ...(result.comparison?.source === "base-capture"
+          ? {}
+          : {
+              mode: result.comparison === undefined ? "none" : "fallback",
+              ...(result.comparison?.baselineCommit === undefined
+                ? {}
+                : {
+                    baselineCommit: result.comparison.baselineCommit,
+                    behindBase: result.comparison.behindBase,
+                  }),
+            }),
+        ...(result.captureMs === undefined
+          ? {}
+          : { baseCaptureMs: result.captureMs }),
+      };
+    if (result.warning !== undefined) options.onPlan?.([result.warning]);
+    else if (comparisons[flow] !== undefined)
+      options.onPlan?.([describeComparison(flow, comparisons[flow])]);
+  }
   const checks: ChangedCheckEntry[] = [];
   let checkedStates = 0;
   let findingNameWarning: string | undefined;
@@ -120,7 +190,10 @@ export async function checkGate(
       flow: flow.id,
       changed: execution.selection.git.resolvedBase,
       scope,
-      sinceBaseline: plan.baselines[flow.id] === true,
+      comparisonFor: (id) =>
+        settled.get(id) ?? {
+          unavailable: "no base comparison was planned for this flow",
+        },
       ...(plan.probeBudgetMs === undefined
         ? {}
         : { probeBudgetMs: plan.probeBudgetMs }),
@@ -156,6 +229,7 @@ export async function checkGate(
     estimateMs: plan.estimate.totalMs,
     budgetMs: plan.budgetMs,
     server: plan.server,
+    comparisons,
     changed,
     timing: combineCheckTimings(timings, performance.now() - started),
   };

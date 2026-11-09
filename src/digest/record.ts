@@ -53,6 +53,24 @@ const occurrenceSchema = z
     impactReasons: z.array(impactReason),
   })
   .strict();
+export const appliedDecisionSchema = z
+  .object({
+    source: z
+      .object({
+        line: z.number().int().positive(),
+        sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+    decision: z.enum(["accept", "reject", "acknowledge"]),
+    actor: z.string(),
+    agent: z.string().optional(),
+    occurrences: z.array(
+      z.object({ fingerprint: z.string(), where: z.string() }).strict(),
+    ),
+  })
+  .strict();
+export type AppliedDecision = z.infer<typeof appliedDecisionSchema>;
+
 export const digestRecordSchema = z
   .object({
     version: z.literal(1),
@@ -73,6 +91,7 @@ export const digestRecordSchema = z
       })
       .strict(),
     occurrences: z.array(occurrenceSchema),
+    appliedDecisions: z.array(appliedDecisionSchema).optional(),
   })
   .strict();
 export type DigestRecord = z.infer<typeof digestRecordSchema>;
@@ -164,6 +183,7 @@ export function buildDigestRecord(options: {
   projectDirectory: string;
   reportPath: string;
   occurrences: readonly Finding[];
+  appliedDecisions?: AppliedDecision[] | undefined;
   coverage: ReportCoverage | undefined;
   scope: RunRecord | undefined;
   captured: readonly string[];
@@ -268,5 +288,8 @@ export function buildDigestRecord(options: {
       problems,
     },
     occurrences,
+    ...(options.appliedDecisions === undefined
+      ? {}
+      : { appliedDecisions: options.appliedDecisions }),
   };
 }
