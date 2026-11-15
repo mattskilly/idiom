@@ -262,6 +262,17 @@
         "idiom/init.md": "f34ee3aeeb50aa172572ba38efd4197c5a1b60a6616031f1a886c4055020a2a0",
         "idiom-verify/SKILL.md": "f8b64f0ed2715b4420d32d3aaeb2e1ac671975d413659256e8b584517e66029a"
       }
+    },
+    {
+      "version": "0.22.0",
+      "tag": "v0.22.0",
+      "tagObject": "71a38d1dd6cc78ffd0c7ac25a2de990239bd636b",
+      "commit": "840bdbcb7019a0af6267809fad21f1b4e3da622e",
+      "files": {
+        "idiom/SKILL.md": "acf9b3db1f1db69978cfc42de0dd64cf013f45a283bcffe89f927b20028e72e7",
+        "idiom/init.md": "f34ee3aeeb50aa172572ba38efd4197c5a1b60a6616031f1a886c4055020a2a0",
+        "idiom-verify/SKILL.md": "f8b64f0ed2715b4420d32d3aaeb2e1ac671975d413659256e8b584517e66029a"
+      }
     }
   ]
 }

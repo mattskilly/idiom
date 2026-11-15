@@ -15,6 +15,7 @@ const pages = {
   "/slow-action": "slow-action.html",
   "/shadow-text": "shadow-text.html",
   "/versions": "versions.html",
+  "/gestures": "gestures.html",
 };
 let nextCount = 0;
 const server = createServer(async (request, response) => {

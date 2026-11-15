@@ -72,6 +72,12 @@ export async function collectPageEvidence(options: {
   /** Final URL of the document response `reach` navigated to, after redirects. */
   documentUrl?: (() => string | undefined) | undefined;
   healthGuard?: StepHealthGuard | undefined;
+  /**
+   * True while a held drag keeps the pointer down. The pointer is then left
+   * where the drag put it through the saved evidence; the health guard's
+   * dispose lifts it before anything after the evidence runs.
+   */
+  pointerHeld?: (() => boolean) | undefined;
   assertDestination?: (() => void) | undefined;
   createAxe: AxeFactory;
   collectConsole: () => Promise<ConsoleRecord[]>;
@@ -107,6 +113,16 @@ export async function collectPageEvidence(options: {
     | (() => Promise<GeometryScan<FocusVisibleObservation>>)
     | undefined;
   progress?: (() => ProgressArtifact | undefined) | undefined;
+  /** Scrollbar gutter measurement; runs after saved evidence, before the probe. */
+  nativeScrollbars?:
+    | (() => Promise<
+        import("../checks/chrome-defaults-dom.js").NativeScrollbarMeasurement
+      >)
+    | undefined;
+  /** Development-server detection; HTML documents only, never fails a capture. */
+  devServer?:
+    | (() => Promise<import("./dev-server.js").DevServerSign | undefined>)
+    | undefined;
 }): Promise<TupleResult> {
   const clock = options.monotonicNow ?? (() => performance.now());
   let probeMs: number | undefined;
@@ -119,9 +135,11 @@ export async function collectPageEvidence(options: {
   let observedSize: { width: number; height: number } | undefined;
   let axe: unknown;
   let nonHtml = false;
+  let devServer: import("./dev-server.js").DevServerSign | undefined;
   let loading: LoadingStuckEvidence | undefined;
   let loadingStarted = false;
   const loadingWindow = options.state.loadingSettleMs ?? 5000;
+  let heldDrag = false;
   let observations: ObservationArtifact | undefined;
   let stage: TupleFailureStage = options.reachStage;
   let failure: unknown;
@@ -313,7 +331,9 @@ export async function collectPageEvidence(options: {
       }
     }
 
-    if (!nonHtml && options.observe?.touchReachability)
+    heldDrag = options.pointerHeld?.() === true;
+    // Parking the pointer would move a held drag's preview.
+    if (!nonHtml && options.observe?.touchReachability && !heldDrag)
       await parkPointer(options.page);
     await options.healthGuard?.checkpoint();
     stage = "dom";
@@ -329,6 +349,10 @@ export async function collectPageEvidence(options: {
     axe = nonHtml
       ? { violations: [] }
       : await options.createAxe(options.page).analyze();
+    devServer =
+      nonHtml || options.devServer === undefined
+        ? undefined
+        : await options.devServer().catch(() => undefined);
     await options.healthGuard?.checkpoint();
     stage = "observations";
     activity(stage);
@@ -583,7 +607,10 @@ export async function collectPageEvidence(options: {
     if (failure === undefined) failure = error;
   }
   await options.timelines?.waitVisual();
-  let probeBlocked: string | undefined;
+  // Replaying and releasing a held drag would change the state it judges.
+  let probeBlocked: string | undefined = heldDrag
+    ? "probe skipped: the state holds a drag; releasing it changes the state"
+    : undefined;
   if (
     failure === undefined &&
     !nonHtml &&
@@ -600,6 +627,20 @@ export async function collectPageEvidence(options: {
     if (!touchReachability.restored)
       probeBlocked =
         "probe skipped: touch diagnostic could not restore the resting state";
+  }
+  if (
+    failure === undefined &&
+    !nonHtml &&
+    options.nativeScrollbars !== undefined &&
+    observations?.version === 2
+  ) {
+    // Classic scrollbars are shown only for this measurement: the saved
+    // screenshot keeps them hidden.
+    const { scan, restored } = await options.nativeScrollbars();
+    observations = { ...observations, nativeScrollbars: scan };
+    if (!restored && probeBlocked === undefined)
+      probeBlocked =
+        "probe skipped: scrollbar measurement could not restore the resting state";
   }
   if (
     failure === undefined &&
@@ -708,5 +749,6 @@ export async function collectPageEvidence(options: {
     mismatches,
     startedAt,
     endedAt,
+    ...(devServer === undefined ? {} : { devServer }),
   };
 }

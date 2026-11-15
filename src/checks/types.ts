@@ -104,6 +104,20 @@ export const deterministicCheckIds = [
   "empty-frame",
   "repeated-row-ornament",
   "glyph-over-icon",
+  "native-scrollbar",
+  "browser-default-style",
+  "unused-token",
+  "hidden-at-rest",
+  "edge-text",
+  "cramped-padding",
+  "heading-rhythm",
+  "type-legibility",
+  "numeric-align",
+  "ragged-row",
+  "text-occlusion",
+  "state-jump",
+  "control-gap",
+  "negative-spacing",
 ] as const;
 
 export type DeterministicCheckId = (typeof deterministicCheckIds)[number];
@@ -276,6 +290,12 @@ export type ObservationArtifactV1 = {
     scrollHeight: number;
     clientWidth: number;
     clientHeight: number;
+    /**
+     * The document's scroll offset when observed, in CSS px; element rects
+     * are viewport coordinates at this offset. Absent in older artifacts.
+     */
+    scrollX?: number | undefined;
+    scrollY?: number | undefined;
   };
   elements: ObservedElement[];
   headings: Array<{
@@ -545,8 +565,16 @@ export type ProbeMenu = {
   group: string;
   /** Selector of the opened menu. */
   root: string;
-  /** Visible rows, in order, at most 40. */
-  items: Array<{ name: string; disabled: boolean; selector: string }>;
+  /**
+   * Visible rows, in order, at most 40. `href` is the absolute http(s) URL
+   * of the link a row is or holds; absent in older artifacts.
+   */
+  items: Array<{
+    name: string;
+    disabled: boolean;
+    selector: string;
+    href?: string | undefined;
+  }>;
   /**
    * Hover samples for up to three disabled rows and the first enabled row,
    * taken only when the menu has a disabled row. Partial when the attempt
@@ -584,6 +612,11 @@ export type ProbeResult = {
   name: string;
   effects: ProbeEffect[];
   signature?: string | undefined;
+  /**
+   * The full http(s) URL a navigating click arrived at; `signature` keeps
+   * only its pathname. Absent in older artifacts.
+   */
+  destination?: string | undefined;
   persistent: boolean;
   /** One of three or more look-alike siblings: a per-row action. */
   repeated?: boolean | undefined;
@@ -865,7 +898,23 @@ export type ProbeSafetyLedger = {
   skipped: { destructive: number };
 };
 
+/** What pressing the configured command palette shortcut opened. */
+export type ProbePalette = {
+  /** The shortcut as configured, in Playwright key syntax (`Meta+K`). */
+  shortcut: string;
+  status: "opened" | "nothing-opened" | "not-reached" | "failed";
+  reason?: string | undefined;
+  /** Selector of the palette that opened. */
+  root?: string | undefined;
+  /** Visible entries, at most 60; `href` when the entry is or holds a link. */
+  entries: Array<{ name: string; selector: string; href?: string | undefined }>;
+  /** Escape closed the palette again. */
+  closed?: boolean | undefined;
+};
+
 export type ProbeArtifact = {
+  /** Present only when `checks.probe.commandPalette` names a shortcut. */
+  palette?: ProbePalette | undefined;
   stateReachTimeout?:
     | import("../capture/types.js").TimeoutDiagnostic
     | undefined;
@@ -1051,6 +1100,40 @@ export type DisclosureObservation = {
   open: boolean;
 };
 
+export type InteractiveSurfaceKind =
+  | "menu"
+  | "popover"
+  | "disclosure"
+  | "toolbar"
+  | "editable"
+  | "selectable"
+  | "multiselect";
+
+/**
+ * A toolbar, popover, menu, editor or selectable element on a captured
+ * surface, and whether this state shows it open, expanded, selected,
+ * focused or shown. Coverage lists the ones no state ever shows active.
+ */
+export type InteractiveSurfaceObservation = {
+  kind: InteractiveSurfaceKind;
+  /** A stable selector for the surface (or the trigger that opens it). */
+  selector: string;
+  /** The probe's `html > tag:nth-of-type(n) > …` path for the same element. */
+  path: string;
+  /** Accessible name, whitespace-collapsed, at most 120 characters. */
+  name: string;
+  /** Explicit role or the tag-implied one. */
+  role: string;
+  /** Open, expanded, selected, focused or shown in this state. */
+  active: boolean;
+  /** Selector of what activating it reveals, when known. */
+  target?: string | undefined;
+  /** Interactive and text elements inside the target (0 when unknown). */
+  reveals: number;
+  /** Multiselect only: up to two unselected member selectors. */
+  members?: string[] | undefined;
+};
+
 /** An interactive control carrying exactly one visible icon. */
 export type IconControlObservation = {
   selector: string;
@@ -1155,7 +1238,19 @@ export type SelectorMarkPurpose =
   /** A decided brief's assertion selector; keeps hidden matches. */
   | "brief"
   /** A box the flow or project declares intentionally empty (empty-frame). */
-  | "empty-ok";
+  | "empty-ok"
+  /** Content a state declares hidden on purpose (hidden-at-rest). */
+  | "hidden-ok"
+  /** An element a state declares moved or resized on purpose (state-jump). */
+  | "jump-ok"
+  /** Text negative-spacing judges even when it is page content. */
+  | "spacing-include"
+  /** Text negative-spacing never judges (wins over include and scope). */
+  | "spacing-ignore"
+  /** A surface whose controls keep a stricter control-gap minimum (a learned law). */
+  | "gap-scope"
+  /** A surface whose labels keep a text-centering tolerance (a learned law). */
+  | "centering-scope";
 
 /** A configured selector resolved at capture time to observed selectors. */
 export type SelectorMark = {
@@ -1190,6 +1285,154 @@ export type RepeatedContainerObservation = {
   items: number;
 };
 
+/** Text at rest (after motion) that is invisible: opacity under 0.1 or visibility hidden. */
+export type HiddenAtRestRecord = {
+  selector: string;
+  /** The outermost element whose opacity or visibility hides it. */
+  root: string;
+  cause: "opacity" | "visibility";
+  /** Effective opacity (own times ancestors'). */
+  opacity: number;
+  rect: Rect;
+  text: string;
+};
+
+/** Share of in-viewport text blocks that are invisible after the state settles. */
+export type HiddenAtRestScan = {
+  status: "ran" | "partial";
+  reason?: string | undefined;
+  /** Text blocks in the viewport (exempt ones excluded). */
+  total: number;
+  hidden: number;
+  /** Text ink area in the viewport, px². */
+  area: number;
+  hiddenArea: number;
+  /** Hidden blocks still animating or transitioning; excluded from both counts. */
+  inFlight: number;
+  records: HiddenAtRestRecord[];
+};
+
+/** Body text too close to the viewport's left or right edge. */
+export type EdgeTextObservation = {
+  selector: string;
+  side: "left" | "right";
+  distance: number;
+  threshold: number;
+  rect: Rect;
+  text: string;
+};
+
+/** Text closer than the padding minimum to its bordered or filled container. */
+export type CrampedPaddingObservation = {
+  container: string;
+  selector: string;
+  side: "top" | "right" | "bottom" | "left";
+  distance: number;
+  rect: Rect;
+  text: string;
+};
+
+/** What a part of an inline control is: a run of text, an icon, or a nested control. */
+export type ControlGapPartKind = "text" | "icon" | "control";
+
+/** Two side-by-side parts inside one inline control whose ink sits closer than the ceiling. */
+export type ControlGapObservation = {
+  /** The chip, pill, toolbar item or button holding both parts. */
+  control: string;
+  first: string;
+  second: string;
+  firstKind: ControlGapPartKind;
+  secondKind: ControlGapPartKind;
+  /** Horizontal ink gap, CSS px, rounded to 0.5px (0 when they touch or overlap by up to 1px). */
+  gap: number;
+  /** The control's border box. */
+  rect: Rect;
+  text: string;
+  /** Configured `controlGap.scopes` selectors whose matches contain the control; absent when none do. */
+  scopes?: string[] | undefined;
+};
+
+/** A negative letter-spacing or word-spacing on painted text, at the element that sets it. */
+export type NegativeSpacingObservation = {
+  selector: string;
+  property: "letter-spacing" | "word-spacing";
+  /** Computed value, CSS px (negative). */
+  value: number;
+  /** The value over the element's font size. */
+  em: number;
+  text: string;
+  rect: Rect;
+};
+
+/** A heading no further from the block above than from the content below. */
+export type HeadingRhythmObservation = {
+  selector: string;
+  level: number;
+  text: string;
+  gapAbove: number;
+  gapBelow: number;
+  above: string;
+  below: string;
+};
+
+export type TypeLegibilityReason =
+  | "small-body"
+  | "small-ui"
+  | "tight-leading"
+  | "justified"
+  | "all-caps"
+  | "letter-spacing";
+
+/** One legibility problem on one text block. */
+export type TypeLegibilityObservation = {
+  selector: string;
+  reason: TypeLegibilityReason;
+  /**
+   * px for small-body and small-ui, the line-height ratio for tight-leading,
+   * em for letter-spacing, the run's characters for all-caps, 0 for justified.
+   */
+  value: number;
+  text: string;
+  rect: Rect;
+};
+
+/** A mostly numeric table or list column that is left-aligned or proportional. */
+export type NumericColumnObservation = {
+  container: string;
+  kind: "table" | "list";
+  /** 0-based column index. */
+  column: number;
+  header: string;
+  /** Non-empty cells in the column. */
+  cells: number;
+  numeric: number;
+  problems: Array<"left-aligned" | "proportional-figures">;
+  example: string;
+};
+
+/** Cards in one visual row of a repeated collection whose bottoms differ. */
+export type RaggedRowObservation = {
+  collection: string;
+  /** 0-based row index within the collection. */
+  row: number;
+  items: number;
+  spread: number;
+  heights: number[];
+  tallest: string;
+  shortest: string;
+};
+
+/** Text partly covered by an opaque element painted above it. */
+export type TextOcclusionObservation = {
+  text: string;
+  cover: string;
+  /** Covered sample points over sampled points, 0–1. */
+  ratio: number;
+  samples: number;
+  covered: number;
+  rect: Rect;
+};
+
 /** A bordered or filled box with nothing visible inside it. */
 export type EmptyFrameObservation = {
   selector: string;
@@ -1199,6 +1442,23 @@ export type EmptyFrameObservation = {
   borderSides: Array<"top" | "right" | "bottom" | "left">;
   /** Element children present in the DOM but not painted at this viewport. */
   hiddenChildren: number;
+};
+
+/**
+ * A framed tile, card or option whose only content is one media element much
+ * smaller than the frame, pinned off-centre so a large strip sits empty.
+ */
+export type UnderfilledFrameObservation = {
+  selector: string;
+  rect: Rect;
+  media: string;
+  mediaRect: Rect;
+  /** 1 − media area over the frame's inner area, 0–1 (3dp). */
+  emptyShare: number;
+  /** The side of the media the widest empty strip sits on. */
+  side: "left" | "right" | "top" | "bottom";
+  /** The parent's selector when two or more sibling records share it. */
+  group?: string | undefined;
 };
 
 /** One identical decoration carried by most items of a collection. */
@@ -1238,6 +1498,47 @@ export type GlyphOverlapObservation = {
   overlap: { width: number; height: number };
   /** Intersection area over the smaller box's area, 0–1. */
   ratio: number;
+};
+
+/** A scroller showing the browser's own space-taking scrollbar in a styled box. */
+export type NativeScrollbarObservation = {
+  selector: string;
+  kind: "scroller" | "textarea";
+  axes: Array<"vertical" | "horizontal">;
+  /** Track thickness in CSS px, the largest over the axes. */
+  gutter: number;
+  rect: Rect;
+  /** The rounded or filled box the scroller sits in (possibly itself). */
+  box: string;
+  boxReason: "radius" | "background";
+  /** The box's largest corner radius in CSS px (0 for a filled square box). */
+  radius: number;
+  /** A textarea the capture filled to overflow, measured, and restored. */
+  filled: boolean;
+};
+
+/** A link painted in the browser's default link colour. */
+export type BrowserDefaultLinkObservation = {
+  selector: string;
+  color: string;
+  text: string;
+};
+
+/** A fieldset legend drawn notched into its fieldset's top border. */
+export type BrowserDefaultLegendObservation = {
+  selector: string;
+  fieldset: string;
+  text: string;
+};
+
+/** Which chrome-like design tokens a captured state's applied rules use. */
+export type ChromeTokenUseObservation = {
+  /** Token names from the tokens file that suggest browser chrome. */
+  candidates: string[];
+  /** The candidates some applied rule or inline style references. */
+  used: string[];
+  /** False when unreadable stylesheets mean use cannot be ruled out. */
+  complete: boolean;
 };
 
 export type EmptyRegionsObservation = {
@@ -1599,6 +1900,8 @@ export type ObservationArtifactV2 = Omit<
   overlaps?: OverlapObservation[] | undefined;
   /** Disclosure controls on the surface; absent in older captures. */
   disclosures?: DisclosureObservation[] | undefined;
+  /** Absent in captures that predate the surface inventory. */
+  interactiveSurfaces?: InteractiveSurfaceObservation[] | undefined;
   /** Controls carrying one icon; absent in older captures. */
   iconControls?: IconControlObservation[] | undefined;
   popoverCovers?: PopoverCoverObservation[] | undefined;
@@ -1612,10 +1915,44 @@ export type ObservationArtifactV2 = Omit<
   repeatedContainers?: RepeatedContainerObservation[] | undefined;
   /** Absent in captures that predate the empty-frame scan (or when disabled). */
   emptyFrames?: EmptyFrameObservation[] | undefined;
+  /** Absent in captures that predate the underfilled-media scan (or when disabled). */
+  underfilledFrames?: UnderfilledFrameObservation[] | undefined;
   /** Absent in captures that predate the row-ornament scan (or when disabled). */
   rowOrnaments?: RowOrnamentObservation[] | undefined;
   /** Absent in captures that predate the glyph-over-icon scan (or when disabled). */
   glyphOverlaps?: GlyphOverlapObservation[] | undefined;
+  /** Absent in captures that predate the hidden-at-rest scan (or when disabled). */
+  hiddenAtRest?: HiddenAtRestScan | undefined;
+  /** Absent in captures that predate the edge-text scan (or when disabled). */
+  edgeTexts?: GeometryScan<EdgeTextObservation> | undefined;
+  /** Absent in captures that predate the cramped-padding scan (or when disabled). */
+  crampedPaddings?: GeometryScan<CrampedPaddingObservation> | undefined;
+  /** Absent in captures that predate the control-gap scan (or when disabled). */
+  controlGaps?: GeometryScan<ControlGapObservation> | undefined;
+  /** Absent in captures that predate the negative-spacing scan (or when disabled). */
+  negativeSpacings?: GeometryScan<NegativeSpacingObservation> | undefined;
+  /** Absent in captures that predate the heading-rhythm scan (or when disabled). */
+  headingRhythms?: GeometryScan<HeadingRhythmObservation> | undefined;
+  /** Absent in captures that predate the type-legibility scan (or when disabled). */
+  typeLegibility?: GeometryScan<TypeLegibilityObservation> | undefined;
+  /** Absent in captures that predate the numeric-align scan (or when disabled). */
+  numericColumns?: GeometryScan<NumericColumnObservation> | undefined;
+  /** Absent in captures that predate the ragged-row scan (or when disabled). */
+  raggedRows?: GeometryScan<RaggedRowObservation> | undefined;
+  /** Absent in captures that predate the text-occlusion pass (or when disabled). */
+  textOcclusions?: TextOcclusionObservation[] | undefined;
+  /** Absent when the scrollbar measurement did not run (older, Electron, disabled). */
+  nativeScrollbars?: GeometryScan<NativeScrollbarObservation> | undefined;
+  /** Absent in captures that predate the default-link scan (or when disabled). */
+  browserDefaultLinks?:
+    | { count: number; records: BrowserDefaultLinkObservation[] }
+    | undefined;
+  /** Absent in captures that predate the notched-legend scan (or when disabled). */
+  browserDefaultLegends?:
+    | { count: number; records: BrowserDefaultLegendObservation[] }
+    | undefined;
+  /** Absent in captures that predate the chrome-token scan (or when disabled). */
+  chromeTokenUse?: ChromeTokenUseObservation | undefined;
   progress?: ProgressArtifact | undefined;
   bandEdges?: GeometryScan<BandEdgeObservation> | undefined;
   wordBreaks?: GeometryScan<WordBreakObservation> | undefined;
@@ -1737,6 +2074,12 @@ export type CheckTuple = {
   designNotApplicable?: string | undefined;
   layoutRepresentative?: string | undefined;
   combination?: string | undefined;
+  /** A toggle combination's base state id. */
+  combinationBase?: string | undefined;
+  /** A toggle combination's chosen option per toggle. */
+  combinationOptions?: Record<string, string> | undefined;
+  /** The state a `from` state is reached from (the nearest ancestor). */
+  from?: string | undefined;
   flow: string;
   state: string;
   viewport: string;
@@ -1843,6 +2186,37 @@ export type ChecksConfig = {
   emptyFrame?: { enabled: boolean; ignore: string[] } | undefined;
   repeatedRowOrnament?: { enabled: boolean } | undefined;
   glyphOverIcon?: { enabled: boolean } | undefined;
+  nativeScrollbar?: { enabled: boolean } | undefined;
+  browserDefaultStyle?: { enabled: boolean } | undefined;
+  unusedToken?: { enabled: boolean } | undefined;
+  hiddenAtRest?: { enabled: boolean } | undefined;
+  edgeText?: { enabled: boolean } | undefined;
+  crampedPadding?: { enabled: boolean } | undefined;
+  headingRhythm?: { enabled: boolean } | undefined;
+  typeLegibility?: { enabled: boolean } | undefined;
+  numericAlign?: { enabled: boolean } | undefined;
+  raggedRow?: { enabled: boolean } | undefined;
+  textOcclusion?: { enabled: boolean } | undefined;
+  controlGap?:
+    | {
+        enabled: boolean;
+        min: number;
+        scopes?:
+          | Array<{ name: string; selector: string; min: number }>
+          | undefined;
+      }
+    | undefined;
+  /** Learned per-surface text-centering tolerances. */
+  textCentering?:
+    | {
+        scopes?:
+          | Array<{ name: string; selector: string; tolerance: number }>
+          | undefined;
+      }
+    | undefined;
+  negativeSpacing?:
+    | { enabled: boolean; scope: "interface" | "all" }
+    | undefined;
   images?: { enabled: boolean; distortionTolerance: number } | undefined;
   layoutShift?: { enabled: boolean; max: number } | undefined;
   interactionShift?: { enabled: boolean; minDistance: number } | undefined;
@@ -1869,6 +2243,10 @@ export type ChecksConfig = {
   compoundControls?: { tokenMax: number; minInset: number } | undefined;
   /** Chrome regions compared across declared sibling states. */
   siblingChrome: { regions: string[] };
+  /** How navigation entry points group; read as `?? "pathname"`. */
+  duplicateEntry?:
+    | { navigation?: "pathname" | "query" | "full" | undefined }
+    | undefined;
   explanation: "default" | "visible";
   /** Undefined uses input-class defaults: fine 24px, coarse 44px, narrow below 768px. */
   targetSize?:

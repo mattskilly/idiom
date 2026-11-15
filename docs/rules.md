@@ -7,7 +7,7 @@ Findings have three bases: **measured** means a deterministic rule with its meas
 Deterministic findings retain readable Done when text and an executable `acceptance` rule contract. Verify reruns the existing rule under unchanged settings against the original target/action in both calibrated captures. A matching violation fails even when other evidence is incomplete. A missing action, skipped probe, partial timeline, missing held replay, changed settings or unresolved target produces **not-recheckable**, with a reason, rather than claiming a fix. Current effect-region and animation exclusions remain part of the original rules.
 
 
-A rule, or check, is a deterministic judgement over the evidence Idiom captured for one state, viewport and colour scheme: the DOM, computed styles and geometry, the screenshot, the axe-core results, the console, and what the interaction probe saw. The same evidence always gives the same findings, so `idiom review <flow> --from <runId> --deterministic-only` re-judges a stored run offline, and `idiom check` gates on it.
+A rule, or check, is a deterministic judgment over the evidence Idiom captured for one state, viewport and color scheme: the DOM, computed styles and geometry, the screenshot, the axe-core results, the console, and what the interaction probe saw. The same evidence always gives the same findings, so `idiom review <flow> --from <runId> --deterministic-only` re-judges a stored run offline, and `idiom check` gates on it.
 
 Each finding has one of four severities:
 
@@ -17,7 +17,7 @@ Each finding has one of four severities:
 
 - **info**: informational evidence, ranked below minor. It cannot trip existing severity gates and is omitted from digest alerts.
 
-State coverage is reported next to rule coverage. `idiom coverage --states`, each flow review report and `idiom check` say which viewports, colour schemes, reduced-motion modes, network replays (slow and failure), interactions (probe reach, focus sweep) and declared data states each state was observed in by the latest capture, and the config or flow change that covers each missing one. It measures what was reviewed, not quality. A dimension that cannot apply (no requests to replay, no controls to probe, no data states declared) is not applicable and never counts towards the percentage.
+State coverage is reported next to rule coverage. `idiom coverage --states`, each flow review report and `idiom check` say which viewports, color schemes, reduced-motion modes, network replays (slow and failure), interactions (probe reach, focus sweep) and declared data states each state was observed in by the latest capture, and the config or flow change that covers each missing one. It measures what was reviewed, not quality. A dimension that cannot apply (no requests to replay, no controls to probe, no data states declared) is not applicable and never counts towards the percentage.
 
 Every check reports coverage as well as findings. A check whose evidence is missing (an older capture, a capture path that cannot record it, or a probe that did not run) reports coverage `unavailable` rather than passing; recapture to measure it. A check you turn off reports `skipped`. A check that intentionally does not evaluate a tuple (`responsive-break` outside the minimum captured CSS width) reports `not-applicable`, shown as "not applicable" in review reports.
 
@@ -41,7 +41,7 @@ A finding is in the higher **impact** tier when any of these holds, and in the l
 - **viewports**: it appears at two or more viewports;
 - **primary**: its element is a recorded primary action, or sits above the fold in the page's primary region (`<main>` or a marked primary region), at any coordinate where it appears;
 - **interactive**: its element is an interactive control (a link, button, input or other focusable control);
-- **broken**: its rule reports broken behaviour or obstructed content (salience 9 in the [ranking table](ranking.md#salience)).
+- **broken**: its rule reports broken behavior or obstructed content (salience 9 in the [ranking table](ranking.md#salience)).
 
 The tier never crosses severities: a minor finding on every state still ranks below any major. `check --json` reports each issue's `impact` (1 or 0) and `impactReasons`.
 
@@ -53,7 +53,7 @@ The tier never crosses severities: a minor finding on every state still ranks be
 - **Why it matters:** Hidden content is content nobody can read or reach, and a page that scrolls sideways feels broken.
 - **Severity:** major; minor for a value truncated inside an `input` or `textarea`.
 - **Source:** WCAG 2.2 1.4.10 Reflow, for document overflow; otherwise craft convention: content should not be silently cut off.
-- **Configure or decide:** No settings; crop-to-fit media, boxes marked `data-idiom-crop`, and boxes that cut off only decoration, presentational illustrations, scroller-owned content or marquee tracks are exempt. Captures made before this classification keep the previous behaviour. Findings are decided with `idiom decide` or a `.idiom/rules.json` override.
+- **Configure or decide:** No settings; crop-to-fit media, boxes marked `data-idiom-crop`, and boxes that cut off only decoration, presentational illustrations, scroller-owned content or marquee tracks are exempt. Captures made before this classification keep the previous behavior. Findings are decided with `idiom decide` or a `.idiom/rules.json` override.
 
 ### `responsive-break`
 
@@ -97,8 +97,8 @@ The tier never crosses severities: a minor finding on every state still ranks be
 
 ### `token-drift`
 
-- **Catches:** Rendered colours and radii on visible elements that do not resolve to a value declared in the project's design tokens. Token values resolve in a separate blank page, so app styles cannot change them and the captured page is never touched. Colours are judged per colour-scheme context: inside a subtree that overrides `color-scheme`, a `light-dark()` token counts only with the value that applies there.
-- **Why it matters:** Off-token values drift from the design system one hard-coded colour at a time.
+- **Catches:** Rendered colors and radii on visible elements that do not resolve to a value declared in the project's design tokens. Token values resolve in a separate blank page, so app styles cannot change them and the captured page is never touched. Colors are judged per color-scheme context: inside a subtree that overrides `color-scheme`, a `light-dark()` token counts only with the value that applies there.
+- **Why it matters:** Off-token values drift from the design system one hard-coded color at a time.
 - **Severity:** minor.
 - **Source:** Craft convention: rendered values should come from the declared design tokens.
 - **Configure or decide:** Runs only when `design.tokensFile` is set in `.idiom/project.json` (otherwise skipped); there are no `checks` settings, so decide findings with `idiom decide` or a `.idiom/rules.json` override.
@@ -113,10 +113,10 @@ The tier never crosses severities: a minor finding on every state still ranks be
 
 ### `missing-state`
 
-- **Catches:** A declared state that failed to capture or failed its `expect` block, and a declared colour scheme that renders identically to the previous one across the whole flow.
-- **Why it matters:** If the state you meant to review never rendered, every other judgement about it is unreliable.
+- **Catches:** A declared state that failed to capture or failed its `expect` block, and a declared color scheme that renders identically to the previous one across the whole flow.
+- **Why it matters:** If the state you meant to review never rendered, every other judgment about it is unreliable.
 - **Severity:** blocker.
-- **Source:** Craft convention: every declared state and colour scheme must actually render.
+- **Source:** Craft convention: every declared state and color scheme must actually render.
 - **Configure or decide:** Configured through the flow's states, `expect` blocks and `colorSchemes`, not `checks`; fix the state or its declaration, or decide with `idiom decide`.
 
 ### `spacing-rhythm`
@@ -137,15 +137,15 @@ The tier never crosses severities: a minor finding on every state still ranks be
 
 ### `text-centering`
 
-- **Catches:** Single-line labels in chips, buttons and badges sitting off their box's vertical centre; an open box with a single top or bottom rule (a divider or underline) is measured against its content box.
-- **Why it matters:** Off-centre labels are a small misalignment people notice without knowing why.
+- **Catches:** Single-line labels in chips, buttons and badges sitting off their box's vertical center; an open box with a single top or bottom rule (a divider or underline) is measured against its content box.
+- **Why it matters:** Off-center labels are a small misalignment people notice without knowing why.
 - **Severity:** minor.
-- **Source:** Craft convention: labels sit on their box's optical centre.
-- **Configure or decide:** `checks.centeringTolerance` sets the allowed offset (default 1.5px). Values below 1.5px are raised to 1.5px, and large type allows 8% of its font size, because font metrics and pixel-snapped line boxes alone put a symmetric label up to about 1.4px off. Filled or fully bordered shapes are still measured edge to edge. Decide findings with `idiom decide`.
+- **Source:** Craft convention: labels sit on their box's optical center.
+- **Configure or decide:** `checks.centeringTolerance` sets the allowed offset (default 1.5px). Values below 1.5px are raised to 1.5px, and large type allows 8% of its font size, because font metrics and pixel-snapped line boxes alone put a symmetric label up to about 1.4px off. Filled or fully bordered shapes are still measured edge to edge. `checks.textCentering.scopes` (`name`, `selector`, `tolerance`) sets a tolerance for labels inside a surface; the 1.5px floor still applies, and the strictest scope wins. `idiom learn` writes a scope from a director's law such as "labels in the toolbar are centred within 1px". Decide findings with `idiom decide`.
 
 ### `adjacent-gap`
 
-- **Catches:** Neighbouring controls closer than the minimum gap, including a focused field's ring, and bordered shapes that touch inside the same parent. Targets (and descendants) controlled by collapsed `aria-expanded="false"` triggers, opacity-zero or visibility-hidden subtrees, and transforms that move a subtree fully outside the viewport are excluded. Partially visible transforms and ordinary below-fold content stay eligible. Keycap glyph groups (⌘ K) and the contents of illustrations or static, non-selectable mock-ups with no controls are not compared.
+- **Catches:** Neighboring controls closer than the minimum gap, including a focused field's ring, and bordered shapes that touch inside the same parent. Targets (and descendants) controlled by collapsed `aria-expanded="false"` triggers, opacity-zero or visibility-hidden subtrees, and transforms that move a subtree fully outside the viewport are excluded. Partially visible transforms and ordinary below-fold content stay eligible. Keycap glyph groups (⌘ K) and the contents of illustrations or static, non-selectable mock-ups with no controls are not compared.
 - **Why it matters:** Controls jammed together look like one control and are easy to mis-hit.
 - **Severity:** major when they touch or overlap (gap of 0.5px or less); minor otherwise.
 - **Source:** Craft convention: separate controls need visible separation.
@@ -169,11 +169,11 @@ The tier never crosses severities: a minor finding on every state still ranks be
 
 ### `duplicate-entry`
 
-- **Catches:** Two or more persistent controls in different places that open the same panel or focus the same field, following one level of menus, and two adjacent triggers (within 16px, in one toolbar, group or row) whose menus list identical items in the same order. Distant triggers with the same menu are not compared.
+- **Catches:** Two or more persistent controls in different places that open the same panel or focus the same field, following one level of menus, and two adjacent triggers (within 16px, in one toolbar, group or row) whose menus list identical items in the same order. Distant triggers with the same menu are not compared. It also groups navigation by destination: links on the page, controls the probe clicked that navigated, link rows of menus the probe opened, and command palette entries. A destination reached from two or more places, at least one of them a menu item or palette entry, is reported, so a project menu offering Leads next to a side-nav link to Leads is one finding. Two page links to one route (a header and a footer link, or the logo and "Home"), in-page anchors and links to other origins never count. Destinations compare by pathname, ignoring the query, the hash and a trailing slash.
 - **Why it matters:** Duplicate entry points clutter the interface and make people wonder whether they do different things.
 - **Severity:** minor.
 - **Source:** Craft convention: one destination, one entry point.
-- **Configure or decide:** Needs the probe (`checks.probe`, on by default); per-row actions in repeated lists are excluded, and findings are decided with `idiom decide`.
+- **Configure or decide:** Needs the probe (`checks.probe`, on by default); per-row actions in repeated lists are excluded, and findings are decided with `idiom decide`. `checks.duplicateEntry.navigation` compares destinations by `pathname` (default), `query` (pathname and sorted query) or `full` (also the hash). Set `checks.probe.commandPalette` to a shortcut in Playwright key syntax (`"Meta+K"`, pressed as written, with no platform remapping) and the probe opens the palette once per state and counts its entries as entry points. A palette entry without a link joins a destination only when exactly one page link has the same name. Palettes repeat destinations by design, so decide those findings as deliberate shortcuts. A palette that does not open is noted in coverage, not reported.
 
 ### `component-size`
 
@@ -245,7 +245,7 @@ The trade-off: a real failure written as a long sentence inside `main`, with no 
 - **Why it matters:** These are the structural promises you made about the layout, so breaking one is a regression by definition.
 - **Severity:** major.
 - **Source:** Project declaration: the `invariants` you write in the flow manifest.
-- **Configure or decide:** Declared in the flow's or state's `invariants` array, not in `checks`; no declaration means no findings, and findings are decided with `idiom decide`.
+- **Configure or decide:** Declared in the flow's or state's `invariants` array, or project-wide in `checks.invariants` (every state of every flow; not `group` invariants). A `share` invariant asserts that every match shares an edge or dimension, compared inside each `within` container. `idiom learn` writes project `share` invariants from laws such as "toolbar buttons share a height within 2px" or "fields in a field group are equal widths". No declaration means no findings, and findings are decided with `idiom decide`.
 
 ### `group-invariants`
 
@@ -261,7 +261,7 @@ The trade-off: a real failure written as a long sentence inside `main`, with no 
 - **Why it matters:** People need to see the current choice, and assistive technology needs it exposed.
 - **Severity:** major for several selected or an invisible selection; minor when nothing is marked selected.
 - **Source:** WCAG 2.2 4.1.2 Name, Role, Value for the exposed state; craft convention for the visible difference.
-- **Configure or decide:** `checks.selectedState` sets `minColorDelta` (default 24), how far a colour must move to count as visible; decide findings with `idiom decide`.
+- **Configure or decide:** `checks.selectedState` sets `minColorDelta` (default 24), how far a color must move to count as visible; decide findings with `idiom decide`.
 
 ### `dialog-shell`
 
@@ -331,31 +331,31 @@ The carousel-peek exemption examines only ancestors strictly inside the actual c
 
 ### `scale-conformance`
 
-- **Catches:** Spacing, control heights, corner radii and border colours off the declared scale, or, without a scale, sharp outliers from the run's prevailing value; control shadows (outliers only).
+- **Catches:** Spacing, control heights, corner radii and border colors off the declared scale, or, without a scale, sharp outliers from the run's prevailing value; control shadows (outliers only).
 - **Why it matters:** Values off the scale accumulate into a layout that never quite lines up.
 - **Severity:** minor.
-- **Source:** Craft convention: dimensions and colours come from a small, declared scale.
-- **Configure or decide:** `checks.scales` declares spacing, control heights, radii, border colours and role selectors; decide findings with `idiom decide`. Without a declared scale, a value is compared only with peers in the same viewport, colour scheme and role, and dividers split into heading rules, table borders and other rules. Borders on inline text (dotted underlines, abbreviations) are not dividers, and radius is judged only on boxes with a visible background, border or shadow. Spacing is not read from unpainted elements or from closed disclosures and hidden, inert or `content-visibility: hidden` subtrees. When one off-scale value repeats in one context, it becomes a single design-system question instead of separate findings (see below).
+- **Source:** Craft convention: dimensions and colors come from a small, declared scale.
+- **Configure or decide:** `checks.scales` declares spacing, control heights, radii, border colors and role selectors; decide findings with `idiom decide`. Without a declared scale, a value is compared only with peers in the same viewport, color scheme and role, and dividers split into heading rules, table borders and other rules. Borders on inline text (dotted underlines, abbreviations) are not dividers, and radius is judged only on boxes with a visible background, border or shadow. Spacing is not read from unpainted elements or from closed disclosures and hidden, inert or `content-visibility: hidden` subtrees. When one off-scale value repeats in one context, it becomes a single design-system question instead of separate findings (see below).
 
-When the same off-scale value keeps appearing in the same place, the system is probably missing a step rather than the page making the same mistake many times. In project runs (review, check, fix, baseline, verify), declared-scale drift (spacing, control heights, radii, border colours) is grouped by property, value and context. Values within 1px of each other count as one value, as do identical colours. The context is the nearest landmark, the component (the nearest `data-node-id`, the matching `checks.scales.roles` selector, the default role, or else the tag and its first class) and the viewport. A group needs at least `checks.scales.suggestAfter` occurrences (default 5) across at least two states or three distinct elements. Light and dark captures of an element count once, and two kinds of value never count toward a question: off-canvas content, such as a carousel's parked slides, and values that fall back from an unresolved custom property. A broken token is a defect, not a missing step. It then becomes one ruling question, for example "17px padding appears 34 times on .row-control in main at desktop, between your 16px and 24px steps. Add a step for this context, or keep reporting it as drift?". Reports and `idiom check` list it under "Design system questions" with the count, the nearest declared steps, a suggested token name and crops of three examples. Its occurrences are not counted as findings, so they never crowd the top issues.
+When the same off-scale value keeps appearing in the same place, the system is probably missing a step rather than the page making the same mistake many times. In project runs (review, check, fix, baseline, verify), declared-scale drift (spacing, control heights, radii, border colors) is grouped by property, value and context. Values within 1px of each other count as one value, as do identical colors. The context is the nearest landmark, the component (the nearest `data-node-id`, the matching `checks.scales.roles` selector, the default role, or else the tag and its first class) and the viewport. A group needs at least `checks.scales.suggestAfter` occurrences (default 5) across at least two states or three distinct elements. Light and dark captures of an element count once, and two kinds of value never count toward a question: off-canvas content, such as a carousel's parked slides, and values that fall back from an unresolved custom property. A broken token is a defect, not a missing step. It then becomes one ruling question, for example "17px padding appears 34 times on .row-control in main at desktop, between your 16px and 24px steps. Add a step for this context, or keep reporting it as drift?". Reports and `idiom check` list it under "Design system questions" with the count, the nearest declared steps, a suggested token name and crops of three examples. Its occurrences are not counted as findings, so they never crowd the top issues.
 
 There are three answers. `idiom ruling --decision ruling-N --add-step [--token <name>]` (or `idiom_decide` with `add-step`) appends the step to DESIGN.md as a recorded ruling. Values in that context within 1px of the step are then on scale, and their findings close as resolved by ruling. `--drift` records that the value should keep being reported, and it comes back as one finding that lists every occurrence. To skip, don't answer: nothing is recorded, and the question is asked again next run. Idiom never edits `.idiom/project.json`, and the only thing it writes to DESIGN.md is a ruling you confirmed. Groups that don't qualify, and undeclared outliers, are reported as before. `idiom quick` asks no questions.
 
 ### `control-anatomy`
 
-- **Catches:** A select chevron or an icon in an icon button or segmented control more than 1px off its label's centre, and sibling selects with different inner padding or chevron size. Sibling comparisons require matching control family (native select, combobox or labelled listbox trigger), host type and role; icon-only action/menu buttons are excluded.
+- **Catches:** A select chevron or an icon in an icon button or segmented control more than 1px off its label's center, and sibling selects with different inner padding or chevron size. Sibling comparisons require matching control family (native select, combobox or labeled listbox trigger), host type and role; icon-only action/menu buttons are excluded.
 - **Why it matters:** Misaligned chevrons and icons make controls look slightly broken.
 - **Severity:** minor.
-- **Source:** Craft convention: a control's parts align on one centre line.
+- **Source:** Craft convention: a control's parts align on one center line.
 - **Configure or decide:** No settings; decide findings with `idiom decide` or a `.idiom/rules.json` override.
 
 ### `luminance-parity`
 
-- **Catches:** In light and dark captures, a field, card or panel that stays light (or dark) while its container and neighbours flip, and primary-action labels under 4.5:1 contrast in either scheme.
+- **Catches:** In light and dark captures, a field, card or panel that stays light (or dark) while its container and neighbors flip, and primary-action labels under 4.5:1 contrast in either scheme.
 - **Why it matters:** A surface that does not follow the theme glares in dark mode or disappears in light mode, and a primary action must be readable in both.
 - **Severity:** major.
 - **Source:** WCAG 2.2 1.4.3 Contrast (Minimum) for primary-action labels; craft convention for theme parity.
-- **Configure or decide:** `checks.luminanceParity` adds `primarySelectors` and `ignore` selectors for fixed-colour content; parity needs both colour schemes in one run, and findings are decided with `idiom decide`.
+- **Configure or decide:** `checks.luminanceParity` adds `primarySelectors` and `ignore` selectors for fixed-color content; parity needs both color schemes in one run, and findings are decided with `idiom decide`.
 
 ### `frame`
 
@@ -375,15 +375,15 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 
 ### `alarm-at-rest`
 
-- **Catches:** Warning glyphs, alert-named icons, or red or configured warning colours on icons with no error or warning around them.
-- **Why it matters:** Alarm colours and icons at rest make people think something is wrong when nothing is.
+- **Catches:** Warning glyphs, alert-named icons, or red or configured warning colors on icons with no error or warning around them.
+- **Why it matters:** Alarm colors and icons at rest make people think something is wrong when nothing is.
 - **Severity:** minor.
 - **Source:** Craft convention: warning signals are reserved for warnings.
-- **Configure or decide:** `checks.alarm` sets warning `colors`, `brand` colours and `ignore` selectors, and `checks.errorPatterns` adds status text that counts as an error; decide findings with `idiom decide`.
+- **Configure or decide:** `checks.alarm` sets warning `colors`, `brand` colors and `ignore` selectors, and `checks.errorPatterns` adds status text that counts as an error; decide findings with `idiom decide`.
 
 ### `cross-surface-naming`
 
-- **Catches:** One `data-node-id` labelled differently across the declared surfaces, such as a tree, breadcrumb, selection chip and toolbar.
+- **Catches:** One `data-node-id` labeled differently across the declared surfaces, such as a tree, breadcrumb, selection chip and toolbar.
 - **Why it matters:** The same object under two names makes people wonder whether they are looking at two things.
 - **Severity:** minor.
 - **Source:** WCAG 2.2 3.2.4 Consistent Identification.
@@ -487,11 +487,11 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 
 ### `visual-blank`
 
-- **Catches:** `idiom:visual-blank`: visible media at least 120 × 80 CSS px whose screenshot interior has a dominant quantized colour covering at least 99.5%, effective opacity at most 1%, a rectangular cover with at least 98% alpha over at least 99.5% of the visible area, or a video without a poster or painted frame. Includes lone images, pictures, canvases, iframe previews, background images and empty skeleton/media placeholders.
+- **Catches:** `idiom:visual-blank`: visible media at least 120 × 80 CSS px whose screenshot interior has a dominant quantized color covering at least 99.5%, effective opacity at most 1%, a rectangular cover with at least 98% alpha over at least 99.5% of the visible area, or a video without a poster or painted frame. Includes lone images, pictures, canvases, iframe previews, background images and empty skeleton/media placeholders.
 - **Why it matters:** A preview can remain a tinted box without producing a load error.
 - **Severity:** minor, including multiple affected surfaces.
 - **Source:** Original Idiom screenshot measurement and fixtures authored for blank media; 16-level RGB buckets over every interior pixel, excluding border, padding and a 2 CSS px edge inset.
-- **Configure or decide:** On by default; `checks.visualBlank.enabled: false` disables it. `checks.visualBlank.swatchSelectors` exempts colour swatches, including matching wrappers; accessible names or role descriptions identifying a colour/swatch also exempt them. Mask intersections and unavailable crops cannot prove a blank or an acceptance. Old captures disclose unavailable coverage; recapture to measure, or decide findings with `idiom decide`.
+- **Configure or decide:** On by default; `checks.visualBlank.enabled: false` disables it. `checks.visualBlank.swatchSelectors` exempts color swatches, including matching wrappers; accessible names or role descriptions identifying a color/swatch also exempt them. Mask intersections and unavailable crops cannot prove a blank or an acceptance. Old captures disclose unavailable coverage; recapture to measure, or decide findings with `idiom decide`.
 
 ### `loading-stuck`
 
@@ -583,7 +583,7 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 
 ### `design-drift`
 
-- **Catches:** A state whose render departs from its declared intended design. Against an HTML design or a live reference site: size, position, gap, radius, border, typography, colour or text drift on matched elements, and design content missing from or extra in the app. Against a design image (PNG, JPEG, WebP): visibly changed regions after alignment, naming the app elements they cover. Each is shown as labelled design and app crops.
+- **Catches:** A state whose render departs from its declared intended design. Against an HTML design or a live reference site: size, position, gap, radius, border, typography, color or text drift on matched elements, and design content missing from or extra in the app. Against a design image (PNG, JPEG, WebP): visibly changed regions after alignment, naming the app elements they cover. Each is shown as labeled design and app crops.
 - **Why it matters:** The screen people get should be the one that was designed, and small drift adds up across a product.
 - **Severity:** minor for measured drift, copy, extras and image regions; major when a declared scale step is crossed, or when controls, headings, main content or its illustrations are missing.
 - **Source:** Craft convention: the built screen matches its intended design.
@@ -624,8 +624,9 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 
 ### `nested-border`
 
-- **Catches:** An element with a visible border on all four sides that contains, within 4px on every side, exactly one descendant with its own visible border of a different corner radius or border style, with nothing else painted between them (no fill, border, shadow or text on the wrappers in between or beside it). Concentric corners (the outer radius less the gap) and two pills count as the same shape. Outlines and box shadows, including focus rings, are not borders, and borders coloured by a `:focus` or `:focus-within` rule are skipped.
-- **Why it matters:** Two frames that nearly coincide read as one doubled, mismatched edge, typically a wrapper rule (`.palette button { border: … }`) also matching a component that draws its own.
+- **Catches:** An element with a visible border on all four sides that contains, within 4px on every side, exactly one descendant with its own visible border of a different corner radius or border style, with nothing else painted between them (no fill, border, shadow or text on the wrappers in between or beside it). Concentric corners (the outer radius less the gap) and two pills count as the same shape. Outlines and box shadows, including focus rings, are not borders, and borders colored by a `:focus` or `:focus-within` rule are skipped.
+  It also catches a *selected* choice that shows two rings: an element marked selected (`aria-selected`, `aria-checked` or `aria-pressed` set to `true`, a `checked` attribute, or a class token such as `is-selected`, `active` or `current`) with a border on all four sides, around exactly one bordered image, picture, video, canvas, svg or `role="img"` (or a text-less bordered wrapper around one). Here distance, shape and other content inside the choice do not matter: the selection ring and the media's own border paint as two concentric rings. A selected choice holding two or more bordered media, or media without a border, is not reported, and focus-sourced borders are still skipped.
+- **Why it matters:** Two frames that nearly coincide read as one doubled, mismatched edge, typically a wrapper rule (`.palette button { border: … }`) also matching a component that draws its own. On a selected tile the photo's own border sits inside the selection ring, so the choice reads as framed twice.
 - **Severity:** minor.
 - **Source:** Craft convention: one edge per surface.
 - **Configure or decide:** On by default; `checks.nestedBorder` sets `enabled`, and findings are decided with `idiom decide`. Border style is compared only in captures that record it; recapture older runs.
@@ -648,7 +649,7 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 
 ### `disabled-highlight`
 
-- **Catches:** A menu or listbox row marked disabled (`aria-disabled="true"`, a `disabled` attribute, or a disabled control inside the row) whose background or text colour changes under the pointer to exactly the highlight an enabled row in the same menu takes. The probe hovers up to three disabled rows and the first enabled row of each menu it opens, waiting at most 250ms for transitions; a disabled row with its own distinct highlight, or no highlight, is not reported. Pointer highlights that libraries set on hover (`data-highlighted`, `aria-activedescendant`) are covered; the pressed `:active` state is not sampled, so a disabled row is never pressed.
+- **Catches:** A menu or listbox row marked disabled (`aria-disabled="true"`, a `disabled` attribute, or a disabled control inside the row) whose background or text color changes under the pointer to exactly the highlight an enabled row in the same menu takes. The probe hovers up to three disabled rows and the first enabled row of each menu it opens, waiting at most 250ms for transitions; a disabled row with its own distinct highlight, or no highlight, is not reported. Pointer highlights that libraries set on hover (`data-highlighted`, `aria-activedescendant`) are covered; the pressed `:active` state is not sampled, so a disabled row is never pressed.
 - **Why it matters:** A row that lights up like the others looks clickable, so people try it and nothing happens.
 - **Severity:** minor.
 - **Source:** Craft convention: disabled rows don't respond.
@@ -696,7 +697,7 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 
 ### `disclosure-affordance`
 
-- **Catches:** A disclosure trigger (a control whose `aria-expanded` toggles from false to true, or a `<details>` summary) where nothing inside or next to it looks different collapsed and expanded (`idiom:disclosure-affordance`). The probe reads the trigger just before its click and again once the opening is confirmed: graphics inside it (SVG geometry, images, background or mask images, one- or two-character glyphs such as ▸ or +), its own `::before` and `::after`, and an adjacent non-interactive sibling within 8px. Each graphic's shape, composed transform and visibility are compared. A rotated chevron, swapped plus/minus, an icon that appears or disappears, a native `<details>` marker or a change in the trigger's own text ("Show details" to "Hide details") all pass. Colour changes alone do not count. Menu buttons whose label says what they open are exempt: a text-only trigger that advertises a popup (`aria-haspopup`, such as "Sort" or "File"), a text-only trigger named "More", "Menu", "Options" or "Actions", and an icon-only popup trigger with such a name (a ⋯ button labelled "More options"). So is a help toggletip whose whole visible text is a help glyph (`?`, `ⓘ`, `ℹ`), which already says it reveals an explanation. A text-only expander that reveals content in place, such as a "Settings" section, is not exempt.
+- **Catches:** A disclosure trigger (a control whose `aria-expanded` toggles from false to true, or a `<details>` summary) where nothing inside or next to it looks different collapsed and expanded (`idiom:disclosure-affordance`). The probe reads the trigger just before its click and again once the opening is confirmed: graphics inside it (SVG geometry, images, background or mask images, one- or two-character glyphs such as ▸ or +), its own `::before` and `::after`, and an adjacent non-interactive sibling within 8px. Each graphic's shape, composed transform and visibility are compared. A rotated chevron, swapped plus/minus, an icon that appears or disappears, a native `<details>` marker or a change in the trigger's own text ("Show details" to "Hide details") all pass. Color changes alone do not count. Menu buttons whose label says what they open are exempt: a text-only trigger that advertises a popup (`aria-haspopup`, such as "Sort" or "File"), a text-only trigger named "More", "Menu", "Options" or "Actions", and an icon-only popup trigger with such a name (a ⋯ button labeled "More options"). So is a help toggletip whose whole visible text is a help glyph (`?`, `ⓘ`, `ℹ`), which already says it reveals an explanation. A text-only expander that reveals content in place, such as a "Settings" section, is not exempt.
 - **Why it matters:** Without an indicator, people can't tell that an item has more below it or that it is open. They find the content by accident or not at all.
 - **Severity:** minor.
 - **Source:** WAI-ARIA Authoring Practices disclosure pattern: the expanded state is shown visually as well as programmatically.
@@ -712,7 +713,7 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 
 ### `icon-meaning`
 
-- **Catches:** One icon that stands for two or more different things across a flow's states (`idiom:icon-meaning`). Capture fingerprints the single icon of each interactive control: an SVG by its `viewBox` and shape geometry (paths, circles, rects, lines, polygons, and `<use>` references resolved), an icon font by its glyph and font family. Colour, class and size are ignored, so the same shape in two colours is one icon. Controls whose icon is their only visible content count, and so do leading icons on controls that are not disclosures. Trailing icons (row chevrons, external-link arrows, dropdown carets) and icons on disclosure triggers with text are affordances, not meanings, and are skipped. Two controls mean the same thing when their accessible names share a meaning word after case, stopwords, numbers, plurals and a small synonym table ("Close" and "Close panel", "Dismiss" and "Close"); same-named controls are split when the probe saw both clicked and their effects share nothing. Repeated identical controls, such as "Delete" on every row, count once. The finding is reported once per icon, on the first state that carries it, and lists each meaning with the states it appears in, including probe-opened panels.
+- **Catches:** One icon that stands for two or more different things across a flow's states (`idiom:icon-meaning`). Capture fingerprints the single icon of each interactive control: an SVG by its `viewBox` and shape geometry (paths, circles, rects, lines, polygons, and `<use>` references resolved), an icon font by its glyph and font family. Color, class and size are ignored, so the same shape in two colors is one icon. Controls whose icon is their only visible content count, and so do leading icons on controls that are not disclosures. Trailing icons (row chevrons, external-link arrows, dropdown carets) and icons on disclosure triggers with text are affordances, not meanings, and are skipped. Two controls mean the same thing when their accessible names share a meaning word after case, stopwords, numbers, plurals and a small synonym table ("Close" and "Close panel", "Dismiss" and "Close"); same-named controls are split when the probe saw both clicked and their effects share nothing. Repeated identical controls, such as "Delete" on every row, count once. The finding is reported once per icon, on the first state that carries it, and lists each meaning with the states it appears in, including probe-opened panels.
 - **Why it matters:** When one icon means "collapse panel" in one place and "3-column layout" in another, people can't learn what it does and hesitate every time they see it.
 - **Severity:** minor.
 - **Source:** WCAG 2.2 success criterion 3.2.4 Consistent Identification.
@@ -721,14 +722,22 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 ### `empty-frame`
 
 - **Catches:** A visible box at least 48px wide and 24px tall that draws a border, or a background different from the one behind it, with nothing visible inside it: no text, image, icon, form field or focusable element, and no drawn `::before`/`::after`. It is judged per viewport, so a header bar whose only child is hidden above some width is reported at the widths where it is empty, and the explanation counts the children hidden there (`idiom:empty-frame`). Spacers without border or fill, loading placeholders (`aria-busy`, skeleton or shimmer classes, running animations), named graphics (an `aria-label` or `title`, `role="img"`, progress and meter parts), fills drawn by an image, background-only overlays, table cells and boxes inside a control are not reported. Content faded to opacity 0 for a scroll reveal counts as content. When an empty box contains another, only the outer one is reported.
-- **Why it matters:** A frame promises content. An empty bar or card reads as broken or still loading, and takes space without telling anyone anything.
+  It also catches an *underfilled* frame: a tile, card or option whose only content is one image, picture, video, canvas, svg, `role="img"` or image-drawn box, much smaller than the frame and pinned to one side, so most of the frame sits empty (a 28×28px photo at the left of a tile stretched to its grid column). All of these must hold:
+  - The frame is a choice (`button`, `label`, `a[href]`, or role `option`, `radio`, `button`, `tab`, `checkbox`, `switch`, `menuitemradio` or `gridcell`), or one of at least two framed siblings sharing its tag and `class`.
+  - It draws a border on all four sides or a fill different from what is behind it, is at least 64px wide and 32px tall, and is no wider than 60% of the viewport. Header, nav, footer, banner, navigation and toolbar bars are not judged, nor is anything inside `aria-hidden="true"` or a frame drawn by its own background image.
+  - It has no visible text, no other focusable element and no drawn `::before`/`::after` beyond the one media element. A labelled option (a photo with its name beside it) is never reported.
+  - The media covers at most 35% of the frame's inner box (an empty share of at least 65%), and the widest empty strip beside it is at least half the inner box's size on that axis.
+  - On the axis of that strip the media's centre sits more than 10% of the inner size (at least 2px) off the frame's centre. Media centred on both axes is a deliberate layout (an icon tile) and is not reported; media centred only on the cross axis, like a photo vertically centred but pinned left, is.
+
+  Sibling frames that all do this are reported once, naming the first frame, its media, the empty share and how many siblings match. When underfilled frames nest, only the innermost is reported.
+- **Why it matters:** A frame promises content. An empty bar or card reads as broken or still loading, and takes space without telling anyone anything. A tile that stretched while its photo did not reads as a layout that never finished.
 - **Severity:** minor.
 - **Source:** Craft convention: a drawn container holds something.
 - **Configure or decide:** On by default; `checks.emptyFrame` sets `enabled`, and its `ignore` selectors exempt boxes everywhere. Mark a box that a state shows empty on purpose (a drop zone before a drop) with the state's `intentionallyEmpty` selectors; the box and everything inside it is skipped. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
 
 ### `repeated-row-ornament`
 
-- **Catches:** In a list, table, grid, feed, tab list, menu or navigation rail of at least 5 visible items, a chip, badge, icon or status mark that appears on at least 80% of the items in the same position with identical size, colours, text and icon (`idiom:repeated-row-ornament`). It is reported once per collection and decoration, naming the decoration and how many items carry it, such as `repeats on 6 of 6 items`. A decoration whose value differs between items (a status column of Paid and Pending) never counts, and neither does an icon inside a per-row action button such as copy or a row menu. Decorations inside the item's own link count. A rail whose links sit in a list is judged once, as the list.
+- **Catches:** In a list, table, grid, feed, tab list, menu or navigation rail of at least 5 visible items, a chip, badge, icon or status mark that appears on at least 80% of the items in the same position with identical size, colors, text and icon (`idiom:repeated-row-ornament`). It is reported once per collection and decoration, naming the decoration and how many items carry it, such as `repeats on 6 of 6 items`. A decoration whose value differs between items (a status column of Paid and Pending) never counts, and neither does an icon inside a per-row action button such as copy or a row menu. Decorations inside the item's own link count. A rail whose links sit in a list is judged once, as the list.
 - **Why it matters:** A mark every item carries tells items apart from nothing. It adds noise to every row and dilutes the marks that do carry meaning.
 - **Severity:** info.
 - **Source:** Craft convention: per-item marks distinguish items; a fact true of every item is stated once.
@@ -741,3 +750,115 @@ There are three answers. `idiom ruling --decision ruling-N --add-step [--token <
 - **Severity:** minor.
 - **Source:** Craft convention: small icons keep clear space; only count and status indicators sit over them.
 - **Configure or decide:** On by default; `checks.glyphOverIcon` sets `enabled`. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `native-scrollbar`
+
+- **Catches:** A visible element that scrolls (computed `overflow` of `auto` or `scroll`) and whose content overflows, showing the browser's own space-taking scrollbar track inside a styled box (`idiom:native-scrollbar`). The styled box is the scroller or one of its 3 nearest ancestors below `body` with a corner radius above 0, a background image, or a background color that is not transparent and differs from the page's canvas color. The scroller counts as unstyled when its computed `scrollbar-width` and `scrollbar-color` are both `auto` and no author `::-webkit-scrollbar` rule matches it. Capture hides scrollbars in screenshots, so after the state's evidence is saved it shows classic scrollbars for a moment and measures each candidate's track: `offsetWidth - clientWidth` less the side borders (or the height equivalent), at least 1px. One visible, enabled textarea per state is tested in an overflow state: the capture fills it with numbered lines, measures, and puts its value, selection and scroll position back. The document's own scrollbar, `select` and `iframe` are exempt. When a stylesheet cannot be read (cross-origin), scrollbar styling cannot be ruled out and the check reports nothing for that state, with the reason in coverage; so does a browser that cannot show classic scrollbars. Electron captures report the check unavailable.
+- **Why it matters:** An operating-system track and gutter inside a rounded card or input breaks its corners and color, and reads as chrome nobody designed.
+- **Severity:** minor.
+- **Source:** Craft convention: scrollers inside designed surfaces get designed scrollbars, or none that take space.
+- **Configure or decide:** On by default; `checks.nativeScrollbar` sets `enabled`. Style the scrollbar with `scrollbar-color`, `scrollbar-width` or `::-webkit-scrollbar`, or decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `browser-default-style`
+
+- **Catches:** Visible links (`a[href]`) whose computed color is the browser's default link blue (`rgb(0, 0, 238)`) or visited purple (`rgb(85, 26, 139)`) and that no author rule or inline style gives a `color`, in a project whose `design.tokensFile` declares a link or accent token (a name with `link` or `accent` as a dash- or underscore-separated part, such as `--accent` or `--color-link`). Reported once per state, with the count and up to 3 example links (`idiom:browser-default-style`). A link set to `#0000ee` on purpose is not reported. Without a tokens file, or with inline `design.tokens` only, links are not judged.
+  It also catches a fieldset `legend` notched into its fieldset's border, the browser's default fieldset look, in interface chrome: a visible `fieldset` (not `aria-hidden`, not inside `article` or editable content) whose top border paints, with a first `legend` child that has visible text, is not floated or absolutely positioned, and straddles that top border. Reported once per state with the count and up to 3 example legends. This half needs no tokens file. A borderless fieldset, a floated legend and a visually hidden notch label are not reported.
+- **Why it matters:** The default blue is what links look like when nothing styled them; next to a declared accent it reads as an unfinished page. A legend cut into a grey groove is how a fieldset looks when nothing styled it, and it does not match the panel's other section headings.
+- **Severity:** minor.
+- **Source:** Craft convention: links use the product's link color, not the browser's.
+- **Configure or decide:** On by default; `checks.browserDefaultStyle` sets `enabled`. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `unused-token`
+
+- **Catches:** Custom properties in the configured `design.tokensFile` whose names suggest browser chrome (`scrollbar`, `selection`, `caret` or `focus`) and that nothing in any captured state uses (`idiom:unused-token`). A token is used when a rule that applies to an element in the page, or an element's inline style, references it through `var()`, directly or through other custom properties. A rule applies when its selector, with pseudo-elements and state pseudo-classes such as `:hover`, `:focus-visible` and `:checked` removed, matches an element. Use is pooled over every state in the run, and each unused token is listed once per run, at the first state. When any stylesheet cannot be read, nothing is reported. Inline `design.tokens` are not judged.
+- **Why it matters:** A scrollbar or selection color that was designed but never applied means the browser default still shows where the design said otherwise.
+- **Severity:** info.
+- **Source:** Craft convention: design tokens that exist are applied.
+- **Configure or decide:** On by default; `checks.unusedToken` sets `enabled`. Apply the token, remove it from the tokens file, or decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `hidden-at-rest`
+
+- **Catches:** A state that looks empty because its content never appeared: after the state settles, more than 20% of the text in the viewport, by count of text-bearing elements or by text area, has an effective opacity under 0.1 (its own opacity times its ancestors') or `visibility: hidden` while its layout box is not empty (`idiom:hidden-at-rest`). It is reported once per state, naming both shares, the element most of the hidden text sits under and up to 3 examples. Text that is still animating or transitioning is not at rest and is left out. Exempt, and left out of both counts: content the state declares hidden (below), the contents of a closed `details` element, the target of a control with `aria-expanded="false"`, text inside `aria-hidden="true"` or `inert`, text drawn for screen readers only (the usual clipped 1px patterns), and text hidden inside a positioned layer such as a menu, listbox, tooltip, dialog, popover, toast or an absolutely placed slide. Scroll reveals sit in the page's flow; those are what this rule is for.
+- **Why it matters:** A reveal animation that never fires leaves the content at opacity 0. A person sees a blank page, while every check that only looks at painted text skips the invisible text and passes.
+- **Severity:** minor.
+- **Source:** Craft convention: content that is present on the page is visible once motion has finished.
+- **Configure or decide:** On by default; `checks.hiddenAtRest` sets `enabled`. List content a state keeps hidden on purpose in the state's `intentionallyHidden` selectors; selectors a step waits to become hidden (`waitFor` with `state: "hidden"`) are exempt too. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `edge-text`
+
+- **Catches:** Body text whose rendered text runs closer than 16px to the viewport's left or right edge, or closer than 12px at viewports under 480px wide (`idiom:edge-text`). It is reported once per element, naming the distance on each side and the minimum at that width. Body text is paragraph-like text: not a heading, not inside a link, button, label, form control or navigation, not code, and inside a block with at least 40 characters of text. Exempt: text inside full-bleed media (a `figure`, `picture` or `video`, or a box with a background image, spanning the viewport's width, or a caption placed over a full-width image), text inside a sideways scroller, text drawn for screen readers only, and text already partly off the screen (the overflow rules report that).
+- **Why it matters:** Text that touches the screen's edge is hard to read and looks cut off, especially on phones held in a case or with rounded corners.
+- **Severity:** minor.
+- **Source:** Craft convention: text keeps a margin from the screen's edge.
+- **Configure or decide:** On by default; `checks.edgeText` sets `enabled`. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `cramped-padding`
+
+- **Catches:** Text inside a bordered or filled box that sits closer than 4px to the box's inner edge (`idiom:cramped-padding`). The box is the nearest one, at or above the text, that draws a border or a fill of its own (a background image, or a background color at least 10% opaque that differs from the one behind it). A filled box counts all four sides; a box with only borders counts only its bordered sides, so text flush with an undrawn side is fine. One finding per box, naming the side and distance of its closest text. The top and bottom are measured a tenth of a line in from the text's line box, so line spacing alone is not mistaken for padding. Exempt: boxes under 24px tall (chips and badges), boxes as wide as the viewport (the edge-text rule covers those), inline highlights, form fields, cells of a collapsed-border table without their own fill, sides a scrolling box scrolls along, and text that overflows its box.
+- **Why it matters:** Text pressed against a border reads as squeezed and makes the box look broken.
+- **Severity:** minor.
+- **Source:** Craft convention: a drawn container gives its content room.
+- **Configure or decide:** On by default; `checks.crampedPadding` sets `enabled`. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `heading-rhythm`
+
+- **Catches:** A heading whose gap to the block above it is smaller than or equal to its gap to the content below it (`idiom:heading-rhythm`). Gaps are measured between border boxes, rounded to half a pixel, against the nearest visible block in the page's flow on each side, looking past up to 3 wrappers that add no padding, border or fill on that side. Both neighbors must be stacked with the heading in the same column. Exempt: a heading below another heading, a short smaller kicker (an eyebrow, one line of at most 40 characters) above a heading, neighbors inside the heading's own `header` or `hgroup`, headings in controls or navigation, overlapping boxes, and headings with no gap on either side.
+- **Why it matters:** A heading groups with the content it introduces. When it sits as close to the section before as to its own, the page's sections blur together.
+- **Severity:** minor.
+- **Source:** Craft convention: proximity groups a heading with its section.
+- **Configure or decide:** On by default; `checks.headingRhythm` sets `enabled`. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `type-legibility`
+
+- **Catches:** Text set in a way that is hard to read (`idiom:type-legibility`): body text under 12px; interface text (headings, labels, controls, navigation and short text) under 11px, except superscripts and subscripts; multi-line body text with a line height under 1.2 times its size (`normal` is never reported); justified multi-line body text; a run of capitals longer than 30 characters, whether typed or set with `text-transform: uppercase`; and body text with letter-spacing beyond ±0.1em. Body text is defined as for `edge-text`. Code and SVG text are not judged. Findings group by problem and value per state, so a page set at 11px reports once with a count and examples, not once per paragraph.
+- **Why it matters:** Small, crowded, justified, shouted or widely tracked text slows reading and loses people with low vision.
+- **Severity:** minor.
+- **Source:** WCAG 2.2 success criterion 1.4.8 Visual Presentation (AAA) for line spacing and justification; craft convention for size, capitals and tracking.
+- **Configure or decide:** On by default; `checks.typeLegibility` sets `enabled`. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `numeric-align`
+
+- **Catches:** A table or list column whose cells are mostly numbers (at least 3 numeric cells and more than half its non-empty cells) set left-aligned or without tabular figures (`idiom:numeric-align`), once per column. Numbers may carry a sign, parentheses, a currency symbol, digit grouping, decimals, a percent sign or a short unit. Dates and times, bare years, ids that start with `#` or a letter, and version strings do not count. A column is left-aligned when its numbers' left edges line up and their right edges do not, or, in a table where the numbers are the same width, when the cells are set `text-align: left` (or `start` in left-to-right text). Figures are proportional when most numeric cells use neither `font-variant-numeric: tabular-nums` nor the `tnum` feature, in a font that is not monospaced. Table columns come from body rows without merged cells; list columns from lists of at least 3 items with the same number of side-by-side children.
+- **Why it matters:** Numbers are compared down a column. Left-aligned or proportional digits put units, tens and decimal points in different places, so values are slow to compare and easy to misread.
+- **Severity:** minor.
+- **Source:** Craft convention: numbers in columns align on the right or the decimal point, in figures of equal width.
+- **Configure or decide:** On by default; `checks.numericAlign` sets `enabled`. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `ragged-row`
+
+- **Catches:** Cards in one visual row of a repeated collection whose bottoms differ by more than 8px (`idiom:ragged-row`), once per row. A collection is at least 3 visible siblings with the same tag and classes; a card is at least 80×40px and draws a border, a fill of its own or a shadow (itself, or a single child that fills it); a row is the cards whose tops are within 2px of each other, at least 2 of them. Exempt: transformed cards (a raised featured card), grid items spanning more than one row, absolutely placed items, multi-column (masonry) layouts, and rows partly outside a sideways scroller.
+- **Why it matters:** Cards side by side read as a set; uneven bottoms make the row look unfinished and pull the eye to the difference.
+- **Severity:** minor.
+- **Source:** Craft convention: cards in a row share a baseline, usually by stretching to the row's height.
+- **Configure or decide:** On by default; `checks.raggedRow` sets `enabled`. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `text-occlusion`
+
+- **Catches:** Text whose rendered text is more than 30% covered by an opaque element painted above it (`idiom:text-occlusion`). The capture samples a grid of points across the visible text (3 rows by up to 5 columns per line, at most 30 points) and hit-tests each; a point is covered when the topmost element above the text, or one of its ancestors below their common ancestor, is opaque: an effective opacity of at least 0.9 and a background color at least 90% opaque, a background image, or an image, video, canvas, SVG or frame. The finding names the cover and the covered share. Exempt: covers in another layer (menus, dialogs, popovers, tooltips, fixed bars, large positioned panels), pairs the `element-overlap` rule already reports, translucent scrims, and text below the fold. Covers with `pointer-events: none` cannot be hit-tested and are missed.
+- **Why it matters:** Covered text cannot be read, and screenshots of a single state rarely make it obvious which element is in the way.
+- **Severity:** minor.
+- **Source:** Craft convention: text is never painted under another element.
+- **Configure or decide:** On by default; `checks.textOcclusion` sets `enabled`. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+### `state-jump`
+
+- **Catches:** An element present in two states the flow links that moves or changes size by more than 1px between them (`idiom:state-jump`). Linked means a state reached with `from` and its source, or a toggle combination and its base (and two combinations of one base that differ by one toggle), at the same viewport and color scheme. Elements are matched by role and accessible name, or, when a name is missing, repeated or changed (a trigger that reads "Open menu" then "Close menu"), by an identical stable selector on the same tag. The control that changed the state is included: a logo that opens a drawer and shrinks from 28×28 to 24×24 is reported. When the page scrolled between the states (a click on something below the fold scrolls it into view), an element counts as moved only if it moved both on screen and in the page, so neither fixed chrome nor scrolled content reads as moved; captures that predate the recorded scroll offset estimate it from the shift most matched elements share. Elements that move together by the same amount are one finding, naming the first three; each resized element is its own finding, outermost only. The finding shows both boxes and attaches both states' screenshots.
+- **Why it matters:** Opening a panel or switching a toggle should change what was asked for. A button that shrinks when its label turns to "Saving…", or a section that pushes everything below it down, moves things a person was about to read or click. When the button you just pressed slides away or shrinks, the next click misses, and the interface feels unsteady.
+- **Severity:** minor.
+- **Source:** Craft convention: an element should not move when an unrelated part of the screen changes.
+- **Configure or decide:** List elements a state moves or resizes on purpose in that state's `intendedChanges` selectors; they and their descendants are skipped for that pair (the state does not pass the list on to states reached from it). States without `from` or toggles are not applicable. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `control-gap`
+
+- **Catches:** Two parts set side by side inside one inline control whose painted ink sits closer than 4px (`idiom:control-gap`). A control is a button, link button, tab, menu item, option or switch; a chip or pill (an `inline-flex`, `inline-block`, `inline-grid`, `flex` or `grid` box at most 40px tall and 480px wide that draws a border or its own fill, with no heading or form field inside); or any item at most 40px tall directly inside a toolbar or menubar. Its parts are text runs (text that flows together in one block, so words of one label are one run and a space between them is never measured), icons (`svg`, `img`, `canvas`, `picture`, `role="img"`) and nested controls, each measured as one piece. The gap is the horizontal distance between the ink of neighbouring parts on the same row, rounded to half a pixel so two captures agree. The finding names the control, both parts and the measured gap. Gaps of 12px and more, and overlaps of more than 1px (the overlap rules cover those), are not recorded. Exempt: segmented groups (two nested controls inside a tablist or radiogroup, or sharing one drawn track), joined groups (two drawn nested controls touching with square facing corners), keycaps (both parts inside a `kbd`, so ⌘ K stays tight), affixes (a symbol of one or two characters next to text, such as `$` or `%`), links set inline in running text, and anything hidden, inert or marked `aria-hidden`. An icon separated from its label only by a space measures the space, about 3.5px at a 13px button font, so it is reported at the default minimum: put the room in the layout (`gap`, a margin) instead.
+- **Why it matters:** A chip that reads `↑18←6`, with its reset × touching the 6, is two numbers and a button the eye cannot pull apart. The box-to-box gap rules measure separate elements, so they cannot see text and buttons crammed together inside one control.
+- **Severity:** minor.
+- **Source:** Craft convention: the parts of a control keep a visible gap between them.
+- **Configure or decide:** On by default; `checks.controlGap` sets `enabled` and `min` (CSS px, 0 to 12, default 4). `min` applies when checks run, so changing it needs no recapture; turning the scan on does. `checks.controlGap.scopes` (`name`, `selector`, `min`) sets a minimum for controls inside a surface; the strictest scope holding the control wins, and its finding cites the law. Adding a scope needs a recapture. `idiom learn` writes a scope from a director's law such as "nothing in a toolbar sits closer than 4px". Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.
+
+### `negative-spacing`
+
+- **Catches:** A negative `letter-spacing` or `word-spacing` computed on painted interface text (`idiom:negative-spacing`): text inside a control (as `control-gap` defines it), a label, a navigation region, a menu, listbox, tablist, toolbar or tooltip, or a link that is not set inline in running text. One finding per element and property, at the outermost element that carries the same value, naming the selector and the value in px and em, so a chip whose children inherit its `word-spacing: -2px` is reported once, at the chip. Page content (paragraphs, headings, links inside running text) is out of reach by default, since tight tracking on a headline is a deliberate typographic choice; type-legibility still reports letter-spacing beyond ±0.1em on body text.
+- **Why it matters:** Squeezing the spacing of a label is how a control gets pushed under a width cap: words and numbers run together, and the text no longer reads as the typeface was drawn. In a control it is almost never a type decision, and it hides the real problem (the control is too narrow).
+- **Severity:** minor.
+- **Source:** Craft convention: interface text keeps the spacing its typeface was drawn with.
+- **Configure or decide:** On by default; `checks.negativeSpacing` sets `enabled`, `scope` (`interface`, the default, or `all` to judge every painted text), `include` (selectors whose text is judged whatever the scope) and `ignore` (selectors never judged; ignore wins). `idiom learn` turns "never use negative word-spacing on chrome text" into this configuration: it enables the check, sets `scope: "all"` for laws about any text, and adds the named surface to `include`. Decide findings with `idiom decide` or a `.idiom/rules.json` override. Recapture to pick this up.

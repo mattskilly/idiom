@@ -15,6 +15,57 @@ export const MAX_STITCH_BYTES = 1024 ** 3;
 
 type ScreenshotOptions = Parameters<Page["screenshot"]>[0];
 
+/** The screenshot allowance per tuple when the state sets none. */
+export const SCREENSHOT_ALLOWANCE_MS = 30000;
+
+/**
+ * The least time a screenshot is started with: a viewport shot, an untiled
+ * full-page shot, or the first tile of a tiled one. Clamped to the tuple's
+ * whole allowance when that is smaller. It decides whether a screenshot
+ * starts, not whether a started tiled shot's later tiles do; those use
+ * SCREENSHOT_MIN_TILE_MS.
+ */
+export const SCREENSHOT_MIN_SHOT_MS = 10_000;
+
+/**
+ * The least time a tile after the first is started with, clamped to the
+ * minimum share when the allowance is smaller. A tiled shot that has started
+ * shares one allowance across its tiles and keeps going while at least this
+ * much is left; below it the tile is not started and the tuple is recorded as
+ * screenshot out of time instead of being handed a sliver it cannot finish in.
+ */
+export const SCREENSHOT_MIN_TILE_MS = 1_000;
+
+/**
+ * A screenshot that ran out of its allowance: either too little was left to
+ * start the next shot or tile, or a shot did not finish in what it was given.
+ * Extends Playwright's TimeoutError so timeout handling treats it the same.
+ * `minShotMs` is the floor that applied to the shot: the minimum share for a
+ * screenshot's first shot, the tile floor for a later tile.
+ */
+export class ScreenshotOutOfTime extends errors.TimeoutError {
+  constructor(
+    message: string,
+    readonly allowanceMs: number,
+    readonly remainingMs: number,
+    readonly minShotMs: number,
+    readonly tilesDone?: number | undefined,
+    readonly tilesTotal?: number | undefined,
+    cause?: unknown,
+  ) {
+    super(message);
+    this.name = "ScreenshotOutOfTime";
+    // Playwright's error classes drop constructor options, so set it here.
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
+function firstLine(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).split(
+    "\n",
+  )[0] as string;
+}
+
 export type CapturedScreenshot = {
   buffer: Buffer;
   geometry: Omit<ScreenshotGeometry, "drift" | "rects">;
@@ -67,16 +118,48 @@ export async function captureScreenshot(
   options: ScreenshotOptions,
   policy: { maxFullPageHeight?: number | undefined } = {},
 ): Promise<CapturedScreenshot> {
-  const deadline = performance.now() + (options?.timeout ?? 30000);
-  const shot = (extra: ScreenshotOptions = {}) => {
-    const remaining = deadline - performance.now();
-    if (remaining <= 0)
-      throw new errors.TimeoutError("screenshot allowance expired");
-    return page.screenshot({
-      ...options,
-      ...extra,
-      timeout: Math.max(1, Math.ceil(remaining)),
-    });
+  const allowance = options?.timeout ?? SCREENSHOT_ALLOWANCE_MS;
+  const minShot = Math.min(SCREENSHOT_MIN_SHOT_MS, allowance);
+  // Set once the page is measured: measuring is not screenshot time, and a
+  // first shot must always start with the whole allowance.
+  let deadline = Number.POSITIVE_INFINITY;
+  const shot = async (
+    extra: ScreenshotOptions = {},
+    progress?: { done: number; total: number },
+  ) => {
+    const remaining = Math.max(0, Math.ceil(deadline - performance.now()));
+    // The minimum share decides whether a screenshot starts; once a tiled
+    // shot has started, its later tiles are tried while real time is left.
+    const later = progress !== undefined && progress.done > 0;
+    const floor = later ? Math.min(SCREENSHOT_MIN_TILE_MS, minShot) : minShot;
+    if (remaining < floor)
+      throw new ScreenshotOutOfTime(
+        `screenshot out of time: ${remaining} ms of the ${allowance} ms screenshot allowance left${progress === undefined ? "" : ` after ${progress.done} of ${progress.total} tiles`}; ${later ? "each tile" : "each shot"} needs at least ${floor} ms`,
+        allowance,
+        remaining,
+        floor,
+        progress?.done,
+        progress?.total,
+      );
+    const timeout = Math.max(1, remaining);
+    try {
+      return await page.screenshot({ ...options, ...extra, timeout });
+    } catch (error) {
+      if (
+        !(error instanceof errors.TimeoutError) ||
+        error instanceof ScreenshotOutOfTime
+      )
+        throw error;
+      throw new ScreenshotOutOfTime(
+        `screenshot out of time: a shot did not finish in ${timeout} ms of the ${allowance} ms screenshot allowance (${firstLine(error)})`,
+        allowance,
+        Math.max(0, Math.ceil(deadline - performance.now())),
+        floor,
+        progress?.done,
+        progress?.total,
+        error,
+      );
+    }
   };
   const [{ scale, innerWidth, innerHeight }, size] = await Promise.all([
     page.evaluate(() => ({
@@ -86,6 +169,7 @@ export async function captureScreenshot(
     })),
     fullPageSize(page),
   ]);
+  deadline = performance.now() + allowance;
   if (options?.fullPage !== true)
     return {
       buffer: await shot(),
@@ -117,11 +201,13 @@ export async function captureScreenshot(
   const tile = tileHeightCss(scale);
   let output: PNG | undefined;
   let tiles = 0;
+  const total = Math.ceil(height / tile);
   for (let y = 0; y < height; y += tile) {
     const image = PNG.sync.read(
-      await shot({
-        clip: { x: 0, y, width, height: Math.min(tile, height - y) },
-      }),
+      await shot(
+        { clip: { x: 0, y, width, height: Math.min(tile, height - y) } },
+        { done: tiles, total },
+      ),
     );
     output ??= new PNG({
       width: image.width,

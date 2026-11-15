@@ -88,7 +88,13 @@ type StoredMetadata = {
   build?: ProductionBuild;
   source: { commit: string; dirty?: boolean };
   flow: { id: string };
-  state: { id: string; siblingGroup?: string; group?: string };
+  state: {
+    id: string;
+    siblingGroup?: string;
+    group?: string;
+    /** Ancestors of a `from` state, nearest first. */
+    from?: string[];
+  };
   viewport: { name: string; width: number; height: number };
   colorScheme?: ColorScheme;
   colorSchemeAxis?: boolean;
@@ -194,6 +200,11 @@ function metadata(value: unknown, path: string): StoredMetadata {
     (item.state.siblingGroup !== undefined &&
       typeof item.state.siblingGroup !== "string") ||
     (item.state.group !== undefined && typeof item.state.group !== "string") ||
+    (item.state.from !== undefined &&
+      !(
+        Array.isArray(item.state.from) &&
+        item.state.from.every((id) => typeof id === "string" && id !== "")
+      )) ||
     typeof item.viewport?.name !== "string" ||
     typeof item.viewport.width !== "number" ||
     typeof item.viewport.height !== "number" ||
@@ -804,7 +815,14 @@ export async function loadCaptureRun(options: {
         : { layoutRepresentative: record.layoutRepresentative }),
       ...(record.combination === undefined
         ? {}
-        : { combination: record.combination.label }),
+        : {
+            combination: record.combination.label,
+            combinationBase: record.combination.base,
+            combinationOptions: { ...record.combination.options },
+          }),
+      ...(record.state.from?.[0] === undefined
+        ? {}
+        : { from: record.state.from[0] }),
       flow: record.flow.id,
       state: record.state.id,
       ...(record.state.siblingGroup !== undefined

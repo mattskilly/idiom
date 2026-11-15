@@ -104,3 +104,39 @@ test("font-metric rounding under a lowered tolerance is not off-centre; a real o
     centering(await reviewFixture(browser, html)).map((c) => c.selectorHint),
   ).toEqual(["#nudged"]);
 });
+
+test("a learned law sets the tolerance inside its surface only, through ancestry, at the 1.5px floor", async () => {
+  const button =
+    "display:inline-flex;align-items:center;margin:4px;padding:6px 12px 0;height:30px;border:1px solid #8a9099;border-radius:6px;background:#eef0f3;font:14px Arial,sans-serif";
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Scoped centring</title></head><body><main><div role="toolbar" aria-label="Format"><button id="inside" style="${button}">Bold</button></div><p><button id="outside" style="${button}">Save</button></p></main></body></html>`;
+  // Loose everywhere, strict in the toolbar.
+  const strict = centering(
+    await reviewFixture(browser, html, {
+      checks: {
+        centeringTolerance: 6,
+        textCentering: {
+          scopes: [
+            {
+              name: "Labels in the toolbar are centred within 1px.",
+              selector: '[role="toolbar"]',
+              tolerance: 1,
+            },
+          ],
+        },
+      },
+    }),
+  );
+  expect(strict.map((c) => c.selectorHint)).toEqual(["#inside"]);
+  expect(strict[0]?.explanation).toContain(
+    'tolerance 1.5px; law: "Labels in the toolbar are centred within 1px.", in [role="toolbar"]',
+  );
+  expect(strict[0]?.verification.params).toMatchObject({
+    scope: '[role="toolbar"]',
+    tolerance: 1.5,
+  });
+  // Without the law both buttons are judged alike, as one geometry group.
+  const plain = centering(await reviewFixture(browser, html));
+  expect(plain.map((c) => c.selectorHint)).toEqual(["#inside"]);
+  expect(plain[0]?.explanation).toContain("2 elements share this geometry");
+  expect(plain[0]?.explanation).not.toContain("law:");
+});

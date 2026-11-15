@@ -50,4 +50,6 @@ export type UpgradeReport = {
   /** One rollup per participating skill; empty when none participated. */
   skills: SkillSummary[];
   discoveryConflicts: { path: string; reason: string }[];
+  /** Versioned `.idiom/` files `idiom upgrade` checked (upgrade command only). */
+  projectFiles?: import("../migrations/run.js").ProjectFilesReport;
 };

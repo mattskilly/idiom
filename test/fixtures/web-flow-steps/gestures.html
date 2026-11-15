@@ -1,0 +1,114 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Gestures</title><link rel="icon" href="data:,">
+<meta name="color-scheme" content="light dark">
+<style>
+  * { box-sizing: border-box; transition: none !important; animation: none !important; }
+  body { margin: 0; font: 14px/20px system-ui, sans-serif; background: #fff; color: #111; }
+  @media (prefers-color-scheme: dark) { body { background: #111; color: #eee; } }
+  main { position: relative; width: 360px; height: 560px; margin: 0 0 0 10px; }
+  [data-block] { position: absolute; border: 1px solid #888; background: #f4f4f4; color: #111; }
+  [data-block].selected { outline: 2px solid #2563eb; outline-offset: 0; }
+  [data-block=button] { left: 60px; top: 80px; width: 100px; height: 40px; font: inherit; }
+  [data-block=image] { left: 200px; top: 80px; width: 120px; height: 80px; }
+  [data-block=heading] { left: 20px; top: 180px; width: 320px; height: 40px; margin: 0; padding: 8px; font-size: 18px; }
+  #toolbar, #offset-chip, #selection-count, #inline-editing { position: absolute; background: #1e293b; color: #fff; padding: 0 6px; height: 20px; font-size: 12px; }
+  .tile { position: absolute; left: 20px; top: 250px; width: 140px; height: 80px; border: 1px solid #888; }
+  .tile-menu { display: none; position: absolute; right: 4px; top: 4px; width: 60px; height: 24px; }
+  .tile:hover .tile-menu { display: block; }
+  .drag-handle { position: absolute; left: 20px; top: 360px; width: 80px; height: 40px; border: 1px solid #888; background: #e2e8f0; touch-action: none; }
+  .drop-zone { position: absolute; left: 200px; top: 360px; width: 140px; height: 120px; border: 2px dashed #888; }
+  .drop-zone.over { border-color: #2563eb; background: #dbeafe; }
+  #drag-preview { position: absolute; width: 80px; height: 40px; background: #93c5fd; pointer-events: none; }
+</style></head><body>
+<main id="canvas">
+  <button data-block="button" type="button" tabindex="0">Buy now</button>
+  <div data-block="image" tabindex="0" role="img" aria-label="Product image"></div>
+  <h2 data-block="heading" tabindex="0">Summer sale</h2>
+  <div class="tile"><span>Tile</span><button class="tile-menu" type="button">Menu</button></div>
+  <div class="drag-handle" aria-label="Drag item">Item</div>
+  <div class="drop-zone" aria-label="Drop zone"></div>
+</main>
+<script>
+const canvas = document.querySelector('#canvas');
+const blocks = [...document.querySelectorAll('[data-block]')];
+const origin = new Map(blocks.map((block) => [block, { left: block.offsetLeft, top: block.offsetTop }]));
+let selection = [];
+
+function overlay(id, text, block, dx, dy) {
+  let node = document.getElementById(id);
+  if (!node) { node = document.createElement('div'); node.id = id; canvas.append(node); }
+  node.textContent = text;
+  node.style.left = `${block.offsetLeft + dx}px`;
+  node.style.top = `${block.offsetTop + dy}px`;
+  return node;
+}
+function render() {
+  for (const block of blocks) block.classList.toggle('selected', selection.includes(block));
+  document.getElementById('toolbar')?.remove();
+  document.getElementById('selection-count')?.remove();
+  const last = selection.at(-1);
+  if (last) overlay('toolbar', 'Edit · Style · Delete', last, 0, -24);
+  if (selection.length > 1) overlay('selection-count', `${selection.length} selected`, last, 0, last.offsetHeight + 4);
+}
+for (const block of blocks) {
+  block.addEventListener('click', (event) => {
+    if (event.metaKey || event.shiftKey) {
+      if (!selection.includes(block)) selection.push(block);
+    } else selection = [block];
+    render();
+  });
+  block.addEventListener('keydown', (event) => {
+    const moves = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+    const move = moves[event.key];
+    if (!move || !selection.includes(block)) return;
+    event.preventDefault();
+    const step = event.shiftKey ? 10 : 1;
+    block.style.left = `${block.offsetLeft + move[0] * step}px`;
+    block.style.top = `${block.offsetTop + move[1] * step}px`;
+    const x = block.offsetLeft - origin.get(block).left;
+    const y = block.offsetTop - origin.get(block).top;
+    const sign = (value) => (value < 0 ? `−${-value}` : String(value));
+    const chip = overlay('offset-chip', `x ${sign(x)} · y ${sign(y)}`, block, block.offsetWidth + 6, 0);
+    chip.dataset.x = String(x);
+    chip.dataset.y = String(y);
+    render();
+  });
+}
+const heading = document.querySelector('[data-block=heading]');
+heading.addEventListener('dblclick', () => {
+  heading.contentEditable = 'true';
+  overlay('inline-editing', 'Editing text', heading, 0, heading.offsetHeight + 4);
+});
+
+const tile = document.querySelector('.tile');
+tile.addEventListener('pointerenter', () => { tile.dataset.hovered = 'true'; });
+tile.addEventListener('pointerleave', () => { delete tile.dataset.hovered; });
+
+const handle = document.querySelector('.drag-handle');
+const zone = document.querySelector('.drop-zone');
+let dragging = false;
+function inside(element, event) {
+  const rect = element.getBoundingClientRect();
+  return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+}
+handle.addEventListener('pointerdown', (event) => {
+  dragging = true;
+  handle.setPointerCapture(event.pointerId);
+  delete document.body.dataset.dropped;
+});
+handle.addEventListener('pointermove', (event) => {
+  if (!dragging) return;
+  let preview = document.getElementById('drag-preview');
+  if (!preview) { preview = document.createElement('div'); preview.id = 'drag-preview'; preview.textContent = 'Item'; canvas.append(preview); }
+  const box = canvas.getBoundingClientRect();
+  preview.style.left = `${Math.round(event.clientX - box.left - 40)}px`;
+  preview.style.top = `${Math.round(event.clientY - box.top - 20)}px`;
+  zone.classList.toggle('over', inside(zone, event));
+});
+handle.addEventListener('pointerup', (event) => {
+  if (!dragging) return;
+  dragging = false;
+  document.getElementById('drag-preview')?.remove();
+  zone.classList.remove('over');
+  document.body.dataset.dropped = inside(zone, event) ? 'zone' : 'outside';
+});
+</script></body></html>

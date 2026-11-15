@@ -109,3 +109,92 @@ export async function findStateCapture(options: {
   }
   return undefined;
 }
+
+/** One stored capture tuple with a screenshot, for screenshot matching. */
+export type ListedStateCapture = StateCapture & {
+  flow: string;
+  state: string;
+  colorScheme?: string | undefined;
+  /** Absolute path of the tuple's screenshot. */
+  screenshotPath: string;
+};
+
+/**
+ * The newest complete capture with a screenshot of every (flow, state,
+ * viewport, colour scheme) the current flows still declare, newest run
+ * first. `flow` narrows to one flow; `from` reads exactly that run.
+ */
+export async function listStateCaptures(options: {
+  projectDirectory: string;
+  /** Flow id → the state ids it declares. */
+  declared: ReadonlyMap<string, ReadonlySet<string>>;
+  flow?: string | undefined;
+  from?: string | undefined;
+}): Promise<ListedStateCapture[]> {
+  const reports = join(options.projectDirectory, ".idiom", "reports");
+  const runs =
+    options.from === undefined
+      ? (await directories(reports)).reverse()
+      : [options.from];
+  const declaredStates = new Set(
+    [...options.declared]
+      .filter(([flow]) => options.flow === undefined || flow === options.flow)
+      .flatMap(([, states]) => [...states]),
+  );
+  const seen = new Set<string>();
+  const captures: ListedStateCapture[] = [];
+  for (const runId of runs) {
+    const runDirectory = resolveStoredRun(options.projectDirectory, runId);
+    if (options.from !== undefined) await assertCompleteRun(runDirectory);
+    if (!(await isCompleteRun(runDirectory))) continue;
+    for (const state of await directories(runDirectory)) {
+      if (!declaredStates.has(state)) continue;
+      for (const viewport of await directories(join(runDirectory, state))) {
+        const viewportDirectory = join(runDirectory, state, viewport);
+        const tuples: Array<{ path: string; colorScheme?: string }> =
+          (await exists(join(viewportDirectory, "dom.html")))
+            ? [{ path: viewportDirectory }]
+            : (await directories(viewportDirectory)).map((scheme) => ({
+                path: join(viewportDirectory, scheme),
+                colorScheme: scheme,
+              }));
+        for (const tuple of tuples) {
+          const screenshotPath = join(tuple.path, "screenshot.png");
+          if (
+            !(await exists(join(tuple.path, "dom.html"))) ||
+            !(await exists(screenshotPath))
+          )
+            continue;
+          const flow = await capturedFlow(tuple.path);
+          if (
+            flow === undefined ||
+            (options.flow !== undefined && flow !== options.flow) ||
+            options.declared.get(flow)?.has(state) !== true
+          )
+            continue;
+          const key = JSON.stringify([
+            flow,
+            state,
+            viewport,
+            tuple.colorScheme ?? null,
+          ]);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          captures.push({
+            runId,
+            viewport,
+            domPath: join(tuple.path, "dom.html"),
+            screenshot: relative(runDirectory, screenshotPath),
+            flow,
+            state,
+            ...(tuple.colorScheme === undefined
+              ? {}
+              : { colorScheme: tuple.colorScheme }),
+            screenshotPath,
+          });
+        }
+      }
+    }
+  }
+  return captures;
+}

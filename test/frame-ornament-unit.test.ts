@@ -30,6 +30,15 @@ const frame = {
   borderSides: ["bottom" as const],
   hiddenChildren: 1,
 };
+const underfilled = (selector: string, group?: string) => ({
+  selector,
+  rect: { x: 0, y: 0, width: 99, height: 38 },
+  media: `${selector} > img`,
+  mediaRect: { x: 5, y: 5, width: 28, height: 28 },
+  emptyShare: 0.786,
+  side: "right" as const,
+  ...(group === undefined ? {} : { group }),
+});
 const ornament = {
   collection: "ul.list",
   collectionKind: "list" as const,
@@ -122,6 +131,70 @@ test("an empty frame is minor and worded with its size, sides and hidden childre
   expect(run(emptyFrameCheck, { emptyFrames: [] }).candidates).toEqual([]);
 });
 
+test("underfilled sibling tiles are one minor candidate naming the frame, media and empty share", () => {
+  const result = run(emptyFrameCheck, {
+    emptyFrames: [],
+    underfilledFrames: [
+      underfilled("button.a", "div.tiles"),
+      underfilled("button.b", "div.tiles"),
+      underfilled("button.c", "div.tiles"),
+    ],
+  });
+  expect(result.coverage).toEqual({ check: "empty-frame", status: "ran" });
+  expect(result.candidates).toEqual([
+    expect.objectContaining({
+      severity: "minor",
+      rule: "idiom:empty-frame",
+      selectorHint: "button.a",
+      fingerprintHint: "empty-frame:underfilled:div.tiles",
+      explanation:
+        "button.a is a 99×38px frame whose 28×28px media (button.a > img) fills 21% of it, leaving 79% empty to its right at 800px (3 sibling frames in div.tiles do the same).",
+      acceptance: [
+        "At 800px, the media in button.a fills its frame, or the frame shrinks to fit it, or the media is centred or labelled.",
+      ],
+    }),
+  ]);
+  expect(result.candidates[0]?.verification.params).toEqual({
+    selector: "button.a",
+    media: "button.a > img",
+    viewportWidth: 800,
+    width: 99,
+    height: 38,
+    mediaWidth: 28,
+    mediaHeight: 28,
+    emptyShare: 0.786,
+    side: "right",
+    count: 3,
+  });
+});
+
+test("a lone underfilled frame is its own candidate", () => {
+  const result = run(emptyFrameCheck, {
+    emptyFrames: [frame],
+    underfilledFrames: [{ ...underfilled("a.card"), side: "bottom" }],
+  });
+  expect(result.candidates.map((c) => c.fingerprintHint)).toEqual([
+    "empty-frame:#bar",
+    "empty-frame:underfilled:a.card",
+  ]);
+  expect(result.candidates[1]?.explanation).toBe(
+    "a.card is a 99×38px frame whose 28×28px media (a.card > img) fills 21% of it, leaving 79% empty below it at 800px.",
+  );
+});
+
+test("a capture without the underfilled-media scan still judges empty frames and says so", () => {
+  const result = run(emptyFrameCheck, { emptyFrames: [frame] });
+  expect(result.candidates.map((c) => c.fingerprintHint)).toEqual([
+    "empty-frame:#bar",
+  ]);
+  expect(result.coverage).toEqual({
+    check: "empty-frame",
+    status: "ran",
+    reason:
+      "observations predate the underfilled-media scan (recapture to judge media in frames)",
+  });
+});
+
 test("repeated row ornaments are info, one candidate per collection and decoration", () => {
   const result = run(repeatedRowOrnamentCheck, {
     rowOrnaments: [
@@ -172,6 +245,7 @@ test("the artifact schema accepts the three records and an empty-ok mark", () =>
   const observations = {
     ...invariantObservations(),
     emptyFrames: [frame],
+    underfilledFrames: [underfilled("button.a", "div.tiles")],
     rowOrnaments: [ornament],
     glyphOverlaps: [overlap],
     selectorMarks: [
@@ -189,6 +263,12 @@ test("the artifact schema accepts the three records and an empty-ok mark", () =>
     observationArtifactSchema.safeParse({
       ...observations,
       emptyFrames: [{ ...frame, extra: true }],
+    }).success,
+  ).toBe(false);
+  expect(
+    observationArtifactSchema.safeParse({
+      ...observations,
+      underfilledFrames: [{ ...underfilled("button.a"), emptyShare: 1.2 }],
     }).success,
   ).toBe(false);
 });

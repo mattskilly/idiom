@@ -21,7 +21,7 @@ idiom --version
 For a project dependency, pin an exact version and commit the package manifest and lockfile:
 
 ```sh
-npm install --save-dev --save-exact @mattskilly/idiom@0.22.0
+npm install --save-dev --save-exact @mattskilly/idiom@0.23.0
 npx --no-install idiom --version
 ```
 
@@ -52,7 +52,7 @@ The report names the installed CLI version and previous per-file versions. Legac
 | `removed` | A retired, unedited upstream file and its ownership record are removed. |
 | `kept` | A customized retired file becomes local, or a foreign/unsafe entry stays protected. |
 
-For an overlapping edit, the report also prints the three-way merge with each side marked (`<<<<<<< local`, `||||||| base`, `=======`, `>>>>>>> incoming`), labelled as not written to disk. The preview stops at 80 lines; `--json` carries the whole text as `conflictText`, and the report's `skills` array carries each skill's summary.
+For an overlapping edit, the report also prints the three-way merge with each side marked (`<<<<<<< local`, `||||||| base`, `=======`, `>>>>>>> incoming`), labeled as not written to disk. The preview stops at 80 lines; `--json` carries the whole text as `conflictText`, and the report's `skills` array carries each skill's summary.
 
 Successful files advance even when another conflicts. Content conflicts and protected discovery collisions return exit status 1 after printing the whole report. A second successful run is a no-op. Foreign skills, user support files, and differently targeted symlinks stay untouched.
 

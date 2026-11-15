@@ -72,7 +72,7 @@ The browser scales an image to the app viewport width with its aspect ratio
 preserved, then both captures are reduced to one pixel per CSS px. Vertical
 alignment searches beyond their height difference by ±240 CSS px. A 2× export
 therefore compares like a 1× export. Changed regions use a deterministic 4 CSS px
-cell grid and perceptual colour difference, discard faint/resampling noise and
+cell grid and perceptual color difference, discard faint/resampling noise and
 very small groups, merge overlaps and keep up to 20 regions, largest first.
 Each region is a **minor** finding with paired crops and the app elements it
 covers. Rows lacking a counterpart are disclosed as uncompared bands.
@@ -87,7 +87,7 @@ image and regions; `check` needs no model for deterministic region findings.
 
 A flow's `{ "site": "https://example.com/checkout" }` uses the URL literally,
 without joining it to the app origin/path. It must be absolute HTTP(S), without
-embedded credentials. The reference uses the app tuple's viewport and colour
+embedded credentials. The reference uses the app tuple's viewport and color
 scheme, and the state's `settleMs` (falling back to project capture settings).
 HTML/image references otherwise apply across captured viewports and schemes
 unless explicitly limited.
@@ -143,7 +143,7 @@ misleading layer name and capture again.
 
 Measurements include width/height, position relative to matched parents, actual
 edge gaps between adjacent matched siblings, corner radii, border widths/styles,
-font size/line height/weight/family, colours and owned text. Translating a subtree
+font size/line height/weight/family, colors and owned text. Translating a subtree
 does not produce a position finding for every descendant. Missing and extra
 content are reported too; an unmatched subtree can summarize its descendants.
 Reports show full Design / App capture views even when clean. Findings include
@@ -177,7 +177,7 @@ zero allowance in tighter mode.
 maximum per-channel RGBA delta on a 0–255 scale, including alpha (default 0).
 Font families ignore case/quoting; Figma compares its family with the first app
 family. Text ignores whitespace runs. Text, families and border styles compare
-discretely; `normal` line height and unknown colours stay literal.
+discretely; `normal` line height and unknown colors stay literal.
 
 Measured drift, copy, extras and image regions are normally minor. A declared
 scale step can make numeric drift major: a marked card with
@@ -220,7 +220,7 @@ and the [MCP repair sequence](mcp.md#repair-sequence).
 Install Idiom and its matching Chromium browser as in the [README](../README.md#browser-setup).
 Use a disposable directory. Run `idiom init --yes` there; retain the generated
 project configuration and PRODUCT.md/DESIGN.md. Configure the project with a
-`desktop` viewport (1440×900), light colour scheme and no `checks.scales` for this
+`desktop` viewport (1440×900), light color scheme and no `checks.scales` for this
 example. Create `designs/` and `app/` directories. Set the project's
 **server settings** below, keeping the rest of the generated project object.
 Python 3 must be installed. Idiom starts and stops the static server on its allocated port;

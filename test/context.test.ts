@@ -1363,3 +1363,70 @@ test.each([
     assertKind(section(output, "Craft checks"), pageGuidance);
   },
 );
+
+test("compiled laws appear in the craft brief", async () => {
+  const { craftCheckEntries } = await import("../src/context/brief.js");
+  const { checksConfigSchema } = await import("../src/schemas/project.js");
+  const entries = craftCheckEntries(
+    checksConfigSchema.parse({
+      controlGap: {
+        min: 3,
+        scopes: [
+          {
+            name: "Nothing in a toolbar sits closer than 6px.",
+            selector: '[role="toolbar"]',
+            min: 6,
+          },
+        ],
+      },
+      negativeSpacing: { scope: "all", include: ['[role="menu"]'] },
+      textCentering: {
+        scopes: [
+          {
+            name: "Labels in the toolbar are centred within 1px.",
+            selector: '[role="toolbar"]',
+            tolerance: 1,
+          },
+        ],
+      },
+      invariants: [
+        {
+          name: "Toolbar buttons share a height within 2px.",
+          optional: true,
+          tolerance: 2,
+          share: "height",
+          selector: ':is([role="toolbar"]) :is(button, [role="button"])',
+          within: '[role="toolbar"]',
+        },
+      ],
+    }),
+  ).flat();
+  expect(entries).toEqual(
+    expect.arrayContaining([
+      "- Parts inside one control (text runs, icons, nested buttons) keep at least 3px between them (control-gap).",
+      '- Nothing in a toolbar sits closer than 6px: inside [role="toolbar"], parts of a control keep at least 6px apart (control-gap).',
+      "- No negative letter- or word-spacing on any painted text (negative-spacing).",
+      '- No negative letter- or word-spacing on text inside [role="menu"] (negative-spacing).',
+      '- Labels in the toolbar are centred within 1px: inside [role="toolbar"], single-line labels sit within 1px of their box\'s vertical centre (text-centering).',
+      '- Toolbar buttons share a height within 2px: one height shared by :is([role="toolbar"]) :is(button, [role="button"]) inside each [role="toolbar"] (within 2px) (layout-invariants).',
+    ]),
+  );
+  // Enabled by default, both checks always state their law.
+  const defaults = craftCheckEntries(checksConfigSchema.parse({})).flat();
+  expect(defaults).toEqual(
+    expect.arrayContaining([
+      "- Parts inside one control (text runs, icons, nested buttons) keep at least 4px between them (control-gap).",
+      "- No negative letter- or word-spacing on interface text: controls, labels, navigation, menus, toolbars and tooltips (negative-spacing).",
+    ]),
+  );
+  const disabled = craftCheckEntries(
+    checksConfigSchema.parse({
+      controlGap: { enabled: false },
+      negativeSpacing: { enabled: false, include: ['[role="menu"]'] },
+    }),
+  ).flat();
+  expect(disabled.some((line) => line.includes("(control-gap)"))).toBe(false);
+  expect(disabled.some((line) => line.includes("(negative-spacing)"))).toBe(
+    false,
+  );
+});

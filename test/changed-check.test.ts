@@ -4,6 +4,7 @@ import { expect, test } from "vitest";
 import { run } from "../src/cli.js";
 import { checkCommand } from "../src/commands/check.js";
 import { checkChanged } from "../src/commands/check-changed.js";
+import { checkChangedJsonContract } from "../src/interface/surfaces.js";
 import { changedFixture } from "./changed-support.js";
 import { mcpClient, toolData } from "./mcp-support.js";
 
@@ -34,6 +35,7 @@ test("20-state public CLI captures only the changed route and never bootstraps a
     ]);
     expect(response.status, response.err).toBe(0);
     const output = JSON.parse(response.out);
+    checkChangedJsonContract.parse(output);
     expect(output.checkedStates).toBe(1);
     expect(output.selection.selected).toEqual([{ flow: "site", state: "s7" }]);
     expect(output.selection.skipped).toHaveLength(19);
@@ -178,6 +180,10 @@ test("flowless checking skips unaffected flows and MCP shares selection and regi
       }),
     );
     expect(mcp.selection).toEqual(output.selection);
+    // Only the result carries interfaceVersion, never each checked flow.
+    expect(Object.keys(mcp)[0]).toBe("interfaceVersion");
+    for (const entry of mcp.checks)
+      expect(entry).not.toHaveProperty("interfaceVersion");
     expect(
       mcp.checks.find((entry: { flow: string }) => entry.flow === "site"),
     ).toMatchObject({

@@ -3,14 +3,18 @@ import { describe, expect, it } from "vitest";
 import {
   commandStatus,
   jsonOutputs,
+  mcpOutputs,
   mcpToolStatus,
 } from "../src/interface/surfaces.js";
 import { INTERFACE_VERSION } from "../src/interface/version.js";
 import {
+  advertisedOutputSchemas,
   buildInterfaceSnapshot,
   compareInterface,
   type InterfaceSnapshot,
+  type JsonSchema,
   programCommands,
+  schemaIssues,
 } from "./contract-support.js";
 
 const snapshotFile = new URL("./contract/interface.json", import.meta.url);
@@ -105,5 +109,189 @@ describe("stable interface contract", () => {
     expect(compareInterface(current, mutated)).toEqual([
       '--json "check": property findings removed',
     ]);
+  });
+
+  it("classifies every MCP tool's output, and only real ones", async () => {
+    const current = await buildInterfaceSnapshot();
+    expect(new Set(Object.keys(mcpOutputs))).toEqual(
+      new Set(current.mcp.tools.map((tool) => tool.name)),
+    );
+  });
+
+  it("gives an output contract to exactly the stable-additive MCP outputs, and a reason to exactly the experimental ones", async () => {
+    for (const [tool, output] of Object.entries(mcpOutputs)) {
+      expect(
+        output.contract !== undefined,
+        `${tool}: a contract is present exactly when the output is stable-additive`,
+      ).toBe(output.status === "stable-additive");
+      expect(
+        output.reason !== undefined,
+        `${tool}: a reason is present exactly when the output is experimental`,
+      ).toBe(output.status === "experimental");
+    }
+    const current = await buildInterfaceSnapshot();
+    for (const tool of current.mcp.tools)
+      expect(
+        tool.outputSchema !== undefined,
+        `${tool.name}: the snapshot records the outputSchema exactly when the output is stable-additive`,
+      ).toBe(tool.outputStatus === "stable-additive");
+  });
+
+  const stableOutput = (snapshot: InterfaceSnapshot, name: string) => {
+    const tool = snapshot.mcp.tools.find((entry) => entry.name === name);
+    if (tool?.outputSchema === undefined)
+      throw new Error(`${name} has no recorded output schema`);
+    return tool;
+  };
+  const doctorOutput = (snapshot: InterfaceSnapshot) =>
+    stableOutput(snapshot, "idiom_doctor");
+  const json = (snapshot: InterfaceSnapshot, id: string) => {
+    const schema = snapshot.json.find((output) => output.id === id)?.schema;
+    if (schema === undefined) throw new Error(`${id} has no recorded schema`);
+    return schema;
+  };
+  type Properties = Record<string, JsonSchema>;
+  const properties = (schema: JsonSchema | undefined) =>
+    schema?.properties as Properties;
+
+  it("reports removing a property from a stable MCP output", async () => {
+    const current = await buildInterfaceSnapshot();
+    const mutated = structuredClone(current) as InterfaceSnapshot;
+    const properties = doctorOutput(mutated).outputSchema?.properties as Record<
+      string,
+      unknown
+    >;
+    delete properties.ok;
+    expect(compareInterface(current, mutated)).toEqual([
+      "MCP tool idiom_doctor output: property ok removed",
+    ]);
+  });
+
+  it("reports retyping a property of a stable MCP output", async () => {
+    const current = await buildInterfaceSnapshot();
+    const mutated = structuredClone(current) as InterfaceSnapshot;
+    const properties = doctorOutput(mutated).outputSchema?.properties as Record<
+      string,
+      Record<string, unknown>
+    >;
+    properties.ok = { type: "string" };
+    const issues = compareInterface(current, mutated);
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues.join("\n")).toContain("MCP tool idiom_doctor output");
+    expect(issues.join("\n")).toContain("ok");
+  });
+
+  it("reports demoting a stable MCP output", async () => {
+    const current = await buildInterfaceSnapshot();
+    const mutated = structuredClone(current) as InterfaceSnapshot;
+    const tool = doctorOutput(mutated);
+    tool.outputStatus = "experimental";
+    delete tool.outputSchema;
+    expect(compareInterface(current, mutated)).toContain(
+      "MCP tool idiom_doctor: output demoted from stable-additive to experimental",
+    );
+  });
+
+  it("reports removing a promised finding field from idiom_quick", async () => {
+    const current = await buildInterfaceSnapshot();
+    const mutated = structuredClone(current) as InterfaceSnapshot;
+    const findings = properties(
+      stableOutput(mutated, "idiom_quick").outputSchema,
+    ).findings as JsonSchema;
+    const finding = properties(findings.items as JsonSchema)
+      .finding as JsonSchema;
+    delete properties(finding).rule;
+    expect(compareInterface(current, mutated)).toEqual([
+      "MCP tool idiom_quick output at findings[].finding: property rule removed",
+    ]);
+  });
+
+  it("reports retyping idiom_verify's success", async () => {
+    const current = await buildInterfaceSnapshot();
+    const mutated = structuredClone(current) as InterfaceSnapshot;
+    properties(stableOutput(mutated, "idiom_verify").outputSchema).success = {
+      type: "string",
+    };
+    expect(compareInterface(current, mutated)).toEqual([
+      'MCP tool idiom_verify output at success: type widened from ["boolean"] to ["string"]',
+    ]);
+  });
+
+  it("reports retyping a promised nested field of idiom_issue", async () => {
+    const current = await buildInterfaceSnapshot();
+    const mutated = structuredClone(current) as InterfaceSnapshot;
+    const coordinate = properties(
+      stableOutput(mutated, "idiom_issue").outputSchema,
+    ).coordinate;
+    properties(coordinate).viewport = { type: "number" };
+    expect(compareInterface(current, mutated)).toEqual([
+      'MCP tool idiom_issue output at coordinate.viewport: type widened from ["string"] to ["number"]',
+    ]);
+  });
+
+  it("reports removing decisionQuestion from the gate that ran", async () => {
+    const current = await buildInterfaceSnapshot();
+    const mutated = structuredClone(current) as InterfaceSnapshot;
+    const ran = (json(mutated, "check --gate").anyOf as JsonSchema[]).find(
+      (branch) => "decisionNeeded" in properties(branch),
+    );
+    if (ran === undefined) throw new Error("no ran form in check --gate");
+    delete properties(ran).decisionQuestion;
+    ran.required = (ran.required as string[]).filter(
+      (name) => name !== "decisionQuestion",
+    );
+    const issues = compareInterface(current, mutated);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatch(
+      /^--json "check --gate": variant \d+ .*no longer matched$/,
+    );
+  });
+
+  it("reports removing selection from check --changed", async () => {
+    const current = await buildInterfaceSnapshot();
+    const mutated = structuredClone(current) as InterfaceSnapshot;
+    delete properties(json(mutated, "check --changed")).selection;
+    expect(compareInterface(current, mutated)).toEqual([
+      '--json "check --changed": property selection removed',
+    ]);
+  });
+
+  it("allows a new property on a stable output, at the root and in a finding detail", async () => {
+    const current = await buildInterfaceSnapshot();
+    const mutated = structuredClone(current) as InterfaceSnapshot;
+    const check = properties(stableOutput(mutated, "idiom_check").outputSchema);
+    check.newRootField = { type: "string" };
+    const detail = (check.newFindings as JsonSchema).items as JsonSchema;
+    properties(detail).newDetailField = { type: "number" };
+    (detail.required as string[]).push("newDetailField");
+    properties(json(mutated, "check --changed")).newChangedField = {
+      type: "boolean",
+    };
+    expect(compareInterface(current, mutated)).toEqual([]);
+  });
+
+  it("advertises an outputSchema that honours each stable output's contract", async () => {
+    const current = await buildInterfaceSnapshot();
+    const advertised = await advertisedOutputSchemas();
+    const stable = current.mcp.tools.filter(
+      (tool) => tool.outputStatus === "stable-additive",
+    );
+    expect(stable.map((tool) => tool.name).sort()).toEqual([
+      "idiom_check",
+      "idiom_doctor",
+      "idiom_issue",
+      "idiom_quick",
+      "idiom_verify",
+    ]);
+    for (const tool of stable)
+      expect(
+        schemaIssues(
+          tool.outputSchema ?? {},
+          advertised[tool.name] ?? {},
+          "output",
+          tool.name,
+        ),
+        `${tool.name}: the advertised outputSchema must keep every promised field, required where promised, never widened`,
+      ).toEqual([]);
   });
 });

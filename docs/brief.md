@@ -255,7 +255,7 @@ Each brief is stored as `.idiom/briefs/<slug>.json` and rendered to `.idiom/brie
 | Heading | Content |
 | --- | --- |
 | `## What and why` | `decision`: the question, the recommended option with its reason and cost, and every rejected option with its reason and cost; once decided, the chosen option first and then the others |
-| `## Acceptance criteria` | `criteria`: `- [ ]` statements grouped as geometry, input states, contrast and behaviour |
+| `## Acceptance criteria` | `criteria`: `- [ ]` statements grouped as geometry, input states, contrast and behavior |
 | `## Out of scope` | `outOfScope` |
 | `## Evidence` | `evidence`: each research question with its findings, sources and how they were verified, then the original request |
 
@@ -341,7 +341,7 @@ A brief is only half the loop: once the build ships, Idiom checks the UI against
 | Contained | `within: "<selector>"` | every match lies inside a container's rectangle: the nearest enclosing container when the element sits inside one, otherwise any container. |
 | Visible without hover | `visibleWithoutHover: true` | on touch viewports (no hover, or a coarse pointer), every match is visible at rest: rendered, opacity above 0, not `visibility: hidden`, with a non-zero size. Desktop viewports are not judged. |
 | No layout shift on hover | `stableOnHover: true` | when the interaction probe hovers the element or anything inside it, nothing outside the element moves. |
-| Minimum contrast | `minContrast: <1–21>` | every match's foreground meets the ratio against its background. For an icon (an `svg` or anything inside one) the foreground is its painted stroke, else its fill; otherwise its text colour. A match with no painted foreground is skipped and the rest are still judged; coverage names the skipped matches. |
+| Minimum contrast | `minContrast: <1–21>` | every match's foreground meets the ratio against its background. For an icon (an `svg` or anything inside one) the foreground is its painted stroke, else its fill; otherwise its text color. A match with no painted foreground is skipped and the rest are still judged; coverage names the skipped matches. |
 
 Every assertion also takes `flow`, `state` (a declared state id; it also covers that state's combinations), `selector`, an optional `name`, and `tolerance` in CSS pixels (default `1`).
 
@@ -382,9 +382,9 @@ idiom brief attach pinned-group --ticket file-281           # export and attach 
 
 - `README.md`: the decision, the chosen option and its cost, the rejected options and why, each acceptance criterion as a checkbox with the Idiom rule that verifies it (`Verified by Idiom: brief-mismatch — …`) or a note that it is not machine-checked, the out-of-scope list, a table of the reference screenshots, and how the build is verified.
 - `criteria.json`: the machine-readable contract, `{"format": "idiom-design-asset", "version": 1, …}` with the brief's slug, title, decision, chosen option and decider; each criterion's statement, assertions and the `idiom:brief-mismatch:…` rule id each assertion produces; the screenshot list; and the capture run id and commit.
-- `screenshots/<flow>--<state>--<viewport>--<scheme>.png`: every state an assertion names, at every configured viewport and colour scheme. They come from the latest capture of each flow, so they show the UI **before** the build; `--capture` captures just those states now instead.
+- `screenshots/<flow>--<state>--<viewport>--<scheme>.png`: every state an assertion names, at every configured viewport and color scheme. They come from the latest capture of each flow, so they show the UI **before** the build; `--capture` captures just those states now instead.
 
-A brief with no assertions exports only `README.md` and `criteria.json`; its criteria are for human or agent judgement. Paths in the export are relative, runs are named by id only, and an export that would contain the project path, home directory or temporary directory is refused, so the directory can be shared as it is.
+A brief with no assertions exports only `README.md` and `criteria.json`; its criteria are for human or agent judgment. Paths in the export are relative, runs are named by id only, and an export that would contain the project path, home directory or temporary directory is refused, so the directory can be shared as it is.
 
 `idiom brief attach <slug> --ticket <id>` exports to a temporary directory, runs `ab ticket attach <id> design <dir> --name <slug>` from the directory that holds `autobuild.toml`, and removes the temporary directory. Autobuild copies the asset in and freezes it when the build is claimed. Idiom runs no other `ab` command, so the ticket's state never moves. On success the brief records the ticket, and its Markdown gains an `Autobuild tickets: file-281` line; attaching does not change `updatedAt`, so `brief list` order stays put.
 
@@ -442,4 +442,4 @@ node scripts/brief-eval.mjs --runs 3 --with-instruction
 | skill | 3/3 | 3/3 | 0/3 |
 | skill + instruction | 3/3 | 1/3 | 2/3 |
 
-Every run triaged before writing anything, including the two in the instruction arm that acted on CLAUDE.md without loading the skill. In 4 of 6 runs the agent stopped after `record` with a proposed brief, because the ask said it must ask and a headless session has no one to answer; that is the intended behaviour. Of the two runs that wrote a ticket, one marked its own brief low-stakes and reversible, proceeded on the recommendation and decided it as "agent (recommendation; low-stakes, reversible)"; the other wrote the ticket while its brief was still proposed. The agent sets stakes and reversibility itself, so review a self-decided brief's `decidedBy` before treating it as the requester's choice. User-level memory (`~/.claude/CLAUDE.md`) is not excluded by `--setting-sources project` and may have been read.
+Every run triaged before writing anything, including the two in the instruction arm that acted on CLAUDE.md without loading the skill. In 4 of 6 runs the agent stopped after `record` with a proposed brief, because the ask said it must ask and a headless session has no one to answer; that is the intended behavior. Of the two runs that wrote a ticket, one marked its own brief low-stakes and reversible, proceeded on the recommendation and decided it as "agent (recommendation; low-stakes, reversible)"; the other wrote the ticket while its brief was still proposed. The agent sets stakes and reversibility itself, so review a self-decided brief's `decidedBy` before treating it as the requester's choice. User-level memory (`~/.claude/CLAUDE.md`) is not excluded by `--setting-sources project` and may have been read.

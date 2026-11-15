@@ -13,6 +13,11 @@ import { PNG } from "pngjs";
 import { afterEach, expect, test, vi } from "vitest";
 import { run } from "../src/cli.js";
 import { initProject } from "../src/commands/init.js";
+import { reportCommand } from "../src/commands/report.js";
+import {
+  DIGEST_RECORD_FILE,
+  digestRecordSchema,
+} from "../src/digest/record.js";
 import {
   comparison,
   escapeHtml,
@@ -461,6 +466,93 @@ test("platform launch shapes and the CLI use the injectable launcher", async () 
     }),
   ).toBe(0);
   expect(stdout.join("")).toContain(`Opened report review-1 — ${reportPath}`);
+  // No digest records yet: no trend lines, and an empty trend in JSON.
+  expect(stdout.join("\n")).not.toContain("Trend for");
+  await expect(
+    reportCommand({
+      project,
+      runId: "review-1",
+      dependencies: { platform: "linux", launch },
+    }),
+  ).resolves.toMatchObject({ runId: "review-1", trend: [] });
+
+  // Two checked runs of a flow: report prints the trend and --json carries it.
+  for (const [day, majors] of [
+    ["01", 2],
+    ["02", 1],
+  ] as const) {
+    const runId = `2026-11-${day}T08-30-00-000Z`;
+    await mkdir(join(project, ".idiom", "reports", runId), { recursive: true });
+    await writeFile(
+      join(project, ".idiom", "reports", runId, DIGEST_RECORD_FILE),
+      JSON.stringify(
+        digestRecordSchema.parse({
+          version: 1,
+          flow: "booking",
+          runId,
+          completedAt: `2026-11-${day}T08:30:00.000Z`,
+          commit: `abcdef${day}99`,
+          dirty: false,
+          reportPath: `.idiom/reports/${runId}/report.md`,
+          configHash: "hash",
+          scope: "full",
+          coverage: { selected: 1, captured: ["home/desktop"], problems: [] },
+          occurrences: Array.from({ length: majors }, (_, index) => ({
+            id: `id-${index}`,
+            fingerprint: `fp-${index}`,
+            where: "home/desktop",
+            state: "home",
+            viewport: "desktop",
+            category: "token-drift",
+            severity: "major",
+            problem: "Off scale.",
+            disposition: "open",
+            score: 1,
+            impactReasons: [],
+          })),
+        }),
+      ),
+    );
+  }
+  stdout.length = 0;
+  expect(
+    await run(["node", "idiom", "report", "review-1", "--project", project], {
+      stdout: (message) => stdout.push(message),
+      stderr: () => undefined,
+      report: { platform: "linux", launch },
+    }),
+  ).toBe(0);
+  const text = stdout.join("\n");
+  expect(text).toContain(
+    "Trend for booking (last 2 runs, oldest first; open blocker/major/minor, acknowledged and rejected excluded):",
+  );
+  expect(text).toContain("  2026-11-01 abcdef0  0/2/0");
+  expect(text).toContain("  2026-11-02 abcdef0  0/1/0");
+  stdout.length = 0;
+  expect(
+    await run(
+      ["node", "idiom", "report", "review-1", "--json", "--project", project],
+      {
+        stdout: (message) => stdout.push(message),
+        stderr: () => undefined,
+        report: { platform: "linux", launch },
+      },
+    ),
+  ).toBe(0);
+  const payload = JSON.parse(stdout.join("\n"));
+  expect(Object.keys(payload).slice(0, 4)).toEqual([
+    "interfaceVersion",
+    "runId",
+    "reportPath",
+    "trend",
+  ]);
+  expect(payload.runId).toBe("review-1");
+  expect(
+    payload.trend.map((trend: { flow: string; runs: { major: number }[] }) => [
+      trend.flow,
+      trend.runs.map((point) => point.major),
+    ]),
+  ).toEqual([["booking", [2, 1]]]);
 
   await expect(
     openHtmlReport({

@@ -15,11 +15,16 @@ import {
   briefMarks,
   type ColorScheme,
   checkMarks,
+  chromeDefaultsOptions,
   emptyOkMarks,
+  hiddenOkMarks,
+  jumpOkMarks,
+  legibilityOptions,
   type Project,
 } from "../schemas/project.js";
 import { ConsoleProvenance } from "./console-provenance.js";
 import { CspRecorder } from "./csp-violations.js";
+import { detectDevServer } from "./dev-server.js";
 import { ExplanationCollector } from "./explanations.js";
 import { replayRequests } from "./failure-identity.js";
 import { FilmstripBudget, FilmstripCapture } from "./filmstrips.js";
@@ -31,6 +36,7 @@ import {
 } from "./links.js";
 import { heldStepIndexes, replayKey } from "./loading.js";
 import { MotionCollector } from "./motion.js";
+import { measureNativeScrollbars } from "./native-scrollbars.js";
 import { collectPageEvidence } from "./page.js";
 import {
   createProbeSafetyLedger,
@@ -61,6 +67,7 @@ import type {
 } from "./types.js";
 import {
   consoleIsAllowed,
+  pressKey,
   type ReachContext,
   runAction,
   WebStepRunner,
@@ -419,13 +426,19 @@ async function captureInContext(
                     page
                       .locator(selector)
                       .first()
-                      .click({ timeout, noWaitAfter: true })
+                      .click({
+                        timeout,
+                        noWaitAfter: true,
+                        ...(step.modifiers === undefined
+                          ? {}
+                          : { modifiers: step.modifiers }),
+                      })
                 : step.action === "press"
                   ? (page: Page, timeout: number) =>
                       page
                         .locator(selector)
                         .first()
-                        .press(step.key, { timeout, noWaitAfter: true })
+                        .press(pressKey(step), { timeout, noWaitAfter: true })
                   : undefined,
           },
         ];
@@ -451,6 +464,7 @@ async function captureInContext(
           ? undefined
           : (runner?.documentUrl ?? documentResponseUrl),
       healthGuard: runner,
+      pointerHeld: () => runner?.holdingPointer === true,
       assertDestination:
         "path" in tuple.state.expect && tuple.state.expect.path !== undefined
           ? () => {
@@ -524,12 +538,17 @@ async function captureInContext(
               ...checkMarks(tuple.project.checks),
               ...briefMarks(tuple.briefSelectors),
               ...emptyOkMarks(tuple.state.intentionallyEmpty),
+              ...hiddenOkMarks(tuple.state),
+              ...jumpOkMarks(tuple.state.intendedChanges),
             ],
             frameOrnaments: {
               emptyFrame: tuple.project.checks.emptyFrame.enabled,
               rowOrnament: tuple.project.checks.repeatedRowOrnament.enabled,
               glyphOverIcon: tuple.project.checks.glyphOverIcon.enabled,
             },
+            chromeDefaults: chromeDefaultsOptions(tuple.project.checks),
+            legibility: legibilityOptions(tuple.project.checks),
+            textOcclusion: tuple.project.checks.textOcclusion.enabled,
             ...(tuple.published ? { images: true } : {}),
             emptyState: tuple.project.checks.emptyState,
             bandEdges: tuple.project.checks.bandEdges?.enabled === true,
@@ -549,6 +568,18 @@ async function captureInContext(
         : undefined,
       fontFailures: () =>
         [...failedFonts].map(([url, reason]) => ({ url, reason })),
+      devServer:
+        tuple.designReference || tuple.project.checks.devServer === "allow"
+          ? undefined
+          : () => detectDevServer(page as Page),
+      nativeScrollbars:
+        !tuple.designReference && tuple.project.checks.nativeScrollbar.enabled
+          ? () =>
+              measureNativeScrollbars(
+                page as Page,
+                scrollbars as ScrollbarController,
+              )
+          : undefined,
       checkLinks:
         linkChecker === undefined
           ? undefined
@@ -621,6 +652,7 @@ async function captureInContext(
               filmstrips,
               requestedActions: tuple.filmstripRequests?.map((r) => r.identity),
               enumerateOnly: tuple.enumerateProbe,
+              commandPalette: settings.commandPalette,
               flowBudget: tuple.probeBudget,
               unbounded: tuple.probeUnbounded,
               region: tuple.probeRegion,
@@ -653,6 +685,8 @@ async function captureInContext(
                         ...checkMarks(tuple.project.checks),
                         ...briefMarks(tuple.briefSelectors),
                         ...emptyOkMarks(tuple.state.intentionallyEmpty),
+                        ...hiddenOkMarks(tuple.state),
+                        ...jumpOkMarks(tuple.state.intendedChanges),
                       ],
                     }),
                   )),

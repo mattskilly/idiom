@@ -13,6 +13,7 @@ import { sweepFocusVisible } from "../src/capture/focus.js";
 import type { LinkChecker } from "../src/capture/links.js";
 import { sampleMediaFrames } from "../src/capture/media-bands.js";
 import { mergeMotion } from "../src/capture/motion.js";
+import { measureNativeScrollbars } from "../src/capture/native-scrollbars.js";
 import { probeControls } from "../src/capture/probe.js";
 import { createProbeLedger } from "../src/capture/probe-ledger.js";
 import {
@@ -20,6 +21,7 @@ import {
   revealedObserver,
   revealedProbeOptions,
 } from "../src/capture/revealed.js";
+import { ScrollbarController } from "../src/capture/scrollbars.js";
 import {
   mergeTimelines,
   TimelineCollector,
@@ -30,7 +32,7 @@ import {
   inferredComponentInputs,
   mergeInferredComponents,
 } from "../src/checks/design-components.js";
-import { observePage } from "../src/checks/observe.js";
+import { observePage, type TokenDeclarations } from "../src/checks/observe.js";
 import {
   checksConfigFrom,
   runDeterministicChecks,
@@ -53,7 +55,11 @@ import {
   briefMarks,
   checkMarks,
   checksConfigSchema,
+  chromeDefaultsOptions,
   emptyOkMarks,
+  hiddenOkMarks,
+  jumpOkMarks,
+  legibilityOptions,
 } from "../src/schemas/project.js";
 
 const directory = fileURLToPath(
@@ -121,6 +127,15 @@ export type ReviewOptions = {
   decidedBriefs?: BriefCheck[];
   /** The state's `intentionallyEmpty` selectors, marked as capture does. */
   intentionallyEmpty?: string[];
+  /** The state's `intentionallyHidden` selectors, marked as capture does. */
+  intentionallyHidden?: string[];
+  /** Design tokens (`loadTokenDeclarations`); not configured by default. */
+  tokens?: TokenDeclarations;
+  /**
+   * Measure native scrollbars after observing, as web capture does. Needs a
+   * browser launched with `scrollbarLaunchOptions`.
+   */
+  scrollbars?: boolean;
 };
 
 /**
@@ -161,6 +176,12 @@ export async function reviewStates(
     focus?: string;
     siblings?: string;
     url?: string;
+    /** The state this one is reached from (sets `CheckTuple.from`). */
+    from?: string;
+    /** Click this selector after loading, then wait `checks.probe.waitMs`. */
+    click?: string;
+    /** The state's `intendedChanges` selectors, marked as capture does. */
+    intendedChanges?: string[];
   }>,
   options: Omit<ReviewOptions, "state" | "focus"> = {},
 ): Promise<{
@@ -182,7 +203,16 @@ export async function reviewStates(
   // One flow-scoped ledger, as a real capture run has: a control probed at an
   // earlier state is reused at later ones.
   const probeLedger = createProbeLedger();
-  for (const { state, html, focus, siblings, url } of states) {
+  for (const {
+    state,
+    html,
+    focus,
+    siblings,
+    url,
+    from,
+    click,
+    intendedChanges,
+  } of states) {
     for (const colorScheme of options.colorSchemes ?? [options.colorScheme]) {
       const context = await browser.newContext({
         viewport,
@@ -223,6 +253,11 @@ export async function reviewStates(
         });
         await load();
         await loadTimeline?.finishLoad();
+        if (click !== undefined) {
+          await page.locator(click).click();
+          await page.waitForTimeout(settings.probe.waitMs);
+        }
+        const documentUrl = served ? page.url() : undefined;
         let probeTimelines: ActionTimelineArtifact | undefined;
         const explanations =
           settings.explanation === "visible"
@@ -237,9 +272,13 @@ export async function reviewStates(
             await window?.dispose();
           }
         }
+        const scrollbarController =
+          options.scrollbars === true
+            ? await ScrollbarController.create(page)
+            : undefined;
         let observations = await observePage(
           page,
-          { status: "not-configured" },
+          options.tokens ?? { status: "not-configured" },
           undefined,
           [],
           {
@@ -268,12 +307,19 @@ export async function reviewStates(
                 ),
               ),
               ...emptyOkMarks(options.intentionallyEmpty),
+              ...hiddenOkMarks({
+                intentionallyHidden: options.intentionallyHidden,
+              }),
+              ...jumpOkMarks(intendedChanges),
             ],
             frameOrnaments: {
               emptyFrame: settings.emptyFrame.enabled,
               rowOrnament: settings.repeatedRowOrnament.enabled,
               glyphOverIcon: settings.glyphOverIcon.enabled,
             },
+            chromeDefaults: chromeDefaultsOptions(settings),
+            legibility: legibilityOptions(settings),
+            textOcclusion: settings.textOcclusion.enabled,
             ...(options.images === true ? { images: true } : {}),
             emptyState: settings.emptyState,
             mediaFill: settings.mediaFill,
@@ -294,6 +340,13 @@ export async function reviewStates(
             links: options.links !== undefined,
           },
         );
+        if (scrollbarController && observations.version === 2)
+          observations = {
+            ...observations,
+            nativeScrollbars: (
+              await measureNativeScrollbars(page, scrollbarController)
+            ).scan,
+          };
         if (
           observations.version === 2 &&
           observations.links !== undefined &&
@@ -344,6 +397,7 @@ export async function reviewStates(
             page,
             skip: settings.probe.skip,
             respectControlIntent: settings.probe.respectControlIntent,
+            commandPalette: settings.probe.commandPalette,
             maxControls: settings.probe.maxControls,
             waitMs: 150,
             ...revealedProbeOptions(
@@ -389,6 +443,8 @@ export async function reviewStates(
             : { colorSchemeAxis: true }),
           state,
           ...(siblings === undefined ? {} : { siblings }),
+          ...(from === undefined ? {} : { from }),
+          ...(documentUrl === undefined ? {} : { documentUrl }),
           viewport: "desktop",
           width: viewport.width,
           height: viewport.height,

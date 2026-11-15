@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Pipeline</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; display: grid; grid-template-columns: 200px 1fr; min-height: 100vh; }
+  nav { background: #f4f6f8; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+  main { padding: 24px; }
+  #palette { position: fixed; top: 80px; left: 50%; transform: translateX(-50%); width: 420px; background: #fff; border: 1px solid #ccc; border-radius: 8px; padding: 8px; }
+  #palette[hidden] { display: none; }
+  [role=option] { display: block; padding: 6px 8px; }
+  [role=option] a { color: inherit; text-decoration: none; }
+</style></head>
+<body>
+<nav aria-label="Main">
+  <a href="/">Dashboard</a>
+  <a href="/leads">Leads</a>
+  <a href="/settings">Settings</a>
+</nav>
+<main>
+  <h1>Pipeline</h1>
+  <p>Press ⌘K to jump anywhere.</p>
+</main>
+<div id="palette" role="dialog" aria-label="Command palette" hidden>
+  <input aria-label="Search commands">
+  <div role="listbox" aria-label="Commands">
+    <div role="option"><a href="/leads">Leads</a></div>
+    <div role="option" onclick="location.assign('/settings')">Settings</div>
+    <div role="option">Invite a teammate</div>
+  </div>
+</div>
+<script>
+  const palette = document.getElementById('palette');
+  document.addEventListener('keydown', (event) => {
+    if (event.metaKey && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      palette.hidden = false;
+      palette.querySelector('input').focus();
+    } else if (event.key === 'Escape') {
+      palette.hidden = true;
+    }
+  });
+</script>
+</body></html>

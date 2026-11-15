@@ -222,6 +222,13 @@ export function buildRuleContract(
             "selection-outline",
             "empty-frame",
             "glyph-over-icon",
+            "native-scrollbar",
+            "edge-text",
+            "cramped-padding",
+            "heading-rhythm",
+            "ragged-row",
+            "state-jump",
+            "control-gap",
           ].includes(candidate.category)
             ? { units: { distance: "CSS px" } }
             : {}),

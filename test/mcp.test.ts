@@ -19,10 +19,16 @@ import { initProject } from "../src/commands/init.js";
 import { readAcknowledgements } from "../src/decisions/log.js";
 import { INTERFACE_VERSION } from "../src/interface/version.js";
 import { evidencePath } from "../src/mcp/evidence.js";
+import { toolError } from "../src/mcp/execution.js";
 import { createIdiomMcpServer } from "../src/mcp/server.js";
 import { writeUnruledDecisions } from "../src/rulings/artifacts.js";
 import { findingSchema } from "../src/schemas/finding.js";
-import { mcpClient, toolData } from "./mcp-support.js";
+import {
+  mcpClient,
+  outputValidators,
+  toolData,
+  validateToolResult,
+} from "./mcp-support.js";
 
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -44,7 +50,7 @@ const call = (
   args: Record<string, unknown> = {},
 ) => client.callTool({ name, arguments: args }) as Promise<CallToolResult>;
 
-test("uninitialized server advertises exactly twenty-four described strict schemas and survives tool errors", async () => {
+test("uninitialized server advertises exactly twenty-five described strict schemas and survives tool errors", async () => {
   const directory = await root();
   const client = await connect({ project: directory });
   expect(client.getServerCapabilities()?.experimental?.idiom).toEqual({
@@ -70,6 +76,7 @@ test("uninitialized server advertises exactly twenty-four described strict schem
     "idiom_flows",
     "idiom_init",
     "idiom_issue",
+    "idiom_learn",
     "idiom_quick",
     "idiom_ready",
     "idiom_setup_prompt",
@@ -201,6 +208,8 @@ test("invalid inputs are tool errors; missing/empty flows differ from malformed 
     ["idiom_coverage", { crawl: "file:///etc/passwd" }],
     ["idiom_init", { flows: true, project: "/elsewhere" }],
     ["idiom_design_add", { state: "home", source: "../outside.html" }],
+    ["idiom_learn", { observation: "  " }],
+    ["idiom_learn", { observation: "too tight", screenshot: "/tmp/x.png" }],
     [
       "idiom_verify",
       { flow: "checkout", findings: [{ id: "finding-1", runId: "../x" }] },
@@ -213,6 +222,7 @@ test("invalid inputs are tool errors; missing/empty flows differ from malformed 
   const flows = join(directory, ".idiom/flows");
   await rm(flows, { recursive: true });
   expect(toolData(await call(client, "idiom_flows"))).toEqual({
+    interfaceVersion: INTERFACE_VERSION,
     flows: [],
     guidance: "Call idiom_init with flows:true (or run idiom init --flows)",
   });
@@ -253,9 +263,150 @@ test.each([
         ? "npx playwright install chromium"
         : "Free the configured port",
     );
-    expect((await client.listTools()).tools).toHaveLength(24);
+    expect((await client.listTools()).tools).toHaveLength(25);
   },
 );
+
+test.each([
+  ["EADDRINUSE: address already in use 127.0.0.1:3107", true],
+  ["configured port 3107 is in use", true],
+  [
+    "Quick capture failed: navigation: net::ERR_FAILED. Report: /Users/x/idiom-quick-reports/run/report.md",
+    false,
+  ],
+  ["Support for the report is busy", false],
+])("port advice only for a port failure: %s", (message, port) => {
+  const text = JSON.stringify(toolError(new Error(message)).content);
+  expect(text.includes("Free the configured port")).toBe(port);
+});
+
+test("a screenshot timeout never gets port or server advice", () => {
+  const text = JSON.stringify(
+    toolError(
+      new Error(
+        "page.screenshot: Timeout 6270ms exceeded. Report: /Users/x/idiom-quick-reports/run/report.md",
+      ),
+    ).content,
+  );
+  expect(text).toContain("longer than its time allowance");
+  expect(text).not.toMatch(/Free the configured port|server settings/);
+});
+
+function slowShotLauncher(
+  fails: (tuple: {
+    viewport: { name: string };
+    colorScheme?: string | undefined;
+  }) => boolean,
+) {
+  return async () =>
+    ({
+      version: "Mock Chromium",
+      async capture(tuple) {
+        if (fails(tuple))
+          return {
+            ok: false,
+            stage: "screenshot",
+            message:
+              "screenshot out of time: 640 ms of the 30000 ms screenshot allowance left after 3 of 4 tiles; each tile needs at least 1000 ms",
+            console: [],
+            mismatches: [],
+            startedAt: "2026-10-26T00:00:00.000Z",
+            endedAt: "2026-10-26T00:00:01.000Z",
+          };
+        return {
+          ok: true,
+          status: 200,
+          dom: "<!doctype html><html><body><h1>Quick</h1></body></html>",
+          screenshot: Buffer.from("png"),
+          console: [{ type: "error", text: "boom" }],
+          axe: { violations: [] },
+          observations: {
+            version: 1,
+            viewport: { width: 1, height: 1 },
+            document: {
+              scrollWidth: 1,
+              scrollHeight: 1,
+              clientWidth: 1,
+              clientHeight: 1,
+            },
+            elements: [],
+            headings: [],
+            tokens: { status: "not-configured" },
+          },
+          mismatches: [],
+          startedAt: "2026-10-26T00:00:00.000Z",
+          endedAt: "2026-10-26T00:00:01.000Z",
+        };
+      },
+      async close() {},
+    }) satisfies BrowserSession;
+}
+
+test("idiom_quick keeps the completed tuples' findings when one screenshot runs out of time", async () => {
+  // A report path under "Users" reproduced the port-advice regex bug.
+  const project = join(await root(), "Users", "someone");
+  await mkdir(project, { recursive: true });
+  const partialClient = await connect({
+    project,
+    dependencies: {
+      quick: {
+        browserLauncher: slowShotLauncher(
+          (tuple) =>
+            tuple.viewport.name === "mobile" && tuple.colorScheme === "dark",
+        ),
+        environment: {},
+      },
+    },
+  });
+  const validators = outputValidators(
+    (await partialClient.listTools()).tools as Parameters<
+      typeof outputValidators
+    >[0],
+  );
+  const partial = await call(partialClient, "idiom_quick", {
+    url: "https://example.com",
+    probe: false,
+  });
+  expect(partial.isError).not.toBe(true);
+  validateToolResult(validators, "idiom_quick", partial);
+  const data = toolData(partial) as {
+    findings: unknown[];
+    counts: { captures: { passed: number; failed: number } };
+    captureFailures: Array<Record<string, unknown>>;
+  };
+  expect(data.findings.length).toBeGreaterThan(0);
+  expect(data.counts.captures).toMatchObject({ passed: 3, failed: 1 });
+  expect(data.captureFailures).toEqual([
+    expect.objectContaining({
+      state: "page-1",
+      viewport: "mobile",
+      colorScheme: "dark",
+      stage: "screenshot",
+      outOfTime: true,
+    }),
+  ]);
+  const text = JSON.stringify(partial.content);
+  expect(text).toContain("Coverage gaps: 1 of 4 captures failed");
+  expect(text).toContain("too slow to capture in its time allowance");
+  expect(text).not.toMatch(/Free the configured port|server settings/);
+
+  const noneClient = await connect({
+    project,
+    dependencies: {
+      quick: { browserLauncher: slowShotLauncher(() => true), environment: {} },
+    },
+  });
+  const none = await call(noneClient, "idiom_quick", {
+    url: "https://example.com",
+    probe: false,
+  });
+  expect(none.isError).toBe(true);
+  const error = JSON.stringify(none.content);
+  expect(error).toContain("Quick capture failed: 4 of 4 captures failed");
+  expect(error).toContain("/Users/someone/idiom-quick-reports/");
+  expect(error).toContain("too slow to capture in its time allowance");
+  expect(error).not.toMatch(/Free the configured port|server settings/);
+});
 
 test("evidence refuses traversal and symlink escapes", async () => {
   const directory = await root();
@@ -331,7 +482,7 @@ test("a persistent SDK session cancels active and queued work, closes late launc
   ).toBe(true);
   const error = await call(client, "idiom_flows");
   expect(error.isError).toBe(true);
-  expect((await client.listTools()).tools).toHaveLength(24);
+  expect((await client.listTools()).tools).toHaveLength(25);
   expect(
     await readFile(join(directory, "missing"), "utf8").catch(() => "absent"),
   ).toBe("absent");

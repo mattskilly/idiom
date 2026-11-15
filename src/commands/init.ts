@@ -16,6 +16,7 @@ import {
   generateSiteFlow,
 } from "../flows/generate.js";
 import { resolveProjectArgument } from "../project.js";
+import { projectViewportSuggestion } from "../setup/viewports.js";
 import { skillIdentity } from "../skills/merge.js";
 import { applyWrites, inspect } from "../skills/paths.js";
 import { seedPristine } from "../skills/pristine.js";
@@ -73,6 +74,8 @@ export type InitResult = {
   wiring?: WiringReport;
   /** Wiring-only (--wire) or preview-only (--dry-run) runs skip scaffolding. */
   mode?: "wire" | "dry-run";
+  /** Viewports skip from phone to desktop: suggest a tablet width. */
+  viewportSuggestion?: string;
   systemLearning: {
     kind:
       | "not-detected"
@@ -351,7 +354,7 @@ export async function initProject(options: {
     // Nothing is created: not even the project directory or scaffold.
     result.mode = "dry-run";
     await wire();
-    return result;
+    return withViewportSuggestion(result);
   }
   if (wiringOptions.wire) {
     const project = await inspect(projectDirectory, ".idiom/project.json");
@@ -361,7 +364,7 @@ export async function initProject(options: {
       );
     result.mode = "wire";
     await wire();
-    return result;
+    return withViewportSuggestion(result);
   }
   await mkdir(projectDirectory, { recursive: true });
   for (const directory of directoryNames) {
@@ -563,6 +566,18 @@ export async function initProject(options: {
         `Existing skills could not be upgraded: ${sanitizeCritiqueDiagnostic(error)}`,
       );
     }
+  return withViewportSuggestion(result);
+}
+
+/** Reads the project file as it now stands; the scaffold when it is absent. */
+async function withViewportSuggestion(result: InitResult): Promise<InitResult> {
+  const suggestion = await projectViewportSuggestion(
+    result.projectDirectory,
+    (await desiredFiles(result.projectDirectory)).get(
+      join(".idiom", "project.json"),
+    ),
+  ).catch(() => undefined);
+  if (suggestion !== undefined) result.viewportSuggestion = suggestion;
   return result;
 }
 
@@ -675,6 +690,8 @@ export function initSummaryLines(result: InitResult): string[] {
     lines.push(result.autobuild.addition);
   }
   if (result.wiring) lines.push(...wiringSummaryLines(result.wiring));
+  if (result.viewportSuggestion !== undefined)
+    lines.push(result.viewportSuggestion);
   if (result.mode === undefined) lines.push(INIT_NEXT_LINE);
   else
     lines.push(

@@ -5,6 +5,7 @@ import { type Browser, chromium, type Page } from "playwright";
 import { expect, test } from "vitest";
 import { emptyFrameCheck } from "../src/checks/empty-frame.js";
 import { glyphOverIconCheck } from "../src/checks/glyph-over-icon.js";
+import { nestedBorderCheck } from "../src/checks/nested-border.js";
 import { observePage } from "../src/checks/observe.js";
 import { checksConfigFrom } from "../src/checks/registry.js";
 import { repeatedRowOrnamentCheck } from "../src/checks/repeated-row-ornament.js";
@@ -22,7 +23,12 @@ const record = join(
   "../docs/field-test/frame-ornament.json",
 );
 const config = checksConfigFrom();
-const checks = [emptyFrameCheck, repeatedRowOrnamentCheck, glyphOverIconCheck];
+const checks = [
+  emptyFrameCheck,
+  repeatedRowOrnamentCheck,
+  glyphOverIconCheck,
+  nestedBorderCheck,
+];
 type Entry = {
   source: string;
   route: string;
@@ -53,7 +59,7 @@ const key = (entry: Entry, explanation: string) =>
 
 // Opt-in record update (IDIOM_UPDATE_FRAME_ORNAMENT_SWEEP=1) keeps ordinary
 // runs read-only. Every coordinate runs the real in-page scan and the checks.
-test("empty-frame, repeated-row-ornament and glyph-over-icon precision sweep over the gate and field apps", {
+test("empty-frame, repeated-row-ornament, glyph-over-icon and nested-border precision sweep over the gate and field apps", {
   timeout: 600000,
 }, async () => {
   let browser: Browser | undefined;
@@ -193,7 +199,7 @@ test("empty-frame, repeated-row-ornament and glyph-over-icon precision sweep ove
         `${JSON.stringify(
           {
             description:
-              "Fresh loads of every gate-app state and field-app route at desktop and mobile, light and dark, through the real in-page scan and the three checks. Severities stay minor (empty-frame, glyph-over-icon) and info (repeated-row-ornament) regardless of the result.",
+              "Fresh loads of every gate-app state and field-app route at desktop and mobile, light and dark, through the real in-page scan and the four checks. Severities stay minor (empty-frame, glyph-over-icon, nested-border) and info (repeated-row-ornament) regardless of the result.",
             review: {
               captures: entries.length,
               captureFailures: entries.filter((e) => e.capture !== "ok").length,

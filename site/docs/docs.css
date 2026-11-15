@@ -46,6 +46,7 @@
   .sidebar { position:static; max-height:none; padding:4px 14px 14px; }
 }
 .prose th { color:var(--muted); }
+@media (max-width:767px) { .docs-menu > summary { min-height:44px; padding-block:12px; } }
 
 /* Search: filters titles and headings in place of the menu */
 .search { position:relative; margin:0 0 22px; }

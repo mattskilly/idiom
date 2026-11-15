@@ -1,0 +1,18 @@
+{
+  "id": "offset-chip",
+  "title": "Offset chip",
+  "intent": ["Select a block and read its offset in the selection toolbar"],
+  "setup": [],
+  "states": [
+    {
+      "id": "chip",
+      "description": "A selected block with its offset chip in the toolbar",
+      "url": "/",
+      "steps": [
+        { "action": "click", "selector": "[data-block]" },
+        { "action": "waitFor", "selector": "span.chip" }
+      ],
+      "expect": { "selectorPresent": ["span.chip"] }
+    }
+  ]
+}

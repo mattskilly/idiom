@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scrollers that are not native-scrollbar findings</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; }
+  main { padding: 32px; }
+  .plain { width: 320px; height: 120px; overflow: auto; }
+  .short { width: 320px; height: 160px; overflow: auto; border-radius: 12px; background: #eef0f3; }
+  .hidden-bar { width: 320px; height: 120px; overflow: auto; border-radius: 12px;
+    background: #eef0f3; scrollbar-width: none; }
+  .tall { height: 2400px; }
+  p { margin: 0 0 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Notes</h1>
+  <div class="plain">
+    <p>First note.</p><p>Second note.</p><p>Third note.</p>
+    <p>Fourth note.</p><p>Fifth note.</p><p>Sixth note.</p>
+  </div>
+  <div class="short"><p>Only one line here.</p></div>
+  <div class="hidden-bar">
+    <p>First tag.</p><p>Second tag.</p><p>Third tag.</p>
+    <p>Fourth tag.</p><p>Fifth tag.</p><p>Sixth tag.</p>
+  </div>
+  <div class="tall"></div>
+</main>
+</body>
+</html>

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Styled scroller</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #f4f4f2; }
+  main { padding: 32px; }
+  .card { width: 320px; border-radius: 12px; background: #fff; padding: 16px; }
+  .list { height: 160px; overflow: auto; margin: 0; padding: 0; list-style: none;
+    scrollbar-color: #9a9a96 transparent; scrollbar-width: thin; }
+  .list li { padding: 8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Recent files</h1>
+  <section class="card">
+    <ul class="list">
+      <li>Quarterly plan</li><li>Budget draft</li><li>Hiring notes</li>
+      <li>Launch checklist</li><li>Interview loop</li><li>Retro notes</li>
+      <li>Roadmap</li><li>Offsite agenda</li><li>Pricing sheet</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

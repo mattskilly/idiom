@@ -23,10 +23,10 @@ Decisions live in `.idiom/decisions.jsonl`. Commit it with your code.
 
 Some questions a review can't settle on its own: "you style inputs three ways; which is law?", or "17px padding appears 34 times; add a step to your scale or keep reporting it?". These arrive as rulings. `idiom ruling` records your answer in `DESIGN.md`, your product's design law, so it becomes a rule rather than a one-off fix.
 
-`idiom learn "<observation>"` does the same for a problem a person found and Idiom missed: it turns it into a new check or a ruling, and shows the diff first.
+`idiom learn "<observation>"` does the same for a problem a person found and Idiom missed: it turns it into a new check or a ruling, and shows the diff first. A measurable law, such as "nothing in a toolbar sits closer than 4px", configures the check that measures it, scoped to the surface it names, so the next `idiom check` enforces it at the exact pixels. Plain words or an annotated screenshot are enough: learn finds the flow state they apply to, or drafts one for you to add. `idiom learn --harvest` collects the UI corrections you already wrote in build escalation answers and pull request reviews as open misses, and `idiom learn --confirm` turns their rule candidates into rules after you see each diff. Agents record a catch the moment you say it with the MCP tool `idiom_learn`. `idiom learn --import misses.md` loads a whole table of past misses at once, and `idiom learn --replay misses` reports how many of them the latest checks now catch.
 
 ## Handing it on
 
 `idiom context` prints the accumulated brief (design law, rulings, prohibitions, tokens, open work), sized to paste into any agent before it writes UI. Over MCP, agents fetch it themselves.
 
-`idiom system` opens your design system as one visual page: the token palette, the colours and type that actually shipped, your rules and rulings, and your standing rejections with their evidence.
+`idiom system` opens your design system as one visual page: the token palette, the colors and type that actually shipped, your rules and rulings, and your standing rejections with their evidence.

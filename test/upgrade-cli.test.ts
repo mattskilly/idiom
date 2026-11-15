@@ -1,9 +1,10 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { run } from "../src/cli.js";
 import { initProject } from "../src/commands/init.js";
 import { renderUpgrade, upgradeCommand } from "../src/commands/upgrade.js";
+import type { ProjectFileFormat } from "../src/migrations/formats.js";
 import type { SelfUpdateDependencies } from "../src/update/self-update.js";
 import {
   distribution,
@@ -455,3 +456,143 @@ test.each(["json", "dry-run", "decline", "accept"])(
     else expect(skill).toBeUndefined();
   },
 );
+
+describe("project file formats", () => {
+  const fixture: ProjectFileFormat = {
+    id: "fixture",
+    locations: ["fixtures/*.json"],
+    kind: "document",
+    current: 2,
+    migrations: {
+      1: ({ name, ...rest }) => ({ ...rest, version: 2, label: name }),
+    },
+    validate: (value) =>
+      (value as { version?: unknown }).version === 2 &&
+      typeof (value as { label?: unknown }).label === "string",
+    summary: "fixture",
+  };
+  const now = () => new Date("2026-11-09T12:34:56Z");
+  const dependencies = {
+    distribution: distribution("1.0.0"),
+    history: { schema: 1 as const, releases: [] },
+    projectFileFormats: [fixture],
+    now,
+  };
+  async function project() {
+    const root = await temporary();
+    await put(root, ".idiom/fixtures/older.json", `{"version":1,"name":"A"}\n`);
+    await put(
+      root,
+      ".idiom/fixtures/newest.json",
+      `{\n  "version": 2,\n  "label": "B"\n}\n`,
+    );
+    return root;
+  }
+  const upgrade = async (root: string, ...flags: string[]) => {
+    const stdout = vi.fn();
+    const stderr = vi.fn();
+    const code = await run(
+      [
+        "node",
+        "idiom",
+        "--project",
+        root,
+        "upgrade",
+        "--no-self-update",
+        "--no-agent",
+        ...flags,
+      ],
+      { stdout, stderr, upgrade: dependencies },
+    );
+    return {
+      code,
+      out: stdout.mock.calls.flat().join(""),
+      err: stderr.mock.calls.flat().join(""),
+    };
+  };
+
+  test("dry run lists the migration and writes nothing", async () => {
+    const root = await project();
+    await upgrade(root);
+    await put(root, ".idiom/fixtures/older.json", `{"version":1,"name":"A"}\n`);
+    await rm(join(root, ".idiom/backups"), { recursive: true });
+    const before = await tree(root);
+    const { code, out } = await upgrade(root, "--dry-run");
+    expect(code).toBe(0);
+    expect(out).toContain(
+      "Project files dry run: 1 migrated, 1 current\n  would migrate: .idiom/fixtures/older.json — format 1 → 2 (nothing written)",
+    );
+    expect(await tree(root)).toEqual(before);
+  });
+
+  test("a real run migrates the older file and names the backup", async () => {
+    const root = await project();
+    const { code, out } = await upgrade(root);
+    expect(code).toBe(0);
+    expect(out).toContain(
+      "Project files: 1 migrated, 1 current\n  migrated: .idiom/fixtures/older.json — format 1 → 2, original kept at .idiom/backups/upgrade-20261109T123456Z/fixtures/older.json\nOriginals kept in .idiom/backups/upgrade-20261109T123456Z/. Commit the migrated files, then delete it.",
+    );
+    expect(JSON.parse(await read(root, ".idiom/fixtures/older.json"))).toEqual({
+      version: 2,
+      label: "A",
+    });
+    const again = await upgrade(root);
+    expect(again.out).toContain("Project files: 2 current");
+  });
+
+  test("--json reports migrated and current files", async () => {
+    const root = await project();
+    const { code, out } = await upgrade(root, "--json");
+    expect(code).toBe(0);
+    expect(JSON.parse(out).projectFiles).toEqual({
+      backupDirectory: ".idiom/backups/upgrade-20261109T123456Z",
+      files: [
+        {
+          path: ".idiom/fixtures/newest.json",
+          format: "fixture",
+          kind: "document",
+          outcome: "current",
+          version: 2,
+          currentVersion: 2,
+        },
+        {
+          path: ".idiom/fixtures/older.json",
+          format: "fixture",
+          kind: "document",
+          outcome: "migrated",
+          version: 1,
+          currentVersion: 2,
+          from: 1,
+          to: 2,
+          backupPath:
+            ".idiom/backups/upgrade-20261109T123456Z/fixtures/older.json",
+        },
+      ],
+    });
+  });
+
+  test("a newer file is refused: JSON first, then exit 1", async () => {
+    const root = await project();
+    await put(root, ".idiom/fixtures/future.json", `{"version":3}\n`);
+    const json = await upgrade(root, "--json");
+    expect(json.code).toBe(1);
+    expect(JSON.parse(json.out).projectFiles.files).toContainEqual(
+      expect.objectContaining({
+        path: ".idiom/fixtures/future.json",
+        outcome: "refused",
+        version: 3,
+      }),
+    );
+    expect(JSON.parse(json.out).projectFiles.files[0].reason).toBe(
+      "format 3 is newer than format 2, the newest this Idiom understands; update Idiom, then run idiom upgrade again",
+    );
+    expect(await read(root, ".idiom/fixtures/future.json")).toBe(
+      `{"version":3}\n`,
+    );
+    const text = await upgrade(root);
+    expect(text.code).toBe(1);
+    expect(text.out).toContain(
+      "  refused: .idiom/fixtures/future.json — format 3; Idiom 1.0.0 understands format 2. Update Idiom, then run idiom upgrade again.",
+    );
+  });
+});

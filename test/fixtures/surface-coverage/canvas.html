@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; margin: 24px; }
+      button { font: inherit; padding: 6px 12px; }
+      [role="menu"] { list-style: none; padding: 8px; border: 1px solid #ccc; }
+      [role="listbox"] { list-style: none; display: flex; gap: 8px; padding: 0; }
+      [role="option"] { padding: 6px 12px; border: 1px solid #ccc; cursor: pointer; }
+      [role="option"][aria-selected="true"] { background: #222; color: #fff; }
+      [popover] { padding: 16px; border: 1px solid #ccc; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Canvas</h1>
+      <p>Arrange the blocks on this page.</p>
+      <button id="more" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">More</button>
+      <ul id="more-menu" role="menu" aria-label="More" hidden>
+        <li role="menuitem" tabindex="-1">Duplicate</li>
+        <li role="menuitem" tabindex="-1">Rename</li>
+        <li role="menuitem" tabindex="-1">Delete</li>
+      </ul>
+      <h2 id="size-label">Size</h2>
+      <ul role="listbox" aria-labelledby="size-label">
+        <li id="size-s" role="option" aria-selected="false">Small</li>
+        <li id="size-m" role="option" aria-selected="false">Medium</li>
+        <li id="size-l" role="option" aria-selected="false">Large</li>
+      </ul>
+      <button id="share" popovertarget="share-panel">Share</button>
+      <div id="share-panel" popover>
+        <p>Anyone with the link can view.</p>
+        <button>Copy link</button>
+      </div>
+    </main>
+    <script>
+      const more = document.getElementById("more");
+      const menu = document.getElementById("more-menu");
+      more.addEventListener("click", () => {
+        const open = more.getAttribute("aria-expanded") !== "true";
+        more.setAttribute("aria-expanded", String(open));
+        menu.hidden = !open;
+      });
+      for (const option of document.querySelectorAll('[role="option"]'))
+        option.addEventListener("click", () => {
+          for (const other of document.querySelectorAll('[role="option"]'))
+            other.setAttribute("aria-selected", String(other === option));
+        });
+    </script>
+  </body>
+</html>

@@ -4,7 +4,13 @@ import { layoutInvariantsCheck } from "../src/checks/layout-invariants.js";
 import { checksConfigFrom } from "../src/checks/registry.js";
 import type { CheckTuple, Rect } from "../src/checks/types.js";
 import { findingFingerprint } from "../src/review/fingerprint.js";
-import type { InvariantInput } from "../src/schemas/invariant.js";
+import {
+  effectiveInvariants,
+  type InvariantInput,
+  invariantSchema,
+  invariantSelectors,
+} from "../src/schemas/invariant.js";
+import { checksConfigSchema } from "../src/schemas/project.js";
 import {
   invariantEvidence,
   invariantObservations,
@@ -253,4 +259,117 @@ test("missing alignment membership keeps its fingerprint when authored selectors
     });
   };
   expect(candidate([".a", ".b"])).toBe(candidate([".b", ".a"]));
+});
+
+describe("share invariants", () => {
+  const toolbar = '[role="toolbar"]';
+  const buttons = ':is([role="toolbar"]) :is(button)';
+  const share = (
+    shared: "top" | "bottom" | "height" | "width",
+    within: string | null = toolbar,
+  ): InvariantInput => ({
+    name: "Toolbar buttons share a height within 1px.",
+    optional: true,
+    tolerance: 1,
+    share: shared,
+    selector: buttons,
+    ...(within === null ? {} : { within }),
+  });
+
+  test("groups by container: two toolbars at different heights do not fail a top law", () => {
+    const boxes = {
+      [toolbar]: [
+        { x: 0, y: 0, width: 400, height: 40 },
+        { x: 0, y: 100, width: 400, height: 40 },
+      ],
+      [buttons]: [
+        { x: 10, y: 6, width: 60, height: 28 },
+        { x: 80, y: 6, width: 60, height: 28 },
+        { x: 10, y: 106, width: 60, height: 28 },
+        { x: 80, y: 106.5, width: 60, height: 28 },
+      ],
+    };
+    expect(evaluate([share("top")], boxes).candidates).toEqual([]);
+    // One member 4px low in the second toolbar.
+    boxes[buttons].push({ x: 150, y: 110, width: 60, height: 28 });
+    const candidates = evaluate([share("top")], boxes).candidates;
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.selectorHint).toBe(`${buttons}:nth-of-type(5)`);
+    expect(candidates[0]?.verification.params?.neighbour).toBe(
+      `${buttons}:nth-of-type(3)`,
+    );
+    expect(candidates[0]?.explanation).toBe(
+      `Toolbar buttons share a height within 1px: top edges 106, 106.5, 110 in ${toolbar}:nth-of-type(2) differ by 4 (tolerance 1)`,
+    );
+    expect(candidates[0]?.severity).toBe("major");
+  });
+
+  test("heights and widths compare the dimension; without within the whole state is one group", () => {
+    const boxes = {
+      [toolbar]: [{ x: 0, y: 0, width: 400, height: 40 }],
+      [buttons]: [
+        { x: 10, y: 6, width: 60, height: 28 },
+        { x: 80, y: 6, width: 64, height: 32 },
+        { x: 150, y: 6, width: 60, height: 28 },
+      ],
+    };
+    const height = evaluate([share("height")], boxes).candidates;
+    expect(height.map((c) => c.selectorHint)).toEqual([
+      `${buttons}:nth-of-type(2)`,
+    ]);
+    expect(height[0]?.explanation).toContain("heights 28, 32, 28");
+    expect(
+      evaluate([share("width", null)], boxes).candidates[0]?.explanation,
+    ).toContain("widths 60, 64, 60 differ by 4");
+  });
+
+  test("an optional law with nothing to measure is silent; members outside every container are not compared", () => {
+    expect(evaluate([share("top")], {}).candidates).toEqual([]);
+    expect(
+      evaluate([share("top")], {
+        [toolbar]: [{ x: 0, y: 0, width: 100, height: 40 }],
+        [buttons]: [
+          { x: 10, y: 6, width: 60, height: 28 },
+          { x: 300, y: 300, width: 60, height: 28 },
+        ],
+      }).candidates,
+    ).toEqual([]);
+    const required = { ...share("top"), optional: false };
+    expect(
+      evaluate([required], {}).candidates.map((c) => c.rule.split(":")[2]),
+    ).toEqual(["missing-selector"]);
+  });
+
+  test("identity is stable across measurements and distinguishes the shared edge", () => {
+    const boxes = (y: number) => ({
+      [toolbar]: [{ x: 0, y: 0, width: 400, height: 40 }],
+      [buttons]: [
+        { x: 10, y: 6, width: 60, height: 28 },
+        { x: 80, y, width: 60, height: 28 },
+      ],
+    });
+    const first = evaluate([share("top")], boxes(10)).candidates[0]?.rule;
+    expect(evaluate([share("top")], boxes(12)).candidates[0]?.rule).toBe(first);
+    expect(evaluate([share("bottom")], boxes(12)).candidates[0]?.rule).not.toBe(
+      first,
+    );
+  });
+
+  test("project invariants come first with a project origin; project group invariants are refused", () => {
+    const [declaration] = [invariantSchema.parse(share("top"))];
+    expect(
+      effectiveInvariants({ id: "studio", invariants: [] }, { id: "editor" }, [
+        declaration,
+      ]).map(({ origin }) => origin),
+    ).toEqual([{ scope: "project", id: "project", index: 0 }]);
+    expect(invariantSelectors(declaration)).toEqual([buttons, toolbar]);
+    expect(
+      checksConfigSchema.safeParse({
+        invariants: [{ group: ".list", items: ".item", attribute: "data-x" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      checksConfigSchema.safeParse({ invariants: [share("height")] }).success,
+    ).toBe(true);
+  });
 });

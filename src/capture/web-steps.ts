@@ -10,6 +10,8 @@ import {
 } from "playwright";
 import { targetVisibility } from "../checks/visibility-dom.js";
 import {
+  holdsPointer,
+  isReadinessStep,
   projectLogPathSchema,
   type ReachedFrom,
   stateChainLabel,
@@ -205,6 +207,7 @@ export class WebStepRunner implements StepHealthGuard {
     this.signalFailure = accept;
   });
   private urls: RegExp[];
+  private pointerHeld = false;
 
   constructor(
     private page: Page,
@@ -415,9 +418,14 @@ export class WebStepRunner implements StepHealthGuard {
       }
       this.activity();
       await this.checkpoint();
-      const mutation = ["click", "fill", "press", "select"].includes(
-        step.action,
-      );
+      const mutation = [
+        "click",
+        "dblclick",
+        "drag",
+        "fill",
+        "press",
+        "select",
+      ].includes(step.action);
       const recording = await this.timelines?.start({
         source: "web-step",
         kind: step.action,
@@ -454,6 +462,9 @@ export class WebStepRunner implements StepHealthGuard {
           : undefined;
       const started = performance.now();
       let failed = false;
+      // Set before the drag runs: a failure signalled mid-drag still lifts
+      // the pointer through releasePointer, and an extra mouse-up is harmless.
+      if (holdsPointer(step)) this.pointerHeld = true;
       try {
         const action = runAction(
           this.page,
@@ -513,6 +524,18 @@ export class WebStepRunner implements StepHealthGuard {
     await this.checkpoint();
   }
 
+  /** True while a held drag keeps the pointer down. */
+  get holdingPointer(): boolean {
+    return this.pointerHeld;
+  }
+
+  /** Lift a held drag's pointer; a no-op when nothing is held. */
+  async releasePointer(): Promise<void> {
+    if (!this.pointerHeld) return;
+    this.pointerHeld = false;
+    await this.page.mouse.up().catch(() => undefined);
+  }
+
   async dispose() {
     this.disposed = true;
     clearTimeout(this.timer);
@@ -526,6 +549,8 @@ export class WebStepRunner implements StepHealthGuard {
     this.page.off("pageerror", this.onPageError);
     this.requests.clear();
     this.pending.clear();
+    // After the listeners: the release is not part of any step's health.
+    await this.releasePointer();
   }
 }
 
@@ -534,18 +559,58 @@ export async function runAction(
   step: WebStep,
   readinessTimeout = 10000,
 ) {
-  const readiness = [
-    "waitFor",
-    "expectUrl",
-    "expectText",
-    "expectVisible",
-  ].includes(step.action);
+  const readiness = isReadinessStep(step);
   const timeout = readiness ? readinessTimeout : 10000;
   if (!readiness) return runActionWithTimeout(page, step, timeout);
   return withTimeoutDiagnostic("readiness", timeout, () =>
     runActionWithTimeout(page, step, timeout),
   );
 }
+/** A press step's key with its `modifiers` joined on: `Shift+ArrowUp`. */
+export function pressKey(step: Extract<WebStep, { action: "press" }>): string {
+  return [...(step.modifiers ?? []), step.key].join("+");
+}
+
+/**
+ * Pointer down on the source's centre, move to the target's centre (or by
+ * the offset) in fixed steps, and lift unless the step holds. A failure
+ * after the button went down always lifts it again.
+ */
+async function runDrag(
+  page: Page,
+  step: Extract<WebStep, { action: "drag" }>,
+  timeout: number,
+): Promise<void> {
+  const source = page.locator(step.selector).first();
+  await source.scrollIntoViewIfNeeded({ timeout });
+  const box = await source.boundingBox({ timeout });
+  if (box === null) throw new Error(`drag source has no box: ${step.selector}`);
+  const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  try {
+    let to: { x: number; y: number };
+    if (step.offset !== undefined) {
+      to = { x: from.x + step.offset.x, y: from.y + step.offset.y };
+    } else {
+      const target = page.locator(step.target as string).first();
+      await target.waitFor({ state: "visible", timeout });
+      const targetBox = await target.boundingBox({ timeout });
+      if (targetBox === null)
+        throw new Error(`drag target has no box: ${step.target}`);
+      to = {
+        x: targetBox.x + targetBox.width / 2,
+        y: targetBox.y + targetBox.height / 2,
+      };
+    }
+    await page.mouse.move(to.x, to.y, { steps: 10 });
+    if (step.hold !== true) await page.mouse.up();
+  } catch (error) {
+    await page.mouse.up().catch(() => undefined);
+    throw error;
+  }
+}
+
 async function runActionWithTimeout(
   page: Page,
   step: WebStep,
@@ -553,11 +618,28 @@ async function runActionWithTimeout(
 ) {
   switch (step.action) {
     case "click":
-      return page.locator(step.selector).click({ timeout });
+      return page.locator(step.selector).click({
+        timeout,
+        ...(step.modifiers === undefined ? {} : { modifiers: step.modifiers }),
+      });
+    case "dblclick":
+      return page.locator(step.selector).dblclick({
+        timeout,
+        ...(step.modifiers === undefined ? {} : { modifiers: step.modifiers }),
+      });
+    case "hover":
+      return page.locator(step.selector).hover({ timeout });
+    case "drag":
+      return runDrag(page, step, timeout);
     case "fill":
       return page.locator(step.selector).fill(step.value, { timeout });
-    case "press":
-      return page.locator(step.selector).press(step.key, { timeout });
+    case "press": {
+      const locator = page.locator(step.selector);
+      const key = pressKey(step);
+      for (let index = 0; index < (step.count ?? 1); index += 1)
+        await locator.press(key, { timeout });
+      return;
+    }
     case "focus":
       return page.locator(step.selector).focus({ timeout });
     case "select":

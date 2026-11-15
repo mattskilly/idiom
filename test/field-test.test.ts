@@ -894,3 +894,265 @@ test("agent-only evidence cannot satisfy human precision and opposite ratings ar
   expect(text).toContain("Agent precision");
   expect(text).toContain("disagree | human | agree | agent");
 });
+
+type TargetRecord = Record<string, unknown>;
+describe("run identity and the re-run", () => {
+  const { humanPassStatus, isTransientFailure, SPEED_TARGET_MS, speedTarget } =
+    lib;
+  const top = (key: string, rules = ["idiom:text-clipped"]) => ({
+    ...issue(key, rules),
+    evidence: `crops/${key}.png`,
+  });
+  const human = (rating: string | null) => ({
+    target: "a",
+    rules: [],
+    title: "",
+    agent: { rating: "agree", reason: "agent" },
+    human: rating ? { rating, reason: "why" } : null,
+  });
+
+  test("isTransientFailure: network blips yes, capture failures and timeouts no", () => {
+    for (const message of [
+      "page.goto: net::ERR_NAME_NOT_RESOLVED at https://x.example/",
+      "getaddrinfo ENOTFOUND x.example",
+      "fatal: unable to access 'https://github.com/x/y/': Could not resolve host: github.com",
+      "TypeError: fetch failed",
+    ])
+      expect(isTransientFailure({ message })).toBe(true);
+    for (const message of [
+      "quick capture failed: 0 of 4 tuples captured",
+      "Request timed out (-32001)",
+      "exited with code 1",
+    ])
+      expect(isTransientFailure({ message })).toBe(false);
+    expect(isTransientFailure({})).toBe(false);
+  });
+
+  test("ratingQueue with a runId skips other runs' targets and history slots", () => {
+    const results = {
+      runId: "run-2",
+      targets: [
+        { id: "a", kind: "docs", runId: "run-2", topIssues: [top("a:1")] },
+        { id: "b", kind: "docs", runId: "run-1", topIssues: [top("b:1")] },
+      ],
+    };
+    const labels = {
+      version: 1,
+      labels: { "a:1": human(null), "b:1": human(null), "old:7": human(null) },
+    };
+    const keys = (items: { key: string }[]) => items.map((item) => item.key);
+    expect(keys(ratingQueue(results, labels, { runId: "run-2" }))).toEqual([
+      "a:1",
+    ]);
+    expect(ratingQueue(results, labels, { runId: "run-2" })[0].runId).toBe(
+      "run-2",
+    );
+    // Without a runId (legacy results), every target is queued; history never is.
+    expect(keys(ratingQueue(results, labels))).toEqual(["a:1", "b:1"]);
+  });
+
+  test("mergeLabelTemplate keeps every rating, tags new slots, counts history", () => {
+    const labels = {
+      version: 1,
+      labels: {
+        "a:1": human("agree"),
+        "old:7": {
+          ...human("disagree"),
+          agent: { rating: "unsure", reason: "x" },
+        },
+      },
+    };
+    const before = structuredClone(labels);
+    const results = {
+      runId: "2026-11-09T10-00-00.000Z",
+      targets: [
+        {
+          id: "a",
+          topIssues: [top("a:1"), top("a:2")],
+          feelIssues: [top("a:3")],
+        },
+      ],
+    };
+    const merged = mergeLabelTemplate(results, labels);
+    expect(labels).toEqual(before);
+    expect(merged.labels.labels["a:1"]).toEqual(before.labels["a:1"]);
+    expect(merged.labels.labels["old:7"]).toEqual(before.labels["old:7"]);
+    expect(merged.added).toBe(2);
+    expect(merged.stale).toBe(1);
+    expect(merged.labels.labels["a:2"]).toMatchObject({
+      addedIn: "2026-11-09T10-00-00.000Z",
+      agent: null,
+      human: null,
+    });
+    expect(
+      mergeLabelTemplate({ targets: results.targets }, labels).labels.labels[
+        "a:2"
+      ],
+    ).not.toHaveProperty("addedIn");
+  });
+
+  const run = (
+    extra: object = {},
+  ): {
+    runId?: string;
+    targets: [TargetRecord, TargetRecord, ...TargetRecord[]];
+  } => ({
+    runId: "r",
+    targets: [
+      {
+        id: "a",
+        runId: "r",
+        kind: "docs",
+        mode: "quick",
+        topIssues: [top("a:1", ["idiom:x"]), top("a:2", ["idiom:y"])],
+        feelIssues: [top("a:3", ["idiom:motion-snap"])],
+        failures: [],
+      },
+      {
+        id: "repo",
+        runId: "r",
+        kind: "docs",
+        mode: "repo",
+        elapsedMs: 200_000,
+        checkedStates: ["s1", "s2", "s3"],
+        probe: { ran: 3, partial: 1, timedOut: 0, partialTimedOut: 0 },
+        topIssues: [],
+        failures: [],
+      },
+    ],
+    ...extra,
+  });
+  const section = (text: string, from: string, to: string) =>
+    text.slice(text.indexOf(from), text.indexOf(to));
+
+  test("with no human ratings, human precision is unmeasured and the pass is pending", () => {
+    const results = run();
+    const labels = {
+      version: 1,
+      labels: {
+        "a:1": human(null),
+        "a:2": human(null),
+        "a:3": human(null),
+        "old:7": human("agree"),
+      },
+    };
+    expect(humanPassStatus(results, labels)).toEqual({
+      total: 3,
+      rated: 0,
+      pending: 3,
+    });
+    const text = renderGenerated(results, labels);
+    expect(text).toContain(
+      "**Human pass pending for this run.** 0 of 3 Top-10 and feel issues rated; human precision is unmeasured (n=0).",
+    );
+    const byTarget = section(
+      text,
+      "### Human precision by target",
+      "### Human precision by rule",
+    );
+    expect(byTarget).toContain("| a | 0 | 0 | 0 | n=0 (unmeasured) |");
+    expect(byTarget).toContain("**n=0 (unmeasured)**");
+    const byRule = section(
+      text,
+      "### Human precision by rule",
+      "### Human feel rules",
+    );
+    expect(byRule).toContain(
+      "| `idiom:x` | 0 | 0 | 0 | 0 | n=0 (unmeasured) |",
+    );
+    expect(byRule).toContain(
+      "| `idiom:y` | 0 | 0 | 0 | 0 | n=0 (unmeasured) |",
+    );
+    // No human number anywhere: every data row of the human tables is free of %.
+    const human_ = section(
+      text,
+      "### Human precision by target",
+      "### Agent precision by target",
+    );
+    const dataRows = human_
+      .split("\n")
+      .filter(
+        (line) => line.startsWith("| ") && !/^\| (Target|Rule) \|/.test(line),
+      );
+    expect(dataRows.length).toBeGreaterThan(0);
+    for (const line of dataRows) expect(line).not.toMatch(/\d%/);
+    // The agent table still reports agent precision as a percent.
+    expect(
+      section(
+        text,
+        "### Agent precision by target",
+        "### Agent precision by rule",
+      ),
+    ).toContain("100%");
+
+    labels.labels["a:1"] = human("agree");
+    expect(renderGenerated(results, labels)).toContain(
+      "Human pass: 1 of 3 Top-10 and feel issues rated.",
+    );
+  });
+
+  test("speed target: met, not met, absent", () => {
+    expect(speedTarget(run())).toEqual({
+      target: "repo",
+      states: 3,
+      elapsedMs: 200_000,
+      probe: { ran: 3, partial: 1, timedOut: 0, partialTimedOut: 0 },
+      met: true,
+    });
+    expect(renderGenerated(run(), {})).toContain(
+      "`check` on repo's 3-state flow with the probe on: 200.0 s (target < 5 min): **met**. Probe ran / partial / timed out: 3 / 1 / 0.",
+    );
+    const slow = run();
+    slow.targets[1].elapsedMs = SPEED_TARGET_MS + 1;
+    expect(speedTarget(slow)?.met).toBe(false);
+    expect(renderGenerated(slow, {})).toContain("**not met**");
+    const none = { targets: [run().targets[0]] };
+    expect(speedTarget(none)).toBeUndefined();
+    expect(renderGenerated(none, {})).toContain(
+      "Not measured in this run (no repo target in this run).",
+    );
+    const failed = run();
+    Object.assign(failed.targets[1], {
+      elapsedMs: undefined,
+      checkedStates: undefined,
+      failures: [{ kind: "crash", stage: "clone", message: "x" }],
+    });
+    expect(renderGenerated(failed, {})).toContain(
+      "Not measured in this run (repo failed: crash@clone).",
+    );
+  });
+
+  test("Runs table status: ok, ok after retry, failed, kept from another run", () => {
+    const results = run();
+    Object.assign(results.targets[0], {
+      attempts: 2,
+      failures: [
+        {
+          kind: "crash",
+          stage: "mcp idiom_quick",
+          message: "net::",
+          retried: true,
+        },
+      ],
+    });
+    results.targets.push(
+      { ...results.targets[1], id: "old", runId: "q" },
+      {
+        ...results.targets[1],
+        id: "bad",
+        failures: [{ kind: "timeout", stage: "check", message: "x" }],
+      },
+    );
+    const rows = renderGenerated(results, {})
+      .split("\n")
+      .filter((line: string) => line.startsWith("| "));
+    const row = (id: string) =>
+      rows.find((line: string) => line.startsWith(`| ${id} | docs`));
+    expect(row("a")).toContain("| ok after retry | 2 |");
+    expect(row("a")).toContain("crash@mcp idiom_quick (retried)");
+    expect(row("repo")).toContain("| ok | 1 |");
+    expect(row("old")).toContain("| kept from run q |");
+    expect(row("bad")).toContain("| failed (timeout@check) |");
+    expect(renderGenerated(results, {})).toContain("run id r");
+  });
+});

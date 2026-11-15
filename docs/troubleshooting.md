@@ -125,7 +125,7 @@ See [Project roots and evidence](mcp.md#project-roots-and-evidence).
 
 ## Model critique degraded or timed out
 
-**Symptom.** `idiom review`, `idiom sweep` or a page review prints a degradation `Warning:` and the report is not labelled full. The run still exits `0` with the ranked deterministic findings.
+**Symptom.** `idiom review`, `idiom sweep` or a page review prints a degradation `Warning:` and the report is not labeled full. The run still exits `0` with the ranked deterministic findings.
 
 **Cause.** The configured model provider could not complete: `claude` is missing or not signed in, a Claude Code session did not finish within its 10-minute bound, the model or CLI version is unsupported, `ANTHROPIC_API_KEY` is missing for the explicit `anthropic` provider, or `codex` is missing or not signed in.
 
@@ -237,6 +237,14 @@ node --version
 **Cause:** Navigation/readiness timed out again after one retry, made after the other tuples with double deadlines. The recorded 1-minute load/core ratio exceeded `capture.hostPressureThreshold` (default 1.5), or the ready URL became more than 10 times slower than its successful measurement at start. Missing measurements are unavailable; a busy start does not pretend to be an idle latency baseline. The report preserves genuine findings and lists the states that received no review.
 
 **Fix:** Re-run on an idle host after other builds finish. Increasing the probe budget cannot make an unreachable state produce evidence: `Probe produced no evidence for <state>: the state timed out` recommends an idle-host re-run. On an idle host, persistent timeouts remain ordinary `missing-state` blockers to investigate. Very tall screenshots are capped at 16000 CSS px by default; adjust `capture.maxFullPageHeight` or a state's `screenshotTimeoutMs` if the report says a needed region was cropped.
+
+## A capture says "screenshot out of time"
+
+**Symptom:** A quick review's final line (or MCP `idiom_quick`'s `captureFailures`) says `1 of 4 captures failed — page-1/mobile/dark: screenshot out of time: 640 ms of the 30000 ms screenshot allowance left after 3 of 4 tiles; each tile needs at least 1000 ms`, or `a shot did not finish in … ms`.
+
+**Cause:** Each capture gets one screenshot allowance (30000 ms by default). A tall page is shot in tiles that share it, and each tile waits for the page's fonts. The first shot needs at least 10000 ms; later tiles are tried while at least 1000 ms is left, so a tile fails only when the page is genuinely too slow, which on a slow page or busy host can happen to the last tiles. The other captures and their findings are kept.
+
+**Fix:** Retry when the network and host are less busy, or review fewer viewports (one URL at a time). Quick review has no setting to raise the allowance. In a configured project, raise the state's `screenshotTimeoutMs` ([configuration](configuration.md)). This is not a port or server problem.
 
 ## A run was interrupted
 

@@ -7,7 +7,7 @@ Scripts, CI jobs and coding agents depend on Idiom's commands, flags, exit codes
 Idiom has an **interface version**, separate from the package version. It is a single integer, currently interface version 1, and it changes only when a stable surface changes incompatibly. It appears in three places:
 
 - `idiom --version` prints `<version> (<short source commit>) · interface <n>`, for example `0.17.0 (abc1234) · interface 1`. Scripts that want the package version alone should take the first word.
-- Every `--json` payload is an object whose first key is `"interfaceVersion": 1`. The one exception is `idiom brief list --json`, which prints a bare array (see [JSON output](#json-output)).
+- Every `--json` payload is an object whose first key is `"interfaceVersion": 1`. Only the deprecated `idiom brief list --json --array` still prints the old bare array, until 0.24.0 (see [JSON output](#json-output)).
 - The MCP server's initialize result carries it under `capabilities.experimental.idiom.interfaceVersion`. Clients read it with their SDK's server-capabilities accessor, for example `client.getServerCapabilities()`.
 
 Pin the interface version you were built against. If it moves, read the **Interface** heading in the [changelog](../CHANGELOG.md) for that release before upgrading.
@@ -30,7 +30,7 @@ A surface can be promoted from experimental to stable in any release. Demoting o
 
 These are the rules the contract test applies (see [How the promise is enforced](#how-the-promise-is-enforced)).
 
-**Output** (Idiom writes it, you read it: `--json` payloads, `findings.json`). Properties may be added. An existing property stays, keeps its type and never becomes a wider type. A property that is always present stays always present. New enum values may appear, and a property that is already a union may gain variants, so a consumer must tolerate values it does not recognise. A property that is not a union never becomes one that admits other types (`string` to `string | null` is breaking).
+**Output** (Idiom writes it, you read it: `--json` payloads, `findings.json`). Properties may be added. An existing property stays, keeps its type and never becomes a wider type. A property that is always present stays always present. New enum values may appear, and a property that is already a union may gain variants, so a consumer must tolerate values it does not recognize. A property that is not a union never becomes one that admits other types (`string` to `string | null` is breaking).
 
 **Input** (you write it, Idiom reads it: `.idiom/project.json`, flow manifests, `decisions.jsonl`, baselines, MCP tool inputs, flags). Optional properties may be added. Existing properties stay accepted with the same type or a wider one. Nothing that was optional becomes required. Enum values and variants may be added, never removed. A record type added to a shared log is additive too: see [Records a newer Idiom wrote](#records-a-newer-idiom-wrote).
 
@@ -108,7 +108,9 @@ Stable. The meanings are in [Exit codes and setup failures](commands.md#exit-cod
 
 At interface version 1, `check` additively supports optional `verdict: "deferred"` and `timedOutTuples` coordinates (`state`, `viewport`, `colorScheme`). Changed/gate aggregates qualify them with `flow`. Normal fields, genuine findings and the numeric `blocking` count retain their meanings; host deferral creates no finding. Stored `run.json` host measurements determine replay behavior. An incomplete initial review does not automatically record a baseline, including with `--deferred warn`. The opt-in policy changes only CLI status; JSON remains truthful and MCP semantics are unchanged.
 
-Every payload except `brief list` is an object that starts with `"interfaceVersion": 1`. The stable-additive payloads promise the fields named here; anything else in them is experimental until it is named.
+At interface version 1, these are additive too: `check` carries an optional `trend` (`flow` and `runs[]` with `runId`, `completedAt`, `commit`, `dirty`, `blocker`, `major`, `minor` and optional `coverageGap` `{ missing, selected, kinds }`) and an optional `devServer` (`kind`, `evidence`, `state`, `viewport`, `colorScheme`); `init --validate` carries `suggestions[]` (advice lines that never affect `ready`); the new `report --json` prints `{ runId, reportPath, trend, humanFound? }` (experimental); and a capture's `run.json` may record an optional `devServer` object.
+
+Every payload is an object that starts with `"interfaceVersion": 1`. The stable-additive payloads promise the fields named here; anything else in them is experimental until it is named.
 
 | Payload | Command | Status |
 | --- | --- | --- |
@@ -116,8 +118,8 @@ Every payload except `brief list` is an object that starts with `"interfaceVersi
 | `run-failure` | `check` | stable-additive |
 | `init --validate` | `init` | stable-additive |
 | `doctor` | `doctor` | stable-additive |
-| `check --gate` | `check` | experimental |
-| `check --changed` | `check` | experimental |
+| `check --gate` | `check` | stable-additive |
+| `check --changed` | `check` | stable-additive |
 | `upgrade` | `upgrade` | experimental |
 | `baseline record` | `baseline record` | experimental |
 | `baseline accept` | `baseline accept` | experimental |
@@ -127,12 +129,16 @@ Every payload except `brief list` is an object that starts with `"interfaceVersi
 | `sweep` | `sweep` | experimental |
 | `coverage` | `coverage` | experimental |
 | `coverage --states` | `coverage` | experimental |
+| `report` | `report` | experimental |
 | `digest` | `digest` | experimental |
 | `nightly` | `nightly` | experimental |
 | `bisect` | `bisect` | experimental |
 | `decide --pending` | `decide` | stable-additive |
 | `decide --list` | `decide` | experimental |
 | `learn list` | `learn` | experimental |
+| `learn harvest` | `learn` | experimental |
+| `learn import` | `learn` | experimental |
+| `learn replay` | `learn` | experimental |
 | `compare` | `compare` | experimental |
 | `brief research` | `brief` | experimental |
 | `brief triage` | `brief triage` | experimental |
@@ -151,39 +157,78 @@ The stable fields:
 - **`run-failure`**, printed instead by `check` and `baseline record|accept` when the run could not happen: `flow` (when one was named) and `failure` with `stage` (`preflight`, `server` or `capture`), `cause`, `hint`, `message` and, when relevant, `paths`.
 - **`init --validate`**: `ready`, `validate.ok`, and `doctor`, which is the `doctor` payload without `interfaceVersion`, or `null`.
 - **`doctor`**: `flow` (when there is one), `ok`, `steps[]` with `id`, `status`, `ms` and optional `detail` and `hint`, `leftovers[]` with `pid`, `port`, `command` and `outcome` (`stopped` or `failed`) when doctor found application servers an earlier, killed run left behind, and `failure` (the `run-failure` object) when the boot failed.
+- **`decide --pending`**: `decisionNeeded[]`, the explicit unresolved decision questions, and `decisionQuestion`, their rendered escalation text (empty when there are none).
+- **`check --changed`**, the flows a change selected and their summaries:
+  - `selection`, the changed-path selection: `git` with `repository`, `head`, `requestedBase` (a string, or `null` for the default base), `resolvedBase`, `baseReason` and, when Idiom fell back to another base, `fallbackReason`; `files[]` with `path`, `kind` (`route`, `import`, `global` or `unresolved`), `reason`, `routes[]` and `states[]` (`{ flow, state }`); `candidates[]`, `selected[]` and `skipped[]` (each `{ flow, state }`); and `fallbackFiles[]`.
+  - `checkedStates`, the number of states checked.
+  - `checks[]`, one per affected flow: either `{ flow, status: "not-checked", reason }` or `{ flow, status: "checked", summary }`, where `summary` is the `check` payload above without `interfaceVersion`.
+  - When any checked flow deferred, `verdict: "deferred"` and `timedOutTuples[]` with `flow`, `state`, `viewport` and `colorScheme`.
+  - Experimental: each file's `importChains` and `uncertainties`, and `selection.graph`. They explain the import-graph analysis, which is still changing (graph completeness arrived with the build gate).
+- **`check --gate`** has three forms. Pass or fail is the exit code (see [Exit codes](#exit-codes)); the payload says which form ran and what is pending.
+  - **Skipped**, when no changed path reaches a rendered page: `gate` with `skipped: true`, `reason`, `base`, `line`, `files[]` (each with `path`) and `allFlows[]`.
+  - **Plan only** (`--plan-only`): `gate` with `planOnly: true`, `line` and `plan`. The contents of `plan` are experimental: its estimates, trimming and comparisons are planner detail that is still changing.
+  - **Ran**: `gate` with `estimateMs`, `budgetMs`, `skippedWork[]` (`kind`, `flow`, `reason`, `estimatedMs`, and `state`, `viewport` or `scheme` when the skipped work had one) and `server` with `mode` (`reused`, `production-reuse` or `fresh`) and `reason`. At the top level: `decisionNeeded[]` (the pending questions, exactly as `decide --pending` prints them) and `decisionQuestion` (empty when there are none), both always present; then `verdict` and `timedOutTuples` when deferred, and `selection`, `checkedStates` and `checks[]` exactly as in `check --changed`.
+  - Experimental in the ran form: `gate.plan` (as above), `gate.comparisons` (added in 0.22.0; its modes are still being tuned) and `gate.timing` (the timing breakdown, still changing).
 
-`brief list --json` prints a bare array, so it cannot carry `interfaceVersion` without changing its shape. It stays an array and experimental until 1.0.
+`brief list --json` prints `{ interfaceVersion, briefs }` and is experimental. `briefs[]` holds each stored brief record, newest first, or `{ slug, error }` for one that cannot be read. `brief list --json --array` prints the old bare array of the same elements; it is deprecated and will be removed in 0.24.0 (see [Deprecation policy](#deprecation-policy)).
 
 ## MCP
 
-Tool names and input schemas are stable for the tools marked stable. The tools declare no output schema yet, so their outputs (`structuredContent`) are experimental, except `structuredContent.failure`, which is the stable-additive `run-failure` object. The `capabilities.experimental.idiom.interfaceVersion` key is stable. Setup and inputs are described in [MCP](mcp.md).
+Tool names and input schemas are stable for the tools marked stable. The `capabilities.experimental.idiom.interfaceVersion` key is stable. Setup and inputs are described in [MCP](mcp.md).
 
-| Tool | Status |
-| --- | --- |
-| `idiom_quick` | stable |
-| `idiom_check` | stable |
-| `idiom_issue` | stable |
-| `idiom_fix_plan` | stable |
-| `idiom_verify` | stable |
-| `idiom_context` | stable |
-| `idiom_flows` | stable |
-| `idiom_decide` | stable |
-| `idiom_init` | stable |
-| `idiom_doctor` | stable |
-| `idiom_baseline` | stable |
-| `idiom_design_add` | experimental |
-| `idiom_choose` | experimental |
-| `idiom_tickets` | experimental |
-| `idiom_sweep` | experimental |
-| `idiom_coverage` | experimental |
-| `idiom_brief_triage` | experimental |
-| `idiom_brief_plan` | experimental |
-| `idiom_brief_record` | experimental |
-| `idiom_brief_decide` | experimental |
-| `idiom_brief_export` | experimental |
-| `idiom_brief_attach` | experimental |
-| `idiom_setup_prompt` | experimental |
-| `idiom_ready` | experimental |
+Every tool declares an `outputSchema`, and every successful result carries `structuredContent` that matches it and starts with `"interfaceVersion": 1`. The text content is unchanged, so clients that read text keep working. A failed call is a tool error (`isError`) and is not held to the output schema; when a run could not happen, its `structuredContent.failure` is the stable-additive `run-failure` object, as before.
+
+A tool's output has its own status, under the same [output rules](#compatibility-rules) as the `--json` payloads. An output is stable-additive once the fields it promises are named here; the fields it does not name stay experimental, and this page says why. An output cannot be more stable than its tool. Experimental outputs, and the experimental fields of a stable output, still match the declared schema, which names every top-level property, but their shape can change in any release.
+
+The stable output fields:
+
+- **`idiom_doctor`**: the `doctor` payload (see [JSON output](#json-output)): `flow` (when there is one), `ok`, `steps[]`, `leftovers[]` and `failure` when present, plus `update` with `current`, `latest` and `command` when a newer Idiom is available (once per server session).
+- **Finding detail**, one shape shared by `idiom_quick`, `idiom_check` and `idiom_issue`. Together these fields are what an agent needs to review, fix and verify:
+  - Identity: `id`, `runId`, `flow` and `verificationReference` (`{ id, runId }`, passed unmodified to `idiom_verify`).
+  - `finding` with `id`, `category` (the rule id, a check id in [rules](rules.md)), `rule` (the finding rule name, when the finding came from a rule), `severity`, `explanation` (the finding's title: its one-line statement of the problem), `state`, `viewport`, and `colorScheme` and `fix` when present.
+  - The target: `coordinate` with `state`, `viewport`, and `colorScheme` and `combination` when present.
+  - The fix guidance: `fix.instructions`, when the finding has one.
+  - The evidence: `evidencePaths[]` (absolute paths), `cropPath` when there is a crop, and `evidenceStatus`.
+  - Experimental, as capture-artifact or verification detail that is still changing: `basis`, `basisDetails`, `acceptance`, `fix.acceptance`, `selector`, `measurement`, `filmstrip`, `timeline`, and every other property of `finding`.
+- **Issue**, one ranked issue in `topIssues[]` and `issues[]`: `id`, `severity`, `category`, `rule` (when present), `groups[]` (group ids), `findings` (how many findings it groups) and `representative` (a finding detail, when one is materialized). Experimental: the ranking fields (`salience`, `prominence`, `score`, `impact`, `impactReasons`, `explanation`, `rules`, `family`, `primaryAction`, `deferred`) and `rootCause`, because [ranking](ranking.md) can change between releases.
+- **`idiom_quick`**: `runId`, `runDirectory`, `reports` (`markdown`, `findings`, and `html` when written), `counts` with `findings`, `issues` and `groups`, `findings[]` (finding details), and `topIssues[]` and `issues[]` (issues). Experimental: `interaction` (the probe report, still changing), `checkCoverage` (coverage detail), `captureFailures` (new since 0.22.0) and `counts.captures`.
+- **`idiom_check`** has two forms in one object. Its schema can only mark every key optional, because an MCP output root cannot be a union, so which keys each form carries is promised here rather than enforced by the schema.
+  - One flow: `flow`, `runId`, `topIssues[]` (issues), `newFindings[]` (finding details), `verificationReferences[]` (`{ id, runId }`), `counts` with `new`, `fixed`, `preExisting`, `findings`, `issues` and `blocking`, and `reports`, always; `issues[]` and `findings[]` (finding details) only with `all: true`; `verdict: "deferred"` and `timedOutTuples[]` (`state`, `viewport`, `colorScheme`) when deferred.
+  - With `changed`: `selection` (as in `check --changed`), `checkedStates`, and `checks[]`, each either `{ flow, status: "not-checked", reason }` or `{ flow, status: "checked" }` plus the one-flow fields above; and `verdict: "deferred"` and `timedOutTuples[]` (each with `flow`) when any flow deferred.
+  - Experimental: `groups`, `baseline`, `baselineRecorded`, `baselineNotRecorded`, `preExistingFindings`, `fixed`, `acknowledgedFindings`, `acknowledgementLapses`, `coverage`, `checkCoverage`, `captureFailures`, `designSystemQuestions`, `update` and the rest of `counts`. Baseline comparison and coverage detail are still changing (the gate's base comparison arrived in 0.22.0).
+- **`idiom_issue`**: every finding-detail field at the top level, where `id` may be a group or issue id, plus `members[]` (finding details). Experimental: `group` and `siblingGroups` (group internals), and the finding detail's experimental fields.
+- **`idiom_verify`**: `outcome` (`fixed`, `failed` or `no-findings`), `passed`, `success` (passed with no introduced findings), `regressionFree` (`true` or `false`, or `null` when introduced findings could not be evaluated), `findingCount`, `causes[]`, `sourceRun`, `reportPath`, `htmlReportPath` and `outputDirectory`.
+  - `verdicts[]`, the per-finding outcomes, when evaluation ran: `status` (`fixed`, `reproduced` or `unverifiable`), `reason`, `finding` with `id`, `category`, `rule` (when present) and `severity`, and `acceptance` with `status` (`passed`, `failed` or `not-recheckable`) and `reason`.
+  - `newFindings[]`, the deterministic findings the fix introduced anywhere in the flow, when evaluation ran: `key`, `coordinate` (`state`, `viewport`, and `colorScheme` and `combination` when present), `category`, `rule` and `severity`.
+  - Experimental: `newBlockers`, `coverage`, `designAssets`, `verdicts[].locus` and `verdicts[].acceptance.contract`.
+
+| Tool | Status | Output | Why the output is experimental |
+| --- | --- | --- | --- |
+| `idiom_quick` | stable | stable-additive | — |
+| `idiom_check` | stable | stable-additive | — |
+| `idiom_issue` | stable | stable-additive | — |
+| `idiom_fix_plan` | stable | experimental | It mirrors `idiom fix`, an experimental command |
+| `idiom_verify` | stable | stable-additive | — |
+| `idiom_context` | stable | experimental | `context` has no `--json` payload to mirror |
+| `idiom_flows` | stable | experimental | No `--json` payload mirrors it |
+| `idiom_decide` | stable | experimental | It mirrors `decide` and `ruling` results whose JSON is experimental (only `decide --pending` is stable, and this tool does not return it) |
+| `idiom_init` | stable | experimental | `init` has no stable `--json` payload besides `init --validate`; its wiring and system learning are still evolving |
+| `idiom_doctor` | stable | stable-additive | — |
+| `idiom_baseline` | stable | experimental | It mirrors `baseline record` and `baseline advance --json`, which are experimental |
+| `idiom_design_add` | experimental | experimental | The tool itself is experimental |
+| `idiom_choose` | experimental | experimental | The tool itself is experimental |
+| `idiom_learn` | experimental | experimental | The tool itself is experimental |
+| `idiom_tickets` | experimental | experimental | The tool itself is experimental |
+| `idiom_sweep` | experimental | experimental | The tool itself is experimental |
+| `idiom_coverage` | experimental | experimental | The tool itself is experimental |
+| `idiom_brief_triage` | experimental | experimental | The tool itself is experimental |
+| `idiom_brief_plan` | experimental | experimental | The tool itself is experimental |
+| `idiom_brief_record` | experimental | experimental | The tool itself is experimental |
+| `idiom_brief_decide` | experimental | experimental | The tool itself is experimental |
+| `idiom_brief_export` | experimental | experimental | The tool itself is experimental |
+| `idiom_brief_attach` | experimental | experimental | The tool itself is experimental |
+| `idiom_setup_prompt` | experimental | experimental | The tool itself is experimental |
+| `idiom_ready` | experimental | experimental | The tool itself is experimental; its output is the stable-additive `init --validate` payload plus `problem`, and is promoted with the tool |
 
 ## Files
 
@@ -223,7 +268,45 @@ Skipped 3 decision records written by a newer Idiom (types: acknowledge). Upgrad
 
 A malformed line, a known type with invalid fields, or a record missing its identity fields (`at`, `findingId` and `fingerprint` in decisions; `version` and `id` in learned entries) still fails as before. Commands that write these files never drop or rewrite a skipped line. So adding a record type to these files is additive and needs no interface version bump.
 
+Learned records from `idiom learn` without `--state` use the `observation` kind, which older readers skip as above. Every new learned record also carries optional `candidate` and `placement` fields. Learned records are strict, so an older Idiom treats a known-kind record with those fields as a known type with invalid fields: its summaries skip the line, and its `learn --list`, `--covered` and `--fixture` stop at it. Records from this release need this release or newer to list, mark or export.
+
+Records from `idiom learn --harvest` are `observation` records that also carry an optional `harvest` field (source, key, date, author and the build, escalation or pull request they came from). An older Idiom stops at them the same way it stops at `candidate` and `placement`. The harvest cursor, `.idiom/harvest.json`, is a versioned document.
+Records from `idiom learn --import` are `observation` records that also carry an optional `import` field (the import's name, source file, row id and named checks, and the row's surface, date and source when the table has them). An older Idiom reads them the same way as `candidate` and `placement` above: its summaries skip the line, and its `learn --list`, `--covered` and `--fixture` stop at it. Use this release or newer once a project has imported a table.
+
 The finding-name registry, decision briefs and a run's `run.json` have no record types; a change to them follows the Input rules above.
+
+### Format versions and upgrade
+
+Every versioned file under `.idiom/` carries a top-level `version` (or, in a log, one per record). `idiom upgrade` brings these files to the format the installed release writes.
+
+| File | Format version | Migrated from |
+| --- | --- | --- |
+| `.idiom/project.json` | 1 | — (no older formats) |
+| `.idiom/rules.json` | 1 | — (no older formats) |
+| `.idiom/finding-names.json` | 1 | — (no older formats) |
+| `.idiom/ruling-names.json` | 1 | — (no older formats) |
+| `.idiom/baselines/*.json` | 1 | — (no older formats) |
+| `.idiom/filed-tickets.json` | 1 | — (no older formats) |
+| `.idiom/briefs/*.json` | 1 | — (no older formats) |
+| `.idiom/briefs/triage/*.json` | 1 | — (no older formats) |
+| `.idiom/references/*/reference.json` | 1 | — (no older formats) |
+| `.idiom/anti-references/*/reference.json` | 1 | — (no older formats) |
+| `.idiom/learned.jsonl` | 1 (per record) | — (a log: never rewritten) |
+| `.idiom/harvest.json` | 1 | — (no older formats) |
+
+No migrations are currently needed: every versioned file is at format version 1.
+
+How upgrade treats each file:
+
+- **Current.** A file already at the current format is only read; its bytes never change. Running `idiom upgrade` twice in a row changes nothing the second time.
+- **Older.** The file is migrated one format at a time, and the result must pass the same schema the reader uses, so nothing the newer format can hold is lost. Before rewriting, upgrade copies the original to one backup directory per run, `.idiom/backups/upgrade-<UTC timestamp>/`, at the same path relative to `.idiom/`, and the report names it. Commit the migrated files, then delete the backup directory (or add `backups/` to `.idiom/.gitignore`).
+- **Logs.** `learned.jsonl` is append-only and never rewritten. Records on an older format stay as written and the reader keeps accepting them; upgrade reports the log as `kept`.
+- **Newer.** A file (or a log record) on a newer format than the installed Idiom understands is left untouched and reported `refused`, and upgrade exits 1: update Idiom, then run `idiom upgrade` again.
+- **Unreadable.** A file that is not valid JSON, has no format version, or is a symlink is reported `skipped` and left alone; `idiom validate` reports what is wrong with it.
+
+`idiom upgrade --dry-run` lists the migrations it would make without writing anything, and `upgrade --json` reports every file under `projectFiles` ([upgrade](commands.md#upgrade)).
+
+These carry no format version and upgrade never touches them: `.idiom/decisions.jsonl` (append-only; new record types are additive, see [Records a newer Idiom wrote](#records-a-newer-idiom-wrote)), flow manifests under `.idiom/flows/`, `.idiom/glossary.json`, and run outputs and caches (`.idiom/reports/`, `.idiom/cache/`, `.idiom/agent-hooks/`, `.idiom/designs/`, images under `.idiom/learned/`, `.idiom/backups/`). A `baselines.directory` configured outside `.idiom/` is not scanned.
 
 ## Ids
 
@@ -241,11 +324,30 @@ A stable surface that is going away is deprecated first:
 3. It keeps working for at least one minor release after the release that deprecated it.
 4. Before 1.0 it is removed only together with an interface version bump. After 1.0 it is removed only in a major release.
 
+An experimental surface can change without a deprecation period, but when Idiom keeps an old form working for a while it is deprecated the same way, with the same warning.
+
+### How warnings appear
+
+On the CLI, using a deprecated surface prints one line to stderr, never stdout and never inside a `--json` payload:
+
+```
+Deprecated: <surface> will be removed in <release>; use <replacement> instead. Set IDIOM_NO_DEPRECATION_WARNINGS=1 to silence this warning.
+```
+
+It prints at most once per process for each surface. Set `IDIOM_NO_DEPRECATION_WARNINGS` to any non-empty value other than `0` to silence every deprecation warning; the deprecated surface still works.
+
+Deprecated now:
+
+- `idiom brief list --json --array`, the old bare-array shape of `brief list --json`. Use `idiom brief list --json` and read `.briefs`. Removed in 0.24.0. Moving `brief list --json` to an object needed no interface version bump because the payload is experimental.
+
 ## How the promise is enforced
 
 This section is for contributors.
 
 - `INTERFACE_VERSION` and the exit codes are defined once, in `src/interface/version.ts`. Every `--json` emitter goes through its `jsonPayload` helper, and a source guard test fails on a pretty-printed `JSON.stringify` written straight to stdout.
-- `src/interface/surfaces.ts` records the status of every command, `--json` payload, MCP tool and file. It also holds the Zod contracts for the stable-additive payloads, and `bun run typecheck` fails if a payload's type stops satisfying its contract. Tests fail when a new command, `--json` flag or MCP tool has no status, and when this page's tables disagree with the registry.
-- `test/contract/interface.json` is a snapshot of the stable surfaces: commands and flags, exit codes, JSON Schemas for the stable `--json` payloads and files (generated from the Zod schemas), the MCP tool list and input schemas, and the rule ids. `test/interface-contract.test.ts` rebuilds it from the code and compares the two with the rules above. Additive changes pass. A breaking change fails, with a message that points here, until `INTERFACE_VERSION` moves.
+- `src/interface/surfaces.ts` records the status of every command, `--json` payload, MCP tool, MCP tool output and file. It also holds the Zod contracts for the stable-additive payloads (the ones the MCP server also uses live in `src/interface/contracts.ts`), and `bun run typecheck` fails if a payload's type stops satisfying its contract. Tests fail when a new command, `--json` flag or MCP tool has no status, and when this page's tables disagree with the registry.
+- `src/mcp/outputs.ts` declares every MCP tool's `outputSchema`; a tool without one fails at server construction. Type ties there fail `bun run typecheck` when a typed tool result gains, loses or retypes a top-level property its schema does not match, or a nested promised field (finding detail, issue). The MCP test client validates every successful call against the advertised schema, and `test/mcp-output-schemas*.test.ts` call every tool.
+- A stable-additive MCP output's promised fields are its contract in `mcpOutputContracts` (`src/mcp/outputs.ts`). Its advertised `outputSchema` is that promised shape plus its loosely typed experimental keys, and a contract test fails unless the advertised schema keeps every promised field, required where promised, and never widens one.
+- Runtime deprecation warnings go through `warnDeprecated` in `src/interface/deprecation.ts`, which keeps them to one consistent stderr line, once per process per surface, silenced by `IDIOM_NO_DEPRECATION_WARNINGS`. Don't print a deprecation warning any other way.
+- `test/contract/interface.json` is a snapshot of the stable surfaces: commands and flags, exit codes, JSON Schemas for the stable `--json` payloads and files (generated from the Zod schemas), the MCP tool list, input schemas and output statuses, the promised output contracts of stable-additive MCP outputs (not their experimental keys), and the rule ids. `test/interface-contract.test.ts` rebuilds it from the code and compares the two with the rules above. Additive changes pass. A breaking change fails, with a message that points here, until `INTERFACE_VERSION` moves.
 - After an additive change, or after a deliberate bump, run `bun run contract:update` to record the new snapshot and commit it. It refuses to record a breaking change while the interface version is unchanged. At release time, every change in the snapshot's diff is listed under **Interface** in the changelog ([releases](releases.md#prepare-the-tag)).

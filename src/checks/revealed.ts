@@ -8,6 +8,41 @@ export type RevealedTuple = {
   tuple: CheckTuple;
 };
 
+type RevealedKind = RevealedState["kind"];
+
+/** What an unnamed disclosure is called, by what it opened. */
+const unnamed: Record<RevealedKind, string> = {
+  details: "unnamed details",
+  popup: "unnamed popup",
+  expanded: "unnamed panel",
+  // The menu a mode-switch item sat in, when its own kind is not recorded.
+  mode: "unnamed menu",
+};
+
+/**
+ * A revealed state's name a person can read. A disclosure with no
+ * accessible name was recorded as `""` by earlier versions; each blank
+ * `›` segment becomes a fallback named for what it opened: the last
+ * segment of a mode switch is the item, the rest are the disclosure
+ * (`parentKind` when the caller knows it). Named segments are untouched.
+ */
+export function revealedLabel(
+  name: string,
+  kind: RevealedKind,
+  parentKind?: Exclude<RevealedKind, "mode">,
+): string {
+  const segments = name.split(" › ");
+  const last = segments.length - 1;
+  return segments
+    .map((segment, index) => {
+      if (segment.trim() !== "") return segment;
+      if (kind !== "mode") return unnamed[kind];
+      if (index === last && last > 0) return "unnamed item";
+      return unnamed[parentKind ?? "mode"];
+    })
+    .join(" › ");
+}
+
 /**
  * Every observed revealed state on a tuple's probe results, as a synthetic
  * tuple carrying the revealed observation. Nested results already carry
@@ -27,7 +62,10 @@ export function revealedTuples(tuple: CheckTuple): RevealedTuple[] {
       continue;
     tuples.push({
       parent: tuple,
-      revealed,
+      revealed: {
+        ...revealed,
+        name: revealedLabel(revealed.name, revealed.kind),
+      },
       tuple: {
         ...tuple,
         observations: { ...revealed.observations, probe: undefined },

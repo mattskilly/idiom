@@ -1,10 +1,306 @@
-import { ran, unavailable, verify } from "./shared.js";
+import {
+  isVisuallyHidden,
+  ran,
+  signalledElements,
+  unavailable,
+  verify,
+} from "./shared.js";
 import type {
+  ChecksConfig,
+  CheckTuple,
   DeterministicCheck,
   FindingCandidate,
+  ProbeArtifact,
   ProbeResult,
   Rect,
 } from "./types.js";
+
+export type NavigationMatch = "pathname" | "query" | "full";
+
+/**
+ * The grouping key of a destination: its pathname with any trailing slash
+ * dropped (except on the root), plus the query with sorted parameters, plus
+ * the hash, as configured.
+ */
+export function navigationKey(url: URL, match: NavigationMatch): string {
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  if (match === "pathname") return path;
+  const params = [...url.searchParams.entries()].sort(([a, x], [b, y]) =>
+    a === b ? (x < y ? -1 : x > y ? 1 : 0) : a < b ? -1 : 1,
+  );
+  const search =
+    params.length === 0 ? "" : `?${new URLSearchParams(params).toString()}`;
+  return match === "query" ? `${path}${search}` : `${path}${search}${url.hash}`;
+}
+
+/** One way to reach a destination from this state. */
+export type NavigationEntry = {
+  selector: string;
+  name: string;
+  /** Where it sits, for the explanation. */
+  location: string;
+  /** Distinct places: a persistent control, one menu, or the palette. */
+  place: string;
+  persistent: boolean;
+  key: string;
+};
+
+const normaliseName = (value: string) =>
+  value.replace(/\s+/g, " ").trim().toLowerCase();
+
+function parseUrl(value: string, base?: string): URL | undefined {
+  try {
+    const url = base === undefined ? new URL(value) : new URL(value, base);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The document's own URL, used to resolve links and drop in-page anchors. */
+function documentOf(tuple: CheckTuple): URL | undefined {
+  const raw =
+    tuple.documentUrl ??
+    tuple.documentResponse?.finalUrl ??
+    tuple.documentResponse?.url;
+  return raw === undefined ? undefined : parseUrl(raw);
+}
+
+/**
+ * Every way this state offers to reach a destination: links on the page,
+ * clicked controls that navigated, link rows of opened menus, and command
+ * palette entries. Grouped by the destination key, origin included.
+ */
+export function navigationEntries(
+  tuple: CheckTuple,
+  probe: ProbeArtifact,
+  match: NavigationMatch,
+): { entries: NavigationEntry[]; notes: string[] } {
+  const notes: string[] = [];
+  const entries: NavigationEntry[] = [];
+  const page = documentOf(tuple);
+  const keyOf = (url: URL) =>
+    page !== undefined && url.origin === page.origin
+      ? navigationKey(url, match)
+      : `${url.origin}${navigationKey(url, match)}`;
+  /** Absolute URL, or undefined for a pure in-page anchor or a non-web URL. */
+  const destination = (raw: string): URL | undefined => {
+    const url = parseUrl(raw, page?.href);
+    if (url === undefined) return undefined;
+    if (
+      page !== undefined &&
+      url.origin === page.origin &&
+      url.pathname === page.pathname &&
+      url.search === page.search &&
+      url.hash !== ""
+    )
+      return undefined;
+    return url;
+  };
+  for (const result of probe.results) {
+    if (result.skipped !== undefined || result.repeated === true) continue;
+    const signature = result.signature;
+    if (signature?.startsWith("navigate:")) {
+      const url =
+        result.destination === undefined
+          ? undefined
+          : parseUrl(result.destination);
+      const key =
+        url === undefined
+          ? navigationKey(
+              new URL(signature.slice("navigate:".length), "http://x"),
+              "pathname",
+            )
+          : keyOf(url);
+      // A menu item's name is its path from the top trigger: "Project › Leads".
+      const path = result.name.split(" › ");
+      const own = path.at(-1) ?? result.name;
+      entries.push(
+        result.persistent
+          ? {
+              selector: result.selector,
+              name: result.name,
+              location: `${result.selector}${result.region === undefined ? "" : `, in ${result.region}`}`,
+              place: `control:${result.selector}`,
+              persistent: true,
+              key,
+            }
+          : {
+              selector: result.selector,
+              name: own,
+              location: `in the "${path.slice(0, -1).join(" › ") || result.name}" menu`,
+              place: `menu:${path[0] ?? result.name}`,
+              persistent: false,
+              key,
+            },
+      );
+    }
+    const menu = result.menu;
+    if (menu === undefined) continue;
+    for (const item of menu.items) {
+      if (item.disabled || item.href === undefined) continue;
+      const url = destination(item.href);
+      if (url === undefined) continue;
+      entries.push({
+        selector: item.selector,
+        name: item.name,
+        location: `in the "${result.name || result.selector}" menu`,
+        place: `menu:${result.name.split(" › ")[0] ?? result.name}`,
+        persistent: false,
+        key: keyOf(url),
+      });
+    }
+  }
+  const linkNames = new Map<string, Set<string>>();
+  const signalled = page === undefined ? undefined : signalledElements(tuple);
+  if (signalled === undefined)
+    notes.push(
+      "page links were not compared: the capture recorded no document URL (recapture)",
+    );
+  else if ("reason" in signalled) notes.push(`page links: ${signalled.reason}`);
+  else
+    for (const element of signalled.elements) {
+      const href = element.signals.href;
+      if (
+        element.signals.role !== "link" ||
+        href === undefined ||
+        isVisuallyHidden(element) ||
+        element.rect.width <= 0 ||
+        element.rect.height <= 0
+      )
+        continue;
+      const url = destination(href);
+      if (url === undefined || url.origin !== page?.origin) continue;
+      const name = (
+        element.signals.name ||
+        element.signals.title ||
+        element.attributes["aria-label"] ||
+        element.text
+      ).trim();
+      const key = keyOf(url);
+      entries.push({
+        selector: element.selector,
+        name,
+        location: element.selector,
+        place: `control:${element.selector}`,
+        persistent: true,
+        key,
+      });
+      if (name !== "") {
+        const keys = linkNames.get(normaliseName(name)) ?? new Set();
+        keys.add(key);
+        linkNames.set(normaliseName(name), keys);
+      }
+    }
+  const palette = probe.palette;
+  if (palette !== undefined) {
+    if (palette.status !== "opened")
+      notes.push(
+        `command palette (${palette.shortcut}) ${palette.status}${palette.reason === undefined ? "" : `: ${palette.reason}`}`,
+      );
+    else
+      for (const entry of palette.entries) {
+        let key: string | undefined;
+        if (entry.href !== undefined) {
+          const url = destination(entry.href);
+          if (url !== undefined) key = keyOf(url);
+        } else {
+          // A script-routed entry joins only an unambiguous same-name link.
+          const keys = linkNames.get(normaliseName(entry.name));
+          if (keys?.size === 1) key = [...keys][0];
+        }
+        if (key === undefined) continue;
+        entries.push({
+          selector: entry.selector,
+          name: entry.name,
+          location: `in the command palette (${palette.shortcut})`,
+          place: "palette",
+          persistent: false,
+          key,
+        });
+      }
+  }
+  return { entries, notes };
+}
+
+/**
+ * Destinations reached from at least two places, at least one of them a
+ * menu item or palette entry. Two persistent links to one route (a header
+ * and a footer link, or the logo and "Home") are ordinary and never count.
+ */
+export function navigationGroups(
+  entries: NavigationEntry[],
+): Array<{ key: string; members: NavigationEntry[] }> {
+  const byKey = new Map<string, NavigationEntry[]>();
+  for (const entry of entries)
+    byKey.set(entry.key, [...(byKey.get(entry.key) ?? []), entry]);
+  const groups: Array<{ key: string; members: NavigationEntry[] }> = [];
+  for (const [key, all] of byKey) {
+    const members: NavigationEntry[] = [];
+    const selectors = new Set<string>();
+    const names = new Set<string>();
+    for (const entry of all) {
+      if (selectors.has(entry.selector)) continue;
+      selectors.add(entry.selector);
+      if (!entry.persistent) {
+        const name = `${entry.place}\u0000${normaliseName(entry.name)}`;
+        if (names.has(name)) continue;
+        names.add(name);
+      }
+      members.push(entry);
+    }
+    if (
+      new Set(members.map((member) => member.place)).size >= 2 &&
+      members.some((member) => !member.persistent)
+    )
+      groups.push({ key, members });
+  }
+  return groups;
+}
+
+function navigationCandidates(
+  tuple: CheckTuple,
+  probe: ProbeArtifact,
+  config: ChecksConfig,
+): { candidates: FindingCandidate[]; notes: string[] } {
+  // Hand-built contexts may omit the config entirely.
+  const match = config?.duplicateEntry?.navigation ?? "pathname";
+  const { entries, notes } = navigationEntries(tuple, probe, match);
+  const candidates = navigationGroups(entries).map(
+    ({ key, members }): FindingCandidate => {
+      const anchor = members.find((member) => member.persistent) ?? members[0];
+      const locations = members
+        .map(
+          (member) =>
+            `"${member.name || member.selector}" (${member.persistent ? member.location : `${member.location}, ${member.selector}`})`,
+        )
+        .join("; ");
+      return {
+        category: "duplicate-entry",
+        severity: "minor",
+        rule: "idiom:redundant-entry-point",
+        selectorHint: anchor?.selector ?? "html",
+        fingerprintHint: `idiom:redundant-entry-point|navigate|${key}`,
+        explanation: `${members.length} entry points in this view each go to ${key}: ${locations}. A menu item that repeats a destination the page already links to adds a second way to the same place; choose the canonical entry point.`,
+        acceptance: [
+          `One entry point goes to ${key}, or the others are recorded as deliberate (for example a command palette shortcut).`,
+        ],
+        verification: verify("duplicate-entry", {
+          destination: key,
+          match,
+          members: members.map((member) => ({
+            selector: member.selector,
+            name: member.name,
+            persistent: member.persistent,
+          })),
+        }),
+      };
+    },
+  );
+  return { candidates, notes };
+}
 
 /** Adjacent triggers sit within this edge gap of each other. */
 const ADJACENT_PX = 16;
@@ -107,6 +403,8 @@ function describe(signature: string): string {
         return label === "" ? `a ${role}` : `the "${label}" ${role}`;
       })
       .join(" and ")}`;
+  if (signature.startsWith("navigate:"))
+    return `goes to ${signature.slice("navigate:".length)}`;
   if (signature.startsWith("focus:"))
     return `moves focus to ${signature.slice("focus:".length).split(":").slice(1).join(":") || "the same field"}`;
   return signature;
@@ -125,7 +423,7 @@ function describe(signature: string): string {
  */
 export const duplicateEntryCheck: DeterministicCheck = {
   id: "duplicate-entry",
-  run({ tuple }) {
+  run({ tuple, config }) {
     const observation = tuple.observations;
     if (observation === undefined)
       return unavailable(this.id, "observations.json is unavailable");
@@ -207,6 +505,17 @@ export const duplicateEntryCheck: DeterministicCheck = {
         }),
       });
     }
-    return ran(this.id, candidates);
+    const navigation = navigationCandidates(tuple, observation.probe, config);
+    candidates.push(...navigation.candidates);
+    return navigation.notes.length === 0
+      ? ran(this.id, candidates)
+      : {
+          coverage: {
+            check: this.id,
+            status: "ran",
+            reason: navigation.notes.join("; "),
+          },
+          candidates,
+        };
   },
 };

@@ -1,3 +1,4 @@
+import { revealedLabel } from "./revealed.js";
 import { ran, unavailable, verify } from "./shared.js";
 import type {
   CheckTuple,
@@ -230,7 +231,7 @@ function analyse(tuples: readonly CheckTuple[], flow: string): Analysis {
       const revealed = result.revealed?.observations;
       if (revealed?.version !== 2 || result.revealed === undefined) continue;
       sources.push({
-        label: `${tuple.state} › ${result.revealed.name}`,
+        label: `${tuple.state} › ${revealedLabel(result.revealed.name, result.revealed.kind)}`,
         controls: revealed.iconControls,
       });
     }

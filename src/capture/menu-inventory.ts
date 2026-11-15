@@ -100,7 +100,24 @@ export async function menuInventory(
           name: string;
           disabled: boolean;
           selector: string;
+          href?: string;
         }> = [];
+        // The link a row is, sits in, or holds: where choosing it goes.
+        const hrefOf = (row: Element): string | undefined => {
+          const anchor = row.matches("a[href]")
+            ? row
+            : (row.closest("a[href]") ?? row.querySelector("a[href]"));
+          const raw = anchor?.getAttribute("href");
+          if (raw === null || raw === undefined) return undefined;
+          try {
+            const url = new URL(raw, location.href);
+            return url.protocol === "http:" || url.protocol === "https:"
+              ? url.href
+              : undefined;
+          } catch {
+            return undefined;
+          }
+        };
         const seen = new Set<Element>();
         for (const container of roots)
           for (const row of container.querySelectorAll(
@@ -121,10 +138,12 @@ export async function menuInventory(
               row.hasAttribute("disabled") ||
               row.matches(":disabled") ||
               row.querySelector(":disabled, [aria-disabled=true]") !== null;
+            const href = hrefOf(row);
             rows.push({
               name: label.replace(/\s+/g, " ").trim().slice(0, 120),
               disabled,
               selector: pathOf(row),
+              ...(href === undefined ? {} : { href }),
             });
           }
         return rows;

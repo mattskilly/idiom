@@ -32,7 +32,7 @@ idiom upgrade
 # For a pinned project dependency: npx --no-install idiom upgrade
 ```
 
-`idiom upgrade` (0.16.0 and later) merges the installed release's skill templates into the project and keeps your local edits. For a global npm or bun install it first updates the CLI to the latest release and merges that release's templates; other installs print the command that updates them and merge with the installed templates. `--no-self-update` merges skills only. Commit the skills and their `.agents/skills/.idiom-pristine/` records together. Outcomes, conflicts and the manual merge workflow are in [Update and roll back](https://idiom.build/docs/update-and-roll-back) and [upgrade](commands.md#upgrade).
+`idiom upgrade` (0.16.0 and later) merges the installed release's skill templates into the project and keeps your local edits. For a global npm or bun install it first updates the CLI to the latest release and merges that release's templates; other installs print the command that updates them and merge with the installed templates. `--no-self-update` merges skills only. Commit the skills and their `.agents/skills/.idiom-pristine/` records together. Outcomes, conflicts and the manual merge workflow are in [Update and roll back](https://idiom.build/docs/update-and-roll-back) and [upgrade](commands.md#upgrade). It also brings versioned `.idiom/` files to the installed release's formats, keeping each original in `.idiom/backups/`; see [format versions](stability.md#format-versions-and-upgrade).
 
 ## Roll back to a pinned version
 
@@ -62,6 +62,10 @@ What you must do after moving past each release, newest first. Everything else i
 
 None.
 
+### v0.23.0
+
+- **`idiom brief list --json` prints an object.** Scripts that read it must read `.briefs` from `{ interfaceVersion, briefs }` instead of the bare array. For one release, `idiom brief list --json --array` still prints the old array, with a deprecation warning on stderr; it will be removed in 0.24.0. Set `IDIOM_NO_DEPRECATION_WARNINGS=1` to silence the warning.
+
 ### v0.22.0
 
 - **Shared decision logs:** this release can append attribution corrections (`idiom decide --reattribute`). Idiom 0.21.0 and older skip those records with a "written by a newer Idiom" note and show the original actor, so upgrade every machine that shares the log.
@@ -83,14 +87,14 @@ None.
 
 - **Scripts:** `idiom --version` now ends with ` · interface 1`; a script comparing the whole line should take the first word. Every `--json` payload except `brief list` gains a first key, `interfaceVersion`; a test comparing a whole payload should ignore it.
 - **Decisions:** `brief-mismatch` findings accepted before this release reappear once, because their rule id now carries a hash of the assertion. Decide them again.
-- **Behaviour:** `idiom upgrade` now updates the CLI before merging skills. A script or CI job that installs Idiom itself should run `idiom upgrade --no-self-update`. Update notices are off when `CI` is set; elsewhere, turn them off with `IDIOM_NO_UPDATE_CHECK=1` or `"updateCheck": false`.
+- **Behavior:** `idiom upgrade` now updates the CLI before merging skills. A script or CI job that installs Idiom itself should run `idiom upgrade --no-self-update`. Update notices are off when `CI` is set; elsewhere, turn them off with `IDIOM_NO_UPDATE_CHECK=1` or `"updateCheck": false`.
 - **Skills:** run `idiom upgrade` for the setup-handoff and `idiom init --validate` guidance in the Idiom skill.
 
 ### v0.18.0
 
 - **Recapture:** to pick up the new disclosure, nested-border, empty-container, redundant-entry-point, control-selects-parent and token-resolution checks, the probe coverage counts, and the probe fingerprints `idiom check --gate` compares against. Recapture after recording a brief with assertions.
 - **Config:** `idiom check --gate` reads the optional `checks.gate` block (`budgetMs`, default three minutes; `nonUi`). `capture.hideWebdriver` and `checks.probe.disclosures` / `checks.probe.maxRevealed` are new.
-- **Behaviour:** a native `title` now explains a control for `unexplained-control` by default; set `checks.explanation: "visible"` to keep requiring a painted explanation.
+- **Behavior:** a native `title` now explains a control for `unexplained-control` by default; set `checks.explanation: "visible"` to keep requiring a painted explanation.
 - **Skills:** run `idiom upgrade` for the brief guidance in the Idiom skill and the before/after evidence in `idiom-verify`.
 
 ### v0.16.1
@@ -101,7 +105,7 @@ None.
 
 - **Skills:** first release with `idiom upgrade`. Run it once in each project so its pristine records exist for the next update.
 - **Config:** new projects default `model.model` to `claude-sonnet-5-5`; existing projects keep theirs, so change it yourself if you want the newer model. `model.provider: "codex"` and `model.fallback` are new.
-- **Behaviour:** a capture now fails when a stylesheet declares colour tokens and none of them resolves. Fix the token names it lists in `design.tokensFile`.
+- **Behavior:** a capture now fails when a stylesheet declares color tokens and none of them resolves. Fix the token names it lists in `design.tokensFile`.
 
 ### v0.15.0
 
@@ -116,12 +120,12 @@ None.
 
 - **Gates:** `error-state-missing` and `retry-blocked` are new major checks, on by default, and can fail a `--fail-on major` gate. Configure them with `checks.failure`.
 - **Config:** a repeated off-scale value now becomes one design-system question at `checks.scales.suggestAfter` occurrences (default 5). Answer it with `idiom ruling`.
-- **Behaviour:** a malformed ruling block in `DESIGN.md` now fails `idiom check`. Fix the block.
+- **Behavior:** a malformed ruling block in `DESIGN.md` now fails `idiom check`. Fix the block.
 - **Recapture:** the failure checks need a fresh capture.
 
 ### v0.12.0
 
 - **Gates:** `interaction-shift`, `loading-state-missing`, `double-submit` and `motion-snap` are new major rules, on by default, and `layout-shift` and overlay snaps are now major. Each can fail a `--fail-on major` gate.
 - **Config:** new `checks.interactionShift`, `checks.loading.delayMs` (default 1500ms), `checks.motion.minExtentPx` (default 24px), `capture.filmstrips`, and `agent.uiGlobs` / `agent.hooks` for the Claude Code reminders.
-- **Behaviour:** `idiom quick` now runs the interaction probe; pass `--no-probe` for the static review.
+- **Behavior:** `idiom quick` now runs the interaction probe; pass `--no-probe` for the static review.
 - **Recapture:** timelines and filmstrips exist only in new captures; older runs report the timeline checks unavailable.

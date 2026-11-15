@@ -60,6 +60,7 @@ import {
 } from "../brief/triage.js";
 import type { CaptureDependencies } from "../capture/run.js";
 import { IdiomError } from "../errors.js";
+import type { Deprecation } from "../interface/deprecation.js";
 import { jsonPayload } from "../interface/version.js";
 import {
   findOptionalProjectDirectory,
@@ -616,6 +617,17 @@ export function renderBriefDecide(decided: BriefDecideResult): string {
       : [`Warning: ${decided.criteriaWarning}`]),
   ].join("\n");
 }
+
+/**
+ * The old bare-array shape of `brief list --json`, kept for one release
+ * behind `--json --array` (docs/stability.md, "Deprecation policy").
+ */
+export const BRIEF_LIST_ARRAY_DEPRECATION: Deprecation = {
+  surface: "idiom brief list --json --array",
+  replacement:
+    "idiom brief list --json, which prints { interfaceVersion, briefs }",
+  removedIn: "0.24.0",
+};
 
 export async function briefListCommand(
   options: ProjectOptions,

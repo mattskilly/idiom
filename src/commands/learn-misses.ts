@@ -14,20 +14,73 @@ import {
 import type { BrowserLaunch } from "../learn/target.js";
 import { validateProject } from "../validation.js";
 import { atomicWrite } from "./learn.js";
+import { resolveImportName } from "./learn-import.js";
 
 type ProjectOptions = {
   project?: string | undefined;
   cwd?: string | undefined;
 };
 
-export async function learnListCommand(options: ProjectOptions) {
-  const { projectDirectory } = await validateProject(options);
-  const entries = await readLearnedLog(projectDirectory, { strict: true });
+export async function learnListCommand(
+  options: ProjectOptions & {
+    /** `--import <name|file>`: only that import's records. */
+    importName?: string | undefined;
+  },
+) {
+  const { projectDirectory, flows } = await validateProject(options);
+  const all = await readLearnedLog(projectDirectory, { strict: true });
+  const importName =
+    options.importName === undefined
+      ? undefined
+      : await resolveImportName(
+          options.importName,
+          all,
+          options.cwd ?? process.cwd(),
+        );
+  const entries =
+    importName === undefined
+      ? all
+      : all.filter((entry) => entry.import?.name === importName);
   const statuses = missStatuses(
     entries,
     await collectMissEvidence(projectDirectory, entries),
+    new Map(
+      flows.map((record) => [
+        record.flow.id,
+        new Set(record.flow.states.map((state) => state.id)),
+      ]),
+    ),
   );
-  return { summary: summarizeStatuses(statuses), statuses };
+  return {
+    summary: summarizeStatuses(statuses),
+    statuses,
+    ...(importName === undefined ? {} : { importName }),
+  };
+}
+
+type ListedStatus = Awaited<
+  ReturnType<typeof learnListCommand>
+>["statuses"][number];
+
+/** `state matched, screenshot 97%` or `state proposed: <proposal>`. */
+function stateSegment(status: ListedStatus): string {
+  const placement = status.entry.placement;
+  if (status.state === "proposed")
+    return `state proposed: ${placement?.proposal ?? "draft"}`;
+  if (placement === undefined || placement.via === "state")
+    return "state matched";
+  if (placement.via === "screenshot")
+    return `state matched, screenshot ${Math.round((placement.similarity ?? 0) * 100)}%`;
+  return `state matched, ${placement.via === "proposed" ? "added" : placement.via}`;
+}
+
+/** ` from <build> <escalation>` or ` from PR #n` for a harvested record. */
+function harvestedFrom(entry: ListedStatus["entry"]): string {
+  const harvest = entry.harvest;
+  if (harvest === undefined) return "";
+  return harvest.source === "escalation"
+    ? ` from ${harvest.build ?? "autobuild"} ${harvest.escalation ?? ""}`.trimEnd()
+    : ` from PR #${harvest.pr ?? "?"}`;
 }
 
 export function renderLearnList(
@@ -43,11 +96,17 @@ export function renderLearnList(
         status.status === "open"
           ? "open"
           : status.via === "mark"
-            ? `covered by ${status.by} (marked ${status.at})`
-            : `covered by ${status.rule} (run ${status.runId}, ${status.at})`;
-      return `${entry.id}  ${label}  ${entry.flow}/${entry.state}  ${entry.kind}  ${JSON.stringify(entry.observation)}`;
+            ? `covered by ${status.coverage}${status.by.toLowerCase().replace(/s$/, "") === status.coverage ? "" : ` ${status.by}`} (marked ${status.at})`
+            : `covered by rule ${status.rule} (run ${status.runId}, ${status.at})`;
+      const imported =
+        entry.import === undefined
+          ? ""
+          : `  import ${entry.import.name}#${entry.import.row}${entry.import.surface === undefined ? "" : `  surface ${entry.import.surface}`}${entry.import.checks.length === 0 ? "" : `  checks ${entry.import.checks.join(", ")}`}`;
+      return `${entry.id}  ${label}  ${entry.flow}/${entry.state} (${stateSegment(status)})  ${entry.kind}${imported}  ${JSON.stringify(entry.observation)}${harvestedFrom(entry)}`;
     }),
-    humanFoundLine(result.summary, now),
+    result.importName === undefined
+      ? humanFoundLine(result.summary, now)
+      : `Import ${result.importName}: ${result.summary.logged} records, ${result.summary.covered} covered, ${result.summary.open} open, ${result.statuses.filter((status) => status.state === "proposed").length} need a new state.`,
   ].join("\n");
 }
 
@@ -62,6 +121,26 @@ export async function learnCoveredCommand(
   if (!by)
     throw new IdiomError("pass a nonblank --by <rule|fixture> with --covered");
   const { projectDirectory } = await validateProject(options);
+  await markLearnedCovered({
+    projectDirectory,
+    id: options.id,
+    by,
+    at: (options.clock ?? (() => new Date()))().toISOString(),
+  });
+  return { id: options.id, by };
+}
+
+/**
+ * Mark one learned record covered by a rule, fixture or later learned id,
+ * rewriting only its line of `.idiom/learned.jsonl`.
+ */
+export async function markLearnedCovered(options: {
+  projectDirectory: string;
+  id: string;
+  by: string;
+  at: string;
+}): Promise<void> {
+  const { projectDirectory } = options;
   const entries = await readLearnedLog(projectDirectory, { strict: true });
   const path = join(projectDirectory, ".idiom", "learned.jsonl");
   const lines = (await readFile(path, "utf8")).split("\n");
@@ -87,10 +166,9 @@ export async function learnCoveredCommand(
   const index = lines.findIndex((line) => lineId(line) === entry.id);
   lines[index] = JSON.stringify({
     ...entry,
-    covered: { by, at: (options.clock ?? (() => new Date()))().toISOString() },
+    covered: { by: options.by, at: options.at },
   });
   await atomicWrite(path, lines.join("\n"));
-  return { id: entry.id, by };
 }
 
 export async function learnFixtureCommand(

@@ -1,6 +1,6 @@
 # Idiom tools for coding agents
 
-`idiom mcp` exposes twenty-four tools over stdio using the official TypeScript MCP SDK. It works with Claude Code, Codex, Cursor, Claude Desktop and other local MCP clients. No HTTP service or repair agent is required. Only model-enabled `idiom_sweep` needs model credentials, and only Figma references need `FIGMA_TOKEN`; both come from the server's environment, never from tool arguments (see [Credentials](#credentials)).
+`idiom mcp` exposes twenty-five tools over stdio using the official TypeScript MCP SDK. It works with Claude Code, Codex, Cursor, Claude Desktop and other local MCP clients. No HTTP service or repair agent is required. Only model-enabled `idiom_sweep` needs model credentials, and only Figma references need `FIGMA_TOKEN`; both come from the server's environment, never from tool arguments (see [Credentials](#credentials)).
 
 Install Node 22.12 or newer and the matching Playwright Chromium browser. Run `npx playwright@1.62.1 install chromium`. The application must be reachable for quick review; configured flows use their normal setup/build/server settings.
 
@@ -29,7 +29,7 @@ For Codex (see [plugin packaging and marketplaces](https://developers.openai.com
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.22.0/mattskilly-idiom-0.22.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.23.0/mattskilly-idiom-0.23.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.
@@ -121,11 +121,11 @@ Configured findings and groups keep their canonical IDs. Quick IDs are opaque an
 
 ## Tools and inputs
 
-Every input is a strict JSON object. Lists, when present, must be nonempty and duplicate-free. Flow/run identifiers cannot contain path separators or equal `.` or `..`. The server advertises the complete JSON schemas through MCP discovery. Its initialize result also carries the [interface version](stability.md) under `capabilities.experimental.idiom.interfaceVersion`; which tools, inputs and outputs are stable is in [stability](stability.md#mcp).
+Every input is a strict JSON object. Lists, when present, must be nonempty and duplicate-free. Flow/run identifiers cannot contain path separators or equal `.` or `..`. The server advertises the complete input and output JSON schemas through MCP discovery; every successful result's `structuredContent` matches its tool's output schema and starts with `interfaceVersion`, and the text content is unchanged. Its initialize result also carries the [interface version](stability.md) under `capabilities.experimental.idiom.interfaceVersion`; which tools, inputs and outputs are stable is in [stability](stability.md#mcp).
 
 | Tool | Input | Result |
 | --- | --- | --- |
-| `idiom_quick` | `{"url":"https://example.com","viewports":["desktop","mobile"],"probe":true,"probeBudgetMs":45000}`; all but `url` optional | Ranked Top 5, all deterministic findings, counts, `interaction` and Markdown/HTML/findings paths. Presets are 1440×900 and 390×844, both by default, in light/dark. The safe interaction probe runs once per page at the first viewport in light unless `probe:false`; `probeBudgetMs` (positive integer, at most 600000) cannot be combined with `probe:false`. `interaction` reports per page what was clicked, skipped, not reached and blocked, or `{"status":"off"}`. |
+| `idiom_quick` | `{"url":"https://example.com","viewports":["desktop","mobile"],"probe":true,"probeBudgetMs":45000}`; all but `url` optional | Ranked Top 5, all deterministic findings, counts, `interaction` and Markdown/HTML/findings paths. Presets are 1440×900 and 390×844, both by default, in light/dark. The safe interaction probe runs once per page at the first viewport in light unless `probe:false`; `probeBudgetMs` (positive integer, at most 600000) cannot be combined with `probe:false`. `interaction` reports per page what was clicked, skipped, not reached and blocked, or `{"status":"off"}`. When some captures fail, the findings from the others are still returned, `captureFailures` lists each failed capture (`state`, `viewport`, `colorScheme`, `stage`, `message`, `outOfTime`) and the text names the gaps with advice; the call is an error only when no capture succeeded, as for CLI `quick`. |
 | `idiom_check` | `{"flow":"checkout","states":["cart"],"viewports":["mobile"],"all":false}` or `{"changed":true}` / `{"changed":"main"}`; flow required unless changed is supplied | Top issues with selectors, measurements, fixes, crops, counts, baseline new/fixed/pre-existing collections and coverage. `all:true` returns complete live findings and bypasses baseline bootstrap/comparison. Changed calls return the shared selection envelope and per-flow rich results; skipped flows have no run or evidence. Repeated off-scale values held as questions come back as `designSystemQuestions` (ruling id, question, count, suggested token) instead of findings. When some tuples fail to capture, the result is still a normal result with findings for the rest, plus `captureFailures`; on a first check that would record the baseline it also carries `baselineNotRecorded` and records none. |
 | `idiom_issue` | `{"id":"group-…"}` | Full original record(s), coordinates, group members/siblings, verification references and crop image content. |
 | `idiom_fix_plan` | `{"flow":"checkout","top":5}`; top optional positive integer | Exact `idiom fix` repair prompt, selected original findings, source run and next verification arguments. A clean snapshot has an empty prompt and no next call. |
@@ -138,6 +138,7 @@ Every input is a strict JSON object. Lists, when present, must be nonempty and d
 | `idiom_ready` | `{"flow":"checkout"}`; flow optional | Same verdict as `idiom init --validate`: `{ready, validate, doctor, surfaces}` (the `--json` shape) plus `problem` (`headline`, `hint`, `stage`, `cause`) when not ready. Validates every flow, then boots the first (or named) flow's server once; creates nothing. Not ready is a result, not a tool error. |
 | `idiom_design_add` | `{"state":"cart","source":"https://www.figma.com/design/…?node-id=1-2","flow":"checkout","name":"figma","viewport":"desktop"}`; flow/name/viewport optional | Same as `idiom design add`: the flow manifest written, whether it changed, the stored source and whether it is Figma. Figma sources without `FIGMA_TOKEN` in the server env fail before writing. |
 | `idiom_choose` | `{"id":"finding-3","reference":"figma","reason":"Figma is the source of truth"}` | Same as `idiom decide --choose`: records the human's chosen reference for one `idiom:design-decision` finding. Reason preserved verbatim; groups and quick evidence are refused. |
+| `idiom_learn` | `{"observation":"The override dots should be 8px","screenshot":"shots/override.png","selector":".dot","state":"editor"}`; all but `observation` optional (`flow` too) | Same as `idiom learn --yes`: `{recorded, repeated, id, kind, flow, state, placement, proposal, candidate, record, paths, next}`. `record` is the exact `.idiom/learned.jsonl` line, `candidate` its rule candidate and checkability, `flow`/`state` the matched or proposed state (`proposal` is the draft state file when one was proposed), `paths` the absolute files written. Calling it again with the same words (whitespace aside) and the same screenshot bytes returns the existing record with `recorded:false`, `repeated:true`, and writes nothing. `screenshot` is a PNG inside the bound root. |
 | `idiom_tickets` | `{"findings":["finding-1"],"out":"tickets/triage"}`; both optional | Same as `idiom tickets --cluster`: accepted findings clustered into triage proposals, absolute created paths and per-finding outcomes. Never writes to ready. |
 | `idiom_sweep` | `{"flow":"checkout","latest":false,"emitTickets":".autobuild/tickets/triage"}`; from/latest/emitTickets optional | Same as `idiom sweep`: every ranked deterministic and model finding, per-surface status, report paths, optional ticket outcomes and `degraded` with the reason when the critique could not run. Choose exactly one of optional `flow` or `all:true`. `deterministicOnly:true` skips model credentials; `maxTickets` is a positive safe integer (default 10). All-mode makes fresh captures and rejects `from`/`latest`; its typed `scope:"all"` result includes flow/probe/check coverage, bounded cross-flow root-cause proposals, omission counts and Markdown/HTML/JSON polish paths. |
 | `idiom_coverage` | `{"crawl":"http://localhost:3000"}` or `{"states":true}`; both optional | Same as `idiom coverage`: every discovered route with the flows/states that capture it, exclusions and unmatched runtime-URL states, plus `states` (each flow's state coverage, as `idiom coverage --states --json`) and one state-coverage line per flow. `states:true` returns only the state coverage and skips route discovery. |
@@ -164,7 +165,41 @@ The tool never promotes tickets, dispatches builds or accepts findings for you.
 
 Before writing a ticket, spec or code that adds or changes visible UI, call `idiom_brief_triage` with the request verbatim. On `design decision`, call `idiom_brief_plan` with the returned id and follow it within its budget, then `idiom_brief_record` with the filled shape. Unless `ask.proceed.allowed`, ask the human with `ask.askUserQuestion` verbatim, then record their choice with `idiom_brief_decide` and use `.idiom/briefs/<slug>.md` as the ticket. In an autobuild project, pass `ticket` to `idiom_brief_decide` (or call `idiom_brief_attach`) to pin the decided brief to the ticket as its design asset. See [brief](brief.md).
 
-Captures, fix-plan, verify, sweep and baseline record write reports and may start the configured app; doctor starts it once and writes nothing. Brief triage and plan may make one model call and store the triage. Decide, choose and brief decide write judgment; init, design add, tickets, brief record and brief export write project files; brief attach (and brief decide with `ticket`) runs `ab ticket attach` and records the ticket on the brief; context/flows/issue/coverage and baseline show are read-only. None changes Git or launches a coding agent.
+When a person points out a UI or UX problem in conversation, call `idiom_learn` with their words verbatim, plus their screenshot (saved inside the project first), the selector and the state when known. Then tell them what was recorded: the id, the matched or proposed state and the rule candidate. A repeated call returns the existing record; say so rather than recording it again. See [learn](commands.md#learn).
+
+Captures, fix-plan, verify, sweep and baseline record write reports and may start the configured app; doctor starts it once and writes nothing. Brief triage and plan may make one model call and store the triage. Decide, choose and brief decide write judgment; learn writes the learned log and any check configuration, ruling, screenshot copy or draft state it implies; init, design add, tickets, brief record and brief export write project files; brief attach (and brief decide with `ticket`) runs `ab ticket attach` and records the ticket on the brief; context/flows/issue/coverage and baseline show are read-only. None changes Git or launches a coding agent.
+
+### Output status
+
+A tool's output has its own status. A stable-additive output promises the fields named in [stability](stability.md#mcp), including the finding detail an agent needs to review, fix and verify; its other fields are experimental, and that page says why for each.
+
+| Tool | Status | Output |
+| --- | --- | --- |
+| `idiom_quick` | stable | stable-additive |
+| `idiom_check` | stable | stable-additive |
+| `idiom_issue` | stable | stable-additive |
+| `idiom_fix_plan` | stable | experimental |
+| `idiom_verify` | stable | stable-additive |
+| `idiom_context` | stable | experimental |
+| `idiom_flows` | stable | experimental |
+| `idiom_decide` | stable | experimental |
+| `idiom_init` | stable | experimental |
+| `idiom_doctor` | stable | stable-additive |
+| `idiom_baseline` | stable | experimental |
+| `idiom_design_add` | experimental | experimental |
+| `idiom_choose` | experimental | experimental |
+| `idiom_learn` | experimental | experimental |
+| `idiom_tickets` | experimental | experimental |
+| `idiom_sweep` | experimental | experimental |
+| `idiom_coverage` | experimental | experimental |
+| `idiom_brief_triage` | experimental | experimental |
+| `idiom_brief_plan` | experimental | experimental |
+| `idiom_brief_record` | experimental | experimental |
+| `idiom_brief_decide` | experimental | experimental |
+| `idiom_brief_export` | experimental | experimental |
+| `idiom_brief_attach` | experimental | experimental |
+| `idiom_setup_prompt` | experimental | experimental |
+| `idiom_ready` | experimental | experimental |
 
 ## Repair sequence
 
@@ -184,7 +219,7 @@ This deterministic loop complements model review: `idiom_sweep` runs the model c
 
 Captures emit increasing progress notifications when the request supplies a progress token, including setup, tuple and probe activity; `idiom_quick` reports its probe activity the same way. Verification keeps one increasing sequence across both captures. Counters describe activity, not percentages. Calls are serialized to avoid concurrent report/decision writes; discovery stays immediate. Cancelling queued work skips it; active cancellation aborts capture resources and guards later publication. Disconnect, stdin EOF, SIGINT and SIGTERM abort work and close the session. Cleanup has a five-second grace for capture-owned resources, including late-acquired browsers/workspaces.
 
-The existing capture limits apply: `capture.maxMinutes` defaults to 30 per capture, probe control/state budgets default to 5000/60000 milliseconds. `idiom_quick` uses its own probe limits: 45000 milliseconds per page for the focus sweep and the click probe together, and at most 40 controls. Its probe only lets `GET`, `HEAD` and `OPTIONS` requests leave the browser and blocks cross-origin navigation, form submission, downloads, new windows and permission prompts ([quick](commands.md#the-interaction-probe)). Missing Chromium errors suggest `npx playwright install chromium`; pinned-port errors tell you to free the port or correct server settings. Stdout is reserved for protocol JSON; diagnostics go to stderr.
+The existing capture limits apply: `capture.maxMinutes` defaults to 30 per capture, probe control/state budgets default to 5000/60000 milliseconds. `idiom_quick` uses its own probe limits: 45000 milliseconds per page for the focus sweep and the click probe together, and at most 40 controls. Its probe only lets `GET`, `HEAD` and `OPTIONS` requests leave the browser and blocks cross-origin navigation, form submission, downloads, new windows and permission prompts ([quick](commands.md#the-interaction-probe)). Missing Chromium errors suggest `npx playwright install chromium`; pinned-port errors tell you to free the port or correct server settings; time-allowance errors (a screenshot or capture timeout) never do. Stdout is reserved for protocol JSON; diagnostics go to stderr.
 
 ## CLI parity
 
@@ -229,7 +264,7 @@ Every CLI command is either reachable as an MCP tool or deliberately CLI-only. A
 | `brief list` | CLI-only | Read-only views; agents read `.idiom/briefs/<slug>.md` or use the CLI. |
 | `brief show` | CLI-only | Read-only views; agents read `.idiom/briefs/<slug>.md` or use the CLI. |
 | `ruling` | CLI-only | Records a design-law ruling after interactive human confirmation. |
-| `learn` | CLI-only | Proposes rules as a diff a human confirms interactively. |
+| `learn` | `idiom_learn` | Observation mode only, always as `--yes`; `--from-brief`, `--from`, `--ruling`, `--wording`, `--list`, `--covered` and `--fixture` are CLI-only. |
 | `instruction` | CLI-only | Produces a paste-ready handoff for a human. |
 | `tickets` | `idiom_tickets` | Clustered proposals only; per-finding tickets are CLI-only. |
 | `context` | `idiom_context` | |

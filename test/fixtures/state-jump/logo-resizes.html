@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Workspace</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; color: #1d232b; background: #fff; }
+  header { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 16px; border-bottom: 1px solid #d8dde3; }
+  #logo { display: inline-flex; padding: 0; border: 0; background: none; cursor: pointer; }
+  #logo svg { display: block; width: 28px; height: 28px; }
+  /* Opening the drawer shrinks the logo and nudges it right. */
+  body.drawer-open #logo { margin-left: 8px; }
+  body.drawer-open #logo svg { width: 24px; height: 24px; }
+  header a { color: #1d4ed8; }
+  #drawer { position: fixed; top: 53px; left: 0; bottom: 0; width: 240px; background: #f4f6f8; border-right: 1px solid #d8dde3; padding: 16px; }
+  #drawer[hidden] { display: none; }
+  main { padding: 24px; }
+</style></head>
+<body>
+<header>
+  <button id="logo" type="button" aria-label="Workspace home" aria-expanded="false" aria-controls="drawer" onclick="toggle()">
+    <svg viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#1d4ed8"/></svg>
+  </button>
+  <a href="#projects">Projects</a>
+  <a href="#reports">Reports</a>
+</header>
+<nav id="drawer" aria-label="Workspaces" hidden>
+  <p>Acme</p>
+</nav>
+<main>
+  <h1>Projects</h1>
+  <p>Three projects in progress.</p>
+</main>
+<script>
+  function toggle() {
+    const open = document.body.classList.toggle('drawer-open');
+    document.getElementById('drawer').hidden = !open;
+    document.getElementById('logo').setAttribute('aria-expanded', String(open));
+  }
+</script>
+</body></html>

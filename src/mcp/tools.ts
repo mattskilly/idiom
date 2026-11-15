@@ -71,6 +71,7 @@ import {
   initValidateProblem,
   renderInitValidate,
 } from "../commands/init-validate.js";
+import { type LearnDependencies, learnCommand } from "../commands/learn.js";
 import { rulingCommand } from "../commands/ruling.js";
 import { renderSweepSummary, sweepCommand } from "../commands/sweep.js";
 import { verifyCommand } from "../commands/verify.js";
@@ -86,6 +87,12 @@ import {
 } from "../fix/check.js";
 import { repairPrompt } from "../fix/prompt.js";
 import type { GenerateFlow } from "../flows/generate.js";
+import { findRepeatedLearning } from "../learn/repeat.js";
+import {
+  describeQuickCaptureFailures,
+  QuickCaptureFailed,
+  quickCaptureAdvice,
+} from "../quick/failures.js";
 import { interactionTail } from "../quick/interaction.js";
 import { type QuickDependencies, runQuick } from "../quick/run.js";
 import { withRecordNotes } from "../records/unknown.js";
@@ -123,6 +130,13 @@ import {
   safeIdentifier,
 } from "./evidence.js";
 import type { Execution, ToolExecutionQueue } from "./execution.js";
+import {
+  isMcpToolName,
+  type LearnToolData,
+  type McpCheckEntry,
+  type McpOutputData,
+  mcpOutputSchemas,
+} from "./outputs.js";
 
 export type McpDependencies = {
   capture?: CaptureDependencies | undefined;
@@ -135,6 +149,8 @@ export type McpDependencies = {
   brief?: BriefDependencies | undefined;
   /** Newer-version notice, delivered once per server session. */
   update?: UpdateNoticeSession | undefined;
+  /** Test seam: the clock, browser and git topology for idiom_learn. */
+  learn?: LearnDependencies | undefined;
 };
 const identifier = z
   .string()
@@ -231,11 +247,16 @@ export function registerIdiomTools(
       execution: Execution,
     ) => Promise<CallToolResult>,
   ) {
+    if (!isMcpToolName(name))
+      throw new Error(
+        `MCP tool ${name} has no declared output schema in src/mcp/outputs.ts`,
+      );
     server.registerTool(
       name,
       {
         description,
         inputSchema,
+        outputSchema: mcpOutputSchemas[name],
         annotations: {
           readOnlyHint: readOnly,
           destructiveHint: !readOnly,
@@ -324,20 +345,18 @@ export function registerIdiomTools(
           ...execution.capture(dependencies.quick),
         },
       });
-      if (output.counts.failed) {
-        const { loadCaptureRun } = await import("../review/artifacts.js");
-        const loaded = await loadCaptureRun({
-          runDirectory: output.runDirectory,
-          expectedFlow: "quick-review",
-          expectedStatusByState: new Map([["page-1", 200]]),
-          stateOrder: ["page-1"],
-          viewportOrder: args.viewports ?? ["desktop", "mobile"],
-          legacyColorScheme: "light",
-        });
-        throw new IdiomError(
-          `Quick capture failed: ${loaded.tuples.flatMap((tuple) => (tuple.failure ? [`${tuple.failure.stage}: ${tuple.failure.message}`] : [])).join("; ")}. Report: ${output.reportPath}`,
+      // One failed tuple no longer discards the others' findings; the run
+      // fails only when nothing captured (the CLI uses the same rule).
+      if (output.counts.passed === 0)
+        throw new QuickCaptureFailed(
+          output.captureFailures,
+          output.counts.total,
+          output.reportPath,
         );
-      }
+      const gaps =
+        output.captureFailures.length === 0
+          ? ""
+          : `Coverage gaps: ${describeQuickCaptureFailures(output.captureFailures, output.counts.total)}. ${quickCaptureAdvice(output.captureFailures)} `;
       const findings = output.findings ?? [];
       const groups = output.groups ?? [];
       const issues = output.issues ?? [];
@@ -379,7 +398,7 @@ export function registerIdiomTools(
         ),
       }));
       return result(
-        `Quick review: ${findings.length} findings, ${issues.length} issues, ${interactionTail(output.interaction)}. Top ${Math.min(5, issues.length)} issues returned. Report: ${output.reportPath}`,
+        `Quick review: ${findings.length} findings, ${issues.length} issues, ${interactionTail(output.interaction)}. Top ${Math.min(5, issues.length)} issues returned. ${gaps}Report: ${output.reportPath}`,
         {
           runId: basename(output.runDirectory),
           topIssues: issueDetails.slice(0, 5),
@@ -395,13 +414,16 @@ export function registerIdiomTools(
             ? {}
             : { checkCoverage: output.checkCoverage }),
           interaction: output.interaction,
+          ...(output.captureFailures.length === 0
+            ? {}
+            : { captureFailures: output.captureFailures }),
           reports: {
             markdown: output.reportPath,
             html: output.htmlReportPath,
             findings: output.findingsPath,
           },
           runDirectory: output.runDirectory,
-        },
+        } satisfies McpOutputData<"idiom_quick">,
       );
     },
   );
@@ -410,7 +432,7 @@ export function registerIdiomTools(
     all: boolean,
     summary: CheckSummary,
     output: ReviewRunResult,
-  ): Promise<CallToolResult> {
+  ): Promise<{ text: string; data: McpOutputData<"idiom_check"> }> {
     const validated = await validateProject({
       ...configured,
       flow: flowId,
@@ -487,9 +509,9 @@ export function registerIdiomTools(
             : []),
         ].join(" ")} `
       : "";
-    return result(
-      `Check ${flowId}: ${(summary.coverage?.runDiagnostics ?? []).join(" ")} ${loaded.tuples.filter((tuple) => tuple.failure).length} failed captures. ${summary.findings.length} new/live occurrences, ${issues.length} issues; ${summary.preExisting ?? 0} pre-existing, ${summary.fixed?.length ?? 0} fixed${(summary.acknowledgedFindings?.length ?? 0) === 0 ? "" : `, ${summary.acknowledgedFindings?.length} acknowledged (not counted)`}. ${(summary.acknowledgementLapses ?? []).map((lapse) => `${lapse.message} `).join("")}${summary.baselineRecorded ? "Automatically recorded the initial baseline; commit its file. " : ""}${questions.length === 0 ? "" : `Design system questions (${questions.length}), held instead of findings; answer with idiom_decide add-step|drift: ${questions.map((question) => `${question.id} — ${question.question}`).join(" ")} `}${probeText}${summary.baselineNotRecorded ? `${summary.baselineNotRecorded.message} ` : ""}${summary.captureFailures?.length ? `Coverage gaps: ${summary.captureFailures.map((tuple) => `${tuple.state}/${tuple.viewport}/${tuple.colorScheme}: ${tuple.message}`).join("; ")}. ` : ""}Report: ${summary.reportPath}`,
-      {
+    return {
+      text: `Check ${flowId}: ${(summary.coverage?.runDiagnostics ?? []).join(" ")} ${loaded.tuples.filter((tuple) => tuple.failure).length} failed captures. ${summary.findings.length} new/live occurrences, ${issues.length} issues; ${summary.preExisting ?? 0} pre-existing, ${summary.fixed?.length ?? 0} fixed${(summary.acknowledgedFindings?.length ?? 0) === 0 ? "" : `, ${summary.acknowledgedFindings?.length} acknowledged (not counted)`}. ${(summary.acknowledgementLapses ?? []).map((lapse) => `${lapse.message} `).join("")}${summary.baselineRecorded ? "Automatically recorded the initial baseline; commit its file. " : ""}${questions.length === 0 ? "" : `Design system questions (${questions.length}), held instead of findings; answer with idiom_decide add-step|drift: ${questions.map((question) => `${question.id} — ${question.question}`).join(" ")} `}${probeText}${summary.baselineNotRecorded ? `${summary.baselineNotRecorded.message} ` : ""}${summary.captureFailures?.length ? `Coverage gaps: ${summary.captureFailures.map((tuple) => `${tuple.state}/${tuple.viewport}/${tuple.colorScheme}: ${tuple.message}`).join("; ")}. ` : ""}Report: ${summary.reportPath}`,
+      data: {
         flow: flowId,
         ...(summary.captureFailures
           ? { captureFailures: summary.captureFailures }
@@ -556,7 +578,7 @@ export function registerIdiomTools(
           findings: output.findingsPath,
         },
       },
-    );
+    };
   }
   register(
     "idiom_check",
@@ -608,7 +630,7 @@ export function registerIdiomTools(
           materializeAllDeterministic: true,
           dependencies: review(execution),
         });
-        const checks = [];
+        const checks: McpCheckEntry[] = [];
         for (const entry of changed.checks) {
           execution.signal.throwIfAborted();
           if (entry.status === "not-checked") checks.push(entry);
@@ -619,11 +641,9 @@ export function registerIdiomTools(
               entry.summary,
               entry.review,
             );
-            checks.push({
-              flow: entry.flow,
-              status: entry.status,
-              ...(projected.structuredContent as Record<string, unknown>),
-            });
+            // projected.data.flow is entry.flow; dropping it keeps the type exact.
+            const { flow: _flow, ...data } = projected.data;
+            checks.push({ flow: entry.flow, status: entry.status, ...data });
           }
         }
         return withUpdateNotice(
@@ -648,7 +668,7 @@ export function registerIdiomTools(
             selection: changed.selection,
             checkedStates: changed.checkedStates,
             checks,
-          }),
+          } satisfies McpOutputData<"idiom_check">),
         );
       }
       if (!args.flow)
@@ -666,9 +686,13 @@ export function registerIdiomTools(
         recordAgentCheck: true,
         dependencies: review(execution),
       });
-      return withUpdateNotice(
-        await projectCheckedRun(args.flow, args.all, summary, output),
+      const projected = await projectCheckedRun(
+        args.flow,
+        args.all,
+        summary,
+        output,
       );
+      return withUpdateNotice(result(projected.text, projected.data));
     },
   );
   register(
@@ -731,7 +755,7 @@ export function registerIdiomTools(
                 arguments: { flow, findings: references },
               }
             : null,
-        },
+        } satisfies McpOutputData<"idiom_fix_plan">,
       );
     },
   );
@@ -799,7 +823,9 @@ export function registerIdiomTools(
     true,
     async () => {
       const brief = await contextCommand(configured);
-      return result(brief, { brief });
+      return result(brief, {
+        brief,
+      } satisfies McpOutputData<"idiom_context">);
     },
   );
   register(
@@ -822,7 +848,7 @@ export function registerIdiomTools(
             flows: [],
             guidance:
               "Call idiom_init with flows:true (or run idiom init --flows)",
-          },
+          } satisfies McpOutputData<"idiom_flows">,
         );
       const validated = await validateProject(configured);
       const flows = validated.flows
@@ -839,7 +865,7 @@ export function registerIdiomTools(
         .sort((a, b) => a.id.localeCompare(b.id));
       return result(
         `${flows.length} configured flows: ${flows.map((flow) => flow.id).join(", ")}`,
-        { flows },
+        { flows } satisfies McpOutputData<"idiom_flows">,
       );
     },
   );
@@ -1061,7 +1087,7 @@ export function registerIdiomTools(
         flows: flowOutcome,
         notes,
         nextSteps,
-      });
+      } satisfies McpOutputData<"idiom_init">);
     },
   );
   register(
@@ -1196,6 +1222,113 @@ export function registerIdiomTools(
     },
   );
   register(
+    "idiom_learn",
+    "Record a UI or UX problem a person pointed out, as idiom learn --yes does: interprets their words, finds the flow state from state, the screenshot or the words (else writes a draft state proposal), and writes the learned record plus any check configuration or ruling it implies. Returns the record, its matched or proposed state and its rule candidate. Repeating the same observation and screenshot returns the existing record and writes nothing. Writes .idiom/learned.jsonl and may write .idiom/project.json, the design file, a flow manifest's invariants, .idiom/learned/<id>.png and .idiom/proposals/states/.",
+    z.strictObject({
+      observation: z
+        .string()
+        .trim()
+        .min(1)
+        .describe("What the person said is wrong, verbatim"),
+      screenshot: relativePath
+        .optional()
+        .describe(
+          "The person's PNG screenshot, saved inside the bound root; path relative to it",
+        ),
+      selector: z
+        .string()
+        .trim()
+        .min(1)
+        .optional()
+        .describe("CSS selector of the element the problem is about"),
+      state: identifier
+        .optional()
+        .describe(
+          "Flow state the problem was seen on; omitted means matched from the screenshot or the words, else proposed",
+        ),
+      flow: identifier
+        .optional()
+        .describe("Disambiguate the state across flow manifests"),
+    }),
+    false,
+    async ({ observation, screenshot, selector, state, flow }) => {
+      const shot =
+        screenshot === undefined
+          ? undefined
+          : await insideRoot(root, screenshot, "Screenshot");
+      const { projectDirectory } = await loadProjectContext(configured);
+      const absolute = (path: string) => resolve(projectDirectory, path);
+      const ruleLine = (entry: LearnToolData["record"]) =>
+        entry.candidate === undefined
+          ? ""
+          : ` Rule candidate (${entry.candidate.checkable}): ${entry.candidate.rule}${/[.!?]$/.test(entry.candidate.rule) ? "" : "."}`;
+      const repeated = await findRepeatedLearning({
+        projectDirectory,
+        observation,
+        screenshot: shot,
+        flow,
+        state,
+      });
+      if (repeated !== undefined) {
+        const data: LearnToolData = {
+          recorded: false,
+          repeated: true,
+          id: repeated.id,
+          kind: repeated.kind,
+          flow: repeated.flow,
+          state: repeated.state,
+          placement: repeated.placement,
+          ...(repeated.placement?.proposal === undefined
+            ? {}
+            : { proposal: absolute(repeated.placement.proposal) }),
+          candidate: repeated.candidate,
+          record: repeated,
+          paths: [],
+          next: "Nothing written; this catch is already recorded.",
+        };
+        return result(
+          `Already recorded as ${repeated.id} (${repeated.kind}) on ${repeated.flow}/${repeated.state}; nothing written.${ruleLine(repeated)}`,
+          data,
+        );
+      }
+      // No write callback: stdout is the protocol channel.
+      const output = await learnCommand({
+        project: root,
+        cwd: root,
+        observation,
+        screenshot: shot,
+        selectors: selector === undefined ? undefined : [selector],
+        state,
+        flow,
+        yes: true,
+        dependencies: dependencies.learn,
+      });
+      if (!output.recorded)
+        throw new IdiomError("unreachable: learn --yes did not record");
+      const entry = output.entry;
+      const data: LearnToolData = {
+        recorded: true,
+        repeated: false,
+        id: output.id,
+        kind: output.kind,
+        flow: entry.flow,
+        state: entry.state,
+        placement: output.placement,
+        ...(output.proposal === undefined
+          ? {}
+          : { proposal: absolute(output.proposal) }),
+        candidate: entry.candidate,
+        record: entry,
+        paths: output.paths.map(absolute),
+        next: output.next,
+      };
+      return result(
+        `Recorded ${output.id} (${output.kind}) on ${entry.flow}/${entry.state}${output.proposal === undefined ? "" : ` — proposed draft state at ${data.proposal}`}.${ruleLine(entry)} Wrote ${data.paths.join(", ")}. ${output.next}`,
+        data,
+      );
+    },
+  );
+  register(
     "idiom_tickets",
     "Emit accepted findings as clustered ticket proposals (grouped by component and category) into a file-tracker triage directory inside the bound project. Only human-accepted findings become tickets; tickets land in triage, never ready, and are promoted by a human. Returns absolute ticket paths.",
     z.strictObject({
@@ -1223,7 +1356,7 @@ export function registerIdiomTools(
         outcomes: output.outcomes,
         ineligible: output.ineligible,
         malformed: output.malformed,
-      });
+      } satisfies McpOutputData<"idiom_tickets">);
     },
   );
   register(

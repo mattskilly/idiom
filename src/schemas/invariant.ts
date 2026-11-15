@@ -17,6 +17,8 @@ const common = {
 };
 export const invariantEdges = ["top", "right", "bottom", "left"] as const;
 export type InvariantEdge = (typeof invariantEdges)[number];
+export const invariantShares = [...invariantEdges, "width", "height"] as const;
+export type InvariantShare = (typeof invariantShares)[number];
 
 /** Split only the final edge suffix, preserving CSS pseudo-classes. */
 export function parseInvariantEdge(value: string): {
@@ -80,6 +82,16 @@ export const invariantSchema = z.union([
     }, "edges must be on the same axis"),
   z
     .object({
+      ...common,
+      /** The edge or dimension every match shares (within each container). */
+      share: z.enum(invariantShares),
+      selector: nonempty,
+      /** Compare matches only against others inside the same container. */
+      within: nonempty.optional(),
+    })
+    .strict(),
+  z
+    .object({
       name: common.name,
       optional: common.optional,
       group: nonempty,
@@ -107,6 +119,11 @@ export type Invariant = z.infer<typeof invariantSchema>;
 export type InvariantInput = z.input<typeof invariantSchema>;
 export type GroupInvariant = Extract<Invariant, { group: string }>;
 export type LayoutInvariant = Exclude<Invariant, GroupInvariant>;
+export type ShareInvariant = Extract<Invariant, { share: InvariantShare }>;
+export type SizeInvariant = Exclude<
+  Extract<Invariant, { selector: string }>,
+  ShareInvariant
+>;
 
 export function isGroupInvariant(
   declaration: Invariant,
@@ -135,7 +152,7 @@ export function groupBasis(declaration: GroupInvariant): string {
 }
 export const invariantOriginSchema = z
   .object({
-    scope: z.enum(["flow", "state"]),
+    scope: z.enum(["project", "flow", "state"]),
     id: nonempty,
     index: z.number().int().nonnegative(),
   })
@@ -145,20 +162,39 @@ export type EffectiveInvariant = {
   origin: z.infer<typeof invariantOriginSchema>;
 };
 
+/**
+ * The invariants a state is measured against: the project's (learned laws),
+ * then the flow's, then the state's own.
+ */
 export function effectiveInvariants(
   flow: { id: string; invariants?: Invariant[] | undefined },
   state: { id: string; invariants?: Invariant[] | undefined },
+  project?: Invariant[] | undefined,
 ): EffectiveInvariant[] {
-  return (["flow", "state"] as const).flatMap((scope) => {
-    const source = scope === "flow" ? flow : state;
-    return (source.invariants ?? []).map((declaration, index) => ({
-      declaration,
-      origin: { scope, id: source.id, index },
-    }));
-  });
+  const projectWide = (project ?? []).map((declaration, index) => ({
+    declaration,
+    origin: { scope: "project" as const, id: "project", index },
+  }));
+  return [
+    ...projectWide,
+    ...(["flow", "state"] as const).flatMap((scope) => {
+      const source = scope === "flow" ? flow : state;
+      return (source.invariants ?? []).map((declaration, index) => ({
+        declaration,
+        origin: { scope, id: source.id, index },
+      }));
+    }),
+  ];
 }
 
 export function invariantSelectors(declaration: Invariant): string[] {
+  if ("share" in declaration)
+    return [
+      ...new Set([
+        declaration.selector,
+        ...(declaration.within === undefined ? [] : [declaration.within]),
+      ]),
+    ];
   if ("selector" in declaration) return [declaration.selector];
   if ("align" in declaration) return declaration.selectors;
   if ("group" in declaration)
@@ -181,13 +217,15 @@ export function invariantLabel({
   origin,
 }: EffectiveInvariant): string {
   const subject =
-    "selector" in declaration
-      ? declaration.selector
-      : "align" in declaration
-        ? `${declaration.align} alignment (${declaration.selectors.join(", ")})`
-        : "group" in declaration
-          ? `group ${declaration.group} › ${declaration.items} by ${groupBasis(declaration)}`
-          : `${declaration.edge} offset from ${declaration.equals}`;
+    "share" in declaration
+      ? `${declaration.share} shared by ${declaration.selector}${declaration.within === undefined ? "" : ` within ${declaration.within}`}`
+      : "selector" in declaration
+        ? declaration.selector
+        : "align" in declaration
+          ? `${declaration.align} alignment (${declaration.selectors.join(", ")})`
+          : "group" in declaration
+            ? `group ${declaration.group} › ${declaration.items} by ${groupBasis(declaration)}`
+            : `${declaration.edge} offset from ${declaration.equals}`;
   return (
     declaration.name ??
     `${subject} (${origin.scope} ${origin.id} #${origin.index + 1})`

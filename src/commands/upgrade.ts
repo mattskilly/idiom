@@ -1,5 +1,9 @@
 import { type SetupOptions, setupAutobuild } from "../autobuild/setup.js";
 import {
+  migrateProjectFiles,
+  type ProjectFileOutcome,
+} from "../migrations/run.js";
+import {
   findOptionalProjectDirectory,
   resolveProjectArgument,
 } from "../project.js";
@@ -24,6 +28,15 @@ export async function upgradeCommand(
     options.project === undefined
       ? ((await findOptionalProjectDirectory(start)) ?? start)
       : start;
+  // Project files move first, so later steps of this run read current formats.
+  const projectFiles = await migrateProjectFiles(
+    {
+      projectDirectory,
+      dryRun: options.dryRun === true,
+      ...(dependencies.now ? { now: dependencies.now } : {}),
+    },
+    { formats: dependencies.projectFileFormats },
+  );
   const autobuild = await setupAutobuild({ ...options, projectDirectory });
   // A declined/conflicting migration must not modify either verifier copy.
   // Other skills still upgrade independently.
@@ -44,7 +57,7 @@ export async function upgradeCommand(
     },
     dependencies,
   );
-  return { ...report, autobuild };
+  return { ...report, autobuild, projectFiles };
 }
 function renderVersion(value: UpgradeReport["previous"]): string {
   if (value.kind === "known") return value.version;
@@ -97,8 +110,53 @@ export function renderUpgrade(report: UpgradeReport): string {
   }
   for (const conflict of report.discoveryConflicts)
     lines.push(`protected: ${conflict.path} — ${conflict.reason}`);
+  lines.push(...renderProjectFiles(report));
   return lines.join("\n");
 }
-export const upgradeFailed = (report: UpgradeReport): boolean =>
+function projectFileLine(
+  file: ProjectFileOutcome,
+  report: UpgradeReport,
+): string {
+  if (file.outcome === "migrated")
+    return report.dryRun
+      ? `  would migrate: ${file.path} — format ${file.from} → ${file.to} (nothing written)`
+      : `  migrated: ${file.path} — format ${file.from} → ${file.to}, original kept at ${file.backupPath}`;
+  if (file.outcome === "refused")
+    return `  refused: ${file.path} — format ${file.version}; Idiom ${report.installedVersion} understands format ${file.currentVersion}. Update Idiom, then run idiom upgrade again.`;
+  return `  ${file.outcome}: ${file.path} — ${file.reason ?? ""}`;
+}
+/** The versioned `.idiom/` file section: counts, then every non-current file. */
+export function renderProjectFiles(report: UpgradeReport): string[] {
+  const projectFiles = report.projectFiles;
+  if (projectFiles === undefined) return [];
+  const dry = report.dryRun ? " dry run" : "";
+  if (projectFiles.files.length === 0)
+    return [`Project files${dry}: none versioned`];
+  const count = (outcome: ProjectFileOutcome["outcome"]) =>
+    projectFiles.files.filter((file) => file.outcome === outcome).length;
+  const counts = (
+    ["migrated", "current", "kept", "refused", "skipped", "failed"] as const
+  )
+    .filter((outcome) => outcome === "current" || count(outcome) > 0)
+    .map((outcome) => `${count(outcome)} ${outcome}`);
+  const lines = [`Project files${dry}: ${counts.join(", ")}`];
+  for (const file of projectFiles.files)
+    if (file.outcome !== "current") lines.push(projectFileLine(file, report));
+  if (projectFiles.backupDirectory !== null)
+    lines.push(
+      `Originals kept in ${projectFiles.backupDirectory}/. Commit the migrated files, then delete it.`,
+    );
+  return lines;
+}
+export const projectFilesRefused = (report: UpgradeReport): boolean =>
+  report.projectFiles?.files.some((file) => file.outcome === "refused") ===
+  true;
+export const projectFilesFailed = (report: UpgradeReport): boolean =>
+  report.projectFiles?.files.some((file) => file.outcome === "failed") === true;
+export const skillsConflicted = (report: UpgradeReport): boolean =>
   report.files.some((file) => file.action === "conflicted") ||
   report.discoveryConflicts.length > 0;
+export const upgradeFailed = (report: UpgradeReport): boolean =>
+  skillsConflicted(report) ||
+  projectFilesRefused(report) ||
+  projectFilesFailed(report);

@@ -718,3 +718,104 @@ test("decision reattribution never creates learned human misses", async () => {
   ]);
   expect(await summarizeMisses({ projectDirectory: project })).toEqual(before);
 });
+
+test("an observation recorded on a proposed state is covered by its candidate's check once that state is checked", () => {
+  const observation = entry({
+    state: "export-menu",
+    kind: "observation",
+    target: { file: ".idiom/proposals/states/learned-1.json" },
+    entry: { name: "export menu item", width: 8, height: 8 },
+    candidate: {
+      rule: "Every export menu item is 8×8px.",
+      kind: "component",
+      checkable: "deterministic",
+    },
+    placement: {
+      via: "proposed",
+      proposal: ".idiom/proposals/states/learned-1.json",
+    },
+  });
+  const ruled = entry({
+    id: "learned-2",
+    kind: "observation",
+    candidate: { rule: "Calmer.", kind: "ruling", checkable: "judged" },
+  });
+  const evidence = { flow: "studio-lab", rule: finding.rule, at: later, runId };
+  const [covered, never] = missStatuses(
+    [observation, ruled],
+    [
+      { ...evidence, state: "export-menu" },
+      { ...evidence, state: "editor" },
+    ],
+    new Map([["studio-lab", new Set(["editor", "export-menu"])]]),
+  );
+  expect(covered).toMatchObject({
+    status: "covered",
+    via: "run",
+    rule: "component-size",
+    coverage: "rule",
+    state: "matched",
+  });
+  expect(never).toMatchObject({ status: "open", coverage: "open" });
+  // Still proposed while the flow does not declare the state.
+  expect(
+    missStatuses([observation], [], new Map([["studio-lab", new Set()]]))[0],
+  ).toMatchObject({ status: "open", coverage: "open", state: "proposed" });
+});
+
+test("--list shows coverage (open, rule, fixture) and whether each state is matched or proposed", async () => {
+  const { project } = await studioProject(directories);
+  await log(project, [
+    // A legacy record with neither new field.
+    entry(),
+    entry({
+      id: "learned-2",
+      kind: "ruling",
+      placement: { via: "screenshot", similarity: 0.968, confidence: "high" },
+      covered: { by: "test/fixtures/learned-2", at: later },
+    }),
+    entry({
+      id: "learned-3",
+      kind: "ruling",
+      covered: { by: "design-law", at: later },
+    }),
+    entry({
+      id: "learned-4",
+      state: "export-menu",
+      kind: "observation",
+      target: { file: ".idiom/proposals/states/learned-4.json" },
+      placement: {
+        via: "proposed",
+        proposal: ".idiom/proposals/states/learned-4.json",
+      },
+    }),
+  ]);
+  const text = (await cli(project, ["learn", "--list"])).text;
+  expect(text).toContain(
+    'learned-1  open  studio-lab/editor (state matched)  component  "the dots should be 8px"',
+  );
+  expect(text).toContain(
+    `learned-2  covered by fixture test/fixtures/learned-2 (marked ${later})  studio-lab/editor (state matched, screenshot 97%)  ruling`,
+  );
+  expect(text).toContain(
+    `learned-3  covered by rule design-law (marked ${later})  studio-lab/editor (state matched)`,
+  );
+  expect(text).toContain(
+    "learned-4  open  studio-lab/export-menu (state proposed: .idiom/proposals/states/learned-4.json)  observation",
+  );
+  const json = JSON.parse(
+    (await cli(project, ["learn", "--list", "--json"])).text,
+  );
+  expect(
+    json.statuses.map(
+      (status: { coverage: string; state: string }) =>
+        `${status.coverage}/${status.state}`,
+    ),
+  ).toEqual([
+    "open/matched",
+    "fixture/matched",
+    "rule/matched",
+    "open/proposed",
+  ]);
+  expect(json.summary).toMatchObject({ logged: 4, open: 2, coveredByMark: 2 });
+});

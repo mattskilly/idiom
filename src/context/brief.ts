@@ -35,6 +35,7 @@ import {
 import { compareFindingNames } from "../review/names.js";
 import { effectiveLaw } from "../rulings/effective.js";
 import type { Decision } from "../schemas/decision.js";
+import { type Invariant, invariantLabel } from "../schemas/invariant.js";
 import type { ChecksSettings } from "../schemas/project.js";
 import type { RuleOverride, Rules } from "../schemas/rules.js";
 import type { RulingResolution } from "../schemas/ruling.js";
@@ -432,6 +433,48 @@ export function craftCheckEntries(
     entries.push([
       `- "${pair.name}": ${pair.a} and ${pair.b} mirror each other — same size, same kind of element (icon or text), same type, each the same distance from the canvas-facing edge of its own panel.`,
     ]);
+  // Enabled checks always state their law, so a learned law that matches
+  // the defaults (or only re-enables a check) is still visible to agents.
+  if (checks.controlGap.enabled)
+    entries.push([
+      `- Parts inside one control (text runs, icons, nested buttons) keep at least ${checks.controlGap.min}px between them (control-gap).`,
+    ]);
+  for (const scope of checks.controlGap.scopes ?? [])
+    entries.push([
+      `- ${scope.name.replace(/[.!?]$/, "")}: inside ${scope.selector}, parts of a control keep at least ${scope.min}px apart (control-gap).`,
+    ]);
+  if (checks.negativeSpacing.enabled) {
+    entries.push([
+      checks.negativeSpacing.scope === "all"
+        ? "- No negative letter- or word-spacing on any painted text (negative-spacing)."
+        : "- No negative letter- or word-spacing on interface text: controls, labels, navigation, menus, toolbars and tooltips (negative-spacing).",
+    ]);
+    for (const selector of checks.negativeSpacing.include)
+      entries.push([
+        `- No negative letter- or word-spacing on text inside ${selector} (negative-spacing).`,
+      ]);
+  }
+  for (const scope of checks.textCentering?.scopes ?? [])
+    entries.push([
+      `- ${scope.name.replace(/[.!?]$/, "")}: inside ${scope.selector}, single-line labels sit within ${scope.tolerance}px of their box's vertical centre (text-centering).`,
+    ]);
+  for (const invariant of checks.invariants ?? []) {
+    const { name, ...unnamed } = invariant;
+    const shape =
+      "share" in invariant
+        ? `${invariant.share === "width" || invariant.share === "height" ? `one ${invariant.share}` : `one ${invariant.share} edge`} shared by ${invariant.selector}${invariant.within === undefined ? "" : ` inside each ${invariant.within}`}`
+        : invariantLabel({
+            declaration: unnamed as Invariant,
+            origin: { scope: "project", id: "project", index: 0 },
+          });
+    const tolerance =
+      "tolerance" in invariant && invariant.tolerance > 0
+        ? ` (within ${invariant.tolerance}px)`
+        : "";
+    entries.push([
+      `- ${name === undefined ? "" : `${name.replace(/[.!?]$/, "")}: `}${shape}${tolerance} (layout-invariants).`,
+    ]);
+  }
   for (const term of checks.copy.glossary)
     entries.push([
       term.preferred === undefined

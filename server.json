@@ -3,7 +3,7 @@
   "name": "io.github.mattskilly/idiom",
   "title": "Idiom",
   "description": "Design acceptance for UI: capture flows, inspect findings, plan repairs and verify fixes.",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "websiteUrl": "https://idiom.build",
   "repository": {
     "url": "https://github.com/mattskilly/idiom",
@@ -14,7 +14,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@mattskilly/idiom",
-      "version": "0.22.0",
+      "version": "0.23.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -73,6 +73,10 @@
         {
           "name": "idiom_choose",
           "description": "Record the human choice and reason between disagreeing design references."
+        },
+        {
+          "name": "idiom_learn",
+          "description": "Record a UI or UX problem a person pointed out as a learned rule candidate."
         },
         {
           "name": "idiom_tickets",

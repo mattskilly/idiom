@@ -6,6 +6,7 @@ import {
   commandStatus,
   fileFormats,
   jsonOutputs,
+  mcpOutputs,
   mcpToolStatus,
   type SurfaceStatus,
 } from "../src/interface/surfaces.js";
@@ -59,6 +60,14 @@ export type InterfaceSnapshot = {
       status: SurfaceStatus | "unclassified";
       inputSchema: JsonSchema;
       annotations: unknown;
+      /** Absent in snapshots recorded before MCP outputs were classified. */
+      outputStatus?: SurfaceStatus | "unclassified";
+      /**
+       * The output's promised fields (mcpOutputs[name].contract), recorded
+       * only for stable-additive outputs. The advertised outputSchema may
+       * declare more: its experimental keys.
+       */
+      outputSchema?: JsonSchema;
     }[];
   };
   rules: string[];
@@ -107,6 +116,28 @@ function schemaOf(schema: z.ZodType, io: Direction): JsonSchema {
   return z.toJSONSchema(schema, { io, unrepresentable: "any" }) as JsonSchema;
 }
 
+function promisedOutput(name: string): JsonSchema {
+  const contract = mcpOutputs[name]?.contract;
+  if (contract === undefined)
+    throw new Error(`${name}: a stable-additive output has no contract`);
+  return schemaOf(contract, "output");
+}
+
+/** Every MCP tool's advertised outputSchema, as tools/list returns it. */
+export async function advertisedOutputSchemas(): Promise<
+  Record<string, JsonSchema>
+> {
+  const { client, close } = await mcpClient({});
+  try {
+    const { tools } = await client.listTools();
+    return Object.fromEntries(
+      tools.map((tool) => [tool.name, (tool.outputSchema ?? {}) as JsonSchema]),
+    );
+  } finally {
+    await close();
+  }
+}
+
 export async function buildInterfaceSnapshot(): Promise<InterfaceSnapshot> {
   const program = createProgram();
   const commands = programCommands(program)
@@ -134,12 +165,20 @@ export async function buildInterfaceSnapshot(): Promise<InterfaceSnapshot> {
     mcp = {
       interfaceVersion: capabilities?.experimental?.idiom?.interfaceVersion,
       tools: tools
-        .map((tool) => ({
-          name: tool.name,
-          status: mcpToolStatus[tool.name] ?? ("unclassified" as const),
-          inputSchema: tool.inputSchema as JsonSchema,
-          annotations: tool.annotations ?? null,
-        }))
+        .map((tool) => {
+          const outputStatus =
+            mcpOutputs[tool.name]?.status ?? ("unclassified" as const);
+          return {
+            name: tool.name,
+            status: mcpToolStatus[tool.name] ?? ("unclassified" as const),
+            inputSchema: tool.inputSchema as JsonSchema,
+            annotations: tool.annotations ?? null,
+            outputStatus,
+            ...(outputStatus === "stable-additive"
+              ? { outputSchema: promisedOutput(tool.name) }
+              : {}),
+          };
+        })
         .sort(byKey((tool) => tool.name)),
     };
   } finally {
@@ -324,18 +363,36 @@ export function compareInterface(
     );
   const tools = new Map(current.mcp.tools.map((tool) => [tool.name, tool]));
   for (const old of previous.mcp.tools) {
-    if (!isStable(old.status)) continue;
     const label = `MCP tool ${old.name}`;
     const next = tools.get(old.name);
+    const stableOutput = old.outputStatus === "stable-additive";
+    if (!isStable(old.status) && !stableOutput) continue;
     if (next === undefined) {
       issues.push(`${label}: removed`);
       continue;
     }
-    if (!isStable(next.status))
-      issues.push(`${label}: demoted from ${old.status} to ${next.status}`);
-    issues.push(
-      ...schemaIssues(old.inputSchema, next.inputSchema, "input", label),
-    );
+    if (isStable(old.status)) {
+      if (!isStable(next.status))
+        issues.push(`${label}: demoted from ${old.status} to ${next.status}`);
+      issues.push(
+        ...schemaIssues(old.inputSchema, next.inputSchema, "input", label),
+      );
+    }
+    // A stable output is protected on its own, whatever the tool's status.
+    if (stableOutput) {
+      if (next.outputStatus !== "stable-additive")
+        issues.push(
+          `${label}: output demoted from stable-additive to ${next.outputStatus ?? "unclassified"}`,
+        );
+      issues.push(
+        ...schemaIssues(
+          old.outputSchema ?? {},
+          next.outputSchema ?? {},
+          "output",
+          `${label} output`,
+        ),
+      );
+    }
   }
 
   const rules = new Set(current.rules);

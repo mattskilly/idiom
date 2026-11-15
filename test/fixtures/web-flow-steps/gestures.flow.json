@@ -1,0 +1,107 @@
+{
+  "id": "gestures",
+  "title": "Live-editing gestures on a fixture editor",
+  "intent": [
+    "Reach selected, nudged, multi-selected, inline-editing, dragging and hovered editor states from flow steps alone."
+  ],
+  "setup": [],
+  "states": [
+    {
+      "id": "nudged",
+      "description": "The button block selected and nudged up 18px and left 6px, showing its offset chip",
+      "url": "/gestures",
+      "steps": [
+        { "action": "click", "selector": "[data-block=button]" },
+        {
+          "action": "press",
+          "selector": "[data-block=button]",
+          "key": "ArrowUp",
+          "count": 18
+        },
+        {
+          "action": "press",
+          "selector": "[data-block=button]",
+          "key": "ArrowLeft",
+          "count": 6
+        },
+        { "action": "expectText", "text": "x −6 · y −18" }
+      ],
+      "expect": { "selectorPresent": ["#offset-chip", "#toolbar"] }
+    },
+    {
+      "id": "multi-select",
+      "description": "Two blocks selected with Meta+click",
+      "url": "/gestures",
+      "steps": [
+        { "action": "click", "selector": "[data-block=button]" },
+        {
+          "action": "click",
+          "selector": "[data-block=image]",
+          "modifiers": ["Meta"]
+        },
+        { "action": "expectText", "text": "2 selected" }
+      ],
+      "expect": {}
+    },
+    {
+      "id": "inline-edit",
+      "description": "The heading in inline text editing after a double-click",
+      "url": "/gestures",
+      "steps": [
+        { "action": "dblclick", "selector": "[data-block=heading]" },
+        { "action": "waitFor", "selector": "#inline-editing" }
+      ],
+      "expect": {}
+    },
+    {
+      "id": "dragging",
+      "description": "An item held mid-drag over the drop zone, showing the drag preview",
+      "url": "/gestures",
+      "steps": [
+        {
+          "action": "drag",
+          "selector": ".drag-handle",
+          "target": ".drop-zone",
+          "hold": true
+        },
+        { "action": "waitFor", "selector": "#drag-preview" }
+      ],
+      "expect": { "selectorPresent": ["#drag-preview", ".drop-zone.over"] }
+    },
+    {
+      "id": "drag-offset",
+      "description": "An item dragged by an offset and dropped",
+      "url": "/gestures",
+      "steps": [
+        {
+          "action": "drag",
+          "selector": ".drag-handle",
+          "offset": { "x": 220, "y": 40 }
+        },
+        {
+          "action": "waitFor",
+          "selector": "body[data-dropped=zone]",
+          "state": "visible"
+        }
+      ],
+      "expect": { "selectorAbsent": ["#drag-preview"] }
+    },
+    {
+      "id": "tile-hover",
+      "description": "A tile hovered, showing its hover-only menu",
+      "url": "/gestures",
+      "steps": [
+        { "action": "hover", "selector": ".tile" },
+        { "action": "waitFor", "selector": ".tile-menu" }
+      ],
+      "expect": { "selectorPresent": [".tile[data-hovered=true]"] }
+    },
+    {
+      "id": "chained",
+      "description": "A state reached from the held drag that only asserts the preview",
+      "from": "dragging",
+      "steps": [{ "action": "expectVisible", "selector": "#drag-preview" }],
+      "expect": {}
+    }
+  ]
+}

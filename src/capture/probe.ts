@@ -9,6 +9,7 @@ import type {
 } from "playwright";
 import { menuTriggerPattern } from "../checks/collection-actions.js";
 import { animatedKeys, snapCandidateKeys } from "../checks/motion-snap.js";
+import { revealedLabel } from "../checks/revealed.js";
 import type {
   ActionTimelineArtifact,
   ExplanationRecord,
@@ -28,6 +29,7 @@ import type {
 } from "../checks/types.js";
 import { DESTRUCTIVE_ACTION_PATTERN } from "../copy-policy.js";
 import { settleAnimations } from "./animation-settle.js";
+import { probeCommandPalette } from "./command-palette.js";
 import { Deadline, DeadlineExpired, deadlinePage } from "./deadline.js";
 import {
   dismissalLimitReason,
@@ -96,6 +98,11 @@ export type ProbeOptions = CaptureHooks & {
     | import("../checks/filmstrip-schema.js").FilmstripIdentity[]
     | undefined;
   enumerateOnly?: boolean | undefined;
+  /**
+   * `checks.probe.commandPalette`: a shortcut (Playwright key syntax) the
+   * probe presses once per state to read the palette's entries.
+   */
+  commandPalette?: string | undefined;
   flowBudget?: import("./probe-budget.js").ProbeBudgetLease | undefined;
   /**
    * No flow target: per-state time fractions are off; only per-control
@@ -2342,6 +2349,7 @@ async function clickAndObserve(
 ): Promise<{
   effects: ProbeEffect[];
   signature?: string;
+  destination?: string;
   primary?: boolean;
   selectsAncestor?: SelectsAncestor;
   triggerBox?: { trigger: Rect; group: string };
@@ -2577,9 +2585,13 @@ async function clickAndObserve(
       effects.has("aria") ||
       (effects.has("dom") && (await primaryMutations(page, path)) > 0);
     let signature: string | undefined;
+    let destination: string | undefined;
     if (effects.has("navigation")) {
       try {
-        signature = `navigate:${new URL(after.url).pathname}`;
+        const url = new URL(after.url);
+        signature = `navigate:${url.pathname}`;
+        if (url.protocol === "http:" || url.protocol === "https:")
+          destination = url.href;
       } catch {
         signature = `navigate:${after.url}`;
       }
@@ -2605,6 +2617,7 @@ async function clickAndObserve(
     return {
       effects: [...effects],
       ...(signature === undefined ? {} : { signature }),
+      ...(destination === undefined ? {} : { destination }),
       primary,
       ...(selectsAncestor === undefined ? {} : { selectsAncestor }),
       ...(box === undefined ? {} : { triggerBox: box }),
@@ -4359,7 +4372,8 @@ export async function probeControls(
     const hook = options.observeRevealed;
     if (hook === undefined || maxRevealed === 0) return undefined;
     const described = {
-      name: base.name,
+      // An unnamed disclosure is still recorded, under a readable fallback.
+      name: revealedLabel(base.name, base.kind),
       kind: base.kind,
       trigger: base.trigger,
       ...(base.root === undefined ? {} : { root: base.root }),
@@ -4547,6 +4561,30 @@ export async function probeControls(
       artifact.candidates = candidates;
     if (options.enumerateOnly) {
       return artifact;
+    }
+    if (options.commandPalette !== undefined) {
+      selector = "command palette";
+      progress("command palette");
+      const page = current ?? options.page;
+      artifact.palette = await probeCommandPalette(page, {
+        shortcut: options.commandPalette,
+        waitMs: options.waitMs,
+        deadline: state,
+      });
+      // Whatever the shortcut left behind is undone by the next replay, so
+      // control results are unaffected by the palette.
+      try {
+        const reference = baseline?.fingerprint;
+        if (
+          artifact.palette.closed === false ||
+          reference === undefined ||
+          (await state.run(() => stateFingerprint(page))) !== reference
+        )
+          needsReplay = true;
+      } catch (error) {
+        if (options.signal?.aborted || state.signal.aborted) throw error;
+        needsReplay = true;
+      }
     }
     const sampled = new Set<string>();
     let ordered = candidates;
@@ -5201,7 +5239,13 @@ export async function probeControls(
               deadline.check();
               if (newField || openedRoots.length > 0)
                 revealed = await observeRevealedState(page, deadline, {
-                  name: `${parentName} › ${item.name}`,
+                  // The parent's segment matches its own revealed name, so
+                  // the mode switch stays its revealed descendant.
+                  name: revealedLabel(
+                    `${parentName} › ${item.name}`,
+                    "mode",
+                    disclosureParent.disclosure,
+                  ),
                   kind: "mode",
                   trigger: item.path,
                   root: revealedRoots.get(disclosureParent),

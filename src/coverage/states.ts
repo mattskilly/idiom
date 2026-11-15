@@ -24,6 +24,11 @@ import {
   type EmptyContainerCoverage,
   emptyContainerCoverageLines,
 } from "./empty-containers.js";
+import {
+  computeSurfaceCoverage,
+  type SurfaceCoverage,
+  surfaceCoverageLines,
+} from "./surfaces.js";
 
 export type StateDimensionKind =
   | "viewport"
@@ -77,6 +82,8 @@ export type FlowStateCoverage = Totals & {
   disclosures?: DisclosureCoverage | undefined;
   /** Lists, tables, feeds and editors that were empty in every captured state. */
   emptyContainers?: EmptyContainerCoverage | undefined;
+  /** Menus, popovers, toolbars, editors and selectable elements no state shows open, with draft states to reach them. */
+  surfaces?: SurfaceCoverage | undefined;
 };
 
 export type StateCoverageSummary = { flows: FlowStateCoverage[] };
@@ -507,6 +514,11 @@ export function computeFlowStateCoverage(options: {
       options.tuples.filter(succeeded),
       labels,
     ),
+    surfaces: computeSurfaceCoverage(
+      options.tuples.filter(succeeded),
+      flow,
+      labels,
+    ),
   };
 }
 
@@ -637,6 +649,8 @@ export function renderStateCoverage(summary: StateCoverageSummary): string {
       lines.push("", ...disclosureCoverageLines(flow.disclosures));
     if (flow.emptyContainers !== undefined)
       lines.push("", ...emptyContainerCoverageLines(flow.emptyContainers));
+    if (flow.surfaces !== undefined)
+      lines.push("", ...surfaceCoverageLines(flow.surfaces));
     if (flow.missing.length > 0) {
       lines.push("", "To cover:");
       const all = flow.states.length;

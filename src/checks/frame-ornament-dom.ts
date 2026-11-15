@@ -4,6 +4,7 @@ import type {
   GlyphOverlapObservation,
   Rect,
   RowOrnamentObservation,
+  UnderfilledFrameObservation,
 } from "./types.js";
 
 export type FrameOrnamentInput = {
@@ -21,6 +22,7 @@ export type FrameOrnamentInput = {
 
 export type FrameOrnamentResult = {
   emptyFrames?: EmptyFrameObservation[];
+  underfilledFrames?: UnderfilledFrameObservation[];
   rowOrnaments?: RowOrnamentObservation[];
   glyphOverlaps?: GlyphOverlapObservation[];
 };
@@ -44,6 +46,18 @@ export const frameOrnamentLimits = {
   minItems: 5,
   itemShare: 0.8,
   primaryCoverage: 0.6,
+  /** Underfilled frames: the smallest frame judged, border box. */
+  underfillMinWidth: 64,
+  underfillMinHeight: 32,
+  /** Underfilled frames wider than this share of the viewport are bars, not tiles. */
+  underfillMaxViewportShare: 0.6,
+  /** The media covers at most this share of the frame's inner box. */
+  underfillMaxMediaShare: 0.35,
+  /** The widest empty strip is at least this share of the inner size on its axis. */
+  underfillMinGapShare: 0.5,
+  /** Media within this share of the inner size of centre (on the open axis) is centred. */
+  underfillCentreTolerance: 0.1,
+  underfillCentreMinPx: 2,
 } as const;
 
 // Serialized by Playwright: self-contained, no runtime imports. Requires
@@ -253,9 +267,7 @@ export function installFrameOrnamentDom(limits: typeof frameOrnamentLimits) {
       exempt.some((root) => root === element || root.contains(element));
 
     // ---- empty-frame -------------------------------------------------------
-    const hasContent = (frame: Element): boolean => {
-      if (pseudoDraws(frame, "::before") || pseudoDraws(frame, "::after"))
-        return true;
+    const hasVisibleText = (frame: Element): boolean => {
       const walker = document.createTreeWalker(frame, NodeFilter.SHOW_TEXT);
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
         if (!/\S/.test(node.textContent ?? "")) continue;
@@ -267,6 +279,12 @@ export function installFrameOrnamentDom(limits: typeof frameOrnamentLimits) {
         const r = range.getBoundingClientRect();
         if (r.width > 0 && r.height > 0) return true;
       }
+      return false;
+    };
+    const hasContent = (frame: Element): boolean => {
+      if (pseudoDraws(frame, "::before") || pseudoDraws(frame, "::after"))
+        return true;
+      if (hasVisibleText(frame)) return true;
       for (const media of frame.querySelectorAll(mediaSelector)) {
         if (media.parentElement?.closest("svg") && media.localName !== "svg")
           continue;
@@ -370,6 +388,191 @@ export function installFrameOrnamentDom(limits: typeof frameOrnamentLimits) {
         });
       }
       return records;
+    };
+
+    // ---- empty-frame: underfilled media ---------------------------------------
+    const choiceSelector =
+      'button, label, a[href], [role="option"], [role="radio"], [role="button"], [role="tab"], [role="checkbox"], [role="switch"], [role="menuitemradio"], [role="gridcell"]';
+    const barSelector =
+      'header, nav, footer, [role="banner"], [role="navigation"], [role="toolbar"]';
+    const underfillMediaSelector =
+      "img, picture, video, canvas, svg, [role='img']";
+    const drawsFrame = (element: Element): boolean => {
+      if (borderSides(element).length === 4) return true;
+      const fill = fillOf(element);
+      return fill !== undefined && fill !== parentFill(element);
+    };
+    const repeated = new Map<Element, Map<string, boolean>>();
+    const repeatedTile = (element: Element): boolean => {
+      const parent = element.parentElement;
+      if (!parent) return false;
+      const cls = element.getAttribute("class") ?? "";
+      const key = `${element.localName} ${cls}`;
+      let known = repeated.get(parent);
+      if (!known) {
+        known = new Map();
+        repeated.set(parent, known);
+      }
+      const cached = known.get(key);
+      if (cached !== undefined) return cached;
+      const value = countRepeated(parent, element.localName, cls) >= 2;
+      known.set(key, value);
+      return value;
+    };
+    const countRepeated = (parent: Element, tag: string, cls: string) => {
+      let matches = 0;
+      for (const sibling of parent.children) {
+        if (
+          sibling.localName !== tag ||
+          (sibling.getAttribute("class") ?? "") !== cls
+        )
+          continue;
+        if (!painted(sibling) || !drawsFrame(sibling)) continue;
+        matches += 1;
+        if (matches >= 2) break;
+      }
+      return matches;
+    };
+    const drawsImage = (s: CSSStyleDeclaration) =>
+      !imageNone(s.backgroundImage) ||
+      !imageNone(s.getPropertyValue("mask-image")) ||
+      !imageNone(s.getPropertyValue("-webkit-mask-image"));
+    /** The frame's one painted media element, or undefined when it holds anything else. */
+    const loneMedia = (frame: Element): Element | undefined => {
+      if (pseudoDraws(frame, "::before") || pseudoDraws(frame, "::after"))
+        return undefined;
+      if (hasVisibleText(frame)) return undefined;
+      let media: Element | undefined;
+      for (const element of frame.querySelectorAll("*")) {
+        if (element.parentElement?.closest("svg")) continue;
+        if (media?.contains(element)) continue;
+        const s = style(element);
+        if (s.display === "none") continue;
+        if (!present(element)) continue;
+        if (element.matches(focusableSelector)) return undefined;
+        if (
+          element.matches(mediaSelector) &&
+          !element.matches(underfillMediaSelector)
+        )
+          return undefined;
+        if (pseudoDraws(element, "::before") || pseudoDraws(element, "::after"))
+          return undefined;
+        const isMedia =
+          element.matches(underfillMediaSelector) ||
+          (drawsImage(s) && textOf(element) === "");
+        if (!isMedia) continue;
+        if (media !== undefined) return undefined;
+        media = element;
+      }
+      return media !== undefined && painted(media) ? media : undefined;
+    };
+    const scanUnderfilledFrames = (): UnderfilledFrameObservation[] => {
+      const found: Array<{
+        frame: Element;
+        record: UnderfilledFrameObservation;
+      }> = [];
+      const all = document.body ? document.body.querySelectorAll("*") : [];
+      const maxWidth = window.innerWidth * limits.underfillMaxViewportShare;
+      for (const frame of all) {
+        if (found.length >= 200) break;
+        const s = style(frame);
+        if (s.display === "none" || s.display === "contents") continue;
+        if (frame.closest("svg") !== null) continue;
+        if (frame.matches(mediaSelector)) continue;
+        const r = frame.getBoundingClientRect();
+        if (
+          r.width < limits.underfillMinWidth ||
+          r.height < limits.underfillMinHeight ||
+          r.width > maxWidth
+        )
+          continue;
+        if (!drawsFrame(frame)) continue;
+        if (!imageNone(s.backgroundImage)) continue;
+        if (frame.matches(barSelector)) continue;
+        if (frame.closest("[aria-hidden='true']")) continue;
+        if (!frame.matches(choiceSelector) && !repeatedTile(frame)) continue;
+        if (isExempt(frame)) continue;
+        if (!painted(frame)) continue;
+        const media = loneMedia(frame);
+        if (media === undefined) continue;
+        const m = media.getBoundingClientRect();
+        const bl = Number.parseFloat(s.borderLeftWidth) || 0;
+        const br = Number.parseFloat(s.borderRightWidth) || 0;
+        const bt = Number.parseFloat(s.borderTopWidth) || 0;
+        const bb = Number.parseFloat(s.borderBottomWidth) || 0;
+        const inner = {
+          left: r.left + bl,
+          right: r.right - br,
+          top: r.top + bt,
+          bottom: r.bottom - bb,
+        };
+        const innerWidth = inner.right - inner.left;
+        const innerHeight = inner.bottom - inner.top;
+        if (innerWidth <= 0 || innerHeight <= 0) continue;
+        if (m.width <= 0 || m.height <= 0) continue;
+        if (
+          m.left < inner.left - 1 ||
+          m.right > inner.right + 1 ||
+          m.top < inner.top - 1 ||
+          m.bottom > inner.bottom + 1
+        )
+          continue;
+        const share = (m.width * m.height) / (innerWidth * innerHeight);
+        if (share > limits.underfillMaxMediaShare) continue;
+        const strips = {
+          left: m.left - inner.left,
+          right: inner.right - m.right,
+          top: m.top - inner.top,
+          bottom: inner.bottom - m.bottom,
+        };
+        let side: UnderfilledFrameObservation["side"] = "left";
+        for (const key of ["right", "top", "bottom"] as const)
+          if (strips[key] > strips[side]) side = key;
+        const horizontal = side === "left" || side === "right";
+        const size = horizontal ? innerWidth : innerHeight;
+        if (strips[side] < limits.underfillMinGapShare * size) continue;
+        const centre = horizontal
+          ? (inner.left + inner.right) / 2
+          : (inner.top + inner.bottom) / 2;
+        const mediaCentre = horizontal
+          ? (m.left + m.right) / 2
+          : (m.top + m.bottom) / 2;
+        const tolerance = Math.max(
+          limits.underfillCentreMinPx,
+          limits.underfillCentreTolerance * size,
+        );
+        if (Math.abs(mediaCentre - centre) <= tolerance) continue;
+        found.push({
+          frame,
+          record: {
+            selector: selectorFor(frame),
+            rect: box(frame),
+            media: selectorFor(media),
+            mediaRect: box(media),
+            emptyShare: Math.min(1, Math.round((1 - share) * 1000) / 1000),
+            side,
+          },
+        });
+      }
+      // Innermost qualifying frame only.
+      const kept = found.filter(
+        ({ frame }) =>
+          !found.some(
+            (other) => other.frame !== frame && frame.contains(other.frame),
+          ),
+      );
+      const records = kept.slice(0, 50);
+      const byParent = new Map<Element, number>();
+      for (const { frame } of records) {
+        const parent = frame.parentElement;
+        if (parent) byParent.set(parent, (byParent.get(parent) ?? 0) + 1);
+      }
+      return records.map(({ frame, record }) => {
+        const parent = frame.parentElement;
+        return parent && (byParent.get(parent) ?? 0) >= 2
+          ? { ...record, group: selectorFor(parent) }
+          : record;
+      });
     };
 
     // ---- collections (row ornaments) -----------------------------------------
@@ -744,7 +947,12 @@ export function installFrameOrnamentDom(limits: typeof frameOrnamentLimits) {
     };
 
     return {
-      ...(input.enabled.emptyFrame ? { emptyFrames: scanEmptyFrames() } : {}),
+      ...(input.enabled.emptyFrame
+        ? {
+            emptyFrames: scanEmptyFrames(),
+            underfilledFrames: scanUnderfilledFrames(),
+          }
+        : {}),
       ...(input.enabled.rowOrnament
         ? { rowOrnaments: scanRowOrnaments() }
         : {}),

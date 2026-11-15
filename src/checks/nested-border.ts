@@ -165,6 +165,47 @@ const focusSourced = (element: ObservedElementV2) =>
     element.styleSources?.[`border${side}Color`]?.selector.includes(":focus"),
   );
 
+/** Same pattern observe.ts uses for a selection outline's ownerState; keep in step. */
+const selectedClass = /(?:^|[-_:])(?:selected|active|current)(?:$|[-_])/i;
+
+/** What marks the element selected (`aria-pressed`, `class:is-selected`), if anything. */
+export function selectionMarker(
+  element: ObservedElementV2,
+): string | undefined {
+  const attributes = element.attributes ?? {};
+  for (const name of ["aria-selected", "aria-checked", "aria-pressed"])
+    if (attributes[name] === "true") return name;
+  if (attributes.checked !== undefined) return "checked";
+  const token = (attributes.class ?? "")
+    .split(/\s+/)
+    .find((value) => value !== "" && selectedClass.test(value));
+  return token === undefined ? undefined : `class:${token}`;
+}
+
+const mediaTags = new Set(["img", "picture", "video", "canvas", "svg"]);
+const isMedia = (element: ObservedElementV2) =>
+  mediaTags.has(element.tag) || element.attributes?.role === "img";
+
+/** A framed media element, or a framed text-less wrapper around one. */
+function isMediaRing(
+  element: ObservedElementV2,
+  elements: readonly ObservedElementV2[],
+): boolean {
+  if (frame(element) === undefined) return false;
+  if (isMedia(element)) return true;
+  if (element.directText.trim() !== "") return false;
+  return elements.some(
+    (other) =>
+      other.ancestorSelectors.includes(element.selector) && isMedia(other),
+  );
+}
+
+const contains = (outer: ObservedElementV2, inner: ObservedElementV2) =>
+  inner.rect.x >= outer.rect.x - 0.5 &&
+  inner.rect.y >= outer.rect.y - 0.5 &&
+  inner.rect.x + inner.rect.width <= outer.rect.x + outer.rect.width + 0.5 &&
+  inner.rect.y + inner.rect.height <= outer.rect.y + outer.rect.height + 0.5;
+
 export const nestedBorderCheck: DeterministicCheck = {
   id: "nested-border",
   run({ tuple, config }) {
@@ -251,6 +292,55 @@ export const nestedBorderCheck: DeterministicCheck = {
           ...(innerFrame.style === undefined
             ? {}
             : { innerStyle: innerFrame.style }),
+        }),
+      });
+    }
+    // A selected choice whose selection border rings a bordered photo or
+    // icon: two concentric rings however far apart and whatever their shapes.
+    for (const outer of elements) {
+      const marker = selectionMarker(outer);
+      if (marker === undefined) continue;
+      const outerFrame = frame(outer);
+      if (!outerFrame) continue;
+      const rings = elements.filter(
+        (other) =>
+          other !== outer &&
+          other.ancestorSelectors.includes(outer.selector) &&
+          isMediaRing(other, elements),
+      );
+      const outermost = rings.filter(
+        (ring) =>
+          !rings.some(
+            (other) =>
+              other !== ring && ring.ancestorSelectors.includes(other.selector),
+          ),
+      );
+      if (outermost.length !== 1) continue;
+      const inner = outermost[0] as ObservedElementV2;
+      const innerFrame = frame(inner);
+      if (!innerFrame) continue;
+      if (!contains(outer, inner)) continue;
+      examined += 1;
+      if (focusSourced(outer) || focusSourced(inner)) continue;
+      const fingerprint = `nested-border:${outer.selector}|${inner.selector}`;
+      if (seen.has(fingerprint)) continue;
+      seen.add(fingerprint);
+      candidates.push({
+        category: this.id,
+        severity: "minor",
+        rule: RULE,
+        selectorHint: outer.selector,
+        fingerprintHint: fingerprint,
+        explanation: `${outer.selector} is selected (${marker}) and draws its ${describe(outer, outerFrame)} selection border around ${inner.selector}, which draws its own ${describe(inner, innerFrame)} border, so the choice shows two rings.`,
+        acceptance: [
+          `While ${outer.selector} is selected, only one of ${outer.selector} and ${inner.selector} draws a ring.`,
+        ],
+        verification: verify(this.id, {
+          selectors: [outer.selector, inner.selector],
+          marker,
+          insets: insets(outer, outerFrame, inner),
+          outerRadii: outerFrame.radii.map((r) => round(r)),
+          innerRadii: innerFrame.radii.map((r) => round(r)),
         }),
       });
     }

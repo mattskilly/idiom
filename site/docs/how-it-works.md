@@ -12,7 +12,7 @@ Idiom looks at the app your users see, not the code. It runs a six-step loop aro
 | Step | What happens | Command |
 | --- | --- | --- |
 | **Learn** | Reads your design tokens, `PRODUCT.md` and `DESIGN.md`, or writes them with you. | `idiom init` |
-| **Render** | Starts your app, drives a real browser through every declared state at each viewport and colour scheme, and records what happens during each load and click. | `idiom capture` |
+| **Render** | Starts your app, drives a real browser through every declared state at each viewport and color scheme, and records what happens during each load and click. | `idiom capture` |
 | **Critique** | Runs more than 60 measured checks, compares against your intended design, and ranks the findings. | `idiom check` |
 | **Repair** | Hands each accepted finding to your coding agent as a bounded fix. | `idiom fix` |
 | **Verify** | Renders the same states again and confirms each finding is gone. No model is involved. | `idiom verify` |

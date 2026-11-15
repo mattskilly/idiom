@@ -7,6 +7,7 @@ import {
 import { RunFailure, type RunFailureJson } from "../errors.js";
 import { validateForRun } from "../preflight.js";
 import { resolveProjectArgument } from "../project.js";
+import { tabletViewportSuggestion } from "../setup/viewports.js";
 import { renderDoctorReport, runDoctor } from "./doctor.js";
 
 export type InitValidateReport = {
@@ -22,6 +23,8 @@ export type InitValidateReport = {
   doctor: DoctorReport | null;
   /** Where Idiom is wired; present even when validation failed. */
   surfaces: SurfacesReport;
+  /** Advice that never affects `ready`; empty when validation failed. */
+  suggestions: string[];
 };
 
 export type InitValidateProblem = {
@@ -86,6 +89,7 @@ export async function initValidate(options: {
       },
       doctor: null,
       surfaces,
+      suggestions: [],
     };
   }
   const flows = validated.flows.map(({ file, flow }) => ({
@@ -106,6 +110,9 @@ export async function initValidate(options: {
     validate: { ok: true, projectDirectory: validated.projectDirectory, flows },
     doctor,
     surfaces,
+    suggestions: [tabletViewportSuggestion(validated.project.viewports)].filter(
+      (line): line is string => line !== undefined,
+    ),
   };
 }
 
@@ -139,6 +146,7 @@ export function renderInitValidate(report: InitValidateReport): string[] {
   if (report.doctor !== null)
     lines.push(...renderDoctorReport(report.doctor).trimEnd().split("\n"));
   lines.push("", ...renderSurfaces(report.surfaces));
+  if (report.suggestions.length > 0) lines.push("", ...report.suggestions);
   if (report.ready) lines.push("ready");
   return lines;
 }

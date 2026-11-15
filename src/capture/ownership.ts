@@ -142,18 +142,33 @@ export async function withCaptureOwnership<T>(
     owner.controller.abort(new CaptureInterrupted("SIGTERM"));
   // A stray rejection from abandoned browser work must end this capture
   // through the normal path, so the application server is always stopped.
-  const unhandled = (reason: unknown) =>
+  // Once an interrupt (or an earlier failure) has aborted the capture, a
+  // further abort is a no-op; say so on stderr rather than dropping the error.
+  const browserError = (kind: string, error: unknown) => {
+    const line = String(error).split("\n")[0];
+    if (owner.controller.signal.aborted) {
+      process.stderr.write(
+        `Ignored a browser error during interrupt: ${line}\n`,
+      );
+      return;
+    }
     owner.controller.abort(
-      new IdiomError(
-        `capture failed on an unhandled browser error: ${String(reason).split("\n")[0]}`,
-      ),
+      new IdiomError(`capture failed on ${kind} browser error: ${line}`),
     );
+  };
+  const unhandled = (reason: unknown) => browserError("an unhandled", reason);
+  // The same for a synchronous throw: closing a page on interrupt can race
+  // Playwright's dispatch of a late message for it ("Cannot find parent
+  // object page@…"), thrown from a setImmediate. Node's default would exit
+  // with code 1 before the interruption is recorded.
+  const uncaught = (error: unknown) => browserError("an uncaught", error);
   // Persistent, not once: a repeated signal during teardown must not fall
   // through to Node's default action and kill the process before the record
   // is sealed. Aborting is idempotent; teardown is bounded by the grace.
   process.on("SIGINT", sigint);
   process.on("SIGTERM", sigterm);
   process.on("unhandledRejection", unhandled);
+  process.on("uncaughtException", uncaught);
   let failure: unknown;
   let result: T | undefined;
   let execution: Promise<T> | undefined;
@@ -197,6 +212,7 @@ export async function withCaptureOwnership<T>(
       process.off("SIGINT", sigint);
       process.off("SIGTERM", sigterm);
       process.off("unhandledRejection", unhandled);
+      process.off("uncaughtException", uncaught);
     }
   }
   if (failure !== undefined) throw failure;

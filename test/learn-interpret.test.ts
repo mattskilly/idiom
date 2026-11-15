@@ -119,3 +119,31 @@ test("appendJsonArrayItem edits in place and keeps the rest of the file as writt
   expect(appendJsonArrayItem("{ not json", ["a"], 1)).toBeUndefined();
   expect(appendJsonArrayItem('{"a": 1}', ["a"], 1)).toBeUndefined();
 });
+
+test("measurable laws interpret after sizes, glossary and mirrored pairs", () => {
+  expect(
+    interpretObservation(
+      "Nothing in a toolbar sits closer than 4px, glyph to glyph or glyph to button",
+    ),
+  ).toEqual({
+    kind: "law",
+    law: {
+      family: "min-gap",
+      check: "control-gap",
+      min: 4,
+      scope: { surface: "toolbar", selector: '[role="toolbar"]' },
+    },
+  });
+  expect(interpretObservation("buttons share a height")).toEqual({
+    kind: "ruling",
+    notCompiled:
+      "name the surface the buttons share it in (toolbar, menu, field group…)",
+  });
+  // Earlier readings are unchanged.
+  expect(interpretObservation("the override dots should be 8px").kind).toBe(
+    "component",
+  );
+  expect(interpretObservation("the toolbar should be 40px tall")).toMatchObject(
+    { kind: "invariant", height: 40 },
+  );
+});

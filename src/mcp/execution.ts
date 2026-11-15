@@ -4,6 +4,7 @@ import type {
 } from "@modelcontextprotocol/server";
 import type { CaptureDependencies } from "../capture/run.js";
 import { RunFailure } from "../errors.js";
+import { QuickCaptureFailed } from "../quick/failures.js";
 
 export function toolError(error: unknown): CallToolResult {
   if (error instanceof RunFailure)
@@ -12,19 +13,27 @@ export function toolError(error: unknown): CallToolResult {
       content: [{ type: "text", text: `${error.message}\n${error.hint}` }],
       structuredContent: { failure: error.failureJson() },
     };
+  // Carries its own advice, picked where the failure stage is known.
+  if (error instanceof QuickCaptureFailed)
+    return { isError: true, content: [{ type: "text", text: error.message }] };
   const diagnostic = error instanceof Error ? error.message : String(error);
   const recovery =
     /executable doesn't exist|playwright install|browser.*not.*found/i.test(
       diagnostic,
     )
       ? "Install Chromium with npx playwright install chromium, then retry."
-      : /EADDRINUSE|port.*(?:use|busy|pinned)|address already in use/i.test(
+      : /\bTimeout \d+ms exceeded\b|screenshot out of time|\btimed?[- ]out\b/i.test(
             diagnostic,
           )
-        ? "Free the configured port or correct .idiom/project.json server settings, then retry."
-        : /no \.idiom\/project.json/i.test(diagnostic)
-          ? "Call idiom_init (or run idiom init) in the project, or restart idiom mcp --project /absolute/project/path."
-          : "Correct the reported input, configuration or evidence problem, then retry this tool. Run idiom validate for configured flows.";
+        ? "The page took longer than its time allowance. Retry when the network and host are less busy, or review fewer viewports; configured flows can raise screenshotTimeoutMs per state."
+        : // Word boundaries: "Report: /Users/…" must not read as a port in use.
+          /\bEADDRINUSE\b|\bport\b[^\n]*\b(?:in use|busy|pinned)\b|address already in use/i.test(
+              diagnostic,
+            )
+          ? "Free the configured port or correct .idiom/project.json server settings, then retry."
+          : /no \.idiom\/project.json/i.test(diagnostic)
+            ? "Call idiom_init (or run idiom init) in the project, or restart idiom mcp --project /absolute/project/path."
+            : "Correct the reported input, configuration or evidence problem, then retry this tool. Run idiom validate for configured flows.";
   return {
     isError: true,
     content: [{ type: "text", text: `${diagnostic}\n${recovery}` }],

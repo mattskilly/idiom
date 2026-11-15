@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -63,8 +63,11 @@ test("--json prints { ready, validate, doctor, surfaces } for a ready project", 
     "validate",
     "doctor",
     "surfaces",
+    "suggestions",
   ]);
   expect(json.ready).toBe(true);
+  // One 800-wide viewport: nothing skips from phone to desktop.
+  expect(json.suggestions).toEqual([]);
   // Computed once, at the top level, not inside the doctor report.
   expect(json.doctor?.surfaces).toBeUndefined();
   expect(json.surfaces.initialized).toBe(true);
@@ -198,6 +201,7 @@ test("rendering and the first problem for hand-built reports", () => {
     },
     doctor: null,
     surfaces,
+    suggestions: [],
   };
   // The section is printed even when validation failed.
   expect(renderInitValidate(noFlows)).toEqual([
@@ -223,6 +227,7 @@ test("rendering and the first problem for hand-built reports", () => {
     },
     doctor: { flow: "home", ok: true, steps: [] },
     surfaces,
+    suggestions: [],
   };
   expect(renderInitValidate(ready)).toEqual([
     "validate: 2 flow(s) valid (home, site)",
@@ -231,6 +236,44 @@ test("rendering and the first problem for hand-built reports", () => {
     "ready",
   ]);
   expect(initValidateProblem(ready)).toBeUndefined();
+  // A suggestion prints after the surfaces and before ready; it never
+  // changes readiness.
+  const suggested: InitValidateReport = {
+    ...ready,
+    suggestions: ["Suggestion: add a tablet viewport."],
+  };
+  expect(renderInitValidate(suggested)).toEqual([
+    "validate: 2 flow(s) valid (home, site)",
+    "idiom doctor home: ok",
+    ...surfaceLines,
+    "",
+    "Suggestion: add a tablet viewport.",
+    "ready",
+  ]);
+  expect(initValidateProblem(suggested)).toBeUndefined();
+});
+
+test("viewports that skip from phone to desktop get a tablet suggestion before ready", async () => {
+  const { directory } = await passingProject(directories);
+  const path = join(directory, ".idiom", "project.json");
+  const project = JSON.parse(await readFile(path, "utf8"));
+  project.viewports = [
+    { name: "desktop", width: 1440, height: 900 },
+    { name: "mobile", width: 390, height: 844 },
+  ];
+  await writeFile(path, JSON.stringify(project));
+  const result = await initValidate(directory, "--validate");
+  expect(result.code).toBe(0);
+  const lines = result.stdout.trimEnd().split("\n");
+  expect(lines.at(-1)).toBe("ready");
+  expect(lines.at(-2)).toBe(
+    'Suggestion: viewports skip from phone (mobile 390px) to desktop (desktop 1440px); add a tablet viewport such as { "name": "tablet", "width": 768, "height": 1024 } (or 1024 wide) to viewports in .idiom/project.json.',
+  );
+  const json = JSON.parse(
+    (await initValidate(directory, "--validate", "--json")).stdout,
+  ) as InitValidateReport;
+  expect(json.ready).toBe(true);
+  expect(json.suggestions).toEqual([lines.at(-2)]);
 });
 
 test("a project with no flow manifests gets the generate-a-flow hint", async () => {

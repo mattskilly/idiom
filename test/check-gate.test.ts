@@ -4,6 +4,11 @@ import { expect, test } from "vitest";
 import { serverAnswers } from "../src/capture/process.js";
 import { run } from "../src/cli.js";
 import { planGate } from "../src/gate/plan.js";
+import { checkGateJsonContract } from "../src/interface/surfaces.js";
+
+const [gateSkipForm, gatePlanOnlyForm, gateRanForm] =
+  checkGateJsonContract.options;
+
 import { changedFixture } from "./changed-support.js";
 import {
   fixtureCommand,
@@ -68,6 +73,7 @@ test("a non-UI diff skips in under a second, before any graph, server or browser
       /^no UI changes since [0-9a-f]{12}; skipped$/,
     );
     const json = await cli(f.directory, ["--gate", "--json"]);
+    gateSkipForm.parse(JSON.parse(json.out));
     expect(JSON.parse(json.out).gate).toMatchObject({
       skipped: true,
       reason: "no UI changes",
@@ -103,6 +109,7 @@ test("a CSS-only change to one component gates only the state that renders it, a
     ]);
     expect(response.status, response.err).toBe(0);
     const output = JSON.parse(response.out);
+    gateRanForm.parse(output);
     expect(output.gate.plan.tuples).toHaveLength(1);
     expect(output.gate.skippedWork).toEqual([]);
     expect(output.checks[0].summary.coverage).toMatchObject({
@@ -317,6 +324,7 @@ test("--plan-only prints the plan or the skip and never starts a server or captu
     ]);
     expect(response.status, response.err).toBe(0);
     const output = JSON.parse(response.out);
+    gatePlanOnlyForm.parse(output);
     expect(output.gate).toMatchObject({
       planOnly: true,
       plan: { flows: ["site"], allFlows: ["site"] },

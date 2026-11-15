@@ -89,10 +89,11 @@ describe("--json emitters", () => {
       const pretty = stringifyCalls(source).filter((call) =>
         /,\s*null,\s*2,?\s*\)$/.test(call),
       );
-      // The one exception is brief list, a bare array (docs/stability.md).
-      expect(pretty.filter((call) => !call.includes("entries.map"))).toEqual(
-        [],
-      );
+      // The one exception is the deprecated `brief list --json --array`
+      // path (docs/stability.md).
+      expect(
+        pretty.filter((call) => !call.startsWith("JSON.stringify(briefs,")),
+      ).toEqual([]);
       expect(pretty.length).toBe(file === "src/cli.ts" ? 1 : 0);
     },
   );

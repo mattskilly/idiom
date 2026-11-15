@@ -128,11 +128,107 @@ const flowHealthSchema = stateHealthSchema.extend({
   serverErrorPatterns: z.array(regexpSchema).optional(),
 });
 
+/** Playwright's modifier names; a flow step's `modifiers` lists these. */
+export const modifierNames = [
+  "Alt",
+  "Control",
+  "ControlOrMeta",
+  "Meta",
+  "Shift",
+] as const;
+const modifiersSchema = z
+  .array(z.string())
+  .superRefine((modifiers, context) => {
+    if (modifiers.length === 0) {
+      context.addIssue({
+        code: "custom",
+        message: "must list at least one modifier",
+      });
+      return;
+    }
+    const seen = new Set<string>();
+    for (const [index, modifier] of modifiers.entries()) {
+      if (/^(?:cmd|command)$/i.test(modifier))
+        context.addIssue({
+          code: "custom",
+          path: [index],
+          message: 'use "Meta" for Cmd',
+        });
+      else if (!modifierNames.some((name) => name === modifier))
+        context.addIssue({
+          code: "custom",
+          path: [index],
+          message: `must be one of ${modifierNames.join(", ")}`,
+        });
+      else if (seen.has(modifier))
+        context.addIssue({
+          code: "custom",
+          path: [index],
+          message: `duplicate modifier ${JSON.stringify(modifier)}`,
+        });
+      seen.add(modifier);
+    }
+  })
+  .transform((modifiers) => modifiers as Array<(typeof modifierNames)[number]>);
+
+/** The first unbalanced bracket, parenthesis or quote in a selector. */
+export function selectorImbalance(selector: string): string | undefined {
+  const closers: Record<string, string> = { "[": "]", "(": ")" };
+  const open: string[] = [];
+  let quote: string | undefined;
+  for (let index = 0; index < selector.length; index += 1) {
+    const character = selector[index] as string;
+    if (character === "\\") {
+      index += 1;
+      continue;
+    }
+    if (quote !== undefined) {
+      if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character in closers) open.push(character);
+    else if (character === "]" || character === ")") {
+      const last = open.pop();
+      if (last === undefined || closers[last] !== character) return character;
+    }
+  }
+  return quote ?? open.at(-1);
+}
+const selectorSchema = z
+  .string()
+  .trim()
+  .min(1, "must be a nonblank selector")
+  .superRefine((selector, context) => {
+    const character = selectorImbalance(selector);
+    if (character !== undefined)
+      context.addIssue({
+        code: "custom",
+        message: `is not a valid selector: unclosed or unmatched ${JSON.stringify(character)}`,
+      });
+  });
+const offsetAxis = z
+  .number("must be a number of pixels")
+  .finite("must be a finite number of pixels")
+  .min(-10_000, "must be within 10000 pixels")
+  .max(10_000, "must be within 10000 pixels");
+const offsetSchema = z
+  .object({ x: offsetAxis, y: offsetAxis })
+  .strict()
+  .refine(
+    (offset) => offset.x !== 0 || offset.y !== 0,
+    "must move: x and y cannot both be 0",
+  );
+/** A counted press repeats at most this many times. */
+export const maxPressCount = 200;
+const countMessage = `must be a whole number from 1 to ${maxPressCount}`;
+
 const actionWebStepSchema = z.discriminatedUnion("action", [
   z
     .object({
       action: z.literal("click"),
       selector: nonblank,
+      modifiers: modifiersSchema.optional(),
       longRunning: z.boolean().optional(),
     })
     .strict(),
@@ -149,9 +245,47 @@ const actionWebStepSchema = z.discriminatedUnion("action", [
       action: z.literal("press"),
       selector: nonblank,
       key: nonblank,
+      count: z
+        .number(countMessage)
+        .int(countMessage)
+        .min(1, countMessage)
+        .max(maxPressCount, countMessage)
+        .optional(),
+      modifiers: modifiersSchema.optional(),
       longRunning: z.boolean().optional(),
     })
+    .strict()
+    .superRefine((step, context) => {
+      if (step.modifiers === undefined) return;
+      const parts = step.key.split("+").slice(0, -1);
+      if (parts.some((part) => modifierNames.some((name) => name === part)))
+        context.addIssue({
+          code: "custom",
+          path: ["modifiers"],
+          message: "put modifiers in either key or modifiers, not both",
+        });
+    }),
+  z.object({ action: z.literal("hover"), selector: selectorSchema }).strict(),
+  z
+    .object({
+      action: z.literal("dblclick"),
+      selector: selectorSchema,
+      modifiers: modifiersSchema.optional(),
+    })
     .strict(),
+  z
+    .object({
+      action: z.literal("drag"),
+      selector: selectorSchema,
+      target: selectorSchema.optional(),
+      offset: offsetSchema.optional(),
+      hold: z.boolean().optional(),
+    })
+    .strict()
+    .refine(
+      (step) => (step.target === undefined) !== (step.offset === undefined),
+      "must provide exactly one of target and offset",
+    ),
   z
     .object({
       action: z.literal("select"),
@@ -210,6 +344,21 @@ export const webStepSchema = z.union([
     })),
 ]);
 export type WebStep = z.infer<typeof webStepSchema>;
+
+/** Steps that only wait or assert, and so may run while a drag is held. */
+export const readinessActions = [
+  "waitFor",
+  "expectUrl",
+  "expectText",
+  "expectVisible",
+] as const;
+export function isReadinessStep(step: WebStep): boolean {
+  return readinessActions.some((action) => action === step.action);
+}
+/** A drag step that keeps the pointer down through the state's capture. */
+export function holdsPointer(step: WebStep): boolean {
+  return step.action === "drag" && step.hold === true;
+}
 export type WebHealth = z.infer<typeof flowHealthSchema>;
 export type WebHealthAllow = z.infer<typeof allowSchema>;
 
@@ -229,7 +378,7 @@ function siblingIssue(
 export const dataStateSchema = z.enum(["empty", "one", "many", "error"]);
 export type DataState = z.infer<typeof dataStateSchema>;
 
-const webStateSchema = z
+export const webStateSchema = z
   .object({
     design: designDeclarationSchema.optional(),
     id: z.string(),
@@ -259,6 +408,13 @@ const webStateSchema = z
     // Boxes this state shows empty on purpose (a drop zone before a drop);
     // the empty-frame check skips them and their descendants.
     intentionallyEmpty: z.array(nonblank).optional(),
+    // Content this state keeps hidden on purpose (a collapsed panel faded to
+    // opacity 0); the hidden-at-rest check skips it and its descendants.
+    intentionallyHidden: z.array(nonblank).optional(),
+    // Elements this state moves or resizes on purpose relative to the state
+    // it is linked to (its `from` source, or its toggle base and sibling
+    // combinations); state-jump skips them and their descendants.
+    intendedChanges: z.array(nonblank).optional(),
     data: dataStateSchema.optional(),
     invariants: z.array(invariantSchema).optional(),
     // Declared siblings for sibling-chrome: run-wide, or within this flow.
@@ -339,6 +495,84 @@ export function fromChainIssues(
 
 type ParsedWebState = z.infer<typeof webStateSchema>;
 
+type HeldDragIssue = { path: Array<string | number>; message: string };
+
+const heldDragFollowers =
+  "only waitFor, expectText, expectVisible and expectUrl may run while the pointer is held";
+
+/**
+ * A held drag keeps the pointer down through the state's capture, so only
+ * readiness steps may follow it: in its own state, in any state reached
+ * from it, and never in a toggle option or a toggle base.
+ */
+export function heldDragIssues(flow: {
+  states: ReadonlyArray<{
+    id: string;
+    from?: string | undefined;
+    steps: WebStep[];
+  }>;
+  toggles?: Record<string, Record<string, WebStep[]>> | undefined;
+  toggleStates?: string[] | undefined;
+}): HeldDragIssue[] {
+  const issues: HeldDragIssue[] = [];
+  const byId = new Map(flow.states.map((state) => [state.id, state]));
+  const ownHolds = (state: { steps: WebStep[] }) =>
+    state.steps.some(holdsPointer);
+  /** The nearest ancestor whose own steps hold a drag. */
+  const holdingAncestor = (state: {
+    id: string;
+    from?: string | undefined;
+  }): string | undefined => {
+    const visited = new Set([state.id]);
+    let current = state.from === undefined ? undefined : byId.get(state.from);
+    while (current !== undefined && !visited.has(current.id)) {
+      if (ownHolds(current)) return current.id;
+      visited.add(current.id);
+      current = current.from === undefined ? undefined : byId.get(current.from);
+    }
+    return undefined;
+  };
+  for (const [index, state] of flow.states.entries()) {
+    const ancestor = holdingAncestor(state);
+    let held: number | undefined;
+    for (const [stepIndex, step] of state.steps.entries()) {
+      if (ancestor !== undefined && !isReadinessStep(step))
+        issues.push({
+          path: ["states", index, "steps", stepIndex],
+          message: `cannot follow the drag ${JSON.stringify(ancestor)} holds; ${heldDragFollowers}`,
+        });
+      else if (held !== undefined && !isReadinessStep(step))
+        issues.push({
+          path: ["states", index, "steps", stepIndex],
+          message: `cannot follow a held drag (step ${held + 1}); ${heldDragFollowers}`,
+        });
+      if (held === undefined && holdsPointer(step)) held = stepIndex;
+    }
+  }
+  if (flow.toggles === undefined) return issues;
+  for (const [toggle, options] of Object.entries(flow.toggles))
+    for (const [option, steps] of Object.entries(options))
+      for (const [stepIndex, step] of steps.entries())
+        if (holdsPointer(step))
+          issues.push({
+            path: ["toggles", toggle, option, stepIndex, "hold"],
+            message: "toggle options cannot hold a drag",
+          });
+  for (const state of flow.states) {
+    if (
+      flow.toggleStates !== undefined &&
+      !flow.toggleStates.includes(state.id)
+    )
+      continue;
+    if (ownHolds(state) || holdingAncestor(state) !== undefined)
+      issues.push({
+        path: ["toggles"],
+        message: `cannot combine with ${JSON.stringify(state.id)}, which holds a drag; list other states in toggleStates`,
+      });
+  }
+  return issues;
+}
+
 /**
  * Flatten every `from` state into one that carries its root's URL source,
  * every ancestor's steps (root first) then its own, and the ancestors'
@@ -414,7 +648,7 @@ const electronStepSchema = z.discriminatedUnion("action", [
     .strict(),
 ]);
 
-const electronStateSchema = z
+export const electronStateSchema = z
   .object({
     design: designDeclarationSchema.optional(),
     id: z.string(),
@@ -433,6 +667,13 @@ const electronStateSchema = z
     // Boxes this state shows empty on purpose (a drop zone before a drop);
     // the empty-frame check skips them and their descendants.
     intentionallyEmpty: z.array(nonblank).optional(),
+    // Content this state keeps hidden on purpose (a collapsed panel faded to
+    // opacity 0); the hidden-at-rest check skips it and its descendants.
+    intentionallyHidden: z.array(nonblank).optional(),
+    // Elements this state moves or resizes on purpose relative to the state
+    // it is linked to (its `from` source, or its toggle base and sibling
+    // combinations); state-jump skips them and their descendants.
+    intendedChanges: z.array(nonblank).optional(),
     data: dataStateSchema.optional(),
     invariants: z.array(invariantSchema).optional(),
     siblingGroup: nonblank.optional(),
@@ -780,6 +1021,8 @@ const webFlowSchema = z
         path: ["states", issue.index, "from"],
         message: issue.message,
       });
+    for (const issue of heldDragIssues(flow))
+      context.addIssue({ code: "custom", ...issue });
     const toggles = flow.toggles;
     if (toggles === undefined) {
       for (const field of [

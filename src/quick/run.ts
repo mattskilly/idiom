@@ -79,6 +79,7 @@ import {
   QUICK_PROBE_MAX_CONTROLS,
   type QuickConfiguration,
 } from "./config.js";
+import { type QuickCaptureFailure, quickCaptureFailures } from "./failures.js";
 import {
   type ProbedPage,
   type QuickInteraction,
@@ -107,6 +108,8 @@ export type QuickRunResult = PaintedCoverageReport & {
   issues?: CheckIssue[];
   /** What the interaction probe did, or that it was off. */
   interaction: QuickInteraction;
+  /** Tuples that did not capture; empty when every capture passed. */
+  captureFailures: QuickCaptureFailure[];
 };
 
 function defaultRunName(now: Date): string {
@@ -586,6 +589,7 @@ export async function runQuick(options: {
       ...reportedCheckCoverage(reviewed.coverage),
       counts,
       interaction,
+      captureFailures: quickCaptureFailures(loaded.tuples),
       ...(options.materializeAllDeterministic
         ? { findings, groups, issues }
         : {}),

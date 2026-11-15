@@ -233,6 +233,20 @@ export const findingCategories = [
   "empty-frame",
   "repeated-row-ornament",
   "glyph-over-icon",
+  "native-scrollbar",
+  "browser-default-style",
+  "unused-token",
+  "hidden-at-rest",
+  "edge-text",
+  "cramped-padding",
+  "heading-rhythm",
+  "type-legibility",
+  "numeric-align",
+  "ragged-row",
+  "text-occlusion",
+  "state-jump",
+  "control-gap",
+  "negative-spacing",
 ] as const;
 
 /** Critique focus areas a page review can request (`idiom review --page --focus`). */

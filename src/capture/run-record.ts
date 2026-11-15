@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { IdiomError } from "../errors.js";
+import { devServerKinds } from "./dev-server.js";
 import { pressureReasons } from "./host-pressure.js";
 import { captureTupleKey } from "./resolve.js";
 import { controlTimingSchema, phaseTimingSchema } from "./timings.js";
@@ -124,6 +125,14 @@ export const runRecordSchema = z
       .strict(),
     /** The prefers-reduced-motion mode every tuple was captured under. */
     capture: z.object({ reducedMotion: z.boolean() }).strict().optional(),
+    /** The first development-server sign capture saw, in selected-tuple order. */
+    devServer: coordinateSchema
+      .extend({
+        kind: z.enum(devServerKinds),
+        evidence: z.string().min(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((record, ctx) => {

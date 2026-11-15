@@ -23,6 +23,13 @@ export const captureLaunchOptions = {
   handleSIGTERM: false,
 } satisfies LaunchOptions;
 
+/**
+ * The probe's classic-scrollbar sheet. A layer and zero specificity let
+ * normal author scrollbar sizing and hiding win.
+ */
+export const probeScrollbarCss =
+  "@layer idiom-probe-scrollbars { :where(*)::-webkit-scrollbar { width: 15px; height: 15px; } }";
+
 /** Page-local emulation: capture stays hidden; only click replays get a gutter. */
 export class ScrollbarController {
   private script: Disposable | undefined;
@@ -53,25 +60,25 @@ export class ScrollbarController {
       await this.session.send("Emulation.setScrollbarsHidden", {
         hidden: false,
       });
-      this.script = await this.page.addInitScript((key: string) => {
-        if (window !== window.top && self.origin === "null") return;
-        // Constructed sheets work under restrictive style-src CSP. A layer and
-        // zero specificity let normal author scrollbar sizing/hiding win.
-        const sheet = new CSSStyleSheet();
-        sheet.replaceSync(
-          "@layer idiom-probe-scrollbars { :where(*)::-webkit-scrollbar { width: 15px; height: 15px; } }",
-        );
-        document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
-        Object.defineProperty(window, key, {
-          configurable: true,
-          value: () => {
-            document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
-              (entry) => entry !== sheet,
-            );
-            Reflect.deleteProperty(window, key);
-          },
-        });
-      }, this.key);
+      this.script = await this.page.addInitScript(
+        ({ key, css }: { key: string; css: string }) => {
+          if (window !== window.top && self.origin === "null") return;
+          // Constructed sheets work under restrictive style-src CSP.
+          const sheet = new CSSStyleSheet();
+          sheet.replaceSync(css);
+          document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+          Object.defineProperty(window, key, {
+            configurable: true,
+            value: () => {
+              document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+                (entry) => entry !== sheet,
+              );
+              Reflect.deleteProperty(window, key);
+            },
+          });
+        },
+        { key: this.key, css: probeScrollbarCss },
+      );
       if (this.disposed) {
         await this.script.dispose().catch(() => undefined);
         throw new Error("scrollbar page closed during preparation");
@@ -80,6 +87,49 @@ export class ScrollbarController {
     } catch (error) {
       await this.capture();
       throw error;
+    }
+  }
+
+  /**
+   * Shows classic scrollbars on the current document for `work` (a
+   * measurement after the state's evidence is saved), then hides them again
+   * in the order `capture()` documents.
+   */
+  async measure<T>(work: () => Promise<T>): Promise<T> {
+    const key = `${this.key}_measure`;
+    try {
+      await this.session.send("Emulation.setScrollbarsHidden", {
+        hidden: false,
+      });
+      await this.page.evaluate(
+        ({ key, css }) => {
+          const sheet = new CSSStyleSheet();
+          sheet.replaceSync(css);
+          document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+          Object.defineProperty(window, key, {
+            configurable: true,
+            value: () => {
+              document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+                (entry) => entry !== sheet,
+              );
+              Reflect.deleteProperty(window, key);
+            },
+          });
+        },
+        { key, css: probeScrollbarCss },
+      );
+      return await work();
+    } finally {
+      await this.bounded(async () => {
+        if (this.page.isClosed()) return;
+        await this.session.send("Emulation.setScrollbarsHidden", {
+          hidden: true,
+        });
+        await this.page.evaluate((key) => {
+          const cleanup = Reflect.get(window, key);
+          if (typeof cleanup === "function") cleanup();
+        }, key);
+      });
     }
   }
 

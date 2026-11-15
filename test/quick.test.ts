@@ -652,3 +652,111 @@ test("uncapped quick projection keeps severity-first issues and neutral scoring 
   );
   expect(stored.issues).toEqual(issues);
 });
+
+const SLOW_SHOT =
+  "screenshot out of time: 640 ms of the 30000 ms screenshot allowance left after 3 of 4 tiles; each tile needs at least 1000 ms";
+
+function failingLauncher(
+  captures: BrowserTuple[],
+  fails: (tuple: BrowserTuple) => boolean,
+): BrowserLauncher {
+  return async () => ({
+    version: "Mock Chromium",
+    async capture(tuple) {
+      captures.push(tuple);
+      if (!fails(tuple)) return capturedResult(tuple);
+      return {
+        ok: false,
+        stage: "screenshot",
+        message: SLOW_SHOT,
+        console: [],
+        mismatches: [],
+        startedAt: "2026-08-20T12:00:00.000Z",
+        endedAt: "2026-08-20T12:00:01.000Z",
+      };
+    },
+    async close() {},
+  });
+}
+
+const lastTuple = (tuple: BrowserTuple) =>
+  tuple.viewport.name === "mobile" && tuple.colorScheme === "dark";
+
+test("a slow screenshot near the end of its allowance keeps the completed tuples' findings", async () => {
+  const directory = await temporaryDirectory();
+  const captures: BrowserTuple[] = [];
+  const result = await runQuick({
+    urls: ["https://example.com/"],
+    cwd: directory,
+    out: "partial",
+    probe: false,
+    materializeAllDeterministic: true,
+    dependencies: {
+      browserLauncher: failingLauncher(captures, lastTuple),
+      environment: {},
+    },
+  });
+  expect(result.counts).toEqual({ passed: 3, failed: 1, total: 4 });
+  expect(result.findingCount).toBeGreaterThan(0);
+  const findings = result.findings ?? [];
+  // The completed tuples' findings survive the slow one.
+  expect(
+    findings.some(
+      (finding) => !finding.rule?.startsWith("idiom:tuple-failure"),
+    ),
+  ).toBe(true);
+  // The slow tuple is recorded through the existing tuple-failure path.
+  expect(
+    findings
+      .filter(
+        (finding) =>
+          finding.viewport === "mobile" && finding.colorScheme === "dark",
+      )
+      .map((finding) => finding.rule),
+  ).toEqual(["idiom:tuple-failure:screenshot"]);
+  expect(result.captureFailures).toEqual([
+    {
+      state: "page-1",
+      viewport: "mobile",
+      colorScheme: "dark",
+      stage: "screenshot",
+      message: SLOW_SHOT,
+      outOfTime: true,
+    },
+  ]);
+});
+
+test("quick CLI names a failed capture with matching advice, and fails when none captured", async () => {
+  // A path under a "Users" directory reproduced the port-advice regex bug.
+  const directory = join(await temporaryDirectory(), "Users", "someone");
+  await mkdir(directory, { recursive: true });
+  const cli = async (out: string, fails: (tuple: BrowserTuple) => boolean) => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await run(
+      ["node", "idiom", "quick", "https://example.com/", "--out", out],
+      {
+        cwd: directory,
+        stdout: (message) => stdout.push(message),
+        stderr: (message) => stderr.push(message),
+        quick: {
+          browserLauncher: failingLauncher([], fails),
+          environment: {},
+        },
+      },
+    );
+    return { code, stdout: stdout.join(""), stderr: stderr.join("") };
+  };
+  const partial = await cli("partial", lastTuple);
+  expect(partial.code).toBe(0);
+  expect(partial.stdout).toContain(
+    `1 of 4 captures failed — page-1/mobile/dark: ${SLOW_SHOT}`,
+  );
+  expect(partial.stdout).toContain("too slow to capture in its time allowance");
+  expect(partial.stdout).not.toMatch(/\bport\b|server settings|project\.json/);
+  const none = await cli("none", () => true);
+  expect(none.code).toBe(1);
+  expect(none.stderr).toContain("Quick capture failed: 4 of 4 captures failed");
+  expect(none.stderr).toContain("too slow to capture in its time allowance");
+  expect(none.stderr).not.toMatch(/\bport\b|server settings|project\.json/);
+});

@@ -87,12 +87,12 @@ test.each([".agents", ".agents/skills/.idiom-pristine"])(
 test("offline catalog blobs have exact digests, tag provenance and absence-aware file maps", async () => {
   const history = await readHistory();
   expect(history.schema).toBe(1);
-  expect(history.releases).toHaveLength(24);
+  expect(history.releases).toHaveLength(25);
   expect(history.releases[0]).toMatchObject({
     version: "0.0.1",
     tag: "v0.0.1",
   });
-  expect(history.releases.at(-1)?.version).toBe("0.21.0");
+  expect(history.releases.at(-1)?.version).toBe("0.22.0");
   const blobs = new Set<string>();
   for (const release of history.releases) {
     expect(release.commit).toMatch(/^[a-f0-9]{40}$/);

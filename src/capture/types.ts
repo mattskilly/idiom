@@ -129,6 +129,8 @@ export type TupleCapture = {
   mismatches: ExpectationMismatch[];
   startedAt: string;
   endedAt: string;
+  /** A development-server sign seen on the page; absent when none or not checked. */
+  devServer?: import("./dev-server.js").DevServerSign | undefined;
 };
 
 export type TupleFailureStage =

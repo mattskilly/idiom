@@ -14,6 +14,7 @@ import {
   briefInstructionLines,
   offerBriefInstruction,
 } from "./brief/instruction.js";
+import { devServerWarning } from "./capture/dev-server.js";
 import { parsePort } from "./capture/port.js";
 import type { CaptureDependencies } from "./capture/run.js";
 import {
@@ -29,6 +30,7 @@ import {
 } from "./commands/baseline.js";
 import { bisectCommand } from "./commands/bisect.js";
 import {
+  BRIEF_LIST_ARRAY_DEPRECATION,
   type BriefDependencies,
   briefAttachCommand,
   briefAttachJson,
@@ -57,6 +59,12 @@ import {
   renderChangedSelection,
 } from "./commands/check-changed.js";
 import { checkGate } from "./commands/check-gate.js";
+import {
+  changedCheckJson,
+  gatePlanOnlyJson,
+  gateRunJson,
+  gateSkipJson,
+} from "./commands/check-json.js";
 import { compareCommand } from "./commands/compare.js";
 import {
   type ContextDependencies,
@@ -91,6 +99,18 @@ import {
 import { instructionCommand } from "./commands/instruction.js";
 import { type LearnDependencies, learnCommand } from "./commands/learn.js";
 import {
+  learnConfirmCommand,
+  learnHarvestCommand,
+  renderConfirm,
+  renderHarvest,
+} from "./commands/learn-harvest.js";
+import {
+  learnImportCommand,
+  learnReplayCommand,
+  renderLearnImport,
+  renderLearnReplay,
+} from "./commands/learn-import.js";
+import {
   learnCoveredCommand,
   learnFixtureCommand,
   learnListCommand,
@@ -110,6 +130,8 @@ import { renderSweepSummary, sweepCommand } from "./commands/sweep.js";
 import { systemCommand } from "./commands/system.js";
 import { clusterTicketsCommand, ticketsCommand } from "./commands/tickets.js";
 import {
+  projectFilesFailed,
+  projectFilesRefused,
   renderUpgrade,
   upgradeCommand,
   upgradeFailed,
@@ -118,10 +140,9 @@ import { validateCommand } from "./commands/validate.js";
 import { verifyCommand } from "./commands/verify.js";
 import { renderStateCoverage } from "./coverage/states.js";
 import type { CritiqueProcessRunner } from "./critique/process.js";
-import { mergePending } from "./decisions/pending.js";
-import { decisionQuestion } from "./decisions/question.js";
 import { digestFlows } from "./digest/build.js";
 import { renderDigest } from "./digest/render.js";
+import { renderTrend } from "./digest/trend.js";
 import {
   DecisionNeeded,
   DeferredCheck,
@@ -133,12 +154,18 @@ import { severityGateEligible } from "./findings/gate.js";
 import { renderFixSummary } from "./fix/report.js";
 import type { FixDependencies } from "./fix/run.js";
 import type { GenerateFlow } from "./flows/generate.js";
-import { gatePlanLine, renderGatePlan } from "./gate/render.js";
+import { renderGatePlan } from "./gate/render.js";
 import { applyHelp } from "./help.js";
+import { warnDeprecated } from "./interface/deprecation.js";
 import { EXIT_CODES, jsonPayload } from "./interface/version.js";
 import { humanFoundLine, summarizeMisses } from "./learn/misses.js";
 import { nightlySchedule } from "./nightly/schedule.js";
 import { findProjectDirectory, resolveProjectArgument } from "./project.js";
+import {
+  describeQuickCaptureFailures,
+  QuickCaptureFailed,
+  quickCaptureAdvice,
+} from "./quick/failures.js";
 import { interactionTail } from "./quick/interaction.js";
 import type { QuickDependencies } from "./quick/run.js";
 import { withRecordNotes } from "./records/unknown.js";
@@ -641,7 +668,7 @@ export function createProgram(
   program
     .command("upgrade")
     .description(
-      "update the Idiom CLI, then its vendored skills, keeping local customization",
+      "update the Idiom CLI, then its vendored skills and project file formats, keeping local customization",
     )
     .option("--no-agent", "leave overlapping edits for manual resolution")
     .option(
@@ -722,6 +749,23 @@ export function createProgram(
             .filter((text) => text !== "")
             .join("\n"),
         );
+      if (projectFilesRefused(report)) {
+        const refused =
+          report.projectFiles?.files.filter(
+            (file) => file.outcome === "refused",
+          ).length ?? 0;
+        throw new CommanderError(
+          1,
+          "idiom.upgrade-newer-format",
+          `${refused} project file${refused === 1 ? " uses" : "s use"} a newer format than Idiom ${report.installedVersion} understands; update Idiom, then run idiom upgrade again`,
+        );
+      }
+      if (projectFilesFailed(report))
+        throw new CommanderError(
+          1,
+          "idiom.upgrade-migration-failed",
+          "A project file could not be migrated; its original is unchanged",
+        );
       if (upgradeFailed(report))
         throw new CommanderError(
           1,
@@ -777,8 +821,20 @@ export function createProgram(
           out: options.out,
           dependencies: dependencies.quick,
         });
+        // Same outcome as idiom_quick: partial captures keep their findings
+        // and name the gaps; nothing captured is an error.
+        if (result.counts.passed === 0)
+          throw new QuickCaptureFailed(
+            result.captureFailures,
+            result.counts.total,
+            result.reportPath,
+          );
+        const gaps =
+          result.captureFailures.length === 0
+            ? ""
+            : ` — ${describeQuickCaptureFailures(result.captureFailures, result.counts.total)}. ${quickCaptureAdvice(result.captureFailures)}`;
         writeOut(
-          `Quick review: ${result.findingCount} finding(s), ${result.counts.total} capture(s) — ${interactionTail(result.interaction)} — Markdown: ${result.reportPath} — HTML: ${result.htmlReportPath}`,
+          `Quick review: ${result.findingCount} finding(s), ${result.counts.total} capture(s) — ${interactionTail(result.interaction)}${gaps} — Markdown: ${result.reportPath} — HTML: ${result.htmlReportPath}`,
         );
       },
     );
@@ -853,6 +909,8 @@ export function createProgram(
           `Captured ${flow}: ${result.counts.passed} passed, ${result.counts.failed} failed, ${result.counts.total} total — ${result.reportPath}`,
         );
         writeErr(renderTimings(result.timings));
+        if (result.scope?.devServer !== undefined)
+          writeErr(devServerWarning(flow, result.scope.devServer));
         if (result.counts.failed > 0) {
           throw new IdiomError(
             `capture completed with ${result.counts.failed} failed tuple(s); see ${result.reportPath}`,
@@ -1599,18 +1657,7 @@ export function createProgram(
           if (result.skipped) {
             writeOut(
               options.json
-                ? jsonPayload(
-                    await withUpdate({
-                      gate: {
-                        skipped: true,
-                        reason: result.reason,
-                        base: result.base,
-                        line: result.line,
-                        files: result.files,
-                        allFlows: result.allFlows,
-                      },
-                    }),
-                  )
+                ? jsonPayload(await withUpdate(gateSkipJson(result)))
                 : result.line,
             );
             return;
@@ -1618,15 +1665,7 @@ export function createProgram(
           if ("planOnly" in result) {
             writeOut(
               options.json
-                ? jsonPayload(
-                    await withUpdate({
-                      gate: {
-                        planOnly: true,
-                        line: gatePlanLine(result.plan),
-                        plan: result.plan,
-                      },
-                    }),
-                  )
+                ? jsonPayload(await withUpdate(gatePlanOnlyJson(result)))
                 : renderGatePlan(result.plan).join("\n"),
             );
             return;
@@ -1635,10 +1674,8 @@ export function createProgram(
           const checked = output.checks.filter(
             (entry) => entry.status === "checked",
           );
-          const plan = result.plan;
-          const decisionNeeded = mergePending(
-            checked.flatMap((entry) => entry.summary.decisionNeeded ?? []),
-          );
+          const gateJson = gateRunJson(result);
+          const { decisionNeeded } = gateJson;
           // Every viewport of a pending reference question is the question,
           // not an ordinary failure.
           const decisionIds = new Set(
@@ -1648,33 +1685,7 @@ export function createProgram(
           );
           writeOut(
             options.json
-              ? jsonPayload(
-                  await withUpdate({
-                    gate: {
-                      plan,
-                      skippedWork: result.skippedWork,
-                      estimateMs: result.estimateMs,
-                      budgetMs: result.budgetMs,
-                      server: result.server,
-                      comparisons: result.comparisons,
-                      timing: result.timing,
-                    },
-                    ...aggregateDeferral(checked),
-                    decisionNeeded,
-                    decisionQuestion: decisionQuestion(decisionNeeded),
-                    selection: output.selection,
-                    checkedStates: output.checkedStates,
-                    checks: output.checks.map((entry) =>
-                      entry.status === "checked"
-                        ? {
-                            flow: entry.flow,
-                            status: entry.status,
-                            summary: entry.summary,
-                          }
-                        : entry,
-                    ),
-                  }),
-                )
+              ? jsonPayload(await withUpdate(gateJson))
               : [
                   `idiom check --gate: checked ${output.checkedStates} state(s).`,
                   ...checked.map((entry) =>
@@ -1771,22 +1782,7 @@ export function createProgram(
           );
           writeOut(
             options.json
-              ? jsonPayload(
-                  await withUpdate({
-                    ...aggregateDeferral(checked),
-                    selection: output.selection,
-                    checkedStates: output.checkedStates,
-                    checks: output.checks.map((entry) =>
-                      entry.status === "checked"
-                        ? {
-                            flow: entry.flow,
-                            status: entry.status,
-                            summary: entry.summary,
-                          }
-                        : entry,
-                    ),
-                  }),
-                )
+              ? jsonPayload(await withUpdate(changedCheckJson(output)))
               : [
                   renderChangedSelection(output),
                   ...checked.map((entry) =>
@@ -2053,10 +2049,13 @@ export function createProgram(
   program
     .command("coverage")
     .description(
-      "list the app's routes that no flow captures, or (--states) which states each flow's latest capture observed",
+      "list the app's routes that no flow captures, or (--states) which states each flow's latest capture observed and interactive surfaces no state opens, with draft states to reach them",
     )
     .option("--crawl <url>", "discover routes from the links on a running page")
-    .option("--states", "show which states each flow's latest capture observed")
+    .option(
+      "--states",
+      "show which states each flow's latest capture observed, and interactive surfaces no state opens, with draft states to reach them",
+    )
     .option("--json", "print machine-readable coverage")
     .action(
       async (
@@ -2501,23 +2500,46 @@ export function createProgram(
     .command("report")
     .description("open a review or verify HTML report in the default browser")
     .argument("[runId]", "report run id; defaults to the newest HTML report")
-    .action(async (runId: string | undefined, _options, command: Command) => {
-      const shared = command.optsWithGlobals<SharedOptions>();
-      const result = await reportCommand({
-        project: shared.project,
-        cwd: dependencies.cwd,
-        runId,
-        dependencies: dependencies.report,
-      });
-      writeOut(`Opened report ${result.runId} — ${result.reportPath}`);
-      const humanFound = await summarizeMisses({
-        projectDirectory: result.projectDirectory,
-      }).catch(() => undefined);
-      if (humanFound)
-        writeOut(
-          humanFoundLine(humanFound, reviewDependencies.now?.() ?? new Date()),
-        );
-    });
+    .option("--json", "print { runId, reportPath, trend } as JSON")
+    .action(
+      async (
+        runId: string | undefined,
+        options: { json?: boolean },
+        command: Command,
+      ) => {
+        const shared = command.optsWithGlobals<SharedOptions>();
+        const result = await reportCommand({
+          project: shared.project,
+          cwd: dependencies.cwd,
+          runId,
+          dependencies: dependencies.report,
+        });
+        const humanFound = await summarizeMisses({
+          projectDirectory: result.projectDirectory,
+        }).catch(() => undefined);
+        if (options.json === true) {
+          writeOut(
+            jsonPayload({
+              runId: result.runId,
+              reportPath: result.reportPath,
+              trend: result.trend,
+              ...(humanFound ? { humanFound } : {}),
+            }),
+          );
+          return;
+        }
+        writeOut(`Opened report ${result.runId} — ${result.reportPath}`);
+        if (humanFound)
+          writeOut(
+            humanFoundLine(
+              humanFound,
+              reviewDependencies.now?.() ?? new Date(),
+            ),
+          );
+        for (const trend of result.trend)
+          for (const line of renderTrend(trend)) writeOut(line);
+      },
+    );
 
   program
     .command("decide")
@@ -2918,23 +2940,32 @@ export function createProgram(
     .command("list")
     .description("list stored decision briefs, newest first")
     .option("--json", "print the stored briefs as JSON")
-    .action(async (_options, command: Command) => {
+    .option(
+      "--array",
+      "with --json, print the old bare array (deprecated; removed in 0.24.0)",
+    )
+    .action(async (options: { array?: boolean }, command: Command) => {
       const shared = briefFlags(command, "list");
+      if (options.array === true && shared.json !== true)
+        throw new IdiomError("--array applies only with --json");
       const entries = await briefListCommand({
         project: shared.project,
         cwd: dependencies.cwd,
       });
-      writeOut(
-        shared.json === true
-          ? // The one --json payload that is a bare array, so it carries no
-            // interfaceVersion; docs/stability.md lists it as the exception.
-            JSON.stringify(
-              entries.map((entry) => ("error" in entry ? entry : entry.brief)),
-              null,
-              2,
-            )
-          : renderBriefList(entries),
+      if (shared.json !== true) {
+        writeOut(renderBriefList(entries));
+        return;
+      }
+      const briefs = entries.map((entry) =>
+        "error" in entry ? entry : entry.brief,
       );
+      if (options.array === true) {
+        // Deprecated old shape, kept for one release via --array.
+        warnDeprecated(BRIEF_LIST_ARRAY_DEPRECATION, writeErr);
+        writeOut(JSON.stringify(briefs, null, 2));
+        return;
+      }
+      writeOut(jsonPayload({ briefs }));
     });
 
   brief
@@ -3087,18 +3118,21 @@ export function createProgram(
 
   program
     .command("learn")
-    .description("record, list, cover, or export a human-found miss")
+    .description("record, list, cover, export or harvest human-found misses")
     .argument(
       "[observation]",
       'what is wrong, e.g. "the override dots should be 8px"',
     )
     .option(
       "--state <state>",
-      "the flow state the miss was seen on (required unless --from-brief names one)",
+      "the flow state the miss was seen on (optional: found from --screenshot or the words)",
     )
     .option("--flow <id>", "the flow, when several declare the state")
     .option("--from-brief <slug>", "the decided brief this rejection is about")
-    .option("--screenshot <png>", "keep the screenshot the human annotated")
+    .option(
+      "--screenshot <png>",
+      "the screenshot the human annotated; without --state it is matched to the closest captured state",
+    )
     .option("--from <runId>", "resolve against this stored capture")
     .option(
       "--selector <css>",
@@ -3120,11 +3154,37 @@ export function createProgram(
       "export an open miss as a regression fixture skeleton",
     )
     .option("--out <dir>", "fixture destination directory (with --fixture)")
-    .option("--json", "print the miss list as JSON (with --list)")
+    .option(
+      "--harvest",
+      "record UI corrections already written in autobuild escalation answers and pull request review comments",
+    )
+    .option(
+      "--since <date>",
+      "harvest from this ISO date or date-time instead of the last harvest (with --harvest)",
+    )
+    .option("--dry-run", "show what --harvest would record; write nothing")
+    .option(
+      "--confirm [ids...]",
+      "apply harvested rule candidates in one pass (all open ones when no ids)",
+    )
+    .option(
+      "--import <file.md|name>",
+      "import a Markdown table of misses; with --list, filter to an import",
+    )
+    .option(
+      "--replay <name|file>",
+      "report how many of an import's misses the latest checks catch",
+    )
+    .option(
+      "--json",
+      "print JSON (with --list, --harvest, --import <file.md> or --replay)",
+    )
     .action(
       async (
         observation: string | undefined,
         options: {
+          import?: string;
+          replay?: string;
           list?: boolean;
           covered?: string;
           by?: string;
@@ -3140,32 +3200,114 @@ export function createProgram(
           ruling?: boolean;
           wording?: string;
           yes?: boolean;
+          harvest?: boolean;
+          since?: string;
+          dryRun?: boolean;
+          confirm?: boolean | string[];
         },
         command: Command,
       ) => {
         const shared = command.optsWithGlobals<SharedOptions>();
+        const importing = options.import !== undefined && !options.list;
         const modes = [
           observation !== undefined,
           options.list === true,
           options.covered !== undefined,
           options.fixture !== undefined,
+          options.harvest === true,
+          options.confirm !== undefined,
+          importing,
+          options.replay !== undefined,
         ].filter(Boolean).length;
         if (modes !== 1)
           throw new IdiomError(
-            "choose exactly one learn mode: an observation, --list, --covered <id>, or --fixture <id>",
+            "choose exactly one learn mode: an observation, --list, --covered <id>, --fixture <id>, --harvest, --confirm [ids...], --import <file.md>, or --replay <import>",
           );
+        if (options.since !== undefined && options.harvest !== true)
+          throw new IdiomError("--since requires --harvest");
+        if (options.dryRun === true && options.harvest !== true)
+          throw new IdiomError("--dry-run requires --harvest");
         if (options.by !== undefined && options.covered === undefined)
           throw new IdiomError("--by requires --covered");
         if (options.out !== undefined && options.fixture === undefined)
           throw new IdiomError("--out requires --fixture");
-        if (options.json && !options.list)
-          throw new IdiomError("--json requires --list");
+        if (
+          options.json &&
+          !options.list &&
+          options.harvest !== true &&
+          !importing &&
+          options.replay === undefined
+        )
+          throw new IdiomError(
+            "--json requires --list, --harvest, --import <file.md> or --replay",
+          );
+        if (importing || options.replay !== undefined || options.list) {
+          const conflicting = [
+            options.state !== undefined && "--state",
+            options.screenshot !== undefined && "--screenshot",
+            options.selector.length > 0 && "--selector",
+            options.ruling === true && "--ruling",
+            options.wording !== undefined && "--wording",
+            options.fromBrief !== undefined && "--from-brief",
+          ].filter((flag): flag is string => typeof flag === "string");
+          if (conflicting.length > 0)
+            throw new IdiomError(
+              `${conflicting.join(", ")} ${conflicting.length === 1 ? "applies" : "apply"} only to an observation, not with ${importing ? "--import" : options.replay !== undefined ? "--replay" : "--list"}`,
+            );
+        }
         const projectOptions = {
           project: shared.project,
           cwd: dependencies.cwd,
         };
+        if (options.harvest === true) {
+          const result = await learnHarvestCommand({
+            ...projectOptions,
+            flow: options.flow,
+            since: options.since,
+            dryRun: options.dryRun,
+            dependencies: dependencies.learn,
+          });
+          writeOut(options.json ? jsonPayload(result) : renderHarvest(result));
+          return;
+        }
+        if (options.confirm !== undefined) {
+          const outcomes = await learnConfirmCommand({
+            ...projectOptions,
+            ids: Array.isArray(options.confirm) ? options.confirm : [],
+            yes: options.yes,
+            dependencies: dependencies.learn,
+            write: writeOut,
+          });
+          writeOut(renderConfirm(outcomes));
+          return;
+        }
+        if (importing && options.import !== undefined) {
+          const result = await learnImportCommand({
+            ...projectOptions,
+            file: options.import,
+            flow: options.flow,
+            clock: dependencies.learn?.clock,
+          });
+          writeOut(
+            options.json ? jsonPayload(result) : renderLearnImport(result),
+          );
+          return;
+        }
+        if (options.replay !== undefined) {
+          const result = await learnReplayCommand({
+            ...projectOptions,
+            importName: options.replay,
+          });
+          writeOut(
+            options.json ? jsonPayload(result) : renderLearnReplay(result),
+          );
+          return;
+        }
         if (options.list) {
-          const result = await learnListCommand(projectOptions);
+          const result = await learnListCommand({
+            ...projectOptions,
+            importName: options.import,
+          });
           writeOut(
             options.json
               ? jsonPayload(result)
@@ -3223,7 +3365,7 @@ export function createProgram(
         });
         writeOut(
           result.recorded
-            ? `Recorded ${result.id} (${result.kind}) — ${result.paths.join(", ")}\n${result.next}`
+            ? `Recorded ${result.id} (${result.kind})${result.proposal === undefined ? "" : ", open, with a draft flow state proposal"} — ${result.paths.join(", ")}\n${result.next}`
             : "Cancelled; no files changed.",
         );
       },
@@ -3503,23 +3645,6 @@ export async function run(
     await notices.settled();
   }
   return exitCode;
-}
-
-function aggregateDeferral(
-  checked: Array<{
-    flow: string;
-    summary: import("./commands/check.js").CheckSummary;
-  }>,
-) {
-  const timedOutTuples = checked.flatMap((entry) =>
-    (entry.summary.timedOutTuples ?? []).map((tuple) => ({
-      flow: entry.flow,
-      ...tuple,
-    })),
-  );
-  return timedOutTuples.length
-    ? { verdict: "deferred" as const, timedOutTuples }
-    : {};
 }
 
 function handleDeferral(

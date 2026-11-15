@@ -8,7 +8,13 @@
 //   node scripts/field-test.mjs labels-template
 //   node scripts/field-test.mjs feel
 //   node scripts/field-test.mjs score
-//   node scripts/field-test.mjs rate [--out <scratch dir>] [--port <n>]
+//   node scripts/field-test.mjs rate [--out <scratch dir>] [--port <n>] [--list]
+//
+// Each run writes into ~/.cache/idiom-field-test/<run id>/ (override the root
+// with IDIOM_FIELD_TEST_RUNS, or the directory with --out). The directory's
+// field-test-run.json marker holds the run id; results.json and every target
+// record carry it, so `rate` reads evidence from the run it rates, and
+// `--only` batches into one --out share one run.
 //
 // Ranked data comes from the MCP `idiom_quick` tool (same runQuick as CLI
 // `quick`, but it returns every ranked issue); a CLI `quick` smoke per target
@@ -28,8 +34,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:http";
-import { cpus, tmpdir, totalmem } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { cpus, homedir, tmpdir, totalmem } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -39,6 +45,7 @@ import {
   countProbeTimeouts,
   FEEL_RULES,
   feelPrecision,
+  isTransientFailure,
   mergeLabelTemplate,
   probeTupleOverheadMs,
   ratingQueue,
@@ -69,6 +76,13 @@ const QUICK_TIMEOUT_MS = 10 * 60_000 + QUICK_PROBE_BUDGET_MS;
 const SMOKE_TIMEOUT_MS = 10 * 60_000;
 const STEP_TIMEOUT_MS = 15 * 60_000;
 const SPEED_STATES = 10;
+// Durable per-user scratch: the OS prunes $TMPDIR (macOS: ~3 days, reboot),
+// which can outlast neither a rating pass nor a weekend.
+const runsRoot =
+  process.env.IDIOM_FIELD_TEST_RUNS ??
+  join(homedir(), ".cache", "idiom-field-test");
+const legacyRunsRoot = join(tmpdir(), "idiom-field-test");
+const RUN_MARKER = "field-test-run.json";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const writeJson = (path, value) =>
@@ -253,10 +267,7 @@ async function quickTarget(target, scratch, previous) {
             message: String(error?.message ?? error),
           });
           // One retry for transient network trouble; keep both attempts.
-          if (
-            attempt === 1 &&
-            /net::|ECONN|ENOTFOUND|EAI_AGAIN/.test(failure.message)
-          ) {
+          if (attempt === 1 && isTransientFailure(failure)) {
             record.failures.push({ ...failure, retried: true });
             continue;
           }
@@ -358,6 +369,8 @@ async function repoTarget(target, scratch) {
   const directory = join(scratch, target.id);
   const step = stepRunner(record, directory);
   try {
+    // A retried attempt starts from an empty directory.
+    await rm(directory, { recursive: true, force: true });
     await mkdir(directory, { recursive: true });
     await step(
       "clone",
@@ -569,23 +582,33 @@ async function runCommand(args) {
     ? await readJson(targetsPath)
     : validateTargets(await readJson(targetsPath));
   const only = option(args, "--only")?.split(",");
-  const scratch =
+  const scratch = resolve(
     option(args, "--out") ??
-    join(
-      tmpdir(),
-      "idiom-field-test",
-      new Date().toISOString().replaceAll(":", "-"),
-    );
+      join(runsRoot, new Date().toISOString().replaceAll(":", "-")),
+  );
   await mkdir(scratch, { recursive: true });
   log(`scratch: ${scratch}`);
   const previous = existsSync(resultsPath)
     ? await readJson(resultsPath)
     : undefined;
   const commit = await run("git rev-parse HEAD", { cwd: root });
+  // A marker already present means this is a batch continuing a run.
+  const markerPath = join(scratch, RUN_MARKER);
+  const marker = existsSync(markerPath)
+    ? await readJson(markerPath)
+    : {
+        runId: basename(scratch),
+        startedAt: new Date().toISOString(),
+        idiomCommit: commit.stdout.trim(),
+      };
+  if (!existsSync(markerPath)) await writeJson(markerPath, marker);
+  else log(`continuing run ${marker.runId}`);
+  const { runId } = marker;
   const results = {
     version: 1,
-    startedAt: new Date().toISOString(),
-    idiomCommit: commit.stdout.trim(),
+    runId,
+    startedAt: marker.startedAt,
+    idiomCommit: marker.idiomCommit,
     node: process.version,
     machine: {
       cpu: cpus()[0]?.model,
@@ -597,24 +620,57 @@ async function runCommand(args) {
   for (const target of targets) {
     if (only && !only.includes(target.id)) {
       const kept = previous?.targets?.find((item) => item.id === target.id);
-      if (kept) results.targets.push(kept);
+      if (kept) {
+        if (kept.runId !== runId)
+          log(
+            `${target.id}: kept from run ${kept.runId ?? "(unknown)"}, not ${runId}; the Runs table will say so`,
+          );
+        results.targets.push(kept);
+      }
       continue;
     }
     const mode = target.local ? "local" : target.repo ? "repo" : "quick";
     log(`${target.id}: ${mode}`);
     const startedAt = new Date().toISOString();
     const started = performance.now();
-    const outcome = target.local
-      ? await localTarget(target, scratch)
-      : target.repo
-        ? await repoTarget(target, scratch)
-        : await quickTarget(
-            target,
-            scratch,
-            previous?.targets?.find((item) => item.id === target.id),
-          );
+    const attempt = () =>
+      target.local
+        ? localTarget(target, scratch)
+        : target.repo
+          ? repoTarget(target, scratch)
+          : quickTarget(
+              target,
+              scratch,
+              previous?.targets?.find((item) => item.id === target.id),
+            );
+    let outcome = await attempt();
+    // One target-level retry for transient network trouble when nothing
+    // succeeded. Quick targets already retry each URL, so they only retry
+    // here when no URL produced a run.
+    const nothingSucceeded =
+      mode === "quick"
+        ? outcome.runs.length === 0
+        : !outcome.steps.some((item) => item.exitCode === 0) ||
+          outcome.checkedStates === undefined;
+    if (
+      nothingSucceeded &&
+      outcome.failures.some((failure) => isTransientFailure(failure))
+    ) {
+      log(`${target.id}: transient network failure; retrying once`);
+      const first = outcome.failures.map((failure) => ({
+        ...failure,
+        retried: true,
+      }));
+      outcome = await attempt();
+      outcome = {
+        ...outcome,
+        attempts: 2,
+        failures: [...first, ...outcome.failures],
+      };
+    }
     results.targets.push({
       id: target.id,
+      runId,
       kind: target.kind,
       ...(target.stack ? { stack: target.stack } : {}),
       aiBuilt: target.aiBuilt,
@@ -629,6 +685,9 @@ async function runCommand(args) {
     await mkdir(dirname(resultsPath), { recursive: true });
     await writeJson(resultsPath, scrub(results, scratch));
   }
+  // Kept targets after the last re-run one are only in memory until now.
+  await mkdir(dirname(resultsPath), { recursive: true });
+  await writeJson(resultsPath, scrub(results, scratch));
   log(`wrote ${resultsPath}`);
 }
 
@@ -638,6 +697,7 @@ function scrub(value, scratch) {
   const text = JSON.stringify(value)
     .replaceAll(`/private${scratch}`, "$SCRATCH")
     .replaceAll(scratch, "$SCRATCH")
+    .replaceAll(runsRoot, "$RUNS")
     .replaceAll(`/private${tmpdir()}`, "$TMPDIR")
     .replaceAll(tmpdir(), "$TMPDIR");
   return JSON.parse(text);
@@ -651,6 +711,9 @@ async function labelsTemplate() {
   const merged = mergeLabelTemplate(results, labels);
   await writeJson(paths.labels, merged.labels);
   log(`${merged.added} label slot(s) added to ${paths.labels}`);
+  log(
+    `${merged.stale} history slot(s) from earlier runs: kept, but not queued by rate and not counted in precision`,
+  );
 }
 
 /**
@@ -722,10 +785,23 @@ async function score() {
 
 /** The newest default scratch directory, when `run` was not given --out. */
 async function latestScratch() {
-  const parent = join(tmpdir(), "idiom-field-test");
-  if (!existsSync(parent)) return undefined;
-  const names = (await readdir(parent)).sort();
-  return names.length === 0 ? undefined : join(parent, names.at(-1));
+  for (const parent of [runsRoot, legacyRunsRoot]) {
+    if (!existsSync(parent)) continue;
+    const names = (await readdir(parent)).sort();
+    if (names.length) return join(parent, names.at(-1));
+  }
+  return undefined;
+}
+
+/** --out, else the directory named by results.runId, else the newest. */
+async function resolveScratch(args, results) {
+  const out = option(args, "--out");
+  if (out) return resolve(out);
+  if (results.runId) {
+    const named = join(runsRoot, results.runId);
+    if (existsSync(named)) return named;
+  }
+  return latestScratch();
 }
 
 /**
@@ -734,12 +810,26 @@ async function latestScratch() {
  * rating stays hidden until the human has rated, so it cannot anchor them.
  */
 async function rate(args) {
-  const scratch = option(args, "--out") ?? (await latestScratch());
   const port = Number(option(args, "--port") ?? 4791);
   const results = await readJson(paths.results);
+  const scratch = await resolveScratch(args, results);
+  if (results.runId) {
+    const markerPath = scratch && join(scratch, RUN_MARKER);
+    const marker =
+      markerPath && existsSync(markerPath)
+        ? await readJson(markerPath)
+        : undefined;
+    if (marker?.runId !== results.runId) {
+      log(
+        `results.json is run ${results.runId}, but ${scratch ?? "no scratch dir"} is ${marker ? `run ${marker.runId}` : "not a field-test run"}; pass --out ${join(runsRoot, results.runId)} (or re-run) so evidence matches the issues`,
+      );
+      process.exit(1);
+    }
+  }
   const expand = (path) =>
     path
       .replace("$SCRATCH", scratch ?? "$SCRATCH")
+      .replace("$RUNS", runsRoot)
       .replace("$TMPDIR", tmpdir());
   const evidenceFor = async (item) => {
     if (item.evidence === undefined) return undefined;
@@ -755,7 +845,28 @@ async function rate(args) {
     }
     return undefined;
   };
-  const queue = async () => ratingQueue(results, await readJson(paths.labels));
+  const queue = async () =>
+    ratingQueue(
+      results,
+      await readJson(paths.labels),
+      results.runId ? { runId: results.runId } : {},
+    );
+  if (args.includes("--list")) {
+    const items = await queue();
+    let missing = 0;
+    for (const item of items) {
+      const file = await evidenceFor(item);
+      if (!file) missing += 1;
+      process.stdout.write(
+        `${item.key}\t${item.target}\t${item.topTen ? `Top 10 #${item.rank}` : "feel"}\t${item.rules.join(" ")}\t${item.title}\t${file ?? "no evidence"}\n`,
+      );
+    }
+    const top = items.filter((item) => item.topTen).length;
+    process.stdout.write(
+      `\n${items.length} issue(s) to rate (${top} Top-10 + ${items.length - top} feel) from run ${results.runId ?? "(no run id)"}; ${items.length - missing} with evidence, ${missing} without; evidence from ${scratch ?? "(no scratch dir found)"}\n`,
+    );
+    return;
+  }
   const save = async (key, rating, reason) => {
     const labels = applyHumanRating(
       await readJson(paths.labels),
@@ -851,7 +962,7 @@ input{flex:1;min-width:180px;font:inherit;padding:8px;border-radius:6px;border:1
 .agent{margin-top:8px;color:var(--muted);font-size:13px}
 kbd{font-size:11px;border:1px solid var(--line);border-radius:3px;padding:0 4px;margin-left:4px}
 </style></head><body><main>
-<header><span id="pos"></span><span>Is this a real problem a person would notice?</span></header>
+<header><span id="pos"></span><span>Is this a real problem a person would notice?</span><span id="run"></span></header>
 <progress id="bar" value="0" max="1"></progress>
 <div id="item"></div>
 </main>
@@ -865,7 +976,7 @@ kbd{font-size:11px;border:1px solid var(--line);border-radius:3px;padding:0 4px;
 <script>
 let queue=[],index=0,total=0,done=0,last=null;
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-async function load(){queue=await (await fetch("/queue")).json();total=total||queue.length;index=0;show()}
+async function load(){queue=await (await fetch("/queue")).json();total=total||queue.length;index=0;const id=queue.find(q=>q.runId)?.runId;if(id)document.getElementById("run").textContent="run "+id;show()}
 function show(){
   const pos=document.getElementById("pos"),item=document.getElementById("item");
   document.getElementById("bar").max=Math.max(total,1);document.getElementById("bar").value=done;
@@ -904,7 +1015,7 @@ else if (command === "score") await score();
 else if (command === "rate") await rate(rest);
 else {
   log(
-    "usage: field-test.mjs run [--only ids] [--out dir] [--targets file --results file] | labels-template | feel | score | rate [--out dir] [--port n]",
+    "usage: field-test.mjs run [--only ids] [--out dir] [--targets file --results file] | labels-template | feel | score | rate [--out dir] [--port n] [--list]",
   );
   process.exit(2);
 }

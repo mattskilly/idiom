@@ -282,6 +282,40 @@ describe("schema behavior", () => {
     expect(parsed.states[0]?.expect.status).toBeUndefined();
   });
 
+  test("states declare intendedChanges; combination states inherit them", () => {
+    const parsed = flowSchema.parse({
+      ...minimalFlow(minimalState({ intendedChanges: ["#logo"] })),
+      toggles: { panel: { narrow: [], wide: [] } },
+    });
+    expect(parsed.states.map((state) => state.intendedChanges)).toEqual([
+      ["#logo"],
+      ["#logo"],
+      ["#logo"],
+    ]);
+    expect(
+      flowSchema.safeParse(minimalFlow(minimalState({ intendedChanges: [""] })))
+        .success,
+    ).toBe(false);
+  });
+
+  test("commandPalette and duplicateEntry are optional, strict and add nothing when absent", () => {
+    const defaults = checksConfigSchema.parse({});
+    expect(defaults.probe).not.toHaveProperty("commandPalette");
+    expect(defaults).not.toHaveProperty("duplicateEntry");
+    const set = checksConfigSchema.parse({
+      probe: { commandPalette: " Meta+K " },
+      duplicateEntry: { navigation: "query" },
+    });
+    expect(set.probe.commandPalette).toBe("Meta+K");
+    expect(set.duplicateEntry).toEqual({ navigation: "query" });
+    for (const checks of [
+      { probe: { commandPalette: " " } },
+      { duplicateEntry: { navigation: "origin" } },
+      { duplicateEntry: { navigation: "query", extra: true } },
+    ])
+      expect(checksConfigSchema.safeParse(checks).success).toBe(false);
+  });
+
   test("states declare intentionallyEmpty selectors; blank ones are rejected", () => {
     expect(
       flowSchema.parse(

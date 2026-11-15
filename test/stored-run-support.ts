@@ -16,7 +16,9 @@ export type StoredState = {
   html: string;
   content?: string;
   /** Extra metadata `state` fields, such as a sibling declaration. */
-  declares?: Record<string, string>;
+  declares?: Record<string, string | string[]>;
+  /** Extra top-level metadata fields, such as a toggle combination. */
+  metadata?: Record<string, unknown>;
 };
 
 /**
@@ -31,7 +33,7 @@ export async function storedRun(
 ): Promise<void> {
   const browser = await chromium.launch({ headless: true });
   try {
-    for (const { state, html, content, declares } of states) {
+    for (const { state, html, content, declares, metadata } of states) {
       const tuple = join(project, ".idiom", "reports", runId, state, "desktop");
       await mkdir(tuple, { recursive: true });
       const page = await browser.newPage({
@@ -74,6 +76,7 @@ export async function storedRun(
             status: 200,
             expectations: { passed: true, mismatches: [] },
             failure: null,
+            ...metadata,
           }),
         ),
       ]);

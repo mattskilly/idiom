@@ -7,11 +7,18 @@
  */
 import { z } from "zod";
 import { baselineFileSchema } from "../baseline/schema.js";
+import type { ChangedSelection } from "../changed/select.js";
 import type { CheckSummary } from "../commands/check.js";
+import type {
+  changedCheckJson,
+  gatePlanOnlyJson,
+  gateRunJson,
+  gateSkipJson,
+} from "../commands/check-json.js";
 import type { InitValidateReport } from "../commands/init-validate.js";
 import type { DoctorReport } from "../doctor/run.js";
-import { SURFACE_IDS, SURFACE_STATUSES } from "../doctor/surfaces.js";
 import type { RunFailureJson } from "../errors.js";
+import { mcpOutputContracts } from "../mcp/outputs.js";
 import { findingNameRegistrySchema } from "../review/names.js";
 import { decisionLogEntrySchema } from "../schemas/decision.js";
 import { findingCategories, findingSchema } from "../schemas/finding.js";
@@ -19,7 +26,16 @@ import { flowSchema } from "../schemas/flow.js";
 import { pendingDecisionSchema } from "../schemas/pending-decision.js";
 import { projectSchema } from "../schemas/project.js";
 import { findingSeveritySchema, rulesSchema } from "../schemas/rules.js";
+import {
+  changedSelectionContract,
+  doctorJsonContract,
+  doctorReportContract,
+  runFailureContract,
+  surfacesContract,
+} from "./contracts.js";
 import { INTERFACE_VERSION } from "./version.js";
+
+export { doctorJsonContract };
 
 export type SurfaceStatus = "stable" | "stable-additive" | "experimental";
 
@@ -74,14 +90,6 @@ export const commandStatus: Record<string, SurfaceStatus> = {
   validate: "stable",
 };
 
-const runFailureContract = z.looseObject({
-  stage: z.enum(["preflight", "server", "capture"]),
-  cause: z.string(),
-  hint: z.string(),
-  message: z.string(),
-  paths: z.array(z.string()).optional(),
-});
-
 /** `{ flow?, failure }`, printed by check and baseline record|accept when the run could not happen. */
 export const runFailureJsonContract = z.looseObject({
   interfaceVersion: z.literal(INTERFACE_VERSION),
@@ -89,9 +97,8 @@ export const runFailureJsonContract = z.looseObject({
   failure: runFailureContract,
 });
 
-/** `idiom check --json` for a full run. */
-export const checkJsonContract = z.looseObject({
-  interfaceVersion: z.literal(INTERFACE_VERSION),
+/** A full run's check summary: `idiom check --json` without interfaceVersion. */
+export const checkSummaryContract = z.looseObject({
   flow: z.string(),
   runDirectory: z.string(),
   reportPath: z.string(),
@@ -146,56 +153,150 @@ export const checkJsonContract = z.looseObject({
       fix: z.array(z.string()),
     }),
   ),
+  /** The flow's last five full runs, oldest first. */
+  trend: z
+    .looseObject({
+      flow: z.string(),
+      runs: z.array(
+        z.looseObject({
+          runId: z.string(),
+          completedAt: z.string(),
+          commit: z.string(),
+          dirty: z.boolean(),
+          blocker: z.number(),
+          major: z.number(),
+          minor: z.number(),
+          coverageGap: z
+            .looseObject({
+              missing: z.number(),
+              selected: z.number(),
+              kinds: z.array(z.enum(["failed", "interrupted", "busy-host"])),
+            })
+            .optional(),
+        }),
+      ),
+    })
+    .optional(),
+  /** The first development-server sign capture saw. */
+  devServer: z
+    .looseObject({
+      kind: z.string(),
+      evidence: z.string(),
+      state: z.string(),
+      viewport: z.string(),
+      colorScheme: z.enum(["light", "dark"]),
+    })
+    .optional(),
 });
 
-const surfacesContract = z.looseObject({
-  root: z.string(),
-  initialized: z.boolean(),
-  notice: z.string().optional(),
-  ms: z.number(),
-  entries: z.array(
-    z.looseObject({
-      id: z.enum(SURFACE_IDS),
-      label: z.string(),
-      status: z.enum(SURFACE_STATUSES),
-      path: z.string().optional(),
-      detail: z.string(),
-      fix: z.string().optional(),
-    }),
-  ),
-});
-
-const doctorReportContract = z.looseObject({
-  flow: z.string().optional(),
-  ok: z.boolean(),
-  steps: z.array(
-    z.looseObject({
-      id: z.enum([
-        "node",
-        "config",
-        "registry",
-        "tree",
-        "port",
-        "setup",
-        "build",
-        "start",
-        "ready",
-        "shutdown",
-      ]),
-      status: z.enum(["pass", "fail", "warn", "skip"]),
-      ms: z.number(),
-      detail: z.string().optional(),
-      hint: z.string().optional(),
-    }),
-  ),
-  failure: runFailureContract.optional(),
-  surfaces: surfacesContract.optional(),
-});
-
-/** `idiom doctor --json`. */
-export const doctorJsonContract = doctorReportContract.extend({
+/** `idiom check --json` for a full run. */
+export const checkJsonContract = z.looseObject({
   interfaceVersion: z.literal(INTERFACE_VERSION),
+  ...checkSummaryContract.shape,
 });
+
+const colorSchemeContract = z.enum(["light", "dark"]);
+
+/** Every flow's timed-out tuples, when any checked flow deferred. */
+const deferralContract = {
+  verdict: z.literal("deferred").optional(),
+  timedOutTuples: z
+    .array(
+      z.looseObject({
+        flow: z.string(),
+        state: z.string(),
+        viewport: z.string(),
+        colorScheme: colorSchemeContract,
+      }),
+    )
+    .optional(),
+};
+
+/** One affected flow: why it was not checked, or its check summary. */
+const changedEntryContract = z.union([
+  z.looseObject({
+    flow: z.string(),
+    status: z.literal("not-checked"),
+    reason: z.string(),
+  }),
+  z.looseObject({
+    flow: z.string(),
+    status: z.literal("checked"),
+    summary: checkSummaryContract,
+  }),
+]);
+
+const changedChecksContract = {
+  selection: changedSelectionContract,
+  checkedStates: z.number(),
+  checks: z.array(changedEntryContract),
+};
+
+/** `idiom check --changed --json`. */
+export const checkChangedJsonContract = z.looseObject({
+  interfaceVersion: z.literal(INTERFACE_VERSION),
+  ...deferralContract,
+  ...changedChecksContract,
+});
+
+/**
+ * `idiom check --gate --json`: skipped (no UI change), plan only, or ran.
+ * gate.plan, gate.comparisons and gate.timing are experimental.
+ */
+export const checkGateJsonContract = z.union([
+  z.looseObject({
+    interfaceVersion: z.literal(INTERFACE_VERSION),
+    gate: z.looseObject({
+      skipped: z.literal(true),
+      reason: z.string(),
+      base: z.string(),
+      line: z.string(),
+      files: z.array(z.looseObject({ path: z.string() })),
+      allFlows: z.array(z.string()),
+    }),
+  }),
+  z.looseObject({
+    interfaceVersion: z.literal(INTERFACE_VERSION),
+    gate: z.looseObject({
+      planOnly: z.literal(true),
+      line: z.string(),
+      /** Present; its contents are experimental planner detail. */
+      plan: z.looseObject({}),
+    }),
+  }),
+  z.looseObject({
+    interfaceVersion: z.literal(INTERFACE_VERSION),
+    gate: z.looseObject({
+      estimateMs: z.number(),
+      budgetMs: z.number(),
+      skippedWork: z.array(
+        z.looseObject({
+          kind: z.enum([
+            "probe-controls",
+            "viewport",
+            "scheme",
+            "probe",
+            "state",
+          ]),
+          flow: z.string(),
+          state: z.string().optional(),
+          viewport: z.string().optional(),
+          scheme: colorSchemeContract.optional(),
+          reason: z.string(),
+          estimatedMs: z.number(),
+        }),
+      ),
+      server: z.looseObject({
+        mode: z.enum(["reused", "production-reuse", "fresh"]),
+        reason: z.string(),
+      }),
+    }),
+    decisionNeeded: z.array(pendingDecisionSchema),
+    decisionQuestion: z.string(),
+    ...deferralContract,
+    ...changedChecksContract,
+  }),
+]);
 
 /** `idiom init --validate --json`. */
 export const initValidateJsonContract = z.looseObject({
@@ -204,6 +305,8 @@ export const initValidateJsonContract = z.looseObject({
   validate: z.looseObject({ ok: z.boolean() }),
   doctor: doctorReportContract.nullable(),
   surfaces: surfacesContract.optional(),
+  /** Advice that never affects ready, such as a missing tablet viewport. */
+  suggestions: z.array(z.string()).optional(),
 });
 
 /** Compile-time ties: tsc fails if a payload type stops satisfying its contract. */
@@ -216,6 +319,26 @@ export type _CheckContract = Satisfies<
 export type _DoctorContract = Satisfies<
   Stamped<DoctorReport>,
   z.infer<typeof doctorJsonContract>
+>;
+export type _ChangedSelectionContract = Satisfies<
+  ChangedSelection,
+  z.infer<typeof changedSelectionContract>
+>;
+export type _CheckChangedContract = Satisfies<
+  Stamped<ReturnType<typeof changedCheckJson>>,
+  z.infer<typeof checkChangedJsonContract>
+>;
+export type _GateSkipContract = Satisfies<
+  Stamped<ReturnType<typeof gateSkipJson>>,
+  z.infer<typeof checkGateJsonContract>
+>;
+export type _GatePlanOnlyContract = Satisfies<
+  Stamped<ReturnType<typeof gatePlanOnlyJson>>,
+  z.infer<typeof checkGateJsonContract>
+>;
+export type _GateRunContract = Satisfies<
+  Stamped<ReturnType<typeof gateRunJson>>,
+  z.infer<typeof checkGateJsonContract>
 >;
 export type _InitValidateContract = Satisfies<
   Stamped<InitValidateReport>,
@@ -249,14 +372,16 @@ export const jsonOutputs: JsonOutput[] = [
     id: "check --gate",
     command: "check",
     description:
-      "the gate plan/skip, or checked flows with decisionNeeded and decisionQuestion",
-    status: "experimental",
+      "the gate skip or plan, or the gate that ran with decisionNeeded, decisionQuestion and the changed check",
+    status: "stable-additive",
+    contract: checkGateJsonContract,
   },
   {
     id: "check --changed",
     command: "check",
-    description: "the flows the change selected and their summaries",
-    status: "experimental",
+    description: "the changed-path selection and each affected flow's summary",
+    status: "stable-additive",
+    contract: checkChangedJsonContract,
   },
   {
     id: "run-failure",
@@ -269,7 +394,7 @@ export const jsonOutputs: JsonOutput[] = [
   {
     id: "init --validate",
     command: "init",
-    description: "{ ready, validate, doctor, surfaces }",
+    description: "{ ready, validate, doctor, surfaces, suggestions }",
     status: "stable-additive",
     contract: initValidateJsonContract,
   },
@@ -338,6 +463,33 @@ export const jsonOutputs: JsonOutput[] = [
     id: "learn list",
     command: "learn",
     description: "human-found misses and their coverage (--list)",
+    status: "experimental",
+  },
+  {
+    id: "learn harvest",
+    command: "learn",
+    description:
+      "harvested UI corrections, ignored counts and source status (--harvest --json)",
+    status: "experimental",
+  },
+  {
+    id: "learn import",
+    command: "learn",
+    description:
+      "an imported table of misses: created, updated, skipped (--import)",
+    status: "experimental",
+  },
+  {
+    id: "learn replay",
+    command: "learn",
+    description:
+      "how many of an import's misses the latest checks catch (--replay)",
+    status: "experimental",
+  },
+  {
+    id: "report",
+    command: "report",
+    description: "{ runId, reportPath, trend, humanFound? }",
     status: "experimental",
   },
   {
@@ -433,8 +585,7 @@ export const jsonOutputs: JsonOutput[] = [
   {
     id: "brief list",
     command: "brief list",
-    description:
-      "a bare array of stored briefs, the one payload without interfaceVersion",
+    description: "{ briefs }: stored briefs, newest first",
     status: "experimental",
   },
   {
@@ -445,7 +596,7 @@ export const jsonOutputs: JsonOutput[] = [
   },
 ];
 
-/** MCP tool names and inputs. Outputs are experimental except structuredContent.failure. */
+/** MCP tool names and inputs. Outputs are classified in mcpOutputs below. */
 export const mcpToolStatus: Record<string, SurfaceStatus> = {
   idiom_quick: "stable",
   idiom_check: "stable",
@@ -460,6 +611,7 @@ export const mcpToolStatus: Record<string, SurfaceStatus> = {
   idiom_baseline: "stable",
   idiom_design_add: "experimental",
   idiom_choose: "experimental",
+  idiom_learn: "experimental",
   idiom_tickets: "experimental",
   idiom_sweep: "experimental",
   idiom_coverage: "experimental",
@@ -471,6 +623,96 @@ export const mcpToolStatus: Record<string, SurfaceStatus> = {
   idiom_brief_attach: "experimental",
   idiom_setup_prompt: "experimental",
   idiom_ready: "experimental",
+};
+
+export type McpOutput = {
+  status: SurfaceStatus;
+  /** Present exactly when status is experimental: why the output is not promised. */
+  reason?: string;
+  /**
+   * Present exactly when status is stable-additive: the promised fields
+   * (mcpOutputContracts in src/mcp/outputs.ts). The advertised outputSchema
+   * declares at least these, exactly, plus the experimental keys.
+   */
+  contract?: z.ZodType;
+};
+
+const experimentalTool = "The tool itself is experimental";
+
+/**
+ * Each MCP tool's structuredContent. An output is stable-additive once its
+ * promised fields are named in a contract; the fields it does not name stay
+ * experimental, and docs/stability.md says why. An output cannot be more
+ * stable than its tool. Every output declares an
+ * outputSchema (src/mcp/outputs.ts); structuredContent.failure on a run that
+ * could not happen is the stable-additive run-failure object for every tool.
+ */
+export const mcpOutputs: Record<string, McpOutput> = {
+  idiom_quick: {
+    status: "stable-additive",
+    contract: mcpOutputContracts.idiom_quick,
+  },
+  idiom_check: {
+    status: "stable-additive",
+    contract: mcpOutputContracts.idiom_check,
+  },
+  idiom_issue: {
+    status: "stable-additive",
+    contract: mcpOutputContracts.idiom_issue,
+  },
+  idiom_fix_plan: {
+    status: "experimental",
+    reason: "It mirrors idiom fix, an experimental command",
+  },
+  idiom_verify: {
+    status: "stable-additive",
+    contract: mcpOutputContracts.idiom_verify,
+  },
+  idiom_context: {
+    status: "experimental",
+    reason: "context has no --json payload to mirror",
+  },
+  idiom_flows: {
+    status: "experimental",
+    reason: "No --json payload mirrors it",
+  },
+  idiom_decide: {
+    status: "experimental",
+    reason:
+      "It mirrors decide and ruling results whose JSON is experimental (only decide --pending is stable, and this tool does not return it)",
+  },
+  idiom_init: {
+    status: "experimental",
+    reason:
+      "init has no stable --json payload besides init --validate; its wiring and system learning are still evolving",
+  },
+  idiom_doctor: {
+    status: "stable-additive",
+    contract: mcpOutputContracts.idiom_doctor,
+  },
+  idiom_baseline: {
+    status: "experimental",
+    reason:
+      "It mirrors baseline record and baseline advance --json, which are experimental",
+  },
+  idiom_ready: {
+    status: "experimental",
+    reason:
+      "The tool itself is experimental; its output is the stable-additive init --validate payload plus problem, and is promoted with the tool",
+  },
+  idiom_design_add: { status: "experimental", reason: experimentalTool },
+  idiom_choose: { status: "experimental", reason: experimentalTool },
+  idiom_learn: { status: "experimental", reason: experimentalTool },
+  idiom_tickets: { status: "experimental", reason: experimentalTool },
+  idiom_sweep: { status: "experimental", reason: experimentalTool },
+  idiom_coverage: { status: "experimental", reason: experimentalTool },
+  idiom_brief_triage: { status: "experimental", reason: experimentalTool },
+  idiom_brief_plan: { status: "experimental", reason: experimentalTool },
+  idiom_brief_record: { status: "experimental", reason: experimentalTool },
+  idiom_brief_decide: { status: "experimental", reason: experimentalTool },
+  idiom_brief_export: { status: "experimental", reason: experimentalTool },
+  idiom_brief_attach: { status: "experimental", reason: experimentalTool },
+  idiom_setup_prompt: { status: "experimental", reason: experimentalTool },
 };
 
 export type FileFormat = {

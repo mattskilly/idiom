@@ -617,8 +617,21 @@ test("benchmark: copy, glyph and error-text misses are caught, then clear", asyn
   const after = await reviewFixture(browser, await fixture("copy-after.html"), {
     checks: copyChecks,
   });
+  // The fixture keeps the browser's default heading margins, so each section
+  // heading (History, Advanced, Add, Templates) sits as far from the section
+  // above as from its own content: real heading-rhythm ties, unrelated to the
+  // copy rules judged here.
   const noise = after
-    .filter(({ candidate }) => newCategories.has(candidate.category))
+    .filter(
+      ({ candidate }) =>
+        newCategories.has(candidate.category) &&
+        !(
+          candidate.category === "heading-rhythm" &&
+          /^body > main > (section:nth-of-type\(\d\) > )?h3$/.test(
+            candidate.selectorHint ?? "",
+          )
+        ),
+    )
     .map(({ candidate }) => `${candidate.category} ${candidate.explanation}`);
   expect(noise).toEqual([]);
 }, 60_000);

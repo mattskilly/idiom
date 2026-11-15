@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dashboard</title>
+    <style>
+      body {
+        margin: 0;
+        font: 15px/1.5 system-ui, sans-serif;
+        color: #1d2330;
+        background: #f6f7f9;
+      }
+      main {
+        max-width: 560px;
+        margin: 48px auto;
+        padding: 24px;
+        background: #fff;
+        border-radius: 12px;
+      }
+      h1 {
+        margin: 0 0 16px;
+        font-size: 20px;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .tools {
+        position: relative;
+      }
+      .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        color: #fff;
+        background: #3048c8;
+        border: 0;
+        border-radius: 8px;
+      }
+      #pop {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        z-index: 10;
+        width: 240px;
+        padding: 12px;
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 6px 24px rgb(0 0 0 / 0.16);
+      }
+      #pop[hidden],
+      #region[hidden] {
+        display: none;
+      }
+      #pop .option {
+        display: block;
+        width: 100%;
+        margin: 0;
+        padding: 8px 12px;
+        font: inherit;
+        text-align: left;
+        color: #1d2330;
+        background: #fff;
+        border: 1px solid #c9ced8;
+        border-radius: 6px;
+      }
+      #pop .mode {
+        width: 28px;
+        height: 28px;
+        margin-top: 8px;
+        padding: 0;
+        background: #eef0f4;
+        border: 1px solid #c9ced8;
+        border-radius: 6px;
+      }
+      #region {
+        padding: 12px;
+        border: 1px solid #c9ced8;
+        border-radius: 8px;
+      }
+      #extra input {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 10px 12px;
+        font: inherit;
+        border: 1px solid #c9ced8;
+        border-radius: 8px;
+      }
+      a.blank {
+        display: inline-block;
+        min-width: 24px;
+        min-height: 24px;
+        background: #eef0f4;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Dashboard</h1>
+      <div class="row">
+        <div class="tools">
+          <!-- An icon-only popup trigger with no accessible name at all. -->
+          <button id="menu" class="icon" type="button" aria-haspopup="menu">
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="3" cy="8" r="1.5" fill="currentColor" />
+              <circle cx="8" cy="8" r="1.5" fill="currentColor" />
+              <circle cx="13" cy="8" r="1.5" fill="currentColor" />
+            </svg>
+          </button>
+          <div id="pop" hidden>
+            <button class="option" id="pop-one" type="button">Duplicate</button>
+            <button class="option" id="pop-two" type="button">Archive</button>
+            <!-- An unnamed item that switches the popup into a new mode. -->
+            <button class="mode" id="pop-mode" type="button" aria-label="   "></button>
+          </div>
+        </div>
+        <!-- An unnamed expander whose region has no name either. -->
+        <button
+          id="toggle"
+          class="icon"
+          type="button"
+          aria-label=""
+          aria-expanded="false"
+          aria-controls="region"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2 5l6 6 6-6" stroke="currentColor" fill="none" />
+          </svg>
+        </button>
+        <!-- Whitespace-only tooltip text and an empty link. -->
+        <button id="hint" class="icon" type="button" title="   ">?</button>
+        <a class="blank" id="blank-link" href="">   </a>
+      </div>
+      <div id="region" hidden>
+        <p>   </p>
+        <button type="button" aria-label=" ">   </button>
+      </div>
+      <details id="disclosure">
+        <summary>   </summary>
+        <p>Details body</p>
+      </details>
+      <div id="extra"></div>
+    </main>
+    <script>
+      (() => {
+        const menu = document.getElementById("menu");
+        const pop = document.getElementById("pop");
+        menu.addEventListener("click", () => {
+          const open = pop.hidden;
+          pop.hidden = !open;
+          menu.setAttribute("aria-expanded", String(open));
+        });
+        // The unnamed item adds a field while the popup stays open.
+        document.getElementById("pop-mode").addEventListener("click", () => {
+          const extra = document.getElementById("extra");
+          if (extra.children.length > 0) return;
+          const input = document.createElement("input");
+          input.id = "extra-field";
+          input.type = "text";
+          input.setAttribute("aria-label", "Name");
+          extra.append(input);
+        });
+        const toggle = document.getElementById("toggle");
+        toggle.addEventListener("click", () => {
+          const region = document.getElementById("region");
+          region.hidden = !region.hidden;
+          toggle.setAttribute("aria-expanded", String(!region.hidden));
+        });
+      })();
+    </script>
+  </body>
+</html>

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   beginCheckRecording,
   completeCheckRecording,
@@ -24,8 +24,10 @@ import {
   summarizeBaselineComparison,
   summarizeFinding,
 } from "../baseline/summary.js";
+import { devServerWarning } from "../capture/dev-server.js";
 import type { CaptureExecutionContext } from "../capture/execution-context.js";
 import { withRefWorktree } from "../capture/ref-worktree.js";
+import type { RunRecord } from "../capture/run-record.js";
 import type { CaptureScope } from "../capture/scope.js";
 import { type CheckTiming, checkTiming } from "../capture/timings.js";
 import type { ProductionBuild } from "../capture/types.js";
@@ -45,6 +47,7 @@ import {
   digestInputs,
   writeDigestRecord,
 } from "../digest/record.js";
+import { type FlowTrend, loadTrends, renderTrend } from "../digest/trend.js";
 import { IdiomError, RunFailure } from "../errors.js";
 import { acceptanceText, basisDescription } from "../findings/presentation.js";
 import {
@@ -131,6 +134,10 @@ export type CheckSummary = PaintedCoverageReport & {
   digestWarning?: string | undefined;
   /** One line when this run's attribution.json could not be written. */
   attributionWarning?: string | undefined;
+  /** Open blocker/major/minor counts over this flow's last five full runs. */
+  trend?: FlowTrend | undefined;
+  /** The first development-server sign capture saw; one warning line. */
+  devServer?: NonNullable<RunRecord["devServer"]> | undefined;
 };
 
 export type CheckDesignSystemQuestion = {
@@ -623,6 +630,17 @@ export async function checkWithReview(
     now: options.dependencies?.now?.() ?? new Date(),
   });
   if (digestWarning !== undefined) summary.digestWarning = digestWarning;
+  // After the digest record, so this run is the newest point.
+  summary.trend = await loadTrends({
+    projectDirectory:
+      validated.stateProjectDirectory ?? validated.projectDirectory,
+    reports: dirname(result.runDirectory),
+    flows: [options.flow],
+  })
+    .then((trends) => trends[0])
+    .catch(() => undefined);
+  if (result.scope?.devServer !== undefined)
+    summary.devServer = result.scope.devServer;
   if (result.attributionWarning !== undefined)
     summary.attributionWarning = result.attributionWarning;
   summary.humanFound = await summarizeMisses({
@@ -807,6 +825,15 @@ export function renderCheckSummary(
     ),
     summary.coverage,
   );
+  const trendLines = renderTrend(summary.trend);
+  if (trendLines.length > 0) {
+    const lines = covered.trimEnd().split("\n");
+    const index = lines.at(-1)?.startsWith("Full report: ")
+      ? lines.length - 1
+      : lines.length;
+    lines.splice(index, 0, ...trendLines);
+    covered = `${lines.join("\n")}\n`;
+  }
   if (options.humanFound !== false && summary.humanFound) {
     const lines = covered.trimEnd().split("\n");
     const index = lines.at(-1)?.startsWith("Full report: ")
@@ -825,6 +852,9 @@ export function renderCheckSummary(
     (summary.tickets === undefined
       ? covered
       : `${covered}${renderClusterTicketsResult(summary.tickets)}\n`) +
+    (summary.devServer === undefined
+      ? ""
+      : `${devServerWarning(summary.flow, summary.devServer)}\n`) +
     (summary.digestWarning === undefined
       ? ""
       : `Warning: ${summary.digestWarning}\n`) +

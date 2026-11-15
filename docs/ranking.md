@@ -93,6 +93,20 @@ All unlisted rules within a known category use its category default.
 | `empty-frame` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
 | `repeated-row-ornament` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `glyph-over-icon` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
+| `native-scrollbar` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
+| `browser-default-style` | All rules | 4 | General consistency, semantics or contextual quality. |
+| `unused-token` | All rules | 1 | Broad hygiene pattern with low visual salience. |
+| `hidden-at-rest` | All rules | 9 | Broken behaviour or obstructed content. |
+| `edge-text` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
+| `cramped-padding` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
+| `heading-rhythm` | All rules | 4 | General consistency, semantics or contextual quality. |
+| `type-legibility` | All rules | 4 | General consistency, semantics or contextual quality. |
+| `numeric-align` | All rules | 4 | General consistency, semantics or contextual quality. |
+| `ragged-row` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
+| `text-occlusion` | All rules | 9 | Broken behaviour or obstructed content. |
+| `state-jump` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
+| `control-gap` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
+| `negative-spacing` | All rules | 4 | Hierarchy, density, type, copy and brand alignment. |
 | `hierarchy` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `density` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `brand-alignment` | All rules | 4 | General consistency, semantics or contextual quality. |

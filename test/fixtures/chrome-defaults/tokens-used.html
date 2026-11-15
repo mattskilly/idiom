@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inbox</title>
+<style>
+  :root { --brand: #2f5d50; --scrollbar-thumb: #8c8c88; --selection-bg: #d9e6e1;
+    --focus-ring: #2f5d50; --thumb: var(--scrollbar-thumb); }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; }
+  main { padding: 32px; }
+  ::selection { background: var(--selection-bg); }
+  button { border-radius: 8px; }
+  button:focus-visible { outline: 2px solid var(--focus-ring); }
+  .list { height: 120px; overflow: auto; }
+  .list::-webkit-scrollbar { width: 8px; }
+  .list::-webkit-scrollbar-thumb { background: var(--thumb); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Inbox</h1>
+  <button type="button">Compose</button>
+  <div class="list"><p>One message.</p></div>
+</main>
+</body>
+</html>

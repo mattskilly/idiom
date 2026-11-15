@@ -655,3 +655,30 @@ test("directory names containing replacement tokens remain valid app names", asy
   );
   expect(parsed.app.name).toBe("app$&-$`-$'-$1-$$");
 });
+
+test("init suggests a tablet viewport when the defaults skip from phone to desktop", async () => {
+  const project = await temporaryProject();
+  const result = await initProject({ project, yes: true });
+  const suggestion =
+    'Suggestion: viewports skip from phone (mobile 390px) to desktop (desktop 1440px); add a tablet viewport such as { "name": "tablet", "width": 768, "height": 1024 } (or 1024 wide) to viewports in .idiom/project.json.';
+  expect(result.viewportSuggestion).toBe(suggestion);
+  const lines = initSummaryLines(result);
+  expect(lines.at(-2)).toBe(suggestion);
+  expect(lines.at(-1)).toBe("Next: idiom init --validate");
+  // The defaults themselves are unchanged.
+  const written = projectSchema.parse(
+    JSON.parse(await readFile(join(project, ".idiom", "project.json"), "utf8")),
+  );
+  expect(written.viewports.map((viewport) => viewport.width)).toEqual([
+    1440, 390,
+  ]);
+
+  // With a tablet configured, nothing is suggested.
+  const path = join(project, ".idiom", "project.json");
+  const raw = JSON.parse(await readFile(path, "utf8"));
+  raw.viewports.push({ name: "tablet", width: 768, height: 1024 });
+  await writeFile(path, JSON.stringify(raw, null, 2));
+  const again = await initProject({ project, yes: true });
+  expect(again.viewportSuggestion).toBeUndefined();
+  expect(initSummaryLines(again).join("\n")).not.toContain("Suggestion:");
+});

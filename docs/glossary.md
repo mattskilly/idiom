@@ -4,7 +4,7 @@ The words Idiom uses in its commands, reports and docs, each with a link to wher
 
 ## Flow
 
-A JSON file in `.idiom/flows/` that names the states of one part of your app, how to reach each one and which viewports and colour schemes to capture them at. See [Flows](configuration.md#flows).
+A JSON file in `.idiom/flows/` that names the states of one part of your app, how to reach each one and which viewports and color schemes to capture them at. See [Flows](configuration.md#flows).
 
 ## State
 
@@ -20,7 +20,7 @@ A named screen size, such as `desktop` at 1440×900 or `mobile` at 390×844, tha
 
 ## Tuple
 
-One state captured at one viewport and one colour scheme, the unit every capture records and every check judges. See [Capture pipeline](architecture.md#capture-pipeline).
+One state captured at one viewport and one color scheme, the unit every capture records and every check judges. See [Capture pipeline](architecture.md#capture-pipeline).
 
 ## Capture
 
@@ -32,7 +32,7 @@ The facts a capture records about a tuple in `observations.json`: geometry, comp
 
 ## Check
 
-A deterministic judgement over captured evidence, such as contrast or a dead control, that always gives the same result for the same evidence. `idiom check` is also the command that captures a flow and runs them all. See [check](commands.md#check).
+A deterministic judgment over captured evidence, such as contrast or a dead control, that always gives the same result for the same evidence. `idiom check` is also the command that captures a flow and runs them all. See [check](commands.md#check).
 
 ## Rule
 

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Pipeline</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; display: grid; grid-template-columns: 200px 1fr; min-height: 100vh; }
+  nav { background: #f4f6f8; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+  main { padding: 24px; }
+  .bar { position: relative; display: flex; gap: 8px; }
+  button { min-height: 32px; }
+  [role=menu] { position: absolute; top: 36px; left: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #ccc; padding: 4px; min-width: 180px; }
+  [role=menu][hidden] { display: none; }
+  [role=menuitem] { padding: 6px 8px; color: inherit; text-decoration: none; text-align: left; border: 0; background: none; font: inherit; }
+</style></head>
+<body>
+<nav aria-label="Main">
+  <a href="/">Dashboard</a>
+  <a href="/leads">Leads</a>
+  <a href="/reports">Reports</a>
+</nav>
+<main>
+  <div class="bar">
+    <button id="project" aria-haspopup="menu" aria-expanded="false" onclick="toggle()">Project</button>
+    <div role="menu" id="project-menu" aria-label="Project" hidden>
+      <button role="menuitem" onclick="done()">Rename project</button>
+      <a role="menuitem" href="/leads?tab=all">Leads</a>
+    </div>
+  </div>
+  <h1>Pipeline</h1>
+  <p>Twelve open opportunities.</p>
+</main>
+<script>
+  const menu = document.getElementById('project-menu');
+  const trigger = document.getElementById('project');
+  function done() { menu.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }
+  function toggle() {
+    const open = menu.hidden;
+    menu.hidden = !open;
+    trigger.setAttribute('aria-expanded', String(open));
+  }
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') done(); });
+</script>
+</body></html>

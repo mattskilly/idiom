@@ -2,17 +2,26 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { triageId } from "../src/brief/store.js";
 import { type ProgramDependencies, run } from "../src/cli.js";
 import { initProject } from "../src/commands/init.js";
+import {
+  DEPRECATION_SILENCE_ENV,
+  resetDeprecationWarnings,
+} from "../src/interface/deprecation.js";
+import { INTERFACE_VERSION } from "../src/interface/version.js";
 
 const fixtureText = readFileSync(
   new URL("./fixtures/brief/pinned-group-brief.json", import.meta.url),
   "utf8",
 );
 const directories: string[] = [];
+beforeEach(() => {
+  resetDeprecationWarnings();
+});
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(
     directories.splice(0).map((d) => rm(d, { recursive: true, force: true })),
   );
@@ -155,9 +164,10 @@ test("record, list and show round-trip a brief", async () => {
     "pinned-group-in-the-add-drawer  decided by requester  Pinned group in the Add drawer\n",
   );
   const listJson = await idiom(directory, ["brief", "list", "--json"]);
-  expect(JSON.parse(listJson.stdout)[0].slug).toBe(
-    "pinned-group-in-the-add-drawer",
-  );
+  const listed = JSON.parse(listJson.stdout);
+  expect(Object.keys(listed)[0]).toBe("interfaceVersion");
+  expect(listed.interfaceVersion).toBe(INTERFACE_VERSION);
+  expect(listed.briefs[0].slug).toBe("pinned-group-in-the-add-drawer");
   const show = await idiom(directory, [
     "brief",
     "show",
@@ -565,10 +575,9 @@ test("subcommand --json survives the parent's --json, before or after the name",
     ["brief", "list", "--json"],
     ["brief", "--json", "list"],
   ]) {
-    const listed = await idiom(directory, args);
-    expect(JSON.parse(listed.stdout)[0].slug).toBe(
-      "pinned-group-in-the-add-drawer",
-    );
+    const listed = JSON.parse((await idiom(directory, args)).stdout);
+    expect(Object.keys(listed)[0]).toBe("interfaceVersion");
+    expect(listed.briefs[0].slug).toBe("pinned-group-in-the-add-drawer");
   }
   for (const args of [
     ["brief", "record", "brief.json", "--json"],
@@ -898,4 +907,77 @@ test("CLI record and decide retain optional screen inventory", async () => {
   expect(await readFile(`${base}.md`, "utf8")).toContain(
     "**Screen question:** What needs action?",
   );
+});
+
+test("brief list --json prints an empty briefs array when nothing is stored", async () => {
+  const directory = await temporary(true);
+  const listed = await idiom(directory, ["brief", "list", "--json"]);
+  expect(listed.code).toBe(0);
+  expect(JSON.parse(listed.stdout)).toEqual({
+    interfaceVersion: INTERFACE_VERSION,
+    briefs: [],
+  });
+});
+
+test("brief list --json --array keeps the old shape and warns on stderr once", async () => {
+  const directory = await temporary(true);
+  await writeFile(join(directory, "brief.json"), fixtureText);
+  await writeFile(
+    join(directory, "other.json"),
+    JSON.stringify({ ...JSON.parse(fixtureText), title: "Another brief" }),
+  );
+  await idiom(directory, ["brief", "record", "brief.json"]);
+  await idiom(directory, ["brief", "record", "other.json"]);
+
+  const object = JSON.parse(
+    (await idiom(directory, ["brief", "list", "--json"])).stdout,
+  );
+  expect(object.briefs).toHaveLength(2);
+
+  const first = await idiom(directory, ["brief", "list", "--json", "--array"]);
+  expect(first.code).toBe(0);
+  const array = JSON.parse(first.stdout);
+  expect(Array.isArray(array)).toBe(true);
+  expect(array).toEqual(object.briefs);
+  expect(first.stdout).not.toContain("Deprecated");
+  const warnings = first.stderr
+    .split("\n")
+    .filter((line) => line.startsWith("Deprecated:"));
+  expect(warnings).toEqual([
+    "Deprecated: idiom brief list --json --array will be removed in 0.24.0; use idiom brief list --json, which prints { interfaceVersion, briefs } instead. Set IDIOM_NO_DEPRECATION_WARNINGS=1 to silence this warning.",
+  ]);
+
+  const parentFlag = await idiom(directory, [
+    "brief",
+    "--json",
+    "list",
+    "--array",
+  ]);
+  expect(parentFlag.stdout).toBe(first.stdout);
+  expect(parentFlag.stderr).not.toContain("Deprecated");
+});
+
+test("brief list --json --array is silent with IDIOM_NO_DEPRECATION_WARNINGS", async () => {
+  const directory = await temporary(true);
+  await writeFile(join(directory, "brief.json"), fixtureText);
+  await idiom(directory, ["brief", "record", "brief.json"]);
+  vi.stubEnv(DEPRECATION_SILENCE_ENV, "1");
+  const silenced = await idiom(directory, [
+    "brief",
+    "list",
+    "--json",
+    "--array",
+  ]);
+  expect(silenced.code).toBe(0);
+  expect(JSON.parse(silenced.stdout)[0].slug).toBe(
+    "pinned-group-in-the-add-drawer",
+  );
+  expect(silenced.stderr).not.toContain("Deprecated");
+});
+
+test("brief list --array without --json is a usage error", async () => {
+  const directory = await temporary(true);
+  const result = await idiom(directory, ["brief", "list", "--array"]);
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("--array applies only with --json");
 });

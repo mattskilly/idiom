@@ -85,6 +85,36 @@ export const textCenteringCheck: DeterministicCheck = {
     const bounded = new Set(
       elements.filter(isBounded).map((element) => element.selector),
     );
+    // Learned laws: a tolerance per surface, applied to labels inside it.
+    const lawScopes = (config.textCentering?.scopes ?? []).flatMap((scope) => {
+      const observation = tuple.observations;
+      const mark = (
+        observation?.version === 2 ? (observation.selectorMarks ?? []) : []
+      ).find(
+        (candidate) =>
+          candidate.purpose === "centering-scope" &&
+          candidate.selector === scope.selector,
+      );
+      return mark === undefined
+        ? []
+        : [{ ...scope, matches: new Set(mark.matches) }];
+    });
+    const lawFor = (element: SignalledElement) =>
+      lawScopes
+        .filter(
+          (scope) =>
+            scope.matches.has(element.selector) ||
+            element.ancestorSelectors.some((selector) =>
+              scope.matches.has(selector),
+            ),
+        )
+        .reduce<(typeof lawScopes)[number] | undefined>(
+          (strictest, scope) =>
+            strictest === undefined || scope.tolerance < strictest.tolerance
+              ? scope
+              : strictest,
+          undefined,
+        );
     const groups = new Map<
       string,
       {
@@ -95,6 +125,7 @@ export const textCenteringCheck: DeterministicCheck = {
         height: number;
         basis: "border" | "content";
         ruleSide: string | undefined;
+        law: { name: string; selector: string } | undefined;
       }
     >();
     for (const element of elements) {
@@ -133,8 +164,9 @@ export const textCenteringCheck: DeterministicCheck = {
       if (box.height <= 0) continue;
       const centre = box.top + box.height / 2;
       const offset = label.inkCenterY - centre;
+      const law = lawFor(element);
       const tolerance = centeringToleranceFor(
-        config.centeringTolerance,
+        law?.tolerance ?? config.centeringTolerance,
         px(element.styles.fontSize),
       );
       if (Math.abs(offset) <= tolerance) continue;
@@ -149,6 +181,7 @@ export const textCenteringCheck: DeterministicCheck = {
         Math.round(box.height),
         box.ruleSide,
         Math.round(offset * 2) / 2,
+        law?.selector,
       ].join("|");
       const group = groups.get(key);
       if (group === undefined)
@@ -160,6 +193,10 @@ export const textCenteringCheck: DeterministicCheck = {
           height: box.height,
           basis: box.basis,
           ruleSide: box.ruleSide,
+          law:
+            law === undefined
+              ? undefined
+              : { name: law.name, selector: law.selector },
         });
       else group.selectors.push(element.selector);
     }
@@ -182,13 +219,14 @@ export const textCenteringCheck: DeterministicCheck = {
         severity: "minor",
         rule: "idiom:label-off-centre",
         selectorHint: first,
-        explanation: `The label "${group.text}" in ${first} sits ${round(Math.abs(group.offset))}px ${direction} the vertical centre of its ${Math.round(group.height)}px ${boxDescription} (tolerance ${round(group.tolerance)}px)${more}.`,
+        explanation: `The label "${group.text}" in ${first} sits ${round(Math.abs(group.offset))}px ${direction} the vertical centre of its ${Math.round(group.height)}px ${boxDescription} (tolerance ${round(group.tolerance)}px${group.law === undefined ? "" : `; law: "${group.law.name}", in ${group.law.selector}`})${more}.`,
         acceptance: [
           `The label's ink centre in ${first} is within ${round(group.tolerance)}px of the ${acceptanceBox}'s vertical centre (balance padding-top/bottom or line-height).`,
         ],
         verification: verify(this.id, {
           selector: first,
           tolerance: group.tolerance,
+          ...(group.law === undefined ? {} : { scope: group.law.selector }),
         }),
       });
     }

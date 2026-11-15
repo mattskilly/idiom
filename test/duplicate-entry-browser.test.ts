@@ -135,3 +135,75 @@ test("distant triggers for one menu, and adjacent triggers for different menus, 
   expect(result("#clipboard")?.menu?.items).toHaveLength(3);
   expect(result("#format")?.menu?.items).toHaveLength(3);
 }, 60_000);
+
+async function reviewServed(name: string, checks?: unknown) {
+  const html = await readFile(join(directory, name), "utf8");
+  let artifact: ObservationArtifact | undefined;
+  const findings = await reviewFixture(browser, html, {
+    probe: true,
+    serve: true,
+    ...(checks === undefined ? {} : { checks }),
+    onObservations: (observations: ObservationArtifact) => {
+      artifact = observations;
+    },
+  });
+  const navigation = findings
+    .map(({ candidate }) => candidate)
+    .filter((candidate) => candidate.fingerprintHint?.includes("|navigate|"));
+  const probe = artifact?.version === 2 ? artifact.probe : undefined;
+  return { navigation, probe };
+}
+
+test("a menu item linking to a side-nav route is a redundant entry point", async () => {
+  const { navigation, probe } = await reviewServed("menu-duplicates-nav.html");
+  expect(navigation).toHaveLength(1);
+  expect(navigation[0]?.fingerprintHint).toBe(
+    "idiom:redundant-entry-point|navigate|/leads",
+  );
+  expect(navigation[0]?.explanation).toContain('in the "Project" menu');
+  const menu = probe?.results.find(
+    (result) => result.selector === "#project",
+  )?.menu;
+  expect(menu?.items.find((item) => item.name === "Leads")?.href).toBe(
+    "http://idiom.test/leads?tab=all",
+  );
+}, 60_000);
+
+test("a menu item to a different route, and repeated persistent links, do not fire", async () => {
+  expect((await reviewServed("menu-other-route.html")).navigation).toEqual([]);
+  expect((await reviewServed("nav-near-miss.html")).navigation).toEqual([]);
+}, 60_000);
+
+test("command palette entries count as entry points only when the palette is configured", async () => {
+  const configured = await reviewServed("command-palette.html", {
+    probe: { commandPalette: "Meta+K" },
+  });
+  expect(configured.probe?.palette).toMatchObject({
+    shortcut: "Meta+K",
+    status: "opened",
+    closed: true,
+  });
+  expect(configured.probe?.palette?.entries.map((entry) => entry.name)).toEqual(
+    ["Leads", "Settings", "Invite a teammate"],
+  );
+  expect(
+    configured.navigation.map((finding) => finding.fingerprintHint).sort(),
+  ).toEqual([
+    "idiom:redundant-entry-point|navigate|/leads",
+    "idiom:redundant-entry-point|navigate|/settings",
+  ]);
+  expect(configured.navigation[0]?.explanation).toContain(
+    "in the command palette (Meta+K)",
+  );
+  const plain = await reviewServed("command-palette.html");
+  expect(plain.probe?.palette).toBeUndefined();
+  expect(plain.navigation).toEqual([]);
+  // The palette leaves the control results unchanged.
+  const strip = (results: ProbeResult[] = []) =>
+    results.map(({ selector, signature, effects }) => ({
+      selector,
+      signature,
+      effects,
+    }));
+  expect(strip(configured.probe?.results)).toEqual(strip(plain.probe?.results));
+}, 90_000);

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   type EffectiveInvariant,
   type InvariantEdge,
+  type InvariantShare,
   invariantLabel,
   isGroupInvariant,
   type LayoutInvariant,
@@ -21,20 +22,52 @@ function identity(
     name: d.name ?? null,
     optional: d.optional,
     tolerance: d.tolerance,
-    ...("selector" in d
-      ? {
-          selector: d.selector,
-          width: d.width ?? null,
-          height: d.height ?? null,
-        }
-      : "align" in d
-        ? { align: d.align, selectors: [...d.selectors].sort() }
-        : { edge: d.edge, equals: d.equals, offset: d.offset }),
+    ...("share" in d
+      ? { share: d.share, selector: d.selector, within: d.within ?? null }
+      : "selector" in d
+        ? {
+            selector: d.selector,
+            width: d.width ?? null,
+            height: d.height ?? null,
+          }
+        : "align" in d
+          ? { align: d.align, selectors: [...d.selectors].sort() }
+          : { edge: d.edge, equals: d.equals, offset: d.offset }),
   };
   return createHash("sha256")
     .update(JSON.stringify(canonical))
     .digest("hex")
     .slice(0, 20);
+}
+function shareValue(rect: Rect, share: InvariantShare): number {
+  return share === "width" || share === "height"
+    ? rect[share]
+    : edgeValue(rect, share);
+}
+const contains = (outer: Rect, inner: Rect) => {
+  const x = inner.x + inner.width / 2;
+  const y = inner.y + inner.height / 2;
+  return (
+    x >= outer.x &&
+    x <= outer.x + outer.width &&
+    y >= outer.y &&
+    y <= outer.y + outer.height
+  );
+};
+function innermost<T extends { rect: Rect }>(
+  containers: T[],
+  rect: Rect,
+): T | undefined {
+  let best: T | undefined;
+  for (const container of containers)
+    if (
+      contains(container.rect, rect) &&
+      (best === undefined ||
+        container.rect.width * container.rect.height <
+          best.rect.width * best.rect.height)
+    )
+      best = container;
+  return best;
 }
 function edgeValue(rect: Rect, side: InvariantEdge): number {
   switch (side) {
@@ -105,7 +138,60 @@ export const layoutInvariantsCheck: DeterministicCheck = {
           );
         continue;
       }
-      if ("selector" in d) {
+      if ("share" in d) {
+        const members = (
+          selectors.find(({ selector }) => selector === d.selector)?.matches ??
+          []
+        ).filter(({ rect }) => rect.width > 0 && rect.height > 0);
+        // With `within`, each member joins the innermost container holding
+        // its centre; members outside every container are not compared.
+        const containers = (
+          d.within === undefined
+            ? []
+            : (selectors.find(({ selector }) => selector === d.within)
+                ?.matches ?? [])
+        ).filter(({ rect }) => rect.width > 0 && rect.height > 0);
+        const groups =
+          d.within === undefined
+            ? [{ container: undefined, group: members }]
+            : containers.map((container) => ({
+                container,
+                group: members.filter(
+                  (member) => innermost(containers, member.rect) === container,
+                ),
+              }));
+        for (const { container, group } of groups) {
+          if (group.length < 2) continue;
+          const values = group.map((member) => ({
+            selector: member.selector,
+            value: shareValue(member.rect, d.share),
+          }));
+          const numbers = values.map(({ value }) => value);
+          const spread = Math.max(...numbers) - Math.min(...numbers);
+          if (spread <= d.tolerance) continue;
+          const sorted = [...numbers].sort((a, b) => a - b);
+          const median = sorted[Math.floor((sorted.length - 1) / 2)] ?? 0;
+          const ordered = [...values].sort((a, b) => a.value - b.value);
+          const low = ordered[0];
+          const high = ordered.at(-1);
+          if (low === undefined || high === undefined) continue;
+          const [outlier, other] =
+            Math.abs(high.value - median) > Math.abs(low.value - median)
+              ? [high, low]
+              : [low, high];
+          const noun =
+            d.share === "width" || d.share === "height"
+              ? `${d.share}s`
+              : `${d.share} edges`;
+          emit(
+            "share",
+            `${label.replace(/[.!?]$/, "")}: ${noun} ${values.map(({ value }) => number(value)).join(", ")}${container === undefined ? "" : ` in ${container.selector}`} differ by ${number(spread)} (tolerance ${number(d.tolerance)})`,
+            outlier.selector,
+            other.selector,
+            values,
+          );
+        }
+      } else if ("selector" in d) {
         for (const entry of selectors)
           for (const match of entry.matches) {
             for (const axis of ["width", "height"] as const) {

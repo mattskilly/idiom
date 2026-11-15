@@ -353,8 +353,14 @@ test("check proposes current open material without accepting, changing the summa
     emitTickets: join(project, "proposals"),
     dependencies: { monotonicNow: () => 0 },
   });
-  const { tickets, ...unchanged } = summary;
-  expect(unchanged).toEqual(before);
+  // Rechecking the same run rewrites its digest record's completion time;
+  // the trend is otherwise the same.
+  const { tickets, trend, ...unchanged } = summary;
+  const { trend: beforeTrend, ...beforeRest } = before;
+  expect(unchanged).toEqual(beforeRest);
+  const withoutTime = (value: typeof trend) =>
+    value?.runs.map(({ completedAt: _completedAt, ...point }) => point);
+  expect(withoutTime(trend)).toEqual(withoutTime(beforeTrend));
   expect(tickets?.createdPaths.length).toBeGreaterThan(0);
   const scores = new Map(
     (summary.groups ?? []).flatMap((g) => {
@@ -933,7 +939,30 @@ test("check records every coordinate's occurrences alike in recorded and --all m
   expect(identities(all)).toEqual(identities(recorded));
 
   // Recorded mode on the later run against the --all record of the earlier.
-  await checkCommand({ project, flow: "studio-lab", from: second });
+  const later = await checkCommand({
+    project,
+    flow: "studio-lab",
+    from: second,
+  });
+  // The trend ends with this run, the earlier one before it.
+  expect(later.trend?.runs.map((point) => point.runId)).toEqual([
+    first,
+    second,
+  ]);
+  expect(later.trend?.runs.at(-1)?.major).toBe(
+    (await digestRecordOf(project, second)).occurrences.filter(
+      (o) =>
+        o.disposition === "open" &&
+        o.severity === "major" &&
+        o.coverageOnly !== true,
+    ).length,
+  );
+  const rendered = renderCheckSummary(later).trimEnd().split("\n");
+  expect(rendered).toContain(
+    "Trend for studio-lab (last 2 runs, oldest first; open blocker/major/minor, acknowledged and rejected excluded):",
+  );
+  expect(rendered.at(-1)).toMatch(/^Full report: /);
+  expect(JSON.parse(JSON.stringify(later)).trend.flow).toBe("studio-lab");
   const stdout: string[] = [];
   const io = {
     stdout: (message: string) => stdout.push(message),

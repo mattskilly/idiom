@@ -6,6 +6,7 @@ import {
   checksConfigFrom,
   runDeterministicChecks,
 } from "../src/checks/registry.js";
+import { revealedLabel, revealedTuples } from "../src/checks/revealed.js";
 import type {
   CheckTuple,
   ObservationArtifactV2,
@@ -368,5 +369,65 @@ describe("artifact schema", () => {
     expect(
       observationArtifactSchema.safeParse(tuple.observations).success,
     ).toBe(false);
+  });
+});
+
+describe("a revealed state with no name", () => {
+  test("blank segments read as what they opened; named ones are untouched", () => {
+    expect(revealedLabel("", "popup")).toBe("unnamed popup");
+    expect(revealedLabel("   ", "expanded")).toBe("unnamed panel");
+    expect(revealedLabel("", "details")).toBe("unnamed details");
+    expect(revealedLabel("Attach", "popup")).toBe("Attach");
+    expect(revealedLabel("  Attach ", "popup")).toBe("  Attach ");
+    expect(revealedLabel(" › Link", "mode")).toBe("unnamed menu › Link");
+    expect(revealedLabel(" › Link", "mode", "popup")).toBe(
+      "unnamed popup › Link",
+    );
+    expect(revealedLabel("Attach › ", "mode")).toBe("Attach › unnamed item");
+    expect(revealedLabel("Attach › Link", "mode", "popup")).toBe(
+      "Attach › Link",
+    );
+    // A mode switch's parent segment matches the parent's own label.
+    expect(
+      revealedLabel(`${revealedLabel("", "expanded")} › `, "mode", "expanded"),
+    ).toBe("unnamed panel › unnamed item");
+  });
+
+  test("files earlier versions wrote with a blank name are read", () => {
+    for (const name of ["", "   ", " › Link"]) {
+      const tuple = probed(observation([]), [
+        {
+          name,
+          kind: name.includes("›") ? "mode" : "popup",
+          observations: revealedObservation(),
+        },
+      ]);
+      const parsed = observationArtifactSchema.safeParse(
+        JSON.parse(JSON.stringify(tuple.observations)),
+      );
+      expect(parsed.error?.issues ?? []).toEqual([]);
+    }
+  });
+
+  test("findings from an old blank name never show an empty disclosure", () => {
+    const tuple = probed(observation([element("#attach", { tag: "button" })]), [
+      { name: "", observations: revealedObservation() },
+    ]);
+    expect(revealedTuples(tuple).map(({ revealed }) => revealed.name)).toEqual([
+      "unnamed popup",
+    ]);
+    const found = revealedOnly(tuple);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.candidate.explanation).toMatch(
+      /^panel › unnamed popup: #file/,
+    );
+    expect(found[0]?.candidate.fingerprintHint).toBe(
+      "revealed unnamed popup | #file",
+    );
+    expect(found[0]?.candidate.verification.params?.revealed).toEqual({
+      state: "panel",
+      disclosure: "unnamed popup",
+      kind: "popup",
+    });
   });
 });

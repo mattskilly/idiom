@@ -16,6 +16,12 @@
   .reveal-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; width: 480px; border: 1px solid #d6dbe1; background: #d6dbe1; }
   .reveal-grid > div { background: #fff; padding: 16px; opacity: 0; }
   .tile .art { width: 100%; height: 100%; background-image: linear-gradient(#cfe0f3, #9fbfe2); }
+  .choice { box-sizing: border-box; width: 120px; height: 64px; border: 1px solid #d6dbe1; border-radius: 8px; background: #fff; display: inline-flex; align-items: center; gap: 8px; padding: 4px; }
+  .choice.centred { justify-content: center; }
+  .choice img { width: 28px; height: 28px; }
+  .choice.centred img { width: 24px; height: 24px; }
+  .brandbar { box-sizing: border-box; width: 600px; height: 56px; border: 1px solid #d6dbe1; display: flex; align-items: center; padding: 0 12px; }
+  .brandbar img { width: 32px; height: 32px; }
 </style>
 </head>
 <body>
@@ -26,6 +32,9 @@
   <span class="chip"></span>
   <div class="tile"><div class="art"></div></div>
   <div class="reveal-grid"><div>Plans are billed monthly.</div><div>Seats can be added any time.</div></div>
+  <button class="choice centred" type="button" aria-label="Grid view"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Crect width='28' height='28' fill='%23667085'/%3E%3C/svg%3E"></button>
+  <button class="choice" type="button"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Crect width='28' height='28' fill='%23667085'/%3E%3C/svg%3E"><span>Natural</span></button>
+  <div class="brandbar"><img alt="Acme" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Crect width='28' height='28' fill='%23667085'/%3E%3C/svg%3E"></div>
   <div class="scrim"></div>
 </body>
 </html>

@@ -1,7 +1,5 @@
-import { readFileSync } from "node:fs";
 import {
   access,
-  chmod,
   mkdir,
   mkdtemp,
   readdir,
@@ -49,112 +47,35 @@ import type { Finding } from "../src/schemas/finding.js";
 import { briefSettings } from "../src/schemas/project.js";
 import { runVerify } from "../src/verify/run.js";
 import { changedFixture } from "./changed-support.js";
+import {
+  briefFixture,
+  decidedBriefProject,
+  fakeAbCli,
+  storedCapture,
+  tileHeight,
+  withAssertions,
+} from "./design-asset-support.js";
 import { invariantObservations, invariantTuple } from "./invariant-support.js";
 import { mcpClient, toolData } from "./mcp-support.js";
 import { studioProject } from "./stored-run-support.js";
 import { fixtureCommand } from "./support/fixture-server.js";
 import { artifactV2, freePort, png } from "./verify-support.js";
 
-const fixture = JSON.parse(
-  readFileSync(
-    new URL("./fixtures/brief/pinned-group-brief.json", import.meta.url),
-    "utf8",
-  ),
-);
+const fixture = briefFixture;
 const directories: string[] = [];
 afterEach(async () => {
   await Promise.all(
     directories.splice(0).map((d) => rm(d, { recursive: true, force: true })),
   );
 });
-
-const tileHeight = {
-  flow: "studio-lab",
-  state: "editor",
-  selector: ".drawer-item",
-  height: 56,
-};
-
-function withAssertions(assertions: unknown[], extra: object = {}) {
-  return {
-    ...fixture,
-    slug: "pinned-group",
-    acceptanceCriteria: fixture.acceptanceCriteria.map(
-      (criterion: { kind: string }, index: number) =>
-        index === 0 ? { ...criterion, assertions } : criterion,
-    ),
-    ...extra,
-  };
-}
+const decidedProject = (assertions?: unknown[], option?: string) =>
+  decidedBriefProject(directories, assertions, option);
+const fakeAb = () => fakeAbCli(directories);
 
 async function temporary(prefix: string): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), prefix));
   directories.push(directory);
   return directory;
-}
-
-async function decidedProject(
-  assertions: unknown[] = [tileHeight],
-  option = "corner-pin",
-) {
-  const { project } = await studioProject(directories, ["editor", "empty"]);
-  await recordBriefInput({ project, input: withAssertions(assertions) });
-  await briefDecideCommand({ project, slug: "pinned-group", option });
-  return project;
-}
-
-/** A stored capture of studio-lab, laid out the way capture writes it. */
-async function storedCapture(
-  project: string,
-  states: string[],
-  runId = "2026-11-01T10-00-00-000Z",
-): Promise<string> {
-  const run = join(project, ".idiom", "reports", runId);
-  for (const [index, state] of states.entries()) {
-    const tuple = join(run, state, "desktop");
-    await mkdir(tuple, { recursive: true });
-    await Promise.all([
-      writeFile(join(tuple, "screenshot.png"), png(2, 2, 10 + index)),
-      writeFile(join(tuple, "dom.html"), "<html></html>"),
-      writeFile(join(tuple, "console.jsonl"), ""),
-      writeFile(join(tuple, "axe.json"), JSON.stringify({ violations: [] })),
-      writeFile(
-        join(tuple, "observations.json"),
-        JSON.stringify(artifactV2(state)),
-      ),
-      writeFile(
-        join(tuple, "metadata.json"),
-        JSON.stringify({
-          source: { commit: "0123456789abcdef0123", dirty: false },
-          flow: { id: "studio-lab", title: "Studio" },
-          state: { id: state, description: state },
-          viewport: {
-            name: "desktop",
-            width: 1440,
-            height: 900,
-            deviceScaleFactor: 2,
-          },
-          url: {
-            kind: "literal",
-            origin: "http://127.0.0.1:3100",
-            url: `http://127.0.0.1:3100/lab/${state}`,
-          },
-          timestamps: {
-            startedAt: "2026-11-01T10:00:00.000Z",
-            endedAt: "2026-11-01T10:00:01.000Z",
-          },
-          status: 200,
-          expectations: { passed: true, mismatches: [] },
-          failure: null,
-        }),
-      ),
-    ]);
-  }
-  await writeFile(
-    join(run, "baseline.md"),
-    `# Capture\n\nFlow \`studio-lab\`: ${states.length} passed, 0 failed, ${states.length} total.\n`,
-  );
-  return run;
 }
 
 async function walk(directory: string): Promise<string[]> {
@@ -382,26 +303,6 @@ describe("export", () => {
     );
   });
 });
-
-/** An `ab` that logs its argv, cwd and the exported files, then answers JSON. */
-async function fakeAb(): Promise<{ bin: string; log: string }> {
-  const bin = await temporary("idiom-fake-ab-");
-  const log = join(bin, "log.txt");
-  await writeFile(
-    join(bin, "ab"),
-    [
-      "#!/bin/sh",
-      'if [ -n "$AB_FAIL" ]; then echo "ticket file-9 not found" >&2; exit 3; fi',
-      'printf "cwd %s\\n" "$(pwd -P)" >> "$AB_LOG"',
-      'printf "argv %s\\n" "$*" >> "$AB_LOG"',
-      'ls "$5" "$5/screenshots" >> "$AB_LOG"',
-      "echo '{\"attached\":true}'",
-      "",
-    ].join("\n"),
-  );
-  await chmod(join(bin, "ab"), 0o755);
-  return { bin, log };
-}
 
 describe("attach", () => {
   async function attachable() {

@@ -15,6 +15,11 @@ import { normalizeCssValues } from "../system/learn/normalize.js";
 import { type DesignToken, tokenIdentity } from "../system/learn/schema.js";
 import type { ExtractedToken } from "../system/learn/types.js";
 import { ensureAuthoredRuleIndex } from "./authored-rules-dom.js";
+import {
+  type ChromeDefaultsResult,
+  type ChromeDefaultsWindow,
+  ensureChromeDefaultsDom,
+} from "./chrome-defaults-dom.js";
 import { menuTriggerPattern } from "./collection-actions.js";
 import {
   type CopyContextWindow,
@@ -32,6 +37,12 @@ import {
 } from "./frame-ornament-dom.js";
 import { glyphCharacter } from "./glyph-icon.js";
 import { type LayoutShiftEntry, layoutShiftScore } from "./layout-shift.js";
+import {
+  ensureLegibilityDom,
+  type LegibilityOptions,
+  type LegibilityResult,
+  type LegibilityWindow,
+} from "./legibility-dom.js";
 import { sampleLiveness } from "./liveness-dom.js";
 import {
   createIsolatedTokenSession,
@@ -55,11 +66,13 @@ import type {
   SelectionOutlineObservation,
   SelectorMark,
   SpacingTargetObservation,
+  TextOcclusionObservation,
   TokenContext,
   TokenObservation,
   WordBreakObservation,
   WordFragment,
 } from "./types.js";
+import { chromeTokenNames } from "./unused-token.js";
 import { ensureVisibilityDom } from "./visibility-dom.js";
 import { inventoryBlankMedia } from "./visual-blank-dom.js";
 
@@ -568,6 +581,26 @@ export type ObserveOptions = {
   frameOrnaments?:
     | { emptyFrame: boolean; rowOrnament: boolean; glyphOverIcon: boolean }
     | undefined;
+  /**
+   * The native-scrollbar (candidate selection only), browser-default-style
+   * and unused-token scans; a scan left out records no field.
+   */
+  chromeDefaults?:
+    | {
+        nativeScrollbar: boolean;
+        browserDefaultStyle: boolean;
+        unusedToken: boolean;
+      }
+    | undefined;
+  /**
+   * The in-page legibility and layout scans (hidden-at-rest, edge-text,
+   * cramped-padding, heading-rhythm, type-legibility, numeric-align,
+   * ragged-row, control-gap, negative-spacing); a scan left out records no
+   * field.
+   */
+  legibility?: LegibilityOptions | undefined;
+  /** Record `textOcclusions`: text covered by an opaque element above it. */
+  textOcclusion?: boolean | undefined;
   /** Regions judged by the empty-state check (resolved at capture time). */
   emptyState?:
     | {
@@ -640,6 +673,8 @@ async function observeWithTokens(
   await ensureVisibilityDom(page);
   await ensureAuthoredRuleIndex(page);
   if (observeOptions.frameOrnaments) await ensureFrameOrnamentDom(page);
+  if (observeOptions.chromeDefaults) await ensureChromeDefaultsDom(page);
+  if (observeOptions.legibility) await ensureLegibilityDom(page);
   const artifact: ObservationArtifact = await page.evaluate(
     async ({
       tokenInput,
@@ -662,6 +697,9 @@ async function observeWithTokens(
       menuTriggerSource,
       revealedInput,
       frameInput,
+      chromeInput,
+      legibilityInput,
+      occlusionInput,
     }) => {
       const generatedClass = (value: string): boolean =>
         /__[A-Za-z0-9_-]{5,}$/.test(value) ||
@@ -675,15 +713,15 @@ async function observeWithTokens(
         "aria-label",
         "role",
       ];
+      // Framework-generated ids (React useId, Radix, Headless UI).
+      const generatedIdPattern =
+        /(?:^|[-_])(?::r[0-9a-z]+:|«r[0-9a-z]+»|_r_[0-9a-z]+_)|^radix-|^headlessui-/;
       const selectorFor = (element: Element): string => {
         if (element === document.documentElement) return "html";
         if (element === document.body) return "body";
         // Framework-generated ids (React useId, Radix, Headless UI) change
         // between renders and builds, so they never anchor a selector.
-        const generatedId =
-          /(?:^|[-_])(?::r[0-9a-z]+:|«r[0-9a-z]+»|_r_[0-9a-z]+_)|^radix-|^headlessui-/.test(
-            element.id,
-          );
+        const generatedId = generatedIdPattern.test(element.id);
         if (element.id && !generatedId) {
           const candidate = `#${CSS.escape(element.id)}`;
           if (document.querySelectorAll(candidate).length === 1)
@@ -786,6 +824,7 @@ async function observeWithTokens(
         }
       };
       const visitedSheets = new Set<CSSStyleSheet>();
+      let unreadableSheets = 0;
       const collectRules = (
         rules: CSSRuleList,
         sheet: string,
@@ -814,6 +853,7 @@ async function observeWithTokens(
                 collectRules(imported.cssRules, sheetLabel(imported, sheet));
               }
             } catch {
+              unreadableSheets += 1;
               // Cross-origin imports and unparseable conditions are not
               // observable.
             }
@@ -865,6 +905,7 @@ async function observeWithTokens(
         try {
           collectRules(sheet.cssRules, sheetLabel(sheet, `<style>[${index}]`));
         } catch {
+          unreadableSheets += 1;
           // Cross-origin stylesheets cannot be inspected safely.
         }
       }
@@ -879,6 +920,7 @@ async function observeWithTokens(
         try {
           collectRules(sheet.cssRules, `adopted[${index}]`);
         } catch {
+          unreadableSheets += 1;
           // Inaccessible adopted stylesheets are skipped like cross-origin ones.
         }
       }
@@ -2838,6 +2880,64 @@ async function observeWithTokens(
               glyphSource: frameInput.glyphSource,
               enabled: frameInput.enabled,
             }) ?? {});
+      const legibility: LegibilityResult =
+        legibilityInput === undefined
+          ? {}
+          : ((window as LegibilityWindow).__idiomLegibility?.({
+              selectorFor,
+              exempt: markMatches
+                .filter(({ mark }) => mark.purpose === "hidden-ok")
+                .flatMap(({ elements }) => elements),
+              enabled: legibilityInput,
+              spacingScope: legibilityInput.negativeSpacingScope,
+              spacingInclude: markMatches
+                .filter(({ mark }) => mark.purpose === "spacing-include")
+                .flatMap(({ elements }) => elements),
+              spacingIgnore: markMatches
+                .filter(({ mark }) => mark.purpose === "spacing-ignore")
+                .flatMap(({ elements }) => elements),
+              gapScopes: markMatches
+                .filter(({ mark }) => mark.purpose === "gap-scope")
+                .map(({ mark, elements }) => ({
+                  selector: mark.selector,
+                  elements,
+                })),
+            }) ?? {});
+      const chromeDefaults: ChromeDefaultsResult =
+        chromeInput.enabled === undefined
+          ? {}
+          : ((window as ChromeDefaultsWindow).__idiomChromeDefaults?.scan({
+              selectorFor,
+              rules: authoredRules,
+              unreadableSheets,
+              authoredColor: (element) => {
+                if (
+                  element instanceof HTMLElement &&
+                  element.style.getPropertyValue("color") !== ""
+                )
+                  return true;
+                for (const rule of authoredRuleIndex.candidates(
+                  indexFacts(element),
+                )) {
+                  try {
+                    if (
+                      rule.style.getPropertyValue("color") !== "" &&
+                      element.matches(rule.selector)
+                    )
+                      return true;
+                  } catch {
+                    // Invalid vendor selectors cannot set the colour.
+                  }
+                }
+                return false;
+              },
+              chromeTokens: chromeInput.tokens,
+              tokenDeclarations:
+                tokenInput.status === "configured"
+                  ? tokenInput.declarations
+                  : {},
+              enabled: chromeInput.enabled,
+            }) ?? {});
       const paintedFacts = new Map<
         Element,
         ReturnType<typeof window.__idiomVisibility.painted>
@@ -4208,6 +4308,120 @@ async function observeWithTokens(
       overlaps.sort((x, y) =>
         x.a === y.a ? (x.b < y.b ? -1 : 1) : x.a < y.a ? -1 : 1,
       );
+      // Text occlusion: text whose ink is more than 30% covered by an opaque
+      // element painted above it, in the same layer. Pairs the overlap pass
+      // already reports, other layers (menus, dialogs, fixed bars) and
+      // pointer-events:none covers (invisible to the hit test) are left out.
+      let textOcclusions: TextOcclusionObservation[] | undefined;
+      if (occlusionInput) {
+        textOcclusions = [];
+        const reported = new Set(overlaps.map(({ a, b }) => `${a}\n${b}`));
+        const replaced = "img, video, canvas, svg, iframe, picture";
+        const fillAlpha = (color: string): number => {
+          const match = color.match(/^rgba?\(([^)]*)\)$/);
+          if (match === null) return color === "transparent" ? 0 : 1;
+          const part = (match[1] ?? "").split(/[\s,/]+/).filter(Boolean)[3];
+          if (part === undefined) return 1;
+          return part.endsWith("%")
+            ? Number.parseFloat(part) / 100
+            : Number.parseFloat(part);
+        };
+        const opaqueCache = new Map<Element, boolean>();
+        const opaque = (element: Element): boolean => {
+          const known = opaqueCache.get(element);
+          if (known !== undefined) return known;
+          let opacity = 1;
+          for (
+            let current: Element | null = element;
+            current !== null;
+            current = current.parentElement
+          )
+            opacity *= Number(getComputedStyle(current).opacity);
+          const style = getComputedStyle(element);
+          const value =
+            opacity >= 0.9 &&
+            (element.matches(replaced) ||
+              fillAlpha(style.backgroundColor) >= 0.9 ||
+              (style.backgroundImage !== "" &&
+                style.backgroundImage !== "none"));
+          opaqueCache.set(element, value);
+          return value;
+        };
+        for (const candidate of overlapCandidates) {
+          if (candidate.kind !== "text") continue;
+          const element = candidate.element;
+          const points: Array<[number, number]> = [];
+          for (const ink of candidate.boxes) {
+            const box = intersectEdges(ink, viewportEdges);
+            const width = box.right - box.left;
+            const height = box.bottom - box.top;
+            if (width < 1 || height < 1) continue;
+            const columns = Math.min(5, Math.max(1, Math.floor(width / 4)));
+            for (let row = 0; row < 3; row += 1)
+              for (let column = 0; column < columns; column += 1)
+                points.push([
+                  box.left + (width * (column + 0.5)) / columns,
+                  box.top + (height * (row + 0.5)) / 3,
+                ]);
+          }
+          if (points.length === 0) continue;
+          const step = Math.max(1, Math.ceil(points.length / 30));
+          let samples = 0;
+          let covered = 0;
+          const covers = new Map<Element, number>();
+          for (let index = 0; index < points.length; index += step) {
+            const [x, y] = points[index] as [number, number];
+            const stack = document.elementsFromPoint(x, y);
+            const at = stack.findIndex(
+              (hit) => hit === element || element.contains(hit),
+            );
+            if (at < 0) continue;
+            samples += 1;
+            const above = stack
+              .slice(0, at)
+              .find((hit) => !hit.contains(element) && !element.contains(hit));
+            if (above === undefined) continue;
+            if (layerRoot(above) !== candidate.layer) continue;
+            let cover: Element | undefined;
+            for (
+              let current: Element | null = above;
+              current !== null && !current.contains(element);
+              current = current.parentElement
+            )
+              if (opaque(current)) {
+                cover = current;
+                break;
+              }
+            if (cover === undefined) continue;
+            covered += 1;
+            covers.set(cover, (covers.get(cover) ?? 0) + 1);
+          }
+          if (samples === 0 || covered / samples <= 0.3) continue;
+          const cover = [...covers.entries()].sort(
+            (x, y) => y[1] - x[1],
+          )[0]?.[0];
+          if (cover === undefined) continue;
+          const pairedWith = overlapCandidates.find(
+            (other) =>
+              other !== candidate &&
+              (other.element === cover ||
+                other.element.contains(cover) ||
+                cover.contains(other.element)) &&
+              (reported.has(`${candidate.selector}\n${other.selector}`) ||
+                reported.has(`${other.selector}\n${candidate.selector}`)),
+          );
+          if (pairedWith !== undefined) continue;
+          if (textOcclusions.length >= 50) break;
+          textOcclusions.push({
+            text: candidate.selector,
+            cover: selectorFor(cover),
+            ratio: Math.round((covered / samples) * 1000) / 1000,
+            samples,
+            covered,
+            rect: rectOf(candidate.bounds),
+          });
+        }
+      }
       // Overlay covers: a field outside an overlay, or the overlay's own
       // trigger past its anchor edge, under the overlay's box. A 3×3 hit-test
       // grid confirms the overlay paints on top.
@@ -4812,6 +5026,250 @@ async function observeWithTokens(
             ? (parent as HTMLDetailsElement).open
             : element.getAttribute("aria-expanded") === "true",
         });
+      }
+      // Interactive surfaces: menus, popovers, disclosures, toolbars,
+      // editable text and selectable elements, with whether this state shows
+      // each open, selected, focused or shown, so coverage can name the ones
+      // no state ever opens and draft the steps that reach them.
+      const interactiveSurfaces: Array<{
+        kind:
+          | "menu"
+          | "popover"
+          | "disclosure"
+          | "toolbar"
+          | "editable"
+          | "selectable"
+          | "multiselect";
+        selector: string;
+        path: string;
+        name: string;
+        role: string;
+        active: boolean;
+        target?: string;
+        reveals: number;
+        members?: string[];
+      }> = [];
+      {
+        const surfaceCap = 300;
+        const revealCap = 200;
+        const interactiveQuery =
+          'a[href], button, input, select, textarea, [role=menuitem], [role=menuitemcheckbox], [role=menuitemradio], [role=option], [role=tab], [role=button], [contenteditable]:not([contenteditable=false]), [tabindex]:not([tabindex="-1"])';
+        const reveals = (root: Element | null): number => {
+          if (root === null) return 0;
+          let count = 0;
+          for (const descendant of root.querySelectorAll("*")) {
+            if (count >= revealCap) break;
+            if (descendant.matches(interactiveQuery)) {
+              count += 1;
+              continue;
+            }
+            const own = [...descendant.childNodes].some(
+              (node) =>
+                node.nodeType === Node.TEXT_NODE &&
+                (node.textContent ?? "").trim() !== "",
+            );
+            if (own) count += 1;
+          }
+          return Math.min(count, revealCap);
+        };
+        const idTarget = (
+          value: string | null,
+        ): { element: Element; selector: string } | undefined => {
+          const id = value?.trim().split(/\s+/)[0];
+          if (!id || generatedIdPattern.test(id)) return undefined;
+          const element = document.getElementById(id);
+          return element === null
+            ? undefined
+            : { element, selector: `#${CSS.escape(id)}` };
+        };
+        const impliedRoles: Record<string, string> = {
+          a: "link",
+          button: "button",
+          summary: "button",
+          input: "textbox",
+          textarea: "textbox",
+          select: "combobox",
+          li: "listitem",
+          tr: "row",
+          td: "cell",
+          option: "option",
+        };
+        const roleOf = (element: Element): string => {
+          const tag = element.tagName.toLowerCase();
+          return (
+            element.getAttribute("role")?.trim().split(/\s+/)[0] ||
+            impliedRoles[tag] ||
+            tag
+          );
+        };
+        const nameOf = (element: Element): string =>
+          accessibleName(element).replace(/\s+/g, " ").trim().slice(0, 120);
+        const hiddenTree = (element: Element) =>
+          element.closest("[aria-hidden=true], [inert]") !== null;
+        const visible = (element: Element) =>
+          element.checkVisibility() && isVisibleContent(element);
+        const seen = new Set<Element>();
+        const push = (
+          element: Element,
+          entry: Omit<
+            (typeof interactiveSurfaces)[number],
+            "selector" | "path" | "name" | "role"
+          >,
+        ) => {
+          if (interactiveSurfaces.length >= surfaceCap || seen.has(element))
+            return;
+          seen.add(element);
+          interactiveSurfaces.push({
+            ...entry,
+            selector: selectorFor(element),
+            path: probePathFor(element),
+            name: nameOf(element),
+            role: roleOf(element),
+          });
+        };
+        // Triggers: what opens a menu, popover or disclosure.
+        for (const element of document.querySelectorAll(
+          "details > summary, [aria-haspopup], [aria-expanded], [popovertarget]",
+        )) {
+          if (hiddenTree(element) || !visible(element)) continue;
+          const parent = element.parentElement;
+          if (
+            element.tagName.toLowerCase() === "summary" &&
+            parent instanceof HTMLDetailsElement &&
+            parent.querySelector(":scope > summary") === element
+          ) {
+            push(element, {
+              kind: "disclosure",
+              active: parent.open,
+              target: `${selectorFor(parent)}[open]`,
+              reveals: Math.max(0, reveals(parent) - 1),
+            });
+            continue;
+          }
+          const popoverTarget = element.getAttribute("popovertarget");
+          if (popoverTarget !== null) {
+            const target = idTarget(popoverTarget);
+            let open = false;
+            try {
+              open = target?.element.matches(":popover-open") ?? false;
+            } catch {
+              open = false;
+            }
+            push(element, {
+              kind: "popover",
+              active: open,
+              ...(target === undefined ? {} : { target: target.selector }),
+              reveals: reveals(target?.element ?? null),
+            });
+            continue;
+          }
+          const haspopup = element.getAttribute("aria-haspopup");
+          const expanded = element.getAttribute("aria-expanded") === "true";
+          const target = idTarget(element.getAttribute("aria-controls"));
+          const targetFields = {
+            ...(target === undefined ? {} : { target: target.selector }),
+            reveals: reveals(target?.element ?? null),
+          };
+          if (haspopup !== null && haspopup !== "false") {
+            push(element, {
+              kind: ["listbox", "dialog", "grid", "tree"].includes(haspopup)
+                ? "popover"
+                : "menu",
+              active: expanded,
+              ...targetFields,
+            });
+            continue;
+          }
+          if (element.hasAttribute("aria-expanded"))
+            push(element, {
+              kind: "disclosure",
+              active: expanded,
+              ...targetFields,
+            });
+        }
+        // Toolbars, shown or not: one shown in any state counts as covered.
+        for (const toolbar of document.querySelectorAll("[role=toolbar]")) {
+          if (hiddenTree(toolbar)) continue;
+          push(toolbar, {
+            kind: "toolbar",
+            active: visible(toolbar),
+            target: selectorFor(toolbar),
+            reveals: reveals(toolbar),
+          });
+        }
+        // Editable text, outermost only.
+        for (const element of document.querySelectorAll(
+          "[contenteditable]:not([contenteditable=false]), [role=textbox]",
+        )) {
+          const tag = element.tagName.toLowerCase();
+          if (tag === "input" || tag === "textarea") continue;
+          if (hiddenTree(element) || !visible(element)) continue;
+          const outer = element.parentElement?.closest(
+            "[contenteditable]:not([contenteditable=false])",
+          );
+          if (outer !== null && outer !== undefined) continue;
+          push(element, {
+            kind: "editable",
+            active: element.contains(document.activeElement),
+            reveals: 0,
+          });
+        }
+        // Selectable elements, a few per group plus every selected one.
+        const groups = new Map<Element | null, Element[]>();
+        for (const element of document.querySelectorAll("[aria-selected]")) {
+          if (hiddenTree(element) || !visible(element)) continue;
+          const group =
+            element.closest(
+              "[role=listbox],[role=tablist],[role=grid],[role=treegrid],[role=tree]",
+            ) ?? element.parentElement;
+          const members = groups.get(group) ?? [];
+          members.push(element);
+          groups.set(group, members);
+        }
+        for (const members of groups.values()) {
+          const selected = members.filter(
+            (member) => member.getAttribute("aria-selected") === "true",
+          );
+          const unselected = members.filter(
+            (member) => member.getAttribute("aria-selected") !== "true",
+          );
+          const kept = new Set([...unselected.slice(0, 3), ...selected]);
+          for (const member of members) {
+            if (!kept.has(member)) continue;
+            const target = idTarget(member.getAttribute("aria-controls"));
+            push(member, {
+              kind: "selectable",
+              active: member.getAttribute("aria-selected") === "true",
+              ...(target === undefined ? {} : { target: target.selector }),
+              reveals: reveals(target?.element ?? null),
+            });
+          }
+        }
+        // Multi-select containers: covered once two members are selected.
+        for (const container of document.querySelectorAll(
+          "[aria-multiselectable=true]",
+        )) {
+          if (hiddenTree(container) || !visible(container)) continue;
+          const members = [
+            ...container.querySelectorAll("[aria-selected]"),
+          ].filter((member) => visible(member));
+          const active =
+            members.filter(
+              (member) => member.getAttribute("aria-selected") === "true",
+            ).length >= 2;
+          const unselected = members
+            .filter((member) => member.getAttribute("aria-selected") !== "true")
+            .slice(0, 2);
+          if (!active && unselected.length < 2) continue;
+          push(container, {
+            kind: "multiselect",
+            active,
+            reveals: 0,
+            ...(unselected.length === 2
+              ? { members: unselected.map((member) => selectorFor(member)) }
+              : {}),
+          });
+        }
       }
       // Icon controls: interactive controls carrying exactly one visible
       // icon, fingerprinted by its geometry (SVG) or glyph and font (icon
@@ -9869,6 +10327,8 @@ async function observeWithTokens(
           scrollHeight: root.scrollHeight,
           clientWidth: root.clientWidth,
           clientHeight: root.clientHeight,
+          scrollX: window.scrollX,
+          scrollY: window.scrollY,
         },
         elements: observed.map(({ element, value }) => {
           const viewportIntersection = viewportIntersections.get(element);
@@ -10054,6 +10514,7 @@ async function observeWithTokens(
         dialogs,
         overlaps,
         disclosures,
+        interactiveSurfaces,
         iconControls,
         popoverCovers,
         selectionOutlines,
@@ -10064,6 +10525,9 @@ async function observeWithTokens(
         emptyRegions,
         repeatedContainers,
         ...frameOrnaments,
+        ...chromeDefaults,
+        ...legibility,
+        ...(textOcclusions === undefined ? {} : { textOcclusions }),
         ...(components.length === 0 ? {} : { components }),
         spacingTargets,
         ...(mediaFrames === undefined ? {} : { mediaFrames }),
@@ -10122,6 +10586,16 @@ async function observeWithTokens(
       frameInput: {
         enabled: observeOptions.frameOrnaments,
         glyphSource: glyphCharacter.source,
+      },
+      legibilityInput: observeOptions.legibility,
+      occlusionInput: observeOptions.textOcclusion === true,
+      chromeInput: {
+        enabled: observeOptions.chromeDefaults,
+        tokens:
+          normalizedTokens.status === "configured" &&
+          normalizedTokens.source !== "design.tokens"
+            ? chromeTokenNames(normalizedTokens.declarations)
+            : [],
       },
     },
   );

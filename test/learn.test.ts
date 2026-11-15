@@ -282,7 +282,7 @@ test("invariant, glossary and mirrored observations land in their check configur
   expect(flow.states[0].invariants).toEqual([
     { name: "toolbar", selector: ".toolbar", height: 48 },
   ]);
-  await learnCommand({
+  const glossary = await learnCommand({
     project,
     state: "editor",
     observation: 'say "Sign in" not "Log in"',
@@ -310,6 +310,9 @@ test("invariant, glossary and mirrored observations land in their check configur
     .trim()
     .split("\n")
     .map((line) => learnedEntrySchema.parse(JSON.parse(line)));
+  // The result carries the exact line written, rule candidate included.
+  expect(glossary.recorded && glossary.entry).toEqual(log[1]);
+  expect(log[1]?.candidate).toMatchObject({ kind: "glossary" });
   expect(log.map((entry) => [entry.id, entry.kind])).toEqual([
     ["learned-1", "invariant"],
     ["learned-2", "glossary"],
@@ -435,3 +438,124 @@ test("the learn CLI prints the diff, then the recorded id or the cancellation", 
   );
   expect(output.join("")).toContain("Next: idiom check studio-lab");
 }, 60_000);
+
+test("a measurable law configures its check, names it and the scope, and leaves DESIGN.md alone", async () => {
+  const { project } = await studioProject(directories);
+  const designPath = join(project, "DESIGN.md");
+  const design = await readFile(designPath, "utf8");
+  let shown = "";
+  const result = await learnCommand({
+    project,
+    state: "editor",
+    observation:
+      "Nothing in a toolbar sits closer than 6px, glyph to glyph or glyph to button",
+    yes: true,
+    write: (message) => {
+      shown += `${message}\n`;
+    },
+    dependencies: { gitTopology: noTopology },
+  });
+  expect(result).toMatchObject({ recorded: true, kind: "law" });
+  if (!result.recorded) throw new Error("not recorded");
+  expect(result.next).toBe(
+    "Next: idiom check studio-lab — control-gap enforces it from the next capture.",
+  );
+  expect(shown).toContain(
+    'Compiles to control-gap: parts inside a control keep at least 6px apart, scoped to the toolbar ([role="toolbar"]).\n',
+  );
+  expect(shown.indexOf("Compiles to")).toBeLessThan(
+    shown.indexOf("+++ b/.idiom/project.json"),
+  );
+  expect(await projectChecks(project)).toMatchObject({
+    controlGap: {
+      scopes: [
+        {
+          name: "Nothing in a toolbar sits closer than 6px, glyph to glyph or glyph to button.",
+          selector: '[role="toolbar"]',
+          min: 6,
+        },
+      ],
+    },
+  });
+  expect(await readFile(designPath, "utf8")).toBe(design);
+  const entry = learnedEntrySchema.parse(
+    JSON.parse(
+      (await readFile(join(project, ".idiom", "learned.jsonl"), "utf8")).trim(),
+    ),
+  );
+  expect(entry).toMatchObject({
+    kind: "law",
+    target: {
+      file: ".idiom/project.json",
+      check: "control-gap",
+      scope: '[role="toolbar"]',
+    },
+    entry: { selector: '[role="toolbar"]', min: 6 },
+    candidate: { kind: "law", checkable: "deterministic" },
+  });
+});
+
+test("a law on an unknown surface with no capture or selector stays a ruling and says why; prose stays a ruling word for word", async () => {
+  const { project } = await studioProject(directories);
+  let shown = "";
+  const result = await learnCommand({
+    project,
+    state: "editor",
+    observation: "nothing in the inspector sits closer than 4px",
+    yes: true,
+    write: (message) => {
+      shown += `${message}\n`;
+    },
+    dependencies: { gitTopology: noTopology },
+  });
+  expect(result).toMatchObject({ recorded: true, kind: "ruling" });
+  expect(shown).toContain(
+    'Not compiled to a check: no selector for "inspector"; pass --selector to compile it. Recorded as a ruling for the model reviewer.',
+  );
+  expect(
+    parseRulingBlocks(await readFile(join(project, "DESIGN.md"), "utf8"))
+      .resolutions[0]?.wording,
+  ).toBe("Nothing in the inspector sits closer than 4px.");
+
+  // With --selector the same words compile.
+  const scoped = await learnCommand({
+    project,
+    state: "editor",
+    observation: "nothing in the inspector sits closer than 5px",
+    selectors: [".inspector"],
+    yes: true,
+    dependencies: { gitTopology: noTopology },
+  });
+  expect(scoped).toMatchObject({ recorded: true, kind: "law" });
+  expect(await projectChecks(project)).toMatchObject({
+    controlGap: { scopes: [{ selector: ".inspector", min: 5 }] },
+  });
+});
+
+test("the interface-reach spacing law re-enables its check and shows in idiom context", async () => {
+  const { project } = await studioProject(directories);
+  const projectPath = join(project, ".idiom", "project.json");
+  const config = JSON.parse(await readFile(projectPath, "utf8"));
+  config.checks = { ...config.checks, negativeSpacing: { enabled: false } };
+  await writeFile(projectPath, JSON.stringify(config, null, 2));
+  const result = await learnCommand({
+    project,
+    state: "editor",
+    observation: "Never use negative word-spacing on chrome text",
+    yes: true,
+    dependencies: { gitTopology: noTopology },
+  });
+  expect(result).toMatchObject({ recorded: true, kind: "law" });
+  expect(await projectChecks(project)).toMatchObject({
+    negativeSpacing: { enabled: true },
+  });
+  const stdout: string[] = [];
+  const code = await run(["node", "idiom", "context", "--project", project], {
+    stdout: (message) => stdout.push(message),
+    stderr: () => undefined,
+  });
+  expect(code).toBe(0);
+  expect(stdout.join("")).toContain(
+    "- No negative letter- or word-spacing on interface text: controls, labels, navigation, menus, toolbars and tooltips (negative-spacing).",
+  );
+});

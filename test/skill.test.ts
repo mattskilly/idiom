@@ -362,12 +362,17 @@ test("the skill prefers supported MCP tools without changing human judgment or v
   expect(skill).toContain("explicit reason for decisions");
   expect(skill).toContain("verification only");
   expect(skill).toContain(
-    "page review, explore, rulings/learn, references, per-finding tickets",
+    "page review, explore, rulings, other learn modes, references, per-finding tickets",
   );
+  expect(skill).toContain(
+    "Whenever a person points out a UI or UX problem, record it at once: call `idiom_learn`",
+  );
+  expect(skill).toContain("Then say back what was recorded");
   for (const tool of [
     "idiom_init",
     "idiom_design_add",
     "idiom_choose",
+    "idiom_learn",
     "idiom_tickets",
     "idiom_sweep",
     "idiom_coverage",

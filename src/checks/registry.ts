@@ -6,6 +6,7 @@ import { bandEdgesCheck } from "./band-edges.js";
 import { briefMismatchCheck } from "./brief-mismatch.js";
 import { brokenImageCheck } from "./broken-image.js";
 import { brokenLinkCheck } from "./broken-link.js";
+import { browserDefaultStyleCheck } from "./browser-default-style.js";
 import { clippedTextCheck } from "./clipped-text.js";
 import { collectionActionsCheck } from "./collection-actions.js";
 import { componentSizeCheck } from "./component-size.js";
@@ -13,7 +14,9 @@ import { compoundControlCheck } from "./compound-control.js";
 import { consoleErrorCheck } from "./console-error.js";
 import { contrastCheck } from "./contrast.js";
 import { controlAnatomyCheck } from "./control-anatomy.js";
+import { controlGapCheck } from "./control-gap.js";
 import { copyLintCheck } from "./copy-lint.js";
+import { crampedPaddingCheck } from "./cramped-padding.js";
 import { crossSurfaceNamingCheck } from "./cross-surface-naming.js";
 import { deadAffordanceCheck } from "./dead-affordance.js";
 import { deadControlCheck } from "./dead-control.js";
@@ -25,6 +28,7 @@ import { disclosureAffordanceCheck } from "./disclosure-affordance.js";
 import { disguisedControlCheck } from "./disguised-control.js";
 import { focusReturnCheck, popoverDismissalCheck } from "./dismissal.js";
 import { duplicateEntryCheck } from "./duplicate-entry.js";
+import { edgeTextCheck } from "./edge-text.js";
 import { elementOverlapCheck } from "./element-overlap.js";
 import { emptyFrameCheck } from "./empty-frame.js";
 import { emptyStateCheck } from "./empty-state.js";
@@ -38,7 +42,9 @@ import { freshStateCheck } from "./fresh-state.js";
 import { glyphIconCheck } from "./glyph-icon.js";
 import { glyphOverIconCheck } from "./glyph-over-icon.js";
 import { groupInvariantsCheck } from "./group-invariants.js";
+import { headingRhythmCheck } from "./heading-rhythm.js";
 import { headingStructureCheck } from "./heading-structure.js";
+import { hiddenAtRestCheck } from "./hidden-at-rest.js";
 import { iconMeaningCheck } from "./icon-meaning.js";
 import { imageDistortionCheck } from "./image-distortion.js";
 import { interactionShiftCheck } from "./interaction-shift.js";
@@ -60,7 +66,10 @@ import {
 } from "./missing-state.js";
 import { motionCheck } from "./motion.js";
 import { nativeControlCheck } from "./native-control.js";
+import { nativeScrollbarCheck } from "./native-scrollbar.js";
+import { negativeSpacingCheck } from "./negative-spacing.js";
 import { nestedBorderCheck } from "./nested-border.js";
+import { numericAlignCheck } from "./numeric-align.js";
 import { openerCannotCloseCheck } from "./opener-cannot-close.js";
 import { orphanWordCheck } from "./orphan-word.js";
 import { overflowClipCheck } from "./overflow-clip.js";
@@ -69,6 +78,7 @@ import { parentSelectionCheck } from "./parent-selection.js";
 import { primaryRegionCheck } from "./primary-region.js";
 import { progressAffordanceCheck } from "./progress-affordance.js";
 import { publishedBudgetCheck } from "./published-budget.js";
+import { raggedRowCheck } from "./ragged-row.js";
 import { repeatedRowOrnamentCheck } from "./repeated-row-ornament.js";
 import { responsiveBreakCheck } from "./responsive-break.js";
 import {
@@ -85,10 +95,13 @@ import { shellVisibilityCheck } from "./shell-visibility.js";
 import { siblingChromeCheck } from "./sibling-chrome.js";
 import { spacingRhythmCheck } from "./spacing-rhythm.js";
 import { spacingTargetCheck } from "./spacing-target.js";
+import { stateJumpCheck } from "./state-jump.js";
 import { targetSizeCheck } from "./target-size.js";
 import { textCenteringCheck } from "./text-centering.js";
+import { textOcclusionCheck } from "./text-occlusion.js";
 import { tokenDriftCheck } from "./token-drift.js";
 import { touchReachabilityCheck } from "./touch-reachability.js";
+import { typeLegibilityCheck } from "./type-legibility.js";
 import type {
   CheckCoverage,
   ChecksConfig,
@@ -98,6 +111,7 @@ import type {
 } from "./types.js";
 import { deterministicCheckIds } from "./types.js";
 import { unexplainedControlCheck } from "./unexplained-control.js";
+import { unusedTokenCheck } from "./unused-token.js";
 import { visualBlankCheck } from "./visual-blank.js";
 import { wordBreakCheck } from "./word-break.js";
 
@@ -191,6 +205,20 @@ export const signalChecks: DeterministicCheck[] = [
   emptyFrameCheck,
   repeatedRowOrnamentCheck,
   glyphOverIconCheck,
+  nativeScrollbarCheck,
+  browserDefaultStyleCheck,
+  unusedTokenCheck,
+  hiddenAtRestCheck,
+  edgeTextCheck,
+  crampedPaddingCheck,
+  headingRhythmCheck,
+  typeLegibilityCheck,
+  numericAlignCheck,
+  raggedRowCheck,
+  textOcclusionCheck,
+  stateJumpCheck,
+  controlGapCheck,
+  negativeSpacingCheck,
 ];
 
 /**
@@ -231,6 +259,25 @@ export function checksConfigFrom(
     },
     repeatedRowOrnament: { ...merged.repeatedRowOrnament },
     glyphOverIcon: { ...merged.glyphOverIcon },
+    nativeScrollbar: { ...merged.nativeScrollbar },
+    browserDefaultStyle: { ...merged.browserDefaultStyle },
+    unusedToken: { ...merged.unusedToken },
+    hiddenAtRest: { ...merged.hiddenAtRest },
+    edgeText: { ...merged.edgeText },
+    crampedPadding: { ...merged.crampedPadding },
+    headingRhythm: { ...merged.headingRhythm },
+    typeLegibility: { ...merged.typeLegibility },
+    numericAlign: { ...merged.numericAlign },
+    raggedRow: { ...merged.raggedRow },
+    textOcclusion: { ...merged.textOcclusion },
+    controlGap: { ...merged.controlGap },
+    ...(merged.textCentering === undefined
+      ? {}
+      : { textCentering: merged.textCentering }),
+    negativeSpacing: {
+      enabled: merged.negativeSpacing.enabled,
+      scope: merged.negativeSpacing.scope,
+    },
     images: { ...merged.images },
     layoutShift: { ...merged.layoutShift },
     interactionShift: { ...merged.interactionShift },
@@ -240,6 +287,9 @@ export function checksConfigFrom(
       ? {}
       : { compoundControls: { ...merged.compoundControls } }),
     siblingChrome: { regions: [...merged.siblingChrome.regions] },
+    duplicateEntry: {
+      navigation: merged.duplicateEntry?.navigation ?? "pathname",
+    },
     touchReachability: merged.touchReachability,
     liveness: merged.liveness,
     mediaFill: {

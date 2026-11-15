@@ -6,7 +6,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { briefSelectorsFor } from "../brief/assertions.js";
 import { loadBriefChecks } from "../brief/store.js";
 import { loadDesignComponents } from "../checks/design-components.js";
@@ -101,6 +101,7 @@ import { installArtifactTree } from "./run-lifecycle.js";
 import { type RunRecord, runRecordSchema } from "./run-record.js";
 import {
   type CaptureScope,
+  type Coordinate,
   coordinate,
   probeCoordinates,
   resolveCaptureScope,
@@ -496,6 +497,37 @@ function mapCsp(
   };
 }
 
+/**
+ * The first development-server sign in selected-tuple order, as the
+ * optional `devServer` scope field; empty when no tuple saw one.
+ */
+export function devServerRecord(
+  tuples: ReadonlyArray<
+    Pick<ArtifactTuple, "state" | "viewport" | "colorScheme" | "result">
+  >,
+  selected: readonly Coordinate[],
+): { devServer?: NonNullable<RunRecord["devServer"]> } {
+  const key = (tuple: Coordinate) =>
+    `${tuple.state}/${tuple.viewport}/${tuple.colorScheme}`;
+  const order = new Map(selected.map((tuple, index) => [key(tuple), index]));
+  const seen = tuples
+    .flatMap((tuple) => {
+      const sign =
+        tuple.result?.ok === true ? tuple.result.devServer : undefined;
+      if (sign === undefined) return [];
+      const where: Coordinate = {
+        state: tuple.state.id,
+        viewport: tuple.viewport.name,
+        colorScheme: tuple.colorScheme ?? "light",
+      };
+      return [{ sign, where, index: order.get(key(where)) ?? order.size }];
+    })
+    .sort((left, right) => left.index - right.index)[0];
+  return seen === undefined
+    ? {}
+    : { devServer: { ...seen.sign, ...seen.where } };
+}
+
 /** Apply one string transform to every derived field of a captured tuple. */
 function mapResult(
   result: TupleResult,
@@ -774,13 +806,26 @@ async function captureOwned(
     }),
     async (workspace) => {
       const reason = owner.signal.reason;
-      await workspace.lifecycle?.interrupt(
-        reason instanceof CaptureInterrupted
-          ? { reason: "signal", signal: reason.signal }
-          : { reason: "capture-failed" },
-        options.dependencies?.onLifecycleDiagnostic,
-      );
-      await cleanupWorkspace(workspace);
+      try {
+        await workspace.lifecycle?.interrupt(
+          reason instanceof CaptureInterrupted
+            ? { reason: "signal", signal: reason.signal }
+            : { reason: "capture-failed" },
+          options.dependencies?.onLifecycleDiagnostic,
+        );
+      } catch (error) {
+        // The capture's own failure wins and would drop this one silently,
+        // leaving run.json "running" with no word why.
+        const diagnostic =
+          options.dependencies?.onLifecycleDiagnostic ??
+          ((message: string) => process.stderr.write(`${message}\n`));
+        diagnostic(
+          `Could not record the interruption of run ${basename(workspace.finalDirectory)}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        throw error;
+      } finally {
+        await cleanupWorkspace(workspace);
+      }
     },
   );
   owner.check();
@@ -1145,7 +1190,11 @@ async function captureOwned(
           )
             continue;
           const state = resolution.value.state;
-          const invariants = effectiveInvariants(options.flow, state);
+          const invariants = effectiveInvariants(
+            options.flow,
+            state,
+            options.project.checks.invariants,
+          );
           const selectors = [
             ...new Set([
               ...(options.flow.toggleRegions ?? []),
@@ -1306,6 +1355,7 @@ async function captureOwned(
             invariants: effectiveInvariants(
               options.flow,
               resolution.value.state,
+              options.project.checks.invariants,
             ),
             briefSelectors: briefSelectorsFor(
               briefChecks,
@@ -2027,7 +2077,11 @@ async function captureOwned(
           signal: owner.signal,
           onActivity: owner.stage,
           shell: options.flow.shell,
-          invariants: effectiveInvariants(options.flow, selected.state),
+          invariants: effectiveInvariants(
+            options.flow,
+            selected.state,
+            options.project.checks.invariants,
+          ),
           briefSelectors: briefSelectorsFor(
             briefChecks,
             options.flow.id,
@@ -2248,6 +2302,7 @@ async function captureOwned(
           : { ...probePolicy, flowBudgetMs: wallTarget },
       timings,
       capture: { reducedMotion: options.project.capture.reducedMotion },
+      ...devServerRecord(tuples, selectedTuples.map(coordinate)),
     });
     await writeFile(
       resolve(workspace.stagingDirectory, "run.json"),

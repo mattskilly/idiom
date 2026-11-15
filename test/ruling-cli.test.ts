@@ -413,3 +413,70 @@ test.each(["--add-step", "--drift"])(
     ).rejects.toThrow("already been recorded");
   },
 );
+
+test("--wording that states a law records the ruling and configures its check in one confirmed diff", async () => {
+  const directory = await project();
+  const design = join(directory, "DESIGN.md");
+  const projectPath = join(directory, ".idiom", "project.json");
+  const designBefore = await readFile(design, "utf8");
+  const projectBefore = await readFile(projectPath, "utf8");
+  const wording = "Labels in the toolbar are centred within 1px.";
+
+  // Declined: neither file changes.
+  let shown = "";
+  const declined = await rulingCommand({
+    project: directory,
+    decision: "ruling-1",
+    wording,
+    dependencies: {
+      confirm: async (diff) => {
+        shown = diff;
+        return false;
+      },
+    },
+  });
+  expect(declined.recorded).toBe(false);
+  expect(shown.split("\n")[0]).toBe(
+    'Compiles to text-centering: single-line labels sit within 1px of their box\'s vertical centre, scoped to the toolbar ([role="toolbar"]). Measured at the 1.5px font-metric floor.',
+  );
+  expect(shown).toContain("--- a/DESIGN.md");
+  expect(shown).toContain("+++ b/.idiom/project.json");
+  expect(await readFile(design, "utf8")).toBe(designBefore);
+  expect(await readFile(projectPath, "utf8")).toBe(projectBefore);
+
+  const recorded = await rulingCommand({
+    project: directory,
+    decision: "ruling-1",
+    wording,
+    dependencies: { confirm: async () => true },
+  });
+  expect(recorded).toMatchObject({
+    recorded: true,
+    compiled: { check: "text-centering", scope: '[role="toolbar"]' },
+  });
+  expect(
+    parseRulingBlocks(await readFile(design, "utf8")).resolutions[0],
+  ).toMatchObject({ id: "ruling-1", wording });
+  expect(
+    JSON.parse(await readFile(projectPath, "utf8")).checks.textCentering,
+  ).toEqual({
+    scopes: [{ name: wording, selector: '[role="toolbar"]', tolerance: 1 }],
+  });
+  // The written project still validates.
+  await loadProjectContext({ project: directory });
+});
+
+test("--wording on a surface outside the vocabulary records the ruling alone", async () => {
+  const directory = await project();
+  const projectPath = join(directory, ".idiom", "project.json");
+  const projectBefore = await readFile(projectPath, "utf8");
+  const result = await rulingCommand({
+    project: directory,
+    decision: "ruling-1",
+    wording: "Nothing in the inspector sits closer than 4px.",
+    dependencies: { confirm: async () => true },
+  });
+  expect(result.recorded).toBe(true);
+  expect(result).not.toHaveProperty("compiled");
+  expect(await readFile(projectPath, "utf8")).toBe(projectBefore);
+});

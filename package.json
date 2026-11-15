@@ -1,6 +1,6 @@
 {
   "name": "@mattskilly/idiom",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "Design acceptance for AI-built software.",
   "type": "module",
   "license": "Apache-2.0",
@@ -48,6 +48,7 @@
     "build:site": "node scripts/build-site.mjs",
     "build:hosted-runner": "node scripts/hosted/build-runner.mjs",
     "measure:hosted-review": "node scripts/hosted/measure.mjs",
+    "measure:first-run": "node scripts/first-run.mjs",
     "generate:skill": "node scripts/generate-skill.mjs",
     "check:plugins": "node scripts/check-plugins.mjs"
   },

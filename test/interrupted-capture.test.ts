@@ -1,4 +1,4 @@
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   access,
   mkdir,
@@ -18,8 +18,12 @@ import {
   baselineGapDiagnostic,
   captureCompleteness,
 } from "../src/baseline/record.js";
+import { createArtifactWorkspace } from "../src/capture/artifacts.js";
 import { createBrowserLauncher } from "../src/capture/browser.js";
-import { CaptureInterrupted } from "../src/capture/ownership.js";
+import {
+  CaptureInterrupted,
+  withCaptureOwnership,
+} from "../src/capture/ownership.js";
 import { runCapture } from "../src/capture/run.js";
 import {
   completeRunNames,
@@ -135,18 +139,71 @@ function cli(directory: string, args: string[]) {
   child.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
   });
-  const closed = new Promise<number | null>((accept) =>
-    child.once("close", accept),
+  const closed = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }>((accept) =>
+    child.once("close", (code, signal) => accept({ code, signal })),
   );
   return {
     child,
     finished: async () => ({
-      code: await closed,
+      ...(await closed),
       stdout,
       stderr: () => stderr,
     }),
     stderr: () => stderr,
   };
+}
+
+type Cli = ReturnType<typeof cli>;
+type Exited = Awaited<ReturnType<Cli["finished"]>>;
+
+/** Exit code, signal and stderr tail: every child-outcome failure names its cause. */
+function outcome(child: {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stderr: () => string;
+}): string {
+  const lines = child.stderr().split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return `child exited with code ${child.code}, signal ${child.signal}\n--- last 40 lines of stderr ---\n${lines.slice(-40).join("\n")}`;
+}
+
+/** The same message for a child that may still be running. */
+function live(capture: Cli): string {
+  return outcome({
+    code: capture.child.exitCode,
+    signal: capture.child.signalCode,
+    stderr: capture.stderr,
+  });
+}
+
+async function withOutcome<T>(work: Promise<T>, message: string): Promise<T> {
+  try {
+    return await work;
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\n${message}`,
+      { cause: error },
+    );
+  }
+}
+
+function recordAfter(run: string, message: string): Promise<RunRecord> {
+  return withOutcome(record(run), message);
+}
+
+async function expectPresent(path: string, message: string) {
+  await withOutcome(access(path), message);
+}
+
+async function expectAbsent(path: string, message: string) {
+  const present = await access(path).then(
+    () => true,
+    () => false,
+  );
+  expect(present, `${path} should not exist\n${message}`).toBe(false);
 }
 
 async function runDirectories(directory: string): Promise<string[]> {
@@ -182,11 +239,8 @@ async function committedRun(directory: string): Promise<string | undefined> {
  * Polls the visible ledger until a tuple commits or the CLI exits; the test
  * timeout is the only bound. Never assumes how long a capture takes.
  */
-async function committed(
-  directory: string,
-  child: ChildProcess,
-  stderr: () => string,
-) {
+async function committed(directory: string, capture: Cli) {
+  const { child } = capture;
   while (child.exitCode === null && child.signalCode === null) {
     const run = await committedRun(directory);
     if (run !== undefined) return run;
@@ -194,16 +248,16 @@ async function committed(
   }
   const run = await committedRun(directory);
   if (run !== undefined) return run;
-  throw new Error(`the capture never committed a tuple: ${stderr()}`);
+  throw new Error(`the capture never committed a tuple\n${live(capture)}`);
 }
 
 for (const signal of ["SIGTERM", "SIGINT"] as const)
   test(`${signal} keeps the finished tuple and prints the interrupted line`, async () => {
     const { directory } = await heldProject();
     const capture = cli(directory, ["capture", "home"]);
-    const run = await committed(directory, capture.child, capture.stderr);
-    const running = await record(run);
-    expect(running).toMatchObject({
+    const run = await committed(directory, capture);
+    const running = await recordAfter(run, live(capture));
+    expect(running, live(capture)).toMatchObject({
       status: "running",
       runId: running.runId,
       selected: [
@@ -214,26 +268,33 @@ for (const signal of ["SIGTERM", "SIGINT"] as const)
         { state: "home", viewport: "desktop", colorScheme: "light" },
       ],
     });
-    expect(running.source.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(running.source.commit, live(capture)).toMatch(/^[0-9a-f]{40}$/);
+    // Readiness barrier, not a delay: a committed tuple read from disk is
+    // written inside withCaptureOwnership, after its signal handlers are
+    // installed and the run record exists, so the signal cannot win.
     capture.child.kill(signal);
-    const result = await capture.finished();
-    expect(result.code).not.toBe(0);
-    const interrupted = await record(run);
-    expect(interrupted).toMatchObject({
+    const result: Exited = await capture.finished();
+    const why = outcome(result);
+    // A graceful interrupt exits through process.exitCode, never by signal.
+    expect(result.signal, why).toBeNull();
+    expect(result.code, why).not.toBe(0);
+    const interrupted = await recordAfter(run, why);
+    expect(interrupted, why).toMatchObject({
       status: "interrupted",
       interruption: { reason: "signal", signal },
       completedTuples: [
         { state: "home", viewport: "desktop", colorScheme: "light" },
       ],
     });
-    await access(join(run, "home", "desktop", "screenshot.png"));
-    await access(join(run, "home", "desktop", "dom.html"));
-    await expect(access(join(run, "held", "desktop"))).rejects.toThrow();
+    await expectPresent(join(run, "home", "desktop", "screenshot.png"), why);
+    await expectPresent(join(run, "home", "desktop", "dom.html"), why);
+    await expectAbsent(join(run, "held", "desktop"), why);
     const line = `Interrupted: run ${interrupted.runId} kept 1 of 2 tuples (unverified).`;
-    expect(result.stderr().split(line).length - 1).toBe(1);
+    expect(result.stderr().split(line).length - 1, why).toBe(1);
     // An interrupted run is never a capture a reader can consume.
     expect(
       await completeRunNames(join(directory, ".idiom", "reports")),
+      why,
     ).toEqual([]);
   }, 90_000);
 
@@ -262,20 +323,23 @@ test("capture browsers leave SIGINT and SIGTERM to Idiom's interrupt", async () 
 test("a SIGKILLed run is reported once by the next check", async () => {
   const { directory, hold } = await heldProject();
   const capture = cli(directory, ["capture", "home"]);
-  const run = await committed(directory, capture.child, capture.stderr);
+  const run = await committed(directory, capture);
   capture.child.kill("SIGKILL");
-  await capture.finished();
-  const orphan = await record(run);
-  expect(orphan.status).toBe("running");
-  await access(join(run, "home", "desktop", "screenshot.png"));
+  const killed = outcome(await capture.finished());
+  const orphan = await recordAfter(run, killed);
+  expect(orphan.status, killed).toBe("running");
+  await expectPresent(join(run, "home", "desktop", "screenshot.png"), killed);
 
   await rm(hold);
   const check = cli(directory, ["check", "home"]);
   const checked = await check.finished();
+  const why = outcome(checked);
   const notice = `Run ${orphan.runId} was interrupted (process gone) after 1 of 2 tuples.`;
-  expect(checked.stderr().split(notice).length - 1, checked.stderr()).toBe(1);
-  expect(checked.stderr()).toContain("Stopped a leftover application server");
-  expect(await record(run)).toMatchObject({
+  expect(checked.stderr().split(notice).length - 1, why).toBe(1);
+  expect(checked.stderr(), why).toContain(
+    "Stopped a leftover application server",
+  );
+  expect(await recordAfter(run, why), why).toMatchObject({
     status: "interrupted",
     interruption: { reason: "process-gone" },
     completedTuples: [
@@ -283,10 +347,10 @@ test("a SIGKILLed run is reported once by the next check", async () => {
     ],
   });
   // Reaping the dead server does not erase the kept evidence.
-  await access(join(run, "home", "desktop", "screenshot.png"));
+  await expectPresent(join(run, "home", "desktop", "screenshot.png"), why);
 
   const again = await cli(directory, ["check", "home"]).finished();
-  expect(again.stderr()).not.toContain("was interrupted");
+  expect(again.stderr(), outcome(again)).not.toContain("was interrupted");
 }, 120_000);
 
 function lifecycleRecord(): RunRecord {
@@ -654,3 +718,116 @@ test("an interrupt after a collapsed tuple keeps its representative's own artifa
     await readFile(join(representativeDirectory, "screenshot.png"), "utf8"),
   ).toBe(`png ${representative}`);
 }, 60_000);
+
+test("a failed interruption seal says so on the lifecycle diagnostic", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "idiom-interrupted-seal-"));
+  directories.push(directory);
+  const project = await toggleProject();
+  project.capture.concurrency = 1;
+  const controller = new AbortController();
+  const browser: BrowserSession = {
+    version: "fake",
+    close: async () => {},
+    measure: async () => "layout",
+    capture: async () => {
+      controller.abort(new CaptureInterrupted("SIGTERM"));
+      throw new Error("interrupted");
+    },
+  };
+  const messages: string[] = [];
+  await expect(
+    runCapture({
+      projectDirectory: directory,
+      project,
+      flow: toggleFlow(),
+      out: join(directory, "run"),
+      dependencies: {
+        browserLauncher: async () => browser,
+        snapshotSource: async () => ({ commit: "fixture", dirty: false }),
+        inheritedEnvironment: { PATH: process.env.PATH },
+        signal: controller.signal,
+        onLifecycleDiagnostic: (message) => messages.push(message),
+        createArtifactWorkspace: async (options) => {
+          const workspace = await createArtifactWorkspace(options);
+          if (workspace.lifecycle)
+            workspace.lifecycle.interrupt = async () => {
+              throw new Error("disk full");
+            };
+          return workspace;
+        },
+      },
+    }),
+  ).rejects.toThrow();
+  expect(messages).toEqual([
+    "Could not record the interruption of run run: disk full",
+  ]);
+  // The seal never landed, which is exactly what the line explains.
+  expect((await record(join(directory, "run"))).status).toBe("running");
+}, 60_000);
+
+test("an uncaught browser throw during an interrupt still lets the record seal", async () => {
+  // Observed: on SIGINT, closing the page raced Playwright's dispatch of a
+  // late message for it, which threw "Cannot find parent object page@…" from
+  // a setImmediate. Node's default handler exited with code 1 before run.json
+  // was sealed. With a listener installed, Node calls process.emit instead.
+  const others = process.listeners("uncaughtException");
+  for (const listener of others) process.off("uncaughtException", listener);
+  let sealed = false;
+  let handled = false;
+  const stderr: string[] = [];
+  const write = vi
+    .spyOn(process.stderr, "write")
+    .mockImplementation((chunk: string | Uint8Array) => {
+      stderr.push(String(chunk));
+      return true;
+    });
+  try {
+    const owned = withCaptureOwnership(1, undefined, async (owner) => {
+      // The workspace's close seals the record; the browser's close throws
+      // mid-teardown, as the real page close did.
+      owner.own({}, async () => {
+        await delay(10);
+        sealed = true;
+      });
+      owner.own({}, async () => {
+        handled = process.emit(
+          "uncaughtException",
+          new Error("Cannot find parent object page@x to create disposable@y"),
+        );
+      });
+      owner.controller.abort(new CaptureInterrupted("SIGINT"));
+      return new Promise<never>(() => {});
+    });
+    await expect(owned).rejects.toBeInstanceOf(CaptureInterrupted);
+    expect(handled).toBe(true);
+    expect(sealed).toBe(true);
+    // Swallowed after the interrupt, but never silently.
+    expect(
+      stderr.filter((line) =>
+        line.startsWith("Ignored a browser error during interrupt:"),
+      ),
+    ).toEqual([
+      "Ignored a browser error during interrupt: Error: Cannot find parent object page@x to create disposable@y\n",
+    ]);
+    // Outside a capture the uncaught throw is Node's again.
+    expect(process.listenerCount("uncaughtException")).toBe(0);
+
+    // Uninterrupted, the throw ends the capture through the normal path.
+    await expect(
+      withCaptureOwnership(1, undefined, async (owner) => {
+        process.emit("uncaughtException", new Error("late dispatch\nstack"));
+        await delay(10);
+        throw owner.signal.reason;
+      }),
+    ).rejects.toThrow(
+      "capture failed on an uncaught browser error: Error: late dispatch",
+    );
+    // Uninterrupted, nothing was ignored.
+    expect(
+      stderr.filter((line) => line.startsWith("Ignored a browser error")),
+    ).toHaveLength(1);
+  } finally {
+    write.mockRestore();
+    for (const listener of others) process.on("uncaughtException", listener);
+  }
+});

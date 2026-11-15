@@ -4,6 +4,7 @@ import { type Browser, chromium, type Page } from "playwright";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { probeControls } from "../src/capture/probe.js";
 import { revealedObserver } from "../src/capture/revealed.js";
+import { observationArtifactSchema } from "../src/checks/artifact-schema.js";
 import { observePage } from "../src/checks/observe.js";
 import type { ObservationArtifactV2 } from "../src/checks/types.js";
 import { reviewStates } from "./benchmark-support.js";
@@ -11,6 +12,7 @@ import { reviewStates } from "./benchmark-support.js";
 let browser: Browser;
 let attachHtml: string;
 let goodHtml: string;
+let unnamedHtml: string;
 beforeAll(async () => {
   browser = await chromium.launch();
   const fixture = (name: string) =>
@@ -20,6 +22,7 @@ beforeAll(async () => {
     );
   attachHtml = await fixture("attach-menu");
   goodHtml = await fixture("menu-good");
+  unnamedHtml = await fixture("unnamed");
 });
 afterAll(async () => {
   await browser.close();
@@ -103,6 +106,48 @@ describe("revealed disclosures through a review", () => {
         ["Tips", "details"],
         ["Attach › Link", "mode"],
       ]),
+    );
+  }, 60_000);
+});
+
+describe("a disclosure with no accessible name", () => {
+  test("what the probe records, the reader accepts; findings name it", async () => {
+    const { findings, tuples } = await reviewStates(
+      browser,
+      [{ state: "panel", html: unnamedHtml }],
+      { probe: true },
+    );
+    const observations = tuples[0]?.observations as ObservationArtifactV2;
+    // Written as capture writes observations.json, read back as check does.
+    const parsed = observationArtifactSchema.safeParse(
+      JSON.parse(JSON.stringify(observations)),
+    );
+    expect(parsed.error?.issues ?? []).toEqual([]);
+    const revealed = (observations.probe?.results ?? []).flatMap((result) =>
+      result.revealed?.status === "observed" ? [result.revealed] : [],
+    );
+    expect(revealed.map((state) => [state.name, state.kind])).toEqual(
+      expect.arrayContaining([
+        ["unnamed popup", "popup"],
+        ["unnamed panel", "expanded"],
+        ["unnamed details", "details"],
+        ["unnamed popup › unnamed item", "mode"],
+      ]),
+    );
+    for (const state of revealed) expect(state.name.trim()).not.toBe("");
+    const scoped = findings
+      .map(({ candidate }) => candidate)
+      .filter((candidate) => candidate.verification.params?.revealed);
+    expect(scoped.length).toBeGreaterThan(0);
+    for (const candidate of scoped) {
+      expect(candidate.explanation).not.toMatch(/ › :|› \s*›/);
+      const revealed = candidate.verification.params?.revealed as
+        | { disclosure?: string }
+        | undefined;
+      expect(revealed?.disclosure).toMatch(/^unnamed /);
+    }
+    expect(scoped.map((candidate) => candidate.rule)).toContain(
+      "idiom:adjacent-elements-touch",
     );
   }, 60_000);
 });

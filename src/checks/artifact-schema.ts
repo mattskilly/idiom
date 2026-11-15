@@ -1056,6 +1056,7 @@ const probeMenuSchema = z
           name: z.string(),
           disabled: z.boolean(),
           selector: z.string().min(1),
+          href: z.string().min(1).optional(),
         })
         .strict(),
     ),
@@ -1213,6 +1214,27 @@ const probeSchema = z
       .strict()
       .optional(),
     indicators: z.object({ recorded: countSchema }).strict().optional(),
+    palette: z
+      .object({
+        shortcut: z.string().min(1),
+        status: z.enum(["opened", "nothing-opened", "not-reached", "failed"]),
+        reason: z.string().optional(),
+        root: z.string().min(1).optional(),
+        entries: z
+          .array(
+            z
+              .object({
+                name: z.string(),
+                selector: z.string().min(1),
+                href: z.string().min(1).optional(),
+              })
+              .strict(),
+          )
+          .max(60),
+        closed: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     fingerprints: z.record(z.string(), z.string()).optional(),
     heldReplay: z
       .object({
@@ -1239,6 +1261,7 @@ const probeSchema = z
           name: z.string(),
           effects: z.array(probeEffectSchema),
           signature: z.string().optional(),
+          destination: z.string().min(1).optional(),
           persistent: z.boolean(),
           repeated: z.boolean().optional(),
           region: z.string().optional(),
@@ -1262,7 +1285,8 @@ const probeSchema = z
             .optional(),
           revealed: z
             .object({
-              name: z.string().min(1),
+              // Released versions wrote "" for an unnamed trigger.
+              name: z.string(),
               kind: z.enum(["details", "popup", "expanded", "mode"]),
               trigger: z.string().min(1),
               root: z.string().min(1).optional(),
@@ -1499,6 +1523,28 @@ const disclosureSchema = z
   })
   .strict();
 
+const interactiveSurfaceSchema = z
+  .object({
+    kind: z.enum([
+      "menu",
+      "popover",
+      "disclosure",
+      "toolbar",
+      "editable",
+      "selectable",
+      "multiselect",
+    ]),
+    selector: z.string().min(1),
+    path: z.string().min(1),
+    name: z.string(),
+    role: z.string(),
+    active: z.boolean(),
+    target: z.string().min(1).optional(),
+    reveals: z.number().int().nonnegative(),
+    members: z.array(z.string().min(1)).max(2).optional(),
+  })
+  .strict();
+
 const popoverCoverSchema = z
   .object({
     overlay: z.string().min(1),
@@ -1551,6 +1597,163 @@ const repeatedContainerSchema = z
   })
   .strict();
 
+const hiddenAtRestSchema = z
+  .object({
+    status: z.enum(["ran", "partial"]),
+    reason: z.string().trim().min(1).optional(),
+    total: z.number().int().min(0),
+    hidden: z.number().int().min(0),
+    area: dimension,
+    hiddenArea: dimension,
+    inFlight: z.number().int().min(0),
+    records: z
+      .array(
+        z
+          .object({
+            selector: z.string().min(1),
+            root: z.string().min(1),
+            cause: z.enum(["opacity", "visibility"]),
+            opacity: z.number().min(0).max(1),
+            rect: rectSchema,
+            text: z.string().max(80),
+          })
+          .strict(),
+      )
+      .max(20),
+  })
+  .strict();
+
+const boundedScan = <T extends z.ZodType>(record: T, max: number) =>
+  z.discriminatedUnion("status", [
+    z
+      .object({ status: z.literal("ran"), records: z.array(record).max(max) })
+      .strict(),
+    z
+      .object({
+        status: z.enum(["partial", "unavailable"]),
+        reason: z.string().trim().min(1),
+        records: z.array(record).max(max),
+      })
+      .strict(),
+  ]);
+
+const edgeTextSchema = z
+  .object({
+    selector: z.string().min(1),
+    side: z.enum(["left", "right"]),
+    distance: dimension,
+    threshold: dimension,
+    rect: rectSchema,
+    text: z.string().max(80),
+  })
+  .strict();
+
+const crampedPaddingSchema = z
+  .object({
+    container: z.string().min(1),
+    selector: z.string().min(1),
+    side: z.enum(["top", "right", "bottom", "left"]),
+    distance: dimension,
+    rect: rectSchema,
+    text: z.string().max(80),
+  })
+  .strict();
+
+const controlGapPartKind = z.enum(["text", "icon", "control"]);
+
+const controlGapSchema = z
+  .object({
+    control: z.string().min(1),
+    first: z.string().min(1),
+    second: z.string().min(1),
+    firstKind: controlGapPartKind,
+    secondKind: controlGapPartKind,
+    gap: dimension,
+    rect: rectSchema,
+    text: z.string().max(80),
+    scopes: z.array(z.string().min(1)).min(1).optional(),
+  })
+  .strict();
+
+const negativeSpacingSchema = z
+  .object({
+    selector: z.string().min(1),
+    property: z.enum(["letter-spacing", "word-spacing"]),
+    value: finite,
+    em: finite,
+    text: z.string().max(80),
+    rect: rectSchema,
+  })
+  .strict();
+
+const headingRhythmSchema = z
+  .object({
+    selector: z.string().min(1),
+    level: z.number().int().min(1).max(6),
+    text: z.string().max(80),
+    gapAbove: dimension,
+    gapBelow: dimension,
+    above: z.string().min(1),
+    below: z.string().min(1),
+  })
+  .strict();
+
+const typeLegibilitySchema = z
+  .object({
+    selector: z.string().min(1),
+    reason: z.enum([
+      "small-body",
+      "small-ui",
+      "tight-leading",
+      "justified",
+      "all-caps",
+      "letter-spacing",
+    ]),
+    value: finite,
+    text: z.string().max(80),
+    rect: rectSchema,
+  })
+  .strict();
+
+const numericColumnSchema = z
+  .object({
+    container: z.string().min(1),
+    kind: z.enum(["table", "list"]),
+    column: z.number().int().min(0),
+    header: z.string().max(80),
+    cells: z.number().int().min(0),
+    numeric: z.number().int().min(0),
+    problems: z
+      .array(z.enum(["left-aligned", "proportional-figures"]))
+      .min(1)
+      .max(2),
+    example: z.string().max(80),
+  })
+  .strict();
+
+const raggedRowSchema = z
+  .object({
+    collection: z.string().min(1),
+    row: z.number().int().min(0),
+    items: z.number().int().min(2),
+    spread: dimension,
+    heights: z.array(dimension).max(50),
+    tallest: z.string().min(1),
+    shortest: z.string().min(1),
+  })
+  .strict();
+
+const textOcclusionSchema = z
+  .object({
+    text: z.string().min(1),
+    cover: z.string().min(1),
+    ratio: z.number().min(0).max(1),
+    samples: z.number().int().min(1),
+    covered: z.number().int().min(0),
+    rect: rectSchema,
+  })
+  .strict();
+
 const emptyFrameSchema = z
   .object({
     selector: z.string().min(1),
@@ -1558,6 +1761,18 @@ const emptyFrameSchema = z
     paint: z.enum(["border", "background", "both"]),
     borderSides: z.array(z.enum(["top", "right", "bottom", "left"])).max(4),
     hiddenChildren: z.number().int().min(0),
+  })
+  .strict();
+
+const underfilledFrameSchema = z
+  .object({
+    selector: z.string().min(1),
+    rect: rectSchema,
+    media: z.string().min(1),
+    mediaRect: rectSchema,
+    emptyShare: z.number().min(0).max(1),
+    side: z.enum(["left", "right", "top", "bottom"]),
+    group: z.string().min(1).optional(),
   })
   .strict();
 
@@ -1594,6 +1809,47 @@ const glyphOverlapSchema = z
     iconRect: rectSchema,
     overlap: z.object({ width: dimension, height: dimension }).strict(),
     ratio: z.number().min(0).max(1),
+  })
+  .strict();
+
+const nativeScrollbarSchema = z
+  .object({
+    selector: z.string().min(1),
+    kind: z.enum(["scroller", "textarea"]),
+    axes: z
+      .array(z.enum(["vertical", "horizontal"]))
+      .min(1)
+      .max(2),
+    gutter: dimension,
+    rect: rectSchema,
+    box: z.string().min(1),
+    boxReason: z.enum(["radius", "background"]),
+    radius: dimension,
+    filled: z.boolean(),
+  })
+  .strict();
+
+const browserDefaultLinkSchema = z
+  .object({
+    selector: z.string().min(1),
+    color: z.string().min(1),
+    text: z.string().max(80),
+  })
+  .strict();
+
+const browserDefaultLegendSchema = z
+  .object({
+    selector: z.string().min(1),
+    fieldset: z.string().min(1),
+    text: z.string().max(80),
+  })
+  .strict();
+
+const chromeTokenUseSchema = z
+  .object({
+    candidates: z.array(z.string().min(1)).max(200),
+    used: z.array(z.string().min(1)).max(200),
+    complete: z.boolean(),
   })
   .strict();
 
@@ -1798,6 +2054,8 @@ const observationCommon = {
       scrollHeight: dimension,
       clientWidth: dimension,
       clientHeight: dimension,
+      scrollX: finite.optional(),
+      scrollY: finite.optional(),
     })
     .strict(),
   headings: z.array(headingSchema),
@@ -2160,6 +2418,12 @@ const observationArtifactV2Schema = z
               "sibling-region",
               "brief",
               "empty-ok",
+              "hidden-ok",
+              "jump-ok",
+              "spacing-include",
+              "spacing-ignore",
+              "gap-scope",
+              "centering-scope",
             ]),
             selector: z.string().min(1),
             matches: z.array(z.string().min(1)),
@@ -2170,6 +2434,7 @@ const observationArtifactV2Schema = z
       .optional(),
     overlaps: z.array(overlapSchema).optional(),
     disclosures: z.array(disclosureSchema).optional(),
+    interactiveSurfaces: z.array(interactiveSurfaceSchema).max(300).optional(),
     iconControls: z.array(iconControlSchema).max(400).optional(),
     popoverCovers: z.array(popoverCoverSchema).optional(),
     clippedText: z.array(clippedTextSchema).optional(),
@@ -2197,8 +2462,51 @@ const observationArtifactV2Schema = z
     emptyRegions: emptyRegionsSchema.optional(),
     repeatedContainers: z.array(repeatedContainerSchema).max(100).optional(),
     emptyFrames: z.array(emptyFrameSchema).max(50).optional(),
+    underfilledFrames: z.array(underfilledFrameSchema).max(50).optional(),
+    hiddenAtRest: hiddenAtRestSchema.optional(),
+    edgeTexts: boundedScan(edgeTextSchema, 50).optional(),
+    crampedPaddings: boundedScan(crampedPaddingSchema, 50).optional(),
+    controlGaps: boundedScan(controlGapSchema, 50).optional(),
+    negativeSpacings: boundedScan(negativeSpacingSchema, 50).optional(),
+    headingRhythms: boundedScan(headingRhythmSchema, 50).optional(),
+    typeLegibility: boundedScan(typeLegibilitySchema, 100).optional(),
+    numericColumns: boundedScan(numericColumnSchema, 50).optional(),
+    raggedRows: boundedScan(raggedRowSchema, 50).optional(),
+    textOcclusions: z.array(textOcclusionSchema).max(50).optional(),
     rowOrnaments: z.array(rowOrnamentSchema).max(100).optional(),
     glyphOverlaps: z.array(glyphOverlapSchema).max(50).optional(),
+    nativeScrollbars: z
+      .discriminatedUnion("status", [
+        z
+          .object({
+            status: z.literal("ran"),
+            records: z.array(nativeScrollbarSchema).max(50),
+          })
+          .strict(),
+        z
+          .object({
+            status: z.enum(["partial", "unavailable"]),
+            reason: identifier,
+            records: z.array(nativeScrollbarSchema).max(50),
+          })
+          .strict(),
+      ])
+      .optional(),
+    browserDefaultLinks: z
+      .object({
+        count: z.number().int().min(0),
+        records: z.array(browserDefaultLinkSchema).max(50),
+      })
+      .strict()
+      .optional(),
+    browserDefaultLegends: z
+      .object({
+        count: z.number().int().min(0),
+        records: z.array(browserDefaultLegendSchema).max(50),
+      })
+      .strict()
+      .optional(),
+    chromeTokenUse: chromeTokenUseSchema.optional(),
     progress: progressArtifactSchema.optional(),
     touchReachability: touchReachabilityArtifactSchema.optional(),
     liveness: livenessArtifactSchema.optional(),

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Workspace</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; color: #1d232b; background: #fff; }
+  header { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 16px; border-bottom: 1px solid #d8dde3; }
+  #menu-toggle { width: 32px; height: 32px; padding: 0; border: 1px solid #d8dde3; border-radius: 6px; background: #fff; }
+  /* Half a pixel is rounding, not a jump. */
+  body.open #menu-toggle { margin-left: 0.5px; }
+  #search { width: 160px; height: 28px; }
+  /* The search field widens on purpose; the state declares it. */
+  body.open #search { width: 320px; }
+  header a { color: #1d4ed8; }
+  #panel { position: fixed; top: 53px; right: 0; width: 280px; bottom: 0; background: #f4f6f8; padding: 16px; }
+  #panel[hidden] { display: none; }
+  main { padding: 24px; }
+</style></head>
+<body>
+<header>
+  <button id="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" onclick="toggle()">≡</button>
+  <a href="#projects">Projects</a>
+  <input id="search" type="search" aria-label="Search projects">
+</header>
+<aside id="panel" aria-label="Menu" hidden><p>Shortcuts</p></aside>
+<main>
+  <h1>Projects</h1>
+  <p>Three projects in progress.</p>
+</main>
+<script>
+  function toggle() {
+    const open = document.body.classList.toggle('open');
+    const button = document.getElementById('menu-toggle');
+    document.getElementById('panel').hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+    button.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+  }
+</script>
+</body></html>

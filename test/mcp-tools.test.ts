@@ -1,4 +1,5 @@
 import {
+  access,
   mkdir,
   mkdtemp,
   readdir,
@@ -230,11 +231,14 @@ test("idiom_ready returns the same verdict as idiom init --validate for a ready 
     steps: report.doctor?.steps.map((step) => [step.id, step.status]),
   });
   expect(Object.keys(data)).toEqual([
+    "interfaceVersion",
     "ready",
     "validate",
     "doctor",
     "surfaces",
+    "suggestions",
   ]);
+  expect(data.suggestions).toEqual(direct.suggestions);
   expect(data.surfaces.initialized).toBe(true);
   expect(data.ready).toBe(true);
   expect(shape(data)).toEqual(shape(direct));
@@ -294,6 +298,147 @@ test("idiom_design_add stores local designs relative, refuses escapes and needs 
     [{ source: "design.html" }, { source: figma, name: "figma" }],
   );
 });
+
+test("idiom_learn records a catch as learn --yes does and a repeated call does not duplicate", async () => {
+  const { project } = await studioProject(directories, ["editor", "settings"]);
+  const png = (marker: string) =>
+    Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from(marker),
+    ]);
+  await mkdir(join(project, "shots"), { recursive: true });
+  await writeFile(join(project, "shots", "a.png"), png("a"));
+  await writeFile(join(project, "shots", "b.png"), png("b"));
+  const client = await connect(project, {
+    learn: {
+      clock: () => new Date("2026-11-15T12:00:00.000Z"),
+      gitTopology: async () => undefined,
+    },
+  });
+  const logPath = join(project, ".idiom", "learned.jsonl");
+  const log = async () =>
+    (await readFile(logPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const catchArgs = {
+    observation: "section headers never use all caps",
+    screenshot: "shots/a.png",
+    state: "editor",
+  };
+  type Learned = {
+    recorded: boolean;
+    repeated: boolean;
+    id: string;
+    flow: string;
+    state: string;
+    candidate: { rule: string; checkable: string };
+    record: Record<string, unknown>;
+    paths: string[];
+  };
+
+  const first = await call(client, "idiom_learn", catchArgs);
+  const recorded = toolData<Learned>(first);
+  expect(recorded).toMatchObject({
+    recorded: true,
+    repeated: false,
+    id: "learned-1",
+    kind: "ruling",
+    flow: "studio-lab",
+    state: "editor",
+    placement: { via: "state" },
+    candidate: { kind: "ruling" },
+  });
+  expect(recorded.candidate.rule).not.toBe("");
+  expect(recorded.record).toEqual((await log())[0]);
+  expect(recorded.record).toMatchObject({
+    screenshot: ".idiom/learned/learned-1.png",
+  });
+  expect(recorded.paths.length).toBeGreaterThan(0);
+  expect(recorded.paths.every((path) => isAbsolute(path))).toBe(true);
+  expect(recorded.paths).toContain(
+    join(project, ".idiom", "learned", "learned-1.png"),
+  );
+  const text = (first.content[0] as { text: string }).text;
+  expect(text).toContain("Recorded learned-1");
+  expect(text).toContain(
+    `Rule candidate (${recorded.candidate.checkable}): ${recorded.candidate.rule}`,
+  );
+
+  // The same words (whitespace aside) and the same screenshot bytes: nothing new.
+  const again = await call(client, "idiom_learn", {
+    ...catchArgs,
+    observation: "  section headers   never use all caps ",
+  });
+  expect(toolData(again)).toMatchObject({
+    recorded: false,
+    repeated: true,
+    id: "learned-1",
+    paths: [],
+    record: recorded.record,
+  });
+  expect(JSON.stringify(again.content)).toContain(
+    "Already recorded as learned-1",
+  );
+  expect(await log()).toHaveLength(1);
+  expect(await readdir(join(project, ".idiom", "learned"))).toEqual([
+    "learned-1.png",
+  ]);
+
+  // No state and words that name none: a draft state is proposed.
+  const proposed = toolData<Learned & { proposal: string }>(
+    await call(client, "idiom_learn", {
+      observation: "the rows should be 40px tall",
+    }),
+  );
+  expect(proposed).toMatchObject({
+    recorded: true,
+    id: "learned-2",
+    kind: "observation",
+    placement: { via: "proposed" },
+  });
+  expect(isAbsolute(proposed.proposal)).toBe(true);
+  await access(proposed.proposal);
+  // The same words with a screenshot are a different catch, and a
+  // different screenshot is a different catch again.
+  for (const [screenshot, id] of [
+    ["shots/a.png", "learned-3"],
+    ["shots/b.png", "learned-4"],
+  ])
+    expect(
+      toolData(
+        await call(client, "idiom_learn", {
+          observation: "the rows should be 40px tall",
+          screenshot,
+        }),
+      ),
+    ).toMatchObject({ recorded: true, id });
+  expect(
+    toolData(
+      await call(client, "idiom_learn", {
+        observation: "the rows should be 40px tall",
+        screenshot: "shots/b.png",
+      }),
+    ),
+  ).toMatchObject({ recorded: false, repeated: true, id: "learned-4" });
+
+  // A screenshot outside the bound root fails before anything is written.
+  const outside = await temporary();
+  await writeFile(join(outside, "c.png"), png("c"));
+  for (const screenshot of ["../c.png", join(outside, "c.png")])
+    expect(
+      errorText(
+        await call(client, "idiom_learn", {
+          observation: 'say "Log out" not "Sign out"',
+          screenshot,
+          state: "editor",
+        }),
+      ),
+    ).toMatch(
+      /inside the bound project root|relative to the bound project root/,
+    );
+  expect(await log()).toHaveLength(4);
+}, 60_000);
 
 test("idiom_choose records exactly the human's reference with the reason verbatim", async () => {
   const project = await siteProject();

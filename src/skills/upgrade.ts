@@ -56,6 +56,10 @@ export type UpgradeDependencies = {
   createResolver?: () => Resolver;
   resolver?: ResolverDependencies;
   apply?: ApplyDependencies;
+  /** Test seam: the versioned `.idiom/` file registry. */
+  projectFileFormats?: import("../migrations/formats.js").ProjectFileFormat[];
+  /** Test seam: the clock that names the backup directory. */
+  now?: () => Date;
 };
 type Decision = {
   outcome: FileOutcome;

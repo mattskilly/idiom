@@ -572,7 +572,7 @@ test.each(["legacy", "auto"] as const)(
         );
         expect(client.getServerVersion()?.version).toBe(plugin.version);
       }
-      expect((await client.listTools()).tools).toHaveLength(24);
+      expect((await client.listTools()).tools).toHaveLength(25);
       const response = await client.callTool({
         name: "idiom_flows",
         arguments: {},

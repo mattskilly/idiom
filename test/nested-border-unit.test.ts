@@ -323,3 +323,101 @@ test("a concentric inner corner (outer radius less the gap) matches", () => {
     run(picker(2, border("12px"), [], border("8px"))).candidates,
   ).toHaveLength(1);
 });
+
+/** A selected 100×40 tile with a 2px blue border and a 28×28 photo pinned left. */
+function selectedTile(
+  attributes: Record<string, string> = { "aria-pressed": "true" },
+  photo: Partial<ExpandedObservedStyles> = border("4px"),
+  extra: ObservedElementV2[] = [],
+) {
+  const blue = "rgb(37, 99, 235)";
+  return [
+    element("#tile", { x: 0, y: 0, width: 100, height: 40 }, ["#tiles"], {
+      tag: "button",
+      interactive: true,
+      attributes,
+      styles: {
+        ...border("8px"),
+        borderTopWidth: "2px",
+        borderRightWidth: "2px",
+        borderBottomWidth: "2px",
+        borderLeftWidth: "2px",
+        borderTopColor: blue,
+        borderRightColor: blue,
+        borderBottomColor: blue,
+        borderLeftColor: blue,
+      },
+    }),
+    element(
+      "#photo",
+      { x: 6, y: 6, width: 28, height: 28 },
+      ["#tile", "#tiles"],
+      {
+        tag: "img",
+        styles: photo,
+      },
+    ),
+    ...extra,
+  ];
+}
+
+test("a selected tile ringing a far-inset bordered photo shows two rings", () => {
+  const result = run(selectedTile());
+  expect(result.candidates).toHaveLength(1);
+  expect(result.candidates[0]).toMatchObject({
+    selectorHint: "#tile",
+    fingerprintHint: "nested-border:#tile|#photo",
+    explanation:
+      "#tile is selected (aria-pressed) and draws its 8px-radius selection border around #photo, which draws its own 4px-radius border, so the choice shows two rings.",
+    acceptance: [
+      "While #tile is selected, only one of #tile and #photo draws a ring.",
+    ],
+  });
+  expect(result.candidates[0]?.verification.params).toMatchObject({
+    selectors: ["#tile", "#photo"],
+    marker: "aria-pressed",
+    outerRadii: [8, 8, 8, 8],
+    innerRadii: [4, 4, 4, 4],
+    insets: { top: 4, right: 64, bottom: 4, left: 4 },
+  });
+  expect(
+    run(selectedTile({ class: "tile is-selected" })).candidates[0]?.verification
+      .params?.marker,
+  ).toBe("class:is-selected");
+  expect(run(selectedTile({ "aria-checked": "true" })).candidates).toHaveLength(
+    1,
+  );
+});
+
+test("an unselected tile, two bordered photos or an unbordered photo is not a selected double ring", () => {
+  expect(run(selectedTile({ "aria-pressed": "false" })).candidates).toEqual([]);
+  expect(run(selectedTile({ class: "tile" })).candidates).toEqual([]);
+  const second = element(
+    "#photo-2",
+    { x: 40, y: 6, width: 28, height: 28 },
+    ["#tile", "#tiles"],
+    { tag: "img", styles: border("4px") },
+  );
+  expect(run(selectedTile(undefined, undefined, [second])).candidates).toEqual(
+    [],
+  );
+  expect(run(selectedTile(undefined, {})).candidates).toEqual([]);
+});
+
+test("a selected pair that also hugs with a mismatched shape is reported once", () => {
+  const elements = picker();
+  (elements[0] as ObservedElementV2).attributes = { "aria-selected": "true" };
+  (elements[1] as ObservedElementV2).tag = "img";
+  const result = run(elements);
+  expect(result.candidates.map((c) => c.fingerprintHint)).toEqual([
+    "nested-border:#swatch|#pill",
+  ]);
+});
+
+test("a focus-sourced selection border is not a selected double ring", () => {
+  const elements = selectedTile();
+  (elements[0] as ObservedElementV2).styleSources = {
+    borderTopColor: { sheet: "<style>[0]", selector: ".tile:focus-visible" },
+  };
+  expect(run(elements).candidates).toEqual([]);
+});

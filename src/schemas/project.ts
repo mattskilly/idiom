@@ -8,6 +8,7 @@ import {
   componentToleranceDefault,
   designDriftConfigSchema,
 } from "./design.js";
+import { invariantSchema, isGroupInvariant } from "./invariant.js";
 
 import {
   normalizeTargetTolerance,
@@ -420,6 +421,8 @@ export const checksConfigSchema = z
         disclosures: z.boolean().optional(),
         /** Revealed-state observations per state (resolved default 12); 0 = none. No zod default. */
         maxRevealed: z.number().int().min(0).optional(),
+        /** A command palette shortcut in Playwright key syntax ("Meta+K"), pressed once per state. No zod default. */
+        commandPalette: z.string().trim().min(1).optional(),
       })
       .strict()
       .default({
@@ -451,6 +454,22 @@ export const checksConfigSchema = z
           )
           .optional(),
       })
+      .strict()
+      .optional(),
+    /**
+     * Development-server signs on a captured page (Vite or webpack client
+     * scripts, React or Next.js development builds, framework error
+     * overlays): `"warn"` (the behaviour when unset) prints one warning and
+     * records it in run.json; `"allow"` skips detection. No zod default:
+     * keeps normalized settings and config hashes stable.
+     */
+    devServer: z.enum(["warn", "allow"]).optional(),
+    /**
+     * Navigation entry points group by destination: the pathname (resolved
+     * default), plus the query, or plus the query and hash. No zod default.
+     */
+    duplicateEntry: z
+      .object({ navigation: z.enum(["pathname", "query", "full"]).optional() })
       .strict()
       .optional(),
     disguisedControl: z
@@ -622,6 +641,122 @@ export const checksConfigSchema = z
       .object({ enabled: z.boolean().default(true) })
       .strict()
       .prefault({}),
+    nativeScrollbar: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    browserDefaultStyle: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    unusedToken: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    hiddenAtRest: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    edgeText: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    crampedPadding: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    headingRhythm: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    typeLegibility: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    numericAlign: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    raggedRow: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    textOcclusion: z
+      .object({ enabled: z.boolean().default(true) })
+      .strict()
+      .prefault({}),
+    controlGap: z
+      .object({
+        enabled: z.boolean().default(true),
+        min: z.number().finite().min(0).max(12).default(4),
+        /**
+         * Stricter minimums inside named surfaces (a learned law). No zod
+         * default: configs without scopes hash as before.
+         */
+        scopes: z
+          .array(
+            z
+              .object({
+                name: z.string().trim().min(1),
+                selector: z.string().trim().min(1),
+                min: z.number().finite().min(0).max(12),
+              })
+              .strict(),
+          )
+          .refine(
+            (scopes) =>
+              new Set(scopes.map((scope) => scope.selector)).size ===
+              scopes.length,
+            "controlGap.scopes selectors must be unique",
+          )
+          .optional(),
+      })
+      .strict()
+      .prefault({}),
+    /** Tolerances for text-centering inside named surfaces (a learned law). */
+    textCentering: z
+      .object({
+        scopes: z
+          .array(
+            z
+              .object({
+                name: z.string().trim().min(1),
+                selector: z.string().trim().min(1),
+                tolerance: z.number().positive(),
+              })
+              .strict(),
+          )
+          .refine(
+            (scopes) =>
+              new Set(scopes.map((scope) => scope.selector)).size ===
+              scopes.length,
+            "textCentering.scopes selectors must be unique",
+          )
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    /**
+     * Layout invariants every state of every flow is measured against
+     * (learned laws). Group invariants stay on flows and states.
+     */
+    invariants: z
+      .array(
+        invariantSchema.refine(
+          (invariant) => !isGroupInvariant(invariant),
+          "group invariants belong on a flow or state",
+        ),
+      )
+      .optional(),
+    negativeSpacing: z
+      .object({
+        enabled: z.boolean().default(true),
+        scope: z.enum(["interface", "all"]).default("interface"),
+        include: selectorList,
+        ignore: selectorList,
+      })
+      .strict()
+      .prefault({}),
     images: z
       .object({
         enabled: z.boolean().default(true),
@@ -669,7 +804,13 @@ export type CheckMark = {
     | "adjacent-region"
     | "sibling-region"
     | "brief"
-    | "empty-ok";
+    | "empty-ok"
+    | "hidden-ok"
+    | "jump-ok"
+    | "spacing-include"
+    | "spacing-ignore"
+    | "gap-scope"
+    | "centering-scope";
   selector: string;
 };
 
@@ -678,10 +819,67 @@ export function briefMarks(selectors: readonly string[] = []): CheckMark[] {
   return selectors.map((selector) => ({ purpose: "brief" as const, selector }));
 }
 
+/** The chrome-default scans observe runs, from the three rule toggles. */
+export function chromeDefaultsOptions(checks: ChecksSettings) {
+  return {
+    nativeScrollbar: checks.nativeScrollbar.enabled,
+    browserDefaultStyle: checks.browserDefaultStyle.enabled,
+    unusedToken: checks.unusedToken.enabled,
+  };
+}
+
+/** The in-page legibility and layout scans observe runs, from their rule toggles. */
+export function legibilityOptions(checks: ChecksSettings) {
+  return {
+    hiddenAtRest: checks.hiddenAtRest.enabled,
+    edgeText: checks.edgeText.enabled,
+    crampedPadding: checks.crampedPadding.enabled,
+    headingRhythm: checks.headingRhythm.enabled,
+    typeLegibility: checks.typeLegibility.enabled,
+    numericAlign: checks.numericAlign.enabled,
+    raggedRow: checks.raggedRow.enabled,
+    controlGap: checks.controlGap.enabled,
+    negativeSpacing: checks.negativeSpacing.enabled,
+    negativeSpacingScope: checks.negativeSpacing.scope,
+  };
+}
+
+/**
+ * Content a state declares hidden on purpose: its `intentionallyHidden`
+ * selectors and the selectors its steps wait to become hidden. The
+ * hidden-at-rest scan skips them and their descendants.
+ */
+export function hiddenOkMarks(state: {
+  intentionallyHidden?: readonly string[] | undefined;
+  steps?: ReadonlyArray<object> | undefined;
+}): CheckMark[] {
+  const waited = (state.steps ?? []).flatMap((step) =>
+    "action" in step &&
+    step.action === "waitFor" &&
+    "state" in step &&
+    step.state === "hidden" &&
+    "selector" in step &&
+    typeof step.selector === "string"
+      ? [step.selector]
+      : [],
+  );
+  return [...new Set([...(state.intentionallyHidden ?? []), ...waited])].map(
+    (selector) => ({ purpose: "hidden-ok" as const, selector }),
+  );
+}
+
 /** Boxes declared intentionally empty; the empty-frame scan skips them. */
 export function emptyOkMarks(selectors: readonly string[] = []): CheckMark[] {
   return [...new Set(selectors)].map((selector) => ({
     purpose: "empty-ok" as const,
+    selector,
+  }));
+}
+
+/** Elements a state moves or resizes on purpose; state-jump skips them. */
+export function jumpOkMarks(selectors: readonly string[] = []): CheckMark[] {
+  return [...new Set(selectors)].map((selector) => ({
+    purpose: "jump-ok" as const,
     selector,
   }));
 }
@@ -753,6 +951,24 @@ export function checkMarks(checks: ChecksSettings): CheckMark[] {
       selector,
     })),
     ...emptyOkMarks(checks.emptyFrame.ignore),
+    ...[...new Set(checks.negativeSpacing.include)].map((selector) => ({
+      purpose: "spacing-include" as const,
+      selector,
+    })),
+    ...[...new Set(checks.negativeSpacing.ignore)].map((selector) => ({
+      purpose: "spacing-ignore" as const,
+      selector,
+    })),
+    ...[
+      ...new Set(
+        (checks.controlGap.scopes ?? []).map(({ selector }) => selector),
+      ),
+    ].map((selector) => ({ purpose: "gap-scope" as const, selector })),
+    ...[
+      ...new Set(
+        (checks.textCentering?.scopes ?? []).map(({ selector }) => selector),
+      ),
+    ].map((selector) => ({ purpose: "centering-scope" as const, selector })),
   ];
 }
 

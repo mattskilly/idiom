@@ -1,3 +1,5 @@
+import { type CompiledLaw, compileLaw } from "./law.js";
+
 /**
  * What a human observation maps onto. Sizes, wording and mirrored pairs map
  * onto existing deterministic checks; anything else becomes a design-law
@@ -18,7 +20,10 @@ export type Interpretation =
       subjects: [string, string];
       axis: "vertical" | "horizontal";
     }
-  | { kind: "ruling" };
+  /** A measurable law compiled to an existing check's configuration. */
+  | { kind: "law"; law: CompiledLaw }
+  /** `notCompiled` says why words that state a law could not configure its check. */
+  | { kind: "ruling"; notCompiled?: string | undefined };
 
 const lead = String.raw`^(?:the\s+)?(.+?)\s+(?:should|must|needs?\s+to)\s+be\s+`;
 const number = String.raw`(\d+(?:\.\d+)?)\s*(?:px)?`;
@@ -79,6 +84,11 @@ export function interpretObservation(text: string): Interpretation {
           ? "horizontal"
           : "vertical",
     };
+  const law = compileLaw(observation);
+  if (law !== undefined)
+    return "law" in law
+      ? { kind: "law", law: law.law }
+      : { kind: "ruling", notCompiled: law.notCompiled };
   return { kind: "ruling" };
 }
 

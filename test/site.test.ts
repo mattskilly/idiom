@@ -450,7 +450,7 @@ describe("landing-page copy follows the shipped command surface", () => {
   test("the version pin forces a re-audit, and marketplace and CLI installs stay current", () => {
     // Bump this literal deliberately at every release; the page must be
     // re-read against the shipped CLI each time.
-    expect(packageJson.version).toBe("0.22.0");
+    expect(packageJson.version).toBe("0.23.0");
     expect(source).toContain("npm install -g @mattskilly/idiom");
     // The CLI installs from npm; the Codex MCP launcher pins the GitHub
     // release tarball, which must name the current version.
@@ -527,6 +527,92 @@ describe("theme toggle", () => {
       }
     },
   );
+});
+
+describe("phone hit areas", () => {
+  const box = (page: Page, selector: string) =>
+    page
+      .locator(selector)
+      .first()
+      .evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { width: rect.width, height: rect.height };
+      });
+
+  test("controls are at least 44×44 at 390px", async () => {
+    const { context, page } = await loadPage({
+      width: 390,
+      colorScheme: "light",
+      html: standalone,
+    });
+    try {
+      for (const selector of [
+        "ol.cmds li button.copy",
+        "header.top nav a",
+        "footer nav a",
+        ".theme-toggle",
+      ]) {
+        const { width, height } = await box(page, selector);
+        expect(width, selector).toBeGreaterThanOrEqual(44);
+        expect(height, selector).toBeGreaterThanOrEqual(44);
+      }
+    } finally {
+      await context.close();
+    }
+  });
+
+  test.each([390, 760, 765, 767])(
+    "the copy button sits right of its command at %ipx",
+    async (width) => {
+      const { context, page } = await loadPage({
+        width,
+        colorScheme: "light",
+        html: standalone,
+      });
+      try {
+        const layout = await page
+          .locator("ol.cmds li")
+          .first()
+          .evaluate((item) => {
+            const rect = (selector: string) => {
+              const found = item.querySelector(selector);
+              if (!found) throw new Error(`missing ${selector}`);
+              return found.getBoundingClientRect();
+            };
+            const code = rect("code");
+            const what = rect(".what");
+            const copy = rect("button.copy");
+            return {
+              codeRight: code.right,
+              codeWidth: code.width,
+              whatWidth: what.width,
+              copyLeft: copy.left,
+            };
+          });
+        expect(layout.copyLeft).toBeGreaterThanOrEqual(layout.codeRight);
+        expect(layout.codeWidth).toBeGreaterThan(100);
+        expect(layout.whatWidth).toBeGreaterThan(100);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  test("the theme toggle keeps its 34px visible box at desktop", async () => {
+    const { context, page } = await loadPage({
+      width: 1440,
+      colorScheme: "light",
+      html: standalone,
+    });
+    try {
+      expect(await box(page, ".theme-toggle")).toEqual({
+        width: 34,
+        height: 34,
+      });
+    } finally {
+      await context.close();
+    }
+  });
 });
 
 describe("landing-page presentation contract", () => {

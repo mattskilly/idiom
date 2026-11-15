@@ -28,7 +28,7 @@ Start from a clean `main` checkout with the intended release commit integrated. 
 - **Interface check.** Run `bun run contract:update`. If `test/contract/interface.json` changed, or `INTERFACE_VERSION` moved since the previous tag, list every change in its diff under an `### Interface` heading in the release's CHANGELOG section, and commit the snapshot. A breaking change names the interface bump and the replacement ([stability](stability.md)). Otherwise the section has no Interface heading.
 - `site/index.html` and the hand-written docs in `site/docs/*.md` (including the two guides) describe exactly this release: the install lines in the landing page, `getting-started.md` and both guides use `npm install -g @mattskilly/idiom`, the `codex mcp add` lines and the guides' "For Idiom" version tags name it, and every user-visible command, rule, default and MCP tool added or changed in its changelog section is reflected, while nothing unreleased is claimed. idiom.build production serves the `release` branch, which only this process moves ([Move idiom.build to the release](#move-idiombuild-to-the-release)); `main` and pull requests deploy as previews. A feature PR may update the site alongside the behaviour it ships, and those changes go live when the release moves `release`. This pass still confirms the site describes exactly this release. The reference pages under idiom.build/docs (commands, rules, configuration, MCP, design comparison) are rendered from `docs/*.md` at build time and need no separate pass. The README (the public GitHub page, carried by the public snapshot) gets the same pass: what Idiom does, how it works and why it helps, accurate to this release.
 
-The current smoke pair is `previous_version="0.21.0"` and `version="0.22.0"`. When preparing the next release, advance both literals — the candidate becomes `version` and the newest released heading becomes `previous_version` — as part of the source commit. The published `v0.6.0` predates embedded provenance and prints a bare version; `v0.7.0` is the first release that prints `<version> (<short source commit>)`.
+The current smoke pair is `previous_version="0.22.0"` and `version="0.23.0"`. When preparing the next release, advance both literals — the candidate becomes `version` and the newest released heading becomes `previous_version` — as part of the source commit. The published `v0.6.0` predates embedded provenance and prints a bare version; `v0.7.0` is the first release that prints `<version> (<short source commit>)`.
 
 Before recording the source, check that `release` carries nothing `main` lacks, so the release push below is a fast-forward:
 
@@ -259,6 +259,18 @@ npm publish mattskilly-idiom-<version>.tgz --access public --auth-type=web
 
 The `openssl` output must equal the integrity of the tarball inspected above, without its `sha512-` prefix, and `npm whoami` must print the maintainer's account before publishing. If a publish fails, stop and read the exact error. Don't retry it and don't change account security settings: repeated attempts triggered an npm account hold in October 2026. A `404 Not Found - PUT` on a package that already exists means the terminal isn't signed in; `npm whoami` returns 401. Then verify with `npm view @mattskilly/idiom@<version> version mcpName --json` and `npm view @mattskilly/idiom dist-tags` (`latest` should name the new version), and follow [the separate registry and skill-listing handoff](distribution.md). Do not enable or dispatch `.github/workflows/publish.yml`, and do not make npm publication a prerequisite for plugin installation: the plugin's MCP launcher pins the GitHub release tarball. The disabled workflow retains identity checks for any future deliberate reactivation; no activation is implied here.
 
+### Measure time to first finding
+
+After `npm view @mattskilly/idiom dist-tags` shows the new version as `latest`, run the first-run check from the workshop checkout:
+
+```sh
+bun run measure:first-run
+```
+
+It defaults to `package.json`'s version and follows `site/docs/getting-started.md` literally from an empty temporary home, npm cache and prefix: the documented `npm install -g` line pinned to that version, the documented `npx playwright@<version> install chromium` line, then `idiom quick` on a bundled sample page served locally in place of the doc's `localhost` placeholder. It needs network access and downloads Chromium into the temporary home, so the browser download is timed as its own step. It fails if a step fails, no finding appears, the docs path cannot be followed as written (reported as docs drift, never worked around), or the total exceeds five minutes.
+
+Each run is appended to `docs/first-run.json` (version, date, machine, step times). Commit that record with the release record. On a miss, file a triage ticket naming the slowest step; don't hold the release. For development, `--tarball <path>` measures a local `npm pack` tarball and `--no-record` skips the record.
+
 ## Smoke plugin installation and update
 
 Run these release gates with the real Claude Code and Codex CLIs in a disposable container/account or an isolated temporary home per host. For the latter, create fresh directories and set `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `XDG_CACHE_HOME` inside that host's temporary directory; also set `CLAUDE_CONFIG_DIR` for Claude and `CODEX_HOME` for Codex, creating those directories before invoking the host. Use an isolated npm cache and an environment without inherited authentication tokens. Never copy credentials or log in for this development smoke. If a host refuses plugin commands without authentication, record the exact error as **not run** and retain its authenticated native smoke as a public release gate. Remove all temporary directories afterwards.
@@ -266,7 +278,7 @@ Run these release gates with the real Claude Code and Codex CLIs in a disposable
 Hash the real home's `.claude`, `.codex` and plugin caches before and after, recording aggregate checksums and any changed paths. Verify that configuration files and plugin caches have identical bytes before and after; if concurrent agent sessions change session logs or SQLite journals, identify those paths explicitly instead of claiming the entire home was unchanged. Record OS, Node/npm, Claude/Codex versions, public snapshot SHA/tag and the exact asset URL.
 
 1. In a fresh application directory, install matching Chromium (`npx playwright@1.62.1 install chromium`). Use Claude's `/plugin marketplace add mattskilly/idiom` and `/plugin install idiom@idiom` (shell equivalents: `claude plugin marketplace add mattskilly/idiom` and `claude plugin install idiom@idiom`). For Codex, use `codex plugin marketplace add mattskilly/idiom`, then `codex plugin add idiom@idiom --json`, then the documented `codex mcp add idiom -- npx -y --package=<release URL> idiom mcp`. Record the reported installed path/version and launcher in each host. For each host, also record the installed plugin directory's size (`du -sh <installed path>`), whether it contains a `node_modules`, and any dependency note in `claude plugin list` or `/plugin` (Claude) or in the `codex plugin` output (Codex). Run the Claude install twice, in separate fresh homes: once with `bun` on `PATH`, and once with a `PATH` that holds only the Node directory. Expected for Claude, in both runs: no dependency note, no `node_modules`, and a cache directory holding only `.claude-plugin/`, `hooks/` and `skills/`. No global CLI is needed.
-2. Start a fresh session in each host. Inspect the twenty-four MCP tools and confirm each host lists exactly one `idiom` skill: Claude loads `plugins/claude/skills/idiom` (the cache holds it as `skills/idiom`), and Codex loads root `skills/idiom`; Claude must also discover both original PostToolUse and Stop reminders. Write a UI fixture and observe the edit reminder and the one-time stop reminder. Codex must discover the portable skill from the plugin and the MCP server from `codex mcp add`, without inheriting Claude hooks: root `plugin.json` explicitly supplies `extensions.com.openai.hooks: {"hooks":{}}`.
+2. Start a fresh session in each host. Inspect the twenty-five MCP tools and confirm each host lists exactly one `idiom` skill: Claude loads `plugins/claude/skills/idiom` (the cache holds it as `skills/idiom`), and Codex loads root `skills/idiom`; Claude must also discover both original PostToolUse and Stop reminders. Write a UI fixture and observe the edit reminder and the one-time stop reminder. Codex must discover the portable skill from the plugin and the MCP server from `codex mcp add`, without inheriting Claude hooks: root `plugin.json` explicitly supplies `extensions.com.openai.hooks: {"hooks":{}}`.
 3. Launch the cached MCP definition from the application directory using its unmodified HTTPS URL. With the MCP SDK, initialize, inspect `serverInfo.version` (`client.getServerVersion().version`), list tools and call `idiom_flows` or `idiom_context` against an application with a distinct configuration. Record that the version equals the cached plugin/package version and that project resolution uses the application directory. A catalog/manifest version alone is insufficient. Launching the server yourself cannot show where the host starts it, so also record each host's resolved MCP working directory (for Codex, `codex mcp get idiom --json`), and from a native session or thread opened in the application directory make one project-bound tool call (`idiom_flows` or `idiom_context`) and confirm it reads that application's configuration.
 4. In another fresh disposable environment, install the preceding plugin-bearing release, record the same evidence, then advance its Git-backed marketplace to the candidate default branch. Claude: `claude plugin marketplace update idiom`, `claude plugin update idiom@idiom`, then `/reload-plugins` or a new session. Codex: `codex plugin marketplace upgrade idiom`, inspect the installed version, then `codex plugin add idiom@idiom --json` and start a new session. Record whether marketplace upgrade refreshed the configured plugin directly or re-add was needed. Prove the installed path/version, cached launcher and MCP version all advance to the candidate; a refreshed catalog is insufficient.
 
@@ -367,8 +379,8 @@ Every release after the first must also prove replacement in place. Create anoth
   test "$(bun pm cache)" = "$BUN_INSTALL_CACHE_DIR"
   bun pm cache rm
   cd "$smoke_root/work"
-  previous_version="0.21.0"
-  version="0.22.0"
+  previous_version="0.22.0"
+  version="0.23.0"
   interface_version="1"
   expected_display="$version ($(printf '%s' "$build_source_commit" | cut -c1-7)) · interface $interface_version"
   idiom_bin="$BUN_INSTALL/bin/idiom"
@@ -471,12 +483,13 @@ A release is finished only when every surface below names the same version `X` a
 | idiom.build docs | `/docs/getting-started`, both guides' "For Idiom vX" labels, `/llms.txt` | The release PR, deployed to production when `release` moves |
 | idiom.build production commit | `https://idiom.build/version.txt` and the landing page's `<meta name="idiom-source">` equal `git rev-parse "vX^{commit}"` (or `git rev-parse origin/release` if a site-only fix has landed since) | [Move idiom.build to the release](#move-idiombuild-to-the-release) |
 | Session handoff | `docs/session-handoff.md` names `X` as the current release and npm's state | The release PR or a follow-up |
+| First-run record | `docs/first-run.json` has a run for `X` (passed, or a triage ticket for the miss) | `bun run measure:first-run` |
 
 Check them all in one pass after `release` has moved, production has deployed and npm is published. Check `https://idiom.build` itself; a `main` preview is not production:
 
 ```sh
 (
-  X="0.22.0"
+  X="0.23.0"
   gh release view "v$X" --repo mattskilly/idiom-dev --json tagName --jq .tagName
   gh release list --repo mattskilly/idiom --limit 1
   gh release view "v$X" --repo mattskilly/idiom --json assets --jq '.assets[].name'

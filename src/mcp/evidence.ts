@@ -24,6 +24,7 @@ import { actionTimelineArtifactSchema } from "../checks/artifact-schema.js";
 import { FILMSTRIP_LIMITS } from "../checks/filmstrip-schema.js";
 import type { ActionTimeline } from "../checks/types.js";
 import { IdiomError } from "../errors.js";
+import { INTERFACE_VERSION } from "../interface/version.js";
 import { loadRunTuples } from "../review/artifacts.js";
 import {
   type CatalogFinding,
@@ -38,11 +39,18 @@ import { validateProject } from "../validation.js";
 export const safeIdentifier = (value: string) =>
   value !== "." && value !== ".." && !/[\\/\0]/.test(value);
 
+/**
+ * A successful tool result: the text agents read, and structuredContent that
+ * starts with interfaceVersion and matches the tool's declared outputSchema.
+ */
 export function result(text: string, data: object): CallToolResult {
   // JSON roundtrip strips undefined and gives the SDK a plain JSON object.
+  const { interfaceVersion: _stamp, ...rest } = JSON.parse(
+    JSON.stringify(data),
+  ) as Record<string, unknown>;
   return {
     content: [{ type: "text", text }],
-    structuredContent: JSON.parse(JSON.stringify(data)),
+    structuredContent: { interfaceVersion: INTERFACE_VERSION, ...rest },
   };
 }
 

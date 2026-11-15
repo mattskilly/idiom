@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas</title>
+    <style>
+      body { margin: 0; padding: 32px; font: 16px/1.5 system-ui, sans-serif; color: #1f2328; background: #fff; }
+      h1 { font-size: 20px; margin: 0 0 16px; }
+      .canvas { position: relative; width: 480px; height: 240px; border: 1px solid #d0d7de; border-radius: 8px; }
+      [data-block] { position: absolute; left: 24px; top: 24px; width: 160px; height: 64px; font: 14px/1.2 system-ui; border: 1px solid #8a9099; border-radius: 6px; background: #eef0f3; color: inherit; }
+      [role="toolbar"] { position: absolute; left: 24px; top: 112px; display: flex; align-items: center; gap: 8px; padding: 4px 8px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; width: max-content; }
+      [role="toolbar"][hidden] { display: none; }
+      .tool { font: 13px/1.2 system-ui; padding: 4px 8px; }
+      .chip { display: inline-flex; align-items: center; gap: 0; word-spacing: -2px; border: 1px solid #d0d7de; border-radius: 999px; padding: 2px 8px; font: 13px/1.2 system-ui; }
+      .reset { border: 0; background: none; padding: 0; font: inherit; color: inherit; }
+      /* The fixed chip: room between its parts and normal word spacing. */
+      [data-fixed] .chip { gap: 4px; word-spacing: normal; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Canvas</h1>
+      <div class="canvas">
+        <button type="button" data-block>Block</button>
+        <div role="toolbar" aria-label="Selection" hidden>
+          <button type="button" class="tool">Edit</button>
+          <span class="chip"><span class="offset">↑18</span> <span class="offset">←6</span><button type="button" class="reset" aria-label="Reset offset">×</button></span>
+        </div>
+      </div>
+    </main>
+    <script>
+      document.querySelector("[data-block]").addEventListener("click", () => {
+        document.querySelector('[role="toolbar"]').hidden = false;
+      });
+    </script>
+  </body>
+</html>
