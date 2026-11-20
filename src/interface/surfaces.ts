@@ -3,7 +3,8 @@
  * contract test (test/interface-contract.test.ts) snapshots the stable ones and
  * fails on a breaking change unless INTERFACE_VERSION moves. Only tests import
  * this module; it lives in src/ so tsc checks the payload types against the
- * output contracts below.
+ * output contracts below. Options on a stable command that are not promised
+ * yet are listed in experimentalOptions; the contract test does not pin them.
  */
 import { z } from "zod";
 import { baselineFileSchema } from "../baseline/schema.js";
@@ -46,23 +47,26 @@ export const commandStatus: Record<string, SurfaceStatus> = {
   mcp: "stable",
   quick: "stable",
   capture: "stable",
-  reference: "experimental",
-  "reference add": "experimental",
-  "reference list": "experimental",
-  "reference remove": "experimental",
-  design: "experimental",
-  "design add": "experimental",
+  reference: "stable",
+  "reference add": "stable",
+  "reference list": "stable",
+  "reference remove": "stable",
+  design: "stable",
+  "design add": "stable",
   baseline: "stable",
   "baseline record": "stable",
   "baseline accept": "stable",
-  "baseline advance": "experimental",
+  "baseline advance": "stable",
   review: "stable",
-  fix: "experimental",
+  fix: "stable",
   check: "stable",
   sweep: "experimental",
   coverage: "experimental",
   digest: "experimental",
+  scorecard: "experimental",
+  escalations: "experimental",
   nightly: "experimental",
+  watch: "experimental",
   bisect: "experimental",
   explore: "experimental",
   "explore resolve": "experimental",
@@ -73,14 +77,16 @@ export const commandStatus: Record<string, SurfaceStatus> = {
   brief: "experimental",
   "brief triage": "experimental",
   "brief gate": "experimental",
+  "brief lint": "experimental",
   "brief plan": "experimental",
+  "brief research": "experimental",
   "brief record": "experimental",
   "brief decide": "experimental",
   "brief export": "experimental",
   "brief attach": "experimental",
   "brief list": "experimental",
   "brief show": "experimental",
-  ruling: "experimental",
+  ruling: "stable",
   learn: "experimental",
   instruction: "experimental",
   tickets: "experimental",
@@ -89,6 +95,12 @@ export const commandStatus: Record<string, SurfaceStatus> = {
   doctor: "stable",
   validate: "stable",
 };
+
+/** Options on a stable command that are not promised yet: still changing. docs/stability.md names each one in its command's row. */
+export const experimentalOptions: Readonly<Record<string, readonly string[]>> =
+  {
+    "baseline advance": ["--commit-file", "--fetch", "--wait"],
+  };
 
 /** `{ flow?, failure }`, printed by check and baseline record|accept when the run could not happen. */
 export const runFailureJsonContract = z.looseObject({
@@ -243,6 +255,17 @@ export const checkChangedJsonContract = z.looseObject({
  * `idiom check --gate --json`: skipped (no UI change), plan only, or ran.
  * gate.plan, gate.comparisons and gate.timing are experimental.
  */
+/** With `--handoff <dir>`: the fix step's round, written under dir. */
+const gateHandoffContract = z.looseObject({
+  dir: z.string(),
+  round: z.number().int().nonnegative(),
+  next: z.enum(["pass", "repair", "stop", "skip"]),
+  targets: z.number().int().nonnegative(),
+  outcome: z.enum(["commit", "revert"]).optional(),
+  repairFrom: z.number().int().nonnegative().optional(),
+  summaryPath: z.string(),
+});
+
 export const checkGateJsonContract = z.union([
   z.looseObject({
     interfaceVersion: z.literal(INTERFACE_VERSION),
@@ -254,6 +277,7 @@ export const checkGateJsonContract = z.union([
       files: z.array(z.looseObject({ path: z.string() })),
       allFlows: z.array(z.string()),
     }),
+    handoff: gateHandoffContract.optional(),
   }),
   z.looseObject({
     interfaceVersion: z.literal(INTERFACE_VERSION),
@@ -290,9 +314,38 @@ export const checkGateJsonContract = z.union([
         mode: z.enum(["reused", "production-reuse", "fresh"]),
         reason: z.string(),
       }),
+      /** Experimental: the changed surface and any coverage gap. */
+      plan: z
+        .looseObject({
+          coverageGap: z
+            .looseObject({
+              files: z.array(z.string()),
+              tokens: z.array(z.string()),
+              statesWithEvidence: z.number(),
+              statesWithoutEvidence: z.array(z.string()),
+            })
+            .optional(),
+        })
+        .optional(),
+      /** Experimental: the gate's own phase breakdown under `timing.gate`. */
+      timing: z
+        .looseObject({
+          gate: z
+            .looseObject({
+              servers: z.number(),
+              serverStartMs: z.number(),
+              baseCaptureMs: z.number(),
+              captureMs: z.number(),
+              probeMs: z.number(),
+              checksMs: z.number(),
+            })
+            .optional(),
+        })
+        .optional(),
     }),
     decisionNeeded: z.array(pendingDecisionSchema),
     decisionQuestion: z.string(),
+    handoff: gateHandoffContract.optional(),
     ...deferralContract,
     ...changedChecksContract,
   }),
@@ -426,7 +479,8 @@ export const jsonOutputs: JsonOutput[] = [
   {
     id: "baseline advance",
     command: "baseline advance",
-    description: "the target branch tip recorded in the base cache",
+    description:
+      "the target branch tip and, per flow, whether its baseline advanced, was current, superseded, absent or failed",
     status: "experimental",
   },
   {
@@ -483,7 +537,7 @@ export const jsonOutputs: JsonOutput[] = [
     id: "learn replay",
     command: "learn",
     description:
-      "how many of an import's misses the latest checks catch (--replay)",
+      "caught, missed and unmeasured counts of an import's misses (--replay)",
     status: "experimental",
   },
   {
@@ -499,9 +553,30 @@ export const jsonOutputs: JsonOutput[] = [
     status: "experimental",
   },
   {
+    id: "scorecard --json",
+    command: "scorecard",
+    description:
+      "weekly found-first counts and director acceptance, with window and rates",
+    status: "experimental",
+  },
+  {
+    id: "escalations --json",
+    command: "escalations",
+    description:
+      "open autobuild escalations with classification, matching precedent and verdict, plus answers sent; or { history } with --history",
+    status: "experimental",
+  },
+  {
     id: "nightly",
     command: "nightly",
     description: "the scheduled full check that files new findings into triage",
+    status: "experimental",
+  },
+  {
+    id: "watch --json",
+    command: "watch",
+    description:
+      "one JSON line per watch event: start, resume, merge outcome, retry and stop",
     status: "experimental",
   },
   {
@@ -553,9 +628,21 @@ export const jsonOutputs: JsonOutput[] = [
     status: "experimental",
   },
   {
+    id: "brief lint",
+    command: "brief lint",
+    description: "the criteria lint result",
+    status: "experimental",
+  },
+  {
     id: "brief plan",
     command: "brief plan",
     description: "the research plan",
+    status: "experimental",
+  },
+  {
+    id: "brief comparables",
+    command: "brief research",
+    description: "comparables, measurements and proposed criteria",
     status: "experimental",
   },
   {

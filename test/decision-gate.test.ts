@@ -1,4 +1,7 @@
-import { expect, test, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, expect, test, vi } from "vitest";
 import { run } from "../src/cli.js";
 import type { CheckSummary } from "../src/commands/check.js";
 import { checkGate } from "../src/commands/check-gate.js";
@@ -59,6 +62,9 @@ function summary(
     ],
   };
 }
+// The gate records unattended conditions under the project; give it a root.
+const projectDirectory = mkdtempSync(join(tmpdir(), "idiom-decision-gate-"));
+afterAll(() => rmSync(projectDirectory, { recursive: true, force: true }));
 function mockResult(summaries: CheckSummary[]) {
   // Only the controller's output formatting/status seam is replaced here;
   // pendingForRun and real CLI/storage integration are covered separately.
@@ -88,7 +94,20 @@ function mockResult(summaries: CheckSummary[]) {
       ),
       slowest: "checks",
       probeIncludedInCapture: true,
+      gate: {
+        servers: 1,
+        serversReused: 0,
+        serverStartMs: 1,
+        baseCaptureMs: 0,
+        baseCapture: "none",
+        captureMs: 1,
+        probeMs: 1,
+        checksMs: 1,
+      },
     },
+    conditions: [],
+    cleared: [],
+    projectDirectory,
   } as unknown as Awaited<ReturnType<typeof checkGate>>);
 }
 async function cli(flags: string[] = []) {

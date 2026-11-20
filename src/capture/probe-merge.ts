@@ -329,3 +329,44 @@ export function fillReplays(options: {
     }),
   );
 }
+
+/**
+ * Seed a resumed capture's probe ledger with a kept state's final probe
+ * evidence: the identities it enumerated, and the controls it completed
+ * itself. With `owned` (a planned partition) only controls the plan gives
+ * this state are recorded, so every other control is still probed by the
+ * state the plan gives it, exactly as in an uninterrupted run.
+ */
+export function seedCarriedProbe(options: {
+  ledger: ProbeLedger;
+  partition: string;
+  state: string;
+  artifact: ProbeArtifact;
+  owned?: ((key: string) => boolean) | undefined;
+}): void {
+  const { ledger, partition, state, artifact } = options;
+  const candidates = artifact.candidates ?? [];
+  const keys = keysFor(candidates);
+  ledger.seen(partition, keys, state);
+  for (const [ordinal, candidate] of candidates.entries()) {
+    const key = keys[ordinal] ?? candidate.path;
+    if (options.owned !== undefined && !options.owned(key)) continue;
+    const result = artifact.results.find(
+      (row) =>
+        row.selector === candidate.selector &&
+        row.name === candidate.name &&
+        row.status === "completed" &&
+        row.reusedFrom === undefined,
+    );
+    if (result === undefined) continue;
+    ledger.record(
+      partition,
+      key,
+      state,
+      result,
+      (artifact.explanations?.records ?? []).filter(
+        (record) => record.selector === candidate.selector,
+      ),
+    );
+  }
+}

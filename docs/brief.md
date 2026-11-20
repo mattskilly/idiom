@@ -27,10 +27,11 @@ The plan exposes this preparation as `inventoryInstructions` and `stateChecklist
 5. **Ask or proceed.** The agent asks the requester that question verbatim (in Claude Code, with AskUserQuestion). Only a low-stakes, reversible decision may go ahead on the recommendation without asking.
 6. **Decide.** `idiom brief decide <slug> --option <id>` records the requester's choice, and the rendered Markdown becomes the ticket.
 7. **Gate.** When the ticket is filed, `idiom brief gate <ticket.md>` warns if it holds a design decision and carries no decided brief (see [Gate tickets](#gate-tickets)).
+   `idiom brief lint <ticket.md>` warns when an acceptance criterion caps a size, time, count or length with no floor or outcome, and suggests the paired criteria (see [Lint acceptance criteria](#lint-acceptance-criteria)).
    In an autobuild project, `idiom brief attach <slug> --ticket <id>` then pins the decided brief to the ticket as its design asset, so every build phase and Idiom's own checks judge the build against it ([Attach to an autobuild ticket](#attach-to-an-autobuild-ticket)).
 8. **Build, then check.** After the build, `idiom check <flow>` judges the decided brief's assertions against the shipped UI and reports a `brief-mismatch` finding for each criterion it breaks ([Checking the build](#checking-the-build)).
 
-Idiom owns the process: the rubric, the research plan, the answer shapes, validation, the question, storage and rendering. `triage` calls a model once, with a bounded text prompt: no tools, no capture, a 90-second limit and a 2,000-token answer. It uses the project's configured review provider (`model.provider`, with `model.fallback` tried once, visibly, if the primary fails). `plan` given a request without `--question` runs that same triage first. The only other command that calls a model is `idiom brief "<request>" --research`. `record`, `decide`, `export`, `list` and `show` never touch the network.
+Idiom owns the process: the rubric, the research plan, the answer shapes, validation, the question, storage and rendering. `triage` calls a model once, with a bounded text prompt: no tools, no capture, a 90-second limit and a 2,000-token answer. It uses the project's configured review provider (`model.provider`, with `model.fallback` tried once, visibly, if the primary fails). `plan` given a request without `--question` runs that same triage first. The only other command that calls a model is `idiom brief "<request>" --research`. `record`, `decide`, `export`, `list`, `show` and `lint` never touch the network.
 
 ## Two ways to research
 
@@ -330,6 +331,80 @@ Before writing a ticket or code that involves a design decision, run `idiom brie
 Before filing the ticket, run `idiom brief gate <ticket.md>`.
 ```
 
+## Lint acceptance criteria
+
+`idiom brief lint <ticket-or-spec.md ...> [--strict] [--json]` flags acceptance criteria that cap a number with nothing holding the other side. Build agents meet the numbers in acceptance criteria and nothing else. A selection toolbar's chip was capped at "adds at most 64px to the toolbar", so the agent squeezed its text with negative word-spacing until it touched the reset button: the criterion was met, and the toolbar was broken. The lint catches criteria like that before a build starts and suggests the paired outcome checks.
+
+```text
+$ idiom brief lint ticket.md
+Warning: ticket.md:9 caps size with no floor or outcome: "The chip adds at most 64px to the toolbar."
+  Pair it with: keep ≥4px between items, glyph to glyph
+  Pair it with: no overlap with neighbouring controls or text
+  Pair it with: stays on one row at 1024px
+  Pair it with: text keeps its normal word- and letter-spacing (no negative spacing)
+  Pair it with: each control stays ≥24px (≥44px below 768px)
+1 criterion warning(s) in 1 file(s).
+```
+
+It is deterministic: no model call, no network, and no project required. It never rewrites the ticket.
+
+### The rule
+
+The phrase lists live as exported constants in `src/brief/lint.ts` (`CAP_PHRASES`, `NON_UI_SUBJECTS`, `UI_NOUNS`, `PAIRING_PHRASES`), and the tests pin them.
+
+1. **Criteria.** The lint reads the section headed `Acceptance criteria`: a Markdown heading at any level, a bold `**Acceptance criteria**` line, or an `Acceptance criteria:` line, in any case. The section ends at the next heading of the same or a higher level (any heading, for the bold and colon forms). Each list item (`-`, `*`, `+` or `1.`, with or without `[ ]`) is one criterion, and indented continuation lines join it. Sub-bullets belong to their parent, so a rendered brief's `Checked by Idiom:` lines count toward pairing, and bold sub-labels such as `**Geometry**` do not end the section. Lines inside code fences are ignored.
+2. **Caps.** A criterion caps when a cap phrase governs a number in the same clause: `at most`, `no more than`, `up to`, `max`/`maximum`, `max-width:`, `≤`, `<=`, `under`, `less than`, `fewer than`, `no wider/taller/longer/bigger/larger than`, `does not exceed`, `caps at`, `N … or fewer`, or `within` for times only. "Under the toolbar" has no number, so it is not a cap. The unit after the number names the kind:
+   - **size**: `px`, `rem`, `em`, `%`, `vw`, `vh` or `pt`, or no unit when the criterion says wide, tall, width, height or size;
+   - **time**: `ms`, `s`, `sec`, `seconds` or `minutes`;
+   - **length**: `characters`, `chars` or `words`;
+   - **count**: items, rows, lines, buttons, chips, columns, options, actions, tabs, clicks, steps, entries or results, or a bare number in a criterion that names a UI noun.
+3. **Where the line is.** A cap is not flagged when the criterion is about tooling rather than UI: it names a test or suite, a timeout, CI, a build, gate or verify step, files, commits, PRs, lines of code, bytes or KB/MB/GB, tokens, retries, requests, calls, an API or endpoint, a process, memory, CPU, a query, a cache, a budget, a log or a dependency. "The e2e test suite times out after at most 30s" and "the change touches at most 3 files" pass. A time, count or length cap must also name a UI noun (toolbar, chip, button, label, text, title, menu, row, card, panel, dialog, item, icon, tab, list, sidebar, gap, padding, font, toast, animation, fade, loading, visible and the rest of `UI_NOUNS`), so "loads in under 2 seconds" passes too. A size cap in a CSS unit is UI by nature and only the tooling guard applies to it. A criterion that names a tooling word and a UI size ("the file list row is at most 40px tall") is not flagged; word the criterion around the UI instead.
+4. **Pairing.** A cap is paired, and silent, when the same criterion, or a sibling criterion naming the cap's subject, carries a floor (`at least`, `minimum`, `min`, `≥`, `>=`, `no less than`, `no fewer than`, `no narrower/shorter/smaller than`) or an observable outcome: overlap or touch, one line or row, stays on one, wrap, truncation, clipping, fully visible, legible or readable, word- or letter-spacing, gap between or between items, reachable, complete, or end state. The subject is the head of the criterion's first run of UI nouns ("Toolbar buttons are ≤ 32px tall" → button), skipping the generic nouns item, text, page, screen, visible and display, so a sibling that shares only "text" does not pair a cap. Any floor in the same criterion pairs it, even one about something else ("at most 64px and at least one chip"); that is a deliberate simplification.
+
+### Suggestions
+
+Each warning quotes the criterion and suggests paired criteria. The numbers come from the project when there is one, and from Idiom's defaults otherwise. Each suggestion's `source` names what backs it:
+
+| Cap | Suggestions | Source |
+| --- | --- | --- |
+| size | keep ≥`checks.controlGap.min`px (default 4) between items, glyph to glyph | `control-gap` |
+| size | no overlap with neighbouring controls or text | `element-overlap` |
+| size | stays on one row at W px | `criterion` when it names `at Npx`; else `viewports`, the narrowest configured viewport at least 768px wide; else `default`, 1024 |
+| size | text keeps its normal word- and letter-spacing | `negative-spacing` |
+| size, naming a button, control, chip or target | each control stays ≥ `checks.targetSize.fine`px (≥ coarse below narrowBelow) | `target-size` |
+| length | the label stays on one line at W px with no truncation; the full text stays legible: no clipping | row width source; `clipped-text` |
+| count | every item beyond the cap stays reachable; no item is clipped or overlapped | `outcome`; `element-overlap` |
+| time | the end state is visible and complete when the time is up | `outcome` |
+
+The project's rulings join them: the wording of every effective `rule` ruling whose wording fits the cap (for size: gap, spacing, overlap, wrap, row, line or legibility; for length: truncation, wrap, line or legibility; for count: overflow or reachable; for time: motion, animation or duration), at most 3 per warning, with source `ruling:<id>`. A design file whose rulings cannot be read prints `Warning: could not read rulings: …` on stderr and the lint continues without them.
+
+### Output and exit codes
+
+The lint warns first. It prints nothing when every file has an acceptance criteria section and every cap is paired. Otherwise it prints each warning and a `N criterion warning(s) in M file(s).` summary, and a `Note: <path> has no acceptance criteria section.` line for each file without one, so a clean-looking run on the wrong file is never silent. It exits 0 either way; `--strict` exits 1 when any criterion warns (a missing section is a note, not a warning). A missing, empty or over-64 KB file, or an invalid `.idiom/project.json`, always exits 1 before any output.
+
+`--json` prints `{ strict, warnings, files }`. Each file is `{ path, section, criteria, warnings }`, where `criteria` counts the criteria found and each warning is `{ criterion, line, cap: { kind, text }, suggestions: [{ text, source }] }`. `line` is the item's 1-based line in the file.
+
+### In recorded briefs
+
+`idiom brief record`, `idiom brief "<request>" --research` and the `idiom_brief_record` MCP tool run the same lint over the brief's `acceptanceCriteria` statements, with the project's context. Each unpaired cap prints a `Warning: criterion <n> caps …` block after the `Recorded brief` line, where `<n>` is the criterion's 1-based position in `acceptanceCriteria`. In JSON the result gains a `lint` array of the same warnings, present only when there is at least one. The brief is stored either way; fix the criterion and record again.
+
+### Lint recipes
+
+**Grooming.** Run it next to the gate while filing or grooming tickets, before moving them to the ready state:
+
+```sh
+find .autobuild/tickets/triage .autobuild/tickets/ready -name '*.md' -exec idiom brief lint {} +
+```
+
+**Plan-review.** Autobuild has no spec-check hook, so ask the plan reviewer to run it. Add to CLAUDE.md or AGENTS.md:
+
+```markdown
+## Acceptance criteria lint (Idiom)
+In plan-review, after `ab context`, run `idiom brief lint .ab/spec.md` and raise each warning as a finding: the spec caps a size, time, count or length with no floor or outcome, and the build will meet the number and nothing else.
+```
+
+Like the gate, this is deliberately not a `[verify]` step: a `kind = "check"` step runs after implementation, in the build worktree where `.ab/spec.md` is not present, too late to change the criteria. The grooming recipe is also in `templates/autobuild.idiom.toml`. Add `--strict` to either recipe to make it fail.
+
 ## Checking the build
 
 A brief is only half the loop: once the build ships, Idiom checks the UI against what was decided. Any acceptance criterion may carry `assertions`, each tied to a flow state and a CSS selector:
@@ -405,7 +480,42 @@ MCP has the same: `idiom_brief_export`, `idiom_brief_attach`, and `ticket` on `i
 - `always`: always compare against it.
 - `floor`: never fall below it.
 
-`idiom init` scaffolds an empty list with a `$comment` explaining it.
+`idiom init` scaffolds an empty list with a `$comment` explaining it. When PRODUCT.md already lists comparable products (below), `idiom init` copies them into the list as it creates `.idiom/project.json`; an existing `project.json` is never rewritten.
+
+## Comparable research
+
+`idiom brief research "<request>"` (experimental) grounds a UI ticket's criteria in what comparable products actually ship. It is deterministic and needs no model:
+
+```sh
+idiom brief research "selection toolbar offset chip"
+idiom brief research "selection toolbar offset chip" --viewport mobile --json
+```
+
+1. **Comparables.** It names two or three products from `brief.references`. When that list is empty it reads the `## Comparable products` section of PRODUCT.md; when both are empty it stops and asks for the list (it never picks products by itself). `always` entries come first; the rest rank by the request's words they match: a `pages[].surface` match counts double over the name and note, then `bar` before other tiers, then list order. With fewer than two matches the list fills the second place. Each comparable says why it was chosen, naming the matched words. One listed product works, with a warning to list at least two.
+2. **Capture.** For each, it captures the equivalent public screen: the `pages` entry whose surface best matches the request, else the entry's `url`, at `--viewport` (default: the project's first viewport). The capture is the same one `idiom reference add --url` makes, so the screen is stored under `.idiom/references/<comparable>-<surface>/` (suffixed `-2`, `-3` when the name is taken) with its source URL, capture date and viewport, and the model reviewer reads it like any other managed reference, citing it as `reference:<name>`.
+3. **Measurement.** In the same page load, for each request word it finds the first visible element whose class, id, `role`, `aria-label` or `data-testid` carries the word (preferring the element that carries the most of them; words naming one element merge into one subject, such as `selection toolbar`). It reports each subject's width, height, corner radius, font size, item gap and transition or animation duration (when non-zero), and the edge-to-edge gap between every pair of subjects (the smaller element named first), each with the CSS selector, page URL and viewport where it was measured. Words no visible element carries are listed as not found. The measurements are written into the stored reference's note, so the reviewer sees the numbers beside the image.
+4. **Criteria.** Each measured value across the captured comparables becomes one criterion with both bounds: the smallest value is the floor and the largest the cap. A value measured on one comparable only (or equal on all) widens by ±10%, at least 1, and says so. Each criterion cites the comparable, its value and its reference, ready to paste into a ticket, and passes `idiom brief lint`:
+
+```text
+- Offset chip to selection toolbar gap is at least 8px and at most 12px (Alpha 8px, reference:alpha-selection-toolbar; Beta 12px, reference:beta-selection-toolbar).
+- Selection toolbar width is at least 320px and at most 360px (Alpha 320px, reference:alpha-selection-toolbar; Beta 360px, reference:beta-selection-toolbar).
+```
+
+**Public pages only.** Each capture is a fresh browser context with no stored sign-in, and nothing on the page is clicked, typed or submitted. A page that answers 401, 403 or 407, redirects to a sign-in URL, or shows a visible password field is reported as `not reachable — sign-in required; not logged into`, and nothing is stored for it. Other navigation failures are reported the same way with their message. An entry with no `url` and no `pages` is reported as having no public page.
+
+To name a product's equivalent screens, give its `brief.references` entry `pages`: `[{ "surface": "editor selection toolbar", "url": "https://…" }]` (see [configuration](configuration.md#briefs)). In PRODUCT.md, the same list is one bullet per product, with indented bullets for its screens:
+
+```markdown
+## Comparable products
+
+- Alpha | https://alpha.example | the calmest selection toolbar we know
+  - editor selection toolbar | https://alpha.example/editor
+- [always] Beta | https://beta.example | the whiteboard everyone compares to
+```
+
+The fields are separated by `|`: the name, an optional public URL, and why it sets the bar. An optional leading `[always]` or `[floor]` sets the tier (default `bar`). HTML comments are ignored, so the template's commented example lists nothing.
+
+`--json` prints `{ interfaceVersion, request, terms, listSource, warnings, comparables, criteria }`: each comparable has `name`, `tier`, `reason`, `page`, `status` (`captured`, `not-reachable` or `no-public-page`), `reference` (`label`, `name`, `source`, `capturedAt`, `viewport`) when captured, `measurements[]` (`subject`, `property`, `value`, `unit`, `selector`, `url`, `viewport`), `unmatched[]` and `notReachable`; each criterion has `text`, `subject`, `property`, `floor`, `cap`, `unit`, `widened` and `sources[]`.
 
 ## Storage and status
 

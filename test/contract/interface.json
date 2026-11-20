@@ -83,12 +83,20 @@
           "valueOptional": false,
           "mandatory": false,
           "negate": false
+        },
+        {
+          "long": "--resume",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
         }
       ]
     },
     {
       "path": "baseline advance",
-      "status": "experimental",
+      "status": "stable",
       "arguments": [
         {
           "name": "flow",
@@ -103,7 +111,17 @@
           "takesValue": false,
           "valueOptional": false,
           "mandatory": false,
-          "negate": false
+          "negate": false,
+          "experimental": true
+        },
+        {
+          "long": "--fetch",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false,
+          "experimental": true
         },
         {
           "long": "--json",
@@ -128,6 +146,15 @@
           "valueOptional": false,
           "mandatory": false,
           "negate": false
+        },
+        {
+          "long": "--wait",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false,
+          "experimental": true
         }
       ]
     },
@@ -192,6 +219,14 @@
         },
         {
           "long": "--prod",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--resume",
           "short": null,
           "takesValue": false,
           "valueOptional": false,
@@ -391,18 +426,39 @@
       ]
     },
     {
-      "path": "brief list",
+      "path": "brief lint",
       "status": "experimental",
-      "arguments": [],
+      "arguments": [
+        {
+          "name": "files",
+          "required": true,
+          "variadic": true
+        }
+      ],
       "options": [
         {
-          "long": "--array",
+          "long": "--json",
           "short": null,
           "takesValue": false,
           "valueOptional": false,
           "mandatory": false,
           "negate": false
         },
+        {
+          "long": "--strict",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        }
+      ]
+    },
+    {
+      "path": "brief list",
+      "status": "experimental",
+      "arguments": [],
+      "options": [
         {
           "long": "--json",
           "short": null,
@@ -465,6 +521,35 @@
           "long": "--json",
           "short": null,
           "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        }
+      ]
+    },
+    {
+      "path": "brief research",
+      "status": "experimental",
+      "arguments": [
+        {
+          "name": "request",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--viewport",
+          "short": null,
+          "takesValue": true,
           "valueOptional": false,
           "mandatory": false,
           "negate": false
@@ -701,6 +786,14 @@
           "long": "--gate",
           "short": null,
           "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--handoff",
+          "short": null,
+          "takesValue": true,
           "valueOptional": false,
           "mandatory": false,
           "negate": false
@@ -1138,13 +1231,13 @@
     },
     {
       "path": "design",
-      "status": "experimental",
+      "status": "stable",
       "arguments": [],
       "options": []
     },
     {
       "path": "design add",
-      "status": "experimental",
+      "status": "stable",
       "arguments": [
         {
           "name": "state",
@@ -1243,6 +1336,37 @@
       ]
     },
     {
+      "path": "escalations",
+      "status": "experimental",
+      "arguments": [],
+      "options": [
+        {
+          "long": "--answer",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--history",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        }
+      ]
+    },
+    {
       "path": "explore",
       "status": "experimental",
       "arguments": [
@@ -1334,7 +1458,7 @@
     },
     {
       "path": "fix",
-      "status": "experimental",
+      "status": "stable",
       "arguments": [
         {
           "name": "flow",
@@ -1382,6 +1506,14 @@
       "status": "stable",
       "arguments": [],
       "options": [
+        {
+          "long": "--advance-baseline",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
         {
           "long": "--agent",
           "short": null,
@@ -1838,13 +1970,13 @@
     },
     {
       "path": "reference",
-      "status": "experimental",
+      "status": "stable",
       "arguments": [],
       "options": []
     },
     {
       "path": "reference add",
-      "status": "experimental",
+      "status": "stable",
       "arguments": [
         {
           "name": "name",
@@ -1897,13 +2029,13 @@
     },
     {
       "path": "reference list",
-      "status": "experimental",
+      "status": "stable",
       "arguments": [],
       "options": []
     },
     {
       "path": "reference remove",
-      "status": "experimental",
+      "status": "stable",
       "arguments": [
         {
           "name": "name",
@@ -2110,7 +2242,7 @@
     },
     {
       "path": "ruling",
-      "status": "experimental",
+      "status": "stable",
       "arguments": [],
       "options": [
         {
@@ -2163,6 +2295,45 @@
         },
         {
           "long": "--wording",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        }
+      ]
+    },
+    {
+      "path": "scorecard",
+      "status": "experimental",
+      "arguments": [],
+      "options": [
+        {
+          "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--since",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--verbose",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--weeks",
           "short": null,
           "takesValue": true,
           "valueOptional": false,
@@ -2370,6 +2541,22 @@
           "valueOptional": false,
           "mandatory": false,
           "negate": true
+        },
+        {
+          "long": "--skip-wiring",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--yes",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
         }
       ]
     },
@@ -2429,6 +2616,109 @@
           "negate": false
         }
       ]
+    },
+    {
+      "path": "watch",
+      "status": "experimental",
+      "arguments": [],
+      "options": [
+        {
+          "long": "--install-service",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--json",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--label",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--once",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--out",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--poll",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--print-service",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--severity",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--since",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--target",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--tracker",
+          "short": null,
+          "takesValue": true,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        },
+        {
+          "long": "--uninstall-service",
+          "short": null,
+          "takesValue": false,
+          "valueOptional": false,
+          "mandatory": false,
+          "negate": false
+        }
+      ]
     }
   ],
   "exitCodes": {
@@ -2465,6 +2755,11 @@
       "status": "experimental"
     },
     {
+      "id": "brief comparables",
+      "command": "brief research",
+      "status": "experimental"
+    },
+    {
       "id": "brief decide",
       "command": "brief decide",
       "status": "experimental"
@@ -2477,6 +2772,11 @@
     {
       "id": "brief gate",
       "command": "brief gate",
+      "status": "experimental"
+    },
+    {
+      "id": "brief lint",
+      "command": "brief lint",
       "status": "experimental"
     },
     {
@@ -2914,7 +3214,8 @@
                     "text-occlusion",
                     "state-jump",
                     "control-gap",
-                    "negative-spacing"
+                    "negative-spacing",
+                    "toolbar-layout"
                   ]
                 },
                 "rule": {
@@ -3720,7 +4021,8 @@
                                   "text-occlusion",
                                   "state-jump",
                                   "control-gap",
-                                  "negative-spacing"
+                                  "negative-spacing",
+                                  "toolbar-layout"
                                 ]
                               },
                               "rule": {
@@ -3954,6 +4256,56 @@
                   "allFlows"
                 ],
                 "additionalProperties": {}
+              },
+              "handoff": {
+                "type": "object",
+                "properties": {
+                  "dir": {
+                    "type": "string"
+                  },
+                  "round": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "next": {
+                    "type": "string",
+                    "enum": [
+                      "pass",
+                      "repair",
+                      "stop",
+                      "skip"
+                    ]
+                  },
+                  "targets": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "commit",
+                      "revert"
+                    ]
+                  },
+                  "repairFrom": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "summaryPath": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "dir",
+                  "round",
+                  "next",
+                  "targets",
+                  "summaryPath"
+                ],
+                "additionalProperties": {}
               }
             },
             "required": [
@@ -4081,6 +4433,83 @@
                       "mode",
                       "reason"
                     ],
+                    "additionalProperties": {}
+                  },
+                  "plan": {
+                    "type": "object",
+                    "properties": {
+                      "coverageGap": {
+                        "type": "object",
+                        "properties": {
+                          "files": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "tokens": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "statesWithEvidence": {
+                            "type": "number"
+                          },
+                          "statesWithoutEvidence": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "files",
+                          "tokens",
+                          "statesWithEvidence",
+                          "statesWithoutEvidence"
+                        ],
+                        "additionalProperties": {}
+                      }
+                    },
+                    "additionalProperties": {}
+                  },
+                  "timing": {
+                    "type": "object",
+                    "properties": {
+                      "gate": {
+                        "type": "object",
+                        "properties": {
+                          "servers": {
+                            "type": "number"
+                          },
+                          "serverStartMs": {
+                            "type": "number"
+                          },
+                          "baseCaptureMs": {
+                            "type": "number"
+                          },
+                          "captureMs": {
+                            "type": "number"
+                          },
+                          "probeMs": {
+                            "type": "number"
+                          },
+                          "checksMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "servers",
+                          "serverStartMs",
+                          "baseCaptureMs",
+                          "captureMs",
+                          "probeMs",
+                          "checksMs"
+                        ],
+                        "additionalProperties": {}
+                      }
+                    },
                     "additionalProperties": {}
                   }
                 },
@@ -4226,6 +4655,56 @@
               },
               "decisionQuestion": {
                 "type": "string"
+              },
+              "handoff": {
+                "type": "object",
+                "properties": {
+                  "dir": {
+                    "type": "string"
+                  },
+                  "round": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "next": {
+                    "type": "string",
+                    "enum": [
+                      "pass",
+                      "repair",
+                      "stop",
+                      "skip"
+                    ]
+                  },
+                  "targets": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "commit",
+                      "revert"
+                    ]
+                  },
+                  "repairFrom": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "summaryPath": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "dir",
+                  "round",
+                  "next",
+                  "targets",
+                  "summaryPath"
+                ],
+                "additionalProperties": {}
               },
               "verdict": {
                 "type": "string",
@@ -4867,7 +5346,8 @@
                                       "text-occlusion",
                                       "state-jump",
                                       "control-gap",
-                                      "negative-spacing"
+                                      "negative-spacing",
+                                      "toolbar-layout"
                                     ]
                                   },
                                   "rule": {
@@ -5399,6 +5879,48 @@
             ],
             "additionalProperties": {}
           },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "cause": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "string"
+                },
+                "mode": {
+                  "type": "string"
+                },
+                "firstSeen": {
+                  "type": "string"
+                },
+                "lastSeen": {
+                  "type": "string"
+                },
+                "runs": {
+                  "type": "number"
+                },
+                "ticket": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "cause",
+                "line",
+                "mode",
+                "firstSeen",
+                "lastSeen",
+                "runs"
+              ],
+              "additionalProperties": {}
+            }
+          },
           "interfaceVersion": {
             "type": "number",
             "const": 1
@@ -5411,6 +5933,11 @@
         ],
         "additionalProperties": {}
       }
+    },
+    {
+      "id": "escalations --json",
+      "command": "escalations",
+      "status": "experimental"
     },
     {
       "id": "init --validate",
@@ -5608,6 +6135,48 @@
                       "entries"
                     ],
                     "additionalProperties": {}
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "cause": {
+                          "type": "string"
+                        },
+                        "line": {
+                          "type": "string"
+                        },
+                        "mode": {
+                          "type": "string"
+                        },
+                        "firstSeen": {
+                          "type": "string"
+                        },
+                        "lastSeen": {
+                          "type": "string"
+                        },
+                        "runs": {
+                          "type": "number"
+                        },
+                        "ticket": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "cause",
+                        "line",
+                        "mode",
+                        "firstSeen",
+                        "lastSeen",
+                        "runs"
+                      ],
+                      "additionalProperties": {}
+                    }
                   }
                 },
                 "required": [
@@ -5813,6 +6382,11 @@
       }
     },
     {
+      "id": "scorecard --json",
+      "command": "scorecard",
+      "status": "experimental"
+    },
+    {
       "id": "sweep",
       "command": "sweep",
       "status": "experimental"
@@ -5820,6 +6394,11 @@
     {
       "id": "upgrade",
       "command": "upgrade",
+      "status": "experimental"
+    },
+    {
+      "id": "watch --json",
+      "command": "watch",
       "status": "experimental"
     }
   ],
@@ -6011,7 +6590,8 @@
                                 "text-occlusion",
                                 "state-jump",
                                 "control-gap",
-                                "negative-spacing"
+                                "negative-spacing",
+                                "toolbar-layout"
                               ]
                             },
                             "rule": {
@@ -6914,7 +7494,8 @@
                 "text-occlusion",
                 "state-jump",
                 "control-gap",
-                "negative-spacing"
+                "negative-spacing",
+                "toolbar-layout"
               ]
             },
             "severity": {
@@ -9488,6 +10069,23 @@
                   "minLength": 1
                 }
               },
+              "intermediateWidths": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 200,
+                      "maximum": 4096
+                    }
+                  }
+                ]
+              },
               "kind": {
                 "type": "string",
                 "enum": [
@@ -10206,6 +10804,23 @@
                     },
                     "probe": {
                       "type": "boolean"
+                    },
+                    "intermediateWidths": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "minItems": 1,
+                          "maxItems": 8,
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 200,
+                            "maximum": 4096
+                          }
+                        }
+                      ]
                     },
                     "fresh": {
                       "type": "boolean"
@@ -11244,6 +11859,10 @@
               },
               "maxMinutes": {
                 "default": 30,
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "stateMaxMinutes": {
                 "type": "number",
                 "exclusiveMinimum": 0
               },
@@ -13486,6 +14105,76 @@
                       "type": "string",
                       "minLength": 1
                     }
+                  },
+                  "displaySize": {
+                    "default": 20,
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "displayTracking": {
+                    "default": -0.03,
+                    "type": "number",
+                    "minimum": -1,
+                    "maximum": 0
+                  }
+                },
+                "additionalProperties": false
+              },
+              "toolbarLayout": {
+                "default": {},
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "selectors": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "centreTolerance": {
+                    "default": 1,
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 8
+                  },
+                  "scopes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "selector": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "law": {
+                          "type": "string",
+                          "enum": [
+                            "one-row",
+                            "centred"
+                          ]
+                        },
+                        "tolerance": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 8
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "selector",
+                        "law"
+                      ],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "additionalProperties": false
@@ -13627,6 +14316,28 @@
                     "url": {
                       "type": "string",
                       "format": "uri"
+                    },
+                    "pages": {
+                      "maxItems": 20,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "surface": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "url": {
+                            "type": "string",
+                            "format": "uri"
+                          }
+                        },
+                        "required": [
+                          "surface",
+                          "url"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": [
@@ -13697,6 +14408,37 @@
               "out": {
                 "type": "string",
                 "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "escalations": {
+            "type": "object",
+            "properties": {
+              "watch": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "unattended": {
+            "type": "object",
+            "properties": {
+              "tracker": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "autobuild",
+                  "off"
+                ]
+              },
+              "labels": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]*$"
+                }
               }
             },
             "additionalProperties": false
@@ -13905,7 +14647,8 @@
                         "text-occlusion",
                         "state-jump",
                         "control-gap",
-                        "negative-spacing"
+                        "negative-spacing",
+                        "toolbar-layout"
                       ]
                     },
                     "flow": {
@@ -13992,7 +14735,7 @@
               "minLength": 1
             },
             "flow": {
-              "description": "Configured flow ID; optional when exactly one flow exists",
+              "description": "Configured flow ID; optional when exactly one flow exists (advance: omit it to advance every flow that needs it)",
               "type": "string",
               "minLength": 1
             },
@@ -14004,6 +14747,11 @@
             "latest": {
               "default": false,
               "description": "record only: use the newest fully passing capture at HEAD",
+              "type": "boolean"
+            },
+            "resume": {
+              "default": false,
+              "description": "record only: continue the newest interrupted capture of the flow at the same commit and configuration",
               "type": "boolean"
             }
           },
@@ -14495,7 +15243,8 @@
                               "text-occlusion",
                               "state-jump",
                               "control-gap",
-                              "negative-spacing"
+                              "negative-spacing",
+                              "toolbar-layout"
                             ]
                           },
                           "rule": {
@@ -14786,7 +15535,8 @@
                               "text-occlusion",
                               "state-jump",
                               "control-gap",
-                              "negative-spacing"
+                              "negative-spacing",
+                              "toolbar-layout"
                             ]
                           },
                           "rule": {
@@ -15047,7 +15797,8 @@
                           "text-occlusion",
                           "state-jump",
                           "control-gap",
-                          "negative-spacing"
+                          "negative-spacing",
+                          "toolbar-layout"
                         ]
                       },
                       "rule": {
@@ -15298,7 +16049,8 @@
                           "text-occlusion",
                           "state-jump",
                           "control-gap",
-                          "negative-spacing"
+                          "negative-spacing",
+                          "toolbar-layout"
                         ]
                       },
                       "rule": {
@@ -15891,7 +16643,8 @@
                                         "text-occlusion",
                                         "state-jump",
                                         "control-gap",
-                                        "negative-spacing"
+                                        "negative-spacing",
+                                        "toolbar-layout"
                                       ]
                                     },
                                     "rule": {
@@ -16182,7 +16935,8 @@
                                         "text-occlusion",
                                         "state-jump",
                                         "control-gap",
-                                        "negative-spacing"
+                                        "negative-spacing",
+                                        "toolbar-layout"
                                       ]
                                     },
                                     "rule": {
@@ -16443,7 +17197,8 @@
                                     "text-occlusion",
                                     "state-jump",
                                     "control-gap",
-                                    "negative-spacing"
+                                    "negative-spacing",
+                                    "toolbar-layout"
                                   ]
                                 },
                                 "rule": {
@@ -16694,7 +17449,8 @@
                                     "text-occlusion",
                                     "state-jump",
                                     "control-gap",
-                                    "negative-spacing"
+                                    "negative-spacing",
+                                    "toolbar-layout"
                                   ]
                                 },
                                 "rule": {
@@ -17305,6 +18061,48 @@
               ],
               "additionalProperties": {}
             },
+            "conditions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "cause": {
+                    "type": "string"
+                  },
+                  "line": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "string"
+                  },
+                  "firstSeen": {
+                    "type": "string"
+                  },
+                  "lastSeen": {
+                    "type": "string"
+                  },
+                  "runs": {
+                    "type": "number"
+                  },
+                  "ticket": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "cause",
+                  "line",
+                  "mode",
+                  "firstSeen",
+                  "lastSeen",
+                  "runs"
+                ],
+                "additionalProperties": {}
+              }
+            },
             "interfaceVersion": {
               "type": "number",
               "const": 1
@@ -17620,7 +18418,8 @@
                     "text-occlusion",
                     "state-jump",
                     "control-gap",
-                    "negative-spacing"
+                    "negative-spacing",
+                    "toolbar-layout"
                   ]
                 },
                 "rule": {
@@ -17856,7 +18655,8 @@
                           "text-occlusion",
                           "state-jump",
                           "control-gap",
-                          "negative-spacing"
+                          "negative-spacing",
+                          "toolbar-layout"
                         ]
                       },
                       "rule": {
@@ -18271,7 +19071,8 @@
                           "text-occlusion",
                           "state-jump",
                           "control-gap",
-                          "negative-spacing"
+                          "negative-spacing",
+                          "toolbar-layout"
                         ]
                       },
                       "rule": {
@@ -18552,7 +19353,8 @@
                               "text-occlusion",
                               "state-jump",
                               "control-gap",
-                              "negative-spacing"
+                              "negative-spacing",
+                              "toolbar-layout"
                             ]
                           },
                           "rule": {
@@ -18843,7 +19645,8 @@
                               "text-occlusion",
                               "state-jump",
                               "control-gap",
-                              "negative-spacing"
+                              "negative-spacing",
+                              "toolbar-layout"
                             ]
                           },
                           "rule": {
@@ -19317,7 +20120,8 @@
                           "text-occlusion",
                           "state-jump",
                           "control-gap",
-                          "negative-spacing"
+                          "negative-spacing",
+                          "toolbar-layout"
                         ]
                       },
                       "rule": {
@@ -19559,6 +20363,7 @@
     "text-centering",
     "text-occlusion",
     "token-drift",
+    "toolbar-layout",
     "touch-reachability",
     "type-legibility",
     "unexplained-control",

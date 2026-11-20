@@ -94,8 +94,11 @@ export function probeCoordinates(
   flow: Flow,
   tuples: SelectedTuple[],
 ) {
+  // Intermediate widths are layout-only: never probed.
   const enabled = tuples.filter(
-    (tuple) => tuple.state.probe ?? project.checks.probe.enabled,
+    (tuple) =>
+      tuple.viewport.intermediate !== true &&
+      (tuple.state.probe ?? project.checks.probe.enabled),
   );
   const intended: Coordinate[] = [];
   if (isWebFlow(flow)) {

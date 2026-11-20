@@ -57,6 +57,20 @@ export const doctorReportContract = z.looseObject({
   ),
   failure: runFailureContract.optional(),
   surfaces: surfacesContract.optional(),
+  conditions: z
+    .array(
+      z.looseObject({
+        key: z.string(),
+        cause: z.string(),
+        line: z.string(),
+        mode: z.string(),
+        firstSeen: z.string(),
+        lastSeen: z.string(),
+        runs: z.number(),
+        ticket: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 /** `idiom doctor --json`. */

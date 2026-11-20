@@ -86,10 +86,13 @@ const plannedKey = (tuple: PlannedTuple) =>
 
 /**
  * Which stored records already judge the base for these tuples. A record
- * speaks for the base when it was captured there, or when nothing between it
+ * speaks for the base when it was captured there, when nothing between it
  * and the base can change a render by the gate's own path pass (no import
- * graph: conservative). Records from either source must match the current
- * checks configuration to count; a stale one can still serve as fallback.
+ * graph: conservative), or — base-cache records only — when its commit's tree
+ * differs from the base's by no render-affecting path (a squash-merged build
+ * head). Records from either source must match the current checks
+ * configuration to count; a stale ancestor can still serve as fallback, a
+ * non-ancestor never does.
  */
 export async function resolveBaseComparison(options: {
   validated: ValidationResult;
@@ -99,6 +102,8 @@ export async function resolveBaseComparison(options: {
   nonUi: string[];
   git?: GitRead | undefined;
   ancestry?: GitAncestry | undefined;
+  /** Only records from these stores count (default: both). */
+  sources?: readonly BaseRecordSource[] | undefined;
 }): Promise<BaseResolution> {
   const { validated, base } = options;
   const git = options.git ?? readGit;
@@ -121,7 +126,7 @@ export async function resolveBaseComparison(options: {
   const cached = (await readBaseCache(cachePath, options.flow)).filter(
     (record) => record.engine === engine,
   );
-  const records: Array<{
+  const allRecords: Array<{
     record: BaselineRecord;
     source: BaseRecordSource;
     path: string;
@@ -139,7 +144,13 @@ export async function resolveBaseComparison(options: {
         }))
       : []),
   ];
-  const reachable: Array<BaseCandidate & { equivalent: boolean }> = [];
+  const records =
+    options.sources === undefined
+      ? allRecords
+      : allRecords.filter((entry) => options.sources?.includes(entry.source));
+  const reachable: Array<
+    BaseCandidate & { equivalent: boolean; ancestor: boolean }
+  > = [];
   const repository = (
     await git(projectDirectory, ["rev-parse", "--show-toplevel"])
   ).trim();
@@ -183,6 +194,27 @@ export async function resolveBaseComparison(options: {
     const ancestor = await ancestry
       .isAncestor(projectDirectory, entry.record.commit, base)
       .catch(() => undefined);
+    if (ancestor === false && entry.source === "base-cache") {
+      // A squash-merged build head: not an ancestor of the base, but it
+      // speaks for it when the trees differ by no render-affecting path. Such
+      // a record only ever covers; it is never the fallback.
+      if (
+        entry.record.configHash !== currentHash ||
+        !(await equivalent(entry.record.commit))
+      )
+        continue;
+      const behindBase = await ancestry
+        .distance(projectDirectory, entry.record.commit, base)
+        .catch(() => undefined);
+      if (behindBase === undefined) continue;
+      reachable.push({
+        ...entry,
+        behindBase,
+        equivalent: true,
+        ancestor: false,
+      });
+      continue;
+    }
     if (ancestor !== true) {
       if (ancestor === undefined && entry.source === "baseline")
         notes.push(
@@ -200,13 +232,15 @@ export async function resolveBaseComparison(options: {
       equivalent:
         entry.record.configHash === currentHash &&
         (await equivalent(entry.record.commit)),
+      ancestor: true,
     });
   }
-  // Nearest first; at equal distance the base cache (exact tuples) wins,
-  // then the newest recording.
+  // Nearest first; at equal distance an ancestor, then the base cache (exact
+  // tuples) wins, then the newest recording.
   reachable.sort(
     (a, b) =>
       a.behindBase - b.behindBase ||
+      Number(b.ancestor) - Number(a.ancestor) ||
       Number(b.source === "base-cache") - Number(a.source === "base-cache") ||
       b.record.recordedAt.localeCompare(a.record.recordedAt),
   );
@@ -223,15 +257,20 @@ export async function resolveBaseComparison(options: {
       continue;
     }
     if (!covering.some((candidate) => candidate.record === found.record)) {
-      const { equivalent: _equivalent, ...candidate } = found;
+      const {
+        equivalent: _equivalent,
+        ancestor: _ancestor,
+        ...candidate
+      } = found;
       covering.push(candidate);
     }
   }
-  const nearest = reachable[0];
+  const nearest = reachable.find((candidate) => candidate.ancestor);
   const fallback =
     nearest === undefined
       ? undefined
-      : (({ equivalent: _equivalent, ...candidate }) => candidate)(nearest);
+      : (({ equivalent: _equivalent, ancestor: _ancestor, ...candidate }) =>
+          candidate)(nearest);
   return {
     base,
     covering: covering.sort(
@@ -381,6 +420,189 @@ export type BaseCaptureResult = {
   ms: number;
 };
 
+/** One flow's share of a batched base capture. */
+export type BaseFlowCapture = {
+  flow: string;
+  scope: CaptureScope;
+  probeRegions?: ReadonlyMap<string, ProbeRegion> | undefined;
+  cachePath?: string | undefined;
+};
+
+/** Shared by every flow of one base capture. */
+export type BaseCaptureBatchOptions = Omit<
+  BaseCaptureOptions,
+  "flow" | "scope" | "probeRegions" | "cachePath"
+> & {
+  flows: BaseFlowCapture[];
+  /**
+   * Called inside the worktree before any flow is captured; returns a server
+   * every flow's capture reuses (and stops it when the batch ends), or
+   * undefined for one owned server per flow.
+   */
+  leaseServer?:
+    | ((
+        context: import("../capture/execution-context.js").CaptureExecutionContext,
+      ) => Promise<
+        | {
+            server: import("../gate/server-lease.js").LeasedServer;
+            stop: () => Promise<void>;
+          }
+        | undefined
+      >)
+    | undefined;
+};
+
+export type BaseCaptureBatchResult = {
+  /** Per flow: its record, or the error its capture threw. */
+  results: Map<string, BaseCaptureResult | { error: unknown }>;
+  /** Wall clock of the whole batch, worktree preparation included. */
+  ms: number;
+  /** Server build + start inside the batch (0 when none was leased). */
+  serverMs: number;
+  /** Servers the batch started itself (the lease counts once). */
+  servers: number;
+};
+
+async function captureFlowAtBase(
+  executionContext: import("../capture/execution-context.js").CaptureExecutionContext,
+  options: BaseCaptureBatchOptions,
+  entry: BaseFlowCapture,
+  leased: import("../gate/server-lease.js").LeasedServer | undefined,
+): Promise<Omit<BaseCaptureResult, "ms"> | undefined> {
+  const record = executionContext.validated.flows.find(
+    (candidate) => candidate.flow.id === entry.flow,
+  );
+  const flow = record?.flow;
+  if (record === undefined || flow === undefined)
+    throw new IdiomError(`unknown flow ${entry.flow} at base`);
+  const validated = { ...executionContext.validated, flows: [record] };
+  const split = (value: string | undefined) =>
+    value
+      ?.split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  const states = split(entry.scope.states)?.filter((id) =>
+    flow.states.some((state) => state.id === id),
+  );
+  const viewports = split(entry.scope.viewports)?.filter((name) =>
+    validated.project.viewports.some((viewport) => viewport.name === name),
+  );
+  const schemes = split(entry.scope.schemes)?.filter((scheme) =>
+    validated.project.colorSchemes.includes(scheme as ColorScheme),
+  );
+  if (states?.length === 0 || viewports?.length === 0 || schemes?.length === 0)
+    return undefined;
+  const result = await runReview({
+    flow: entry.flow,
+    project: options.project,
+    cwd: options.cwd,
+    executionContext: { ...executionContext, validated },
+    scope: {
+      ...(states === undefined ? {} : { states: states.join(",") }),
+      ...(viewports === undefined ? {} : { viewports: viewports.join(",") }),
+      ...(schemes === undefined ? {} : { schemes: schemes.join(",") }),
+    },
+    prod: options.prod,
+    deterministicOnly: true,
+    isolatedRegistry: true,
+    ...(options.probeBudgetMs === undefined
+      ? {}
+      : { probeBudgetMs: options.probeBudgetMs }),
+    ...(options.probeDisabled ? { probeDisabled: true } : {}),
+    ...(entry.probeRegions === undefined
+      ? {}
+      : { probeRegions: entry.probeRegions }),
+    ...(leased === undefined ? {} : { leasedServer: leased }),
+    dependencies: {
+      ...options.dependencies,
+      capture: {
+        ...options.dependencies?.capture,
+        signal: executionContext.signal,
+      },
+    },
+  });
+  return buildBaselineRecord({
+    validated,
+    flow,
+    runDirectory: result.runDirectory,
+  });
+}
+
+/**
+ * Capture several flows at the base in **one** detached worktree: one
+ * dependency install and, when `leaseServer` provides one, one server for
+ * every flow. A flow whose capture throws is reported, not fatal to the
+ * others; cancellation is.
+ */
+export async function captureBaseRecords(
+  options: BaseCaptureBatchOptions,
+  worktreeDependencies?: Parameters<typeof withRefWorktree>[2],
+): Promise<BaseCaptureBatchResult> {
+  const started = performance.now();
+  const results = new Map<string, BaseCaptureResult | { error: unknown }>();
+  let serverMs = 0;
+  let servers = 0;
+  if (!options.flows.length) return { results, ms: 0, serverMs, servers };
+  await withRefWorktree(
+    {
+      ref: options.base,
+      // One flow validates as before; several validate every flow at the base.
+      flow: options.flows.length === 1 ? options.flows[0]?.flow : undefined,
+      project: options.project,
+      cwd: options.cwd,
+      dependencies: options.dependencies?.capture,
+    },
+    async (executionContext) => {
+      const lease = await options.leaseServer?.(executionContext);
+      if (lease) {
+        servers = 1;
+        serverMs = lease.server.buildMs + lease.server.startMs;
+      }
+      try {
+        for (const entry of options.flows) {
+          executionContext.signal.throwIfAborted();
+          const flowStarted = performance.now();
+          try {
+            const captured = await captureFlowAtBase(
+              executionContext,
+              options,
+              entry,
+              lease?.server,
+            );
+            results.set(entry.flow, {
+              ...(captured ?? { failedTupleKeys: [] }),
+              ms: Math.round(performance.now() - flowStarted),
+            });
+          } catch (error) {
+            if (executionContext.signal.aborted) throw error;
+            results.set(entry.flow, { error });
+          }
+        }
+      } finally {
+        await lease?.stop();
+      }
+    },
+    worktreeDependencies,
+  );
+  for (const entry of options.flows) {
+    const result = results.get(entry.flow);
+    if (
+      entry.cachePath !== undefined &&
+      result !== undefined &&
+      !("error" in result) &&
+      result.record !== undefined &&
+      result.record.tuples.length > 0
+    )
+      await writeBaseCacheRecord(entry.cachePath, entry.flow, result.record);
+  }
+  return {
+    results,
+    ms: Math.round(performance.now() - started),
+    serverMs,
+    servers,
+  };
+}
+
 /**
  * Capture the base commit in a detached worktree with its own committed
  * configuration and an owned server, deterministic checks only. It calls
@@ -392,88 +614,15 @@ export async function captureBaseRecord(
   options: BaseCaptureOptions,
 ): Promise<BaseCaptureResult> {
   const started = performance.now();
-  const captured = await withRefWorktree(
-    {
-      ref: options.base,
-      flow: options.flow,
-      project: options.project,
-      cwd: options.cwd,
-      dependencies: options.dependencies?.capture,
-    },
-    async (executionContext) => {
-      const { validated } = executionContext;
-      const flow = validated.flows[0]?.flow;
-      if (flow === undefined)
-        throw new IdiomError(`unknown flow ${options.flow} at base`);
-      const split = (value: string | undefined) =>
-        value
-          ?.split(",")
-          .map((entry) => entry.trim())
-          .filter(Boolean);
-      const states = split(options.scope.states)?.filter((id) =>
-        flow.states.some((state) => state.id === id),
-      );
-      const viewports = split(options.scope.viewports)?.filter((name) =>
-        validated.project.viewports.some((viewport) => viewport.name === name),
-      );
-      const schemes = split(options.scope.schemes)?.filter((scheme) =>
-        validated.project.colorSchemes.includes(scheme as ColorScheme),
-      );
-      if (
-        states?.length === 0 ||
-        viewports?.length === 0 ||
-        schemes?.length === 0
-      )
-        return undefined;
-      const result = await runReview({
-        flow: options.flow,
-        project: options.project,
-        cwd: options.cwd,
-        executionContext,
-        scope: {
-          ...(states === undefined ? {} : { states: states.join(",") }),
-          ...(viewports === undefined
-            ? {}
-            : { viewports: viewports.join(",") }),
-          ...(schemes === undefined ? {} : { schemes: schemes.join(",") }),
-        },
-        prod: options.prod,
-        deterministicOnly: true,
-        isolatedRegistry: true,
-        ...(options.probeBudgetMs === undefined
-          ? {}
-          : { probeBudgetMs: options.probeBudgetMs }),
-        ...(options.probeDisabled ? { probeDisabled: true } : {}),
-        ...(options.probeRegions === undefined
-          ? {}
-          : { probeRegions: options.probeRegions }),
-        dependencies: {
-          ...options.dependencies,
-          capture: {
-            ...options.dependencies?.capture,
-            signal: executionContext.signal,
-          },
-        },
-      });
-      return buildBaselineRecord({
-        validated,
-        flow,
-        runDirectory: result.runDirectory,
-      });
-    },
-  );
-  if (
-    options.cachePath !== undefined &&
-    captured !== undefined &&
-    captured.record.tuples.length > 0
-  )
-    await writeBaseCacheRecord(
-      options.cachePath,
-      options.flow,
-      captured.record,
-    );
+  const { flow, scope, probeRegions, cachePath, ...shared } = options;
+  const batch = await captureBaseRecords({
+    ...shared,
+    flows: [{ flow, scope, probeRegions, cachePath }],
+  });
+  const result = batch.results.get(flow);
+  if (result !== undefined && "error" in result) throw result.error;
   return {
-    ...(captured ?? { failedTupleKeys: [] }),
+    ...(result ?? { failedTupleKeys: [] }),
     ms: Math.round(performance.now() - started),
   };
 }

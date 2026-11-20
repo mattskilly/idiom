@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Alpha editor</title>
+    <style>
+      body { margin: 0; font-family: sans-serif; }
+      .offset-chip {
+        position: absolute; left: 40px; top: 40px; width: 60px; height: 24px;
+        border-radius: 12px; font-size: 12px; background: #eee;
+      }
+      .selection-toolbar {
+        position: absolute; left: 40px; top: 72px; width: 320px; height: 40px;
+        display: flex; gap: 4px; border-radius: 8px; font-size: 14px;
+        background: #222; color: #fff; transition: opacity 150ms;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="editor">
+      <span class="offset-chip">+3</span>
+      <div class="selection-toolbar">
+        <button class="tool">Bold</button>
+        <button class="tool">Italic</button>
+      </div>
+    </main>
+  </body>
+</html>

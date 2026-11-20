@@ -3,15 +3,19 @@ import { basename, delimiter, join } from "node:path";
 import { findProjectDirectory, resolveProjectArgument } from "../project.js";
 
 /** Single-quoted for sh. */
-const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-const xml = (value: string) =>
+export const shellQuote = (value: string) =>
+  `'${value.replaceAll("'", `'\\''`)}'`;
+const quote = shellQuote;
+export const xmlEscape = (value: string) =>
   value
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+const xml = xmlEscape;
 
-async function idiomOnPath(environment: NodeJS.ProcessEnv) {
+/** The installed `idiom` on PATH, so a scheduler runs the same binary. */
+export async function idiomOnPath(environment: NodeJS.ProcessEnv) {
   for (const directory of (environment.PATH ?? "").split(delimiter)) {
     if (directory === "") continue;
     const path = join(directory, "idiom");
@@ -74,11 +78,7 @@ export async function scheduleFor(options: {
         "\\%",
       ),
     };
-  const slug =
-    basename(root)
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9]+/g, "-")
-      .replaceAll(/^-+|-+$/g, "") || "project";
+  const slug = projectSlug(root);
   const label = `build.idiom.nightly.${slug}`;
   const plist = join(
     options.home ?? environment.HOME ?? "~",
@@ -128,4 +128,14 @@ export async function scheduleFor(options: {
     path: plist,
     install,
   };
+}
+
+/** A launchd/systemd-safe name for the project root's directory. */
+export function projectSlug(root: string): string {
+  return (
+    basename(root)
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9]+/g, "-")
+      .replaceAll(/^-+|-+$/g, "") || "project"
+  );
 }

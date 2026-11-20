@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   comparisonWithCapture,
   composeBaseRecord,
@@ -179,6 +179,100 @@ test("records not reachable from the base (a squash-merged branch) are ignored",
     `no baseline reachable from base ${BASE.slice(0, 12)}; gating open findings`,
   );
   expect(settled.warning).toContain("run idiom baseline advance site");
+});
+
+describe("a squash-merged build head in the base cache", () => {
+  const cacheHead = async (engine?: string) =>
+    writeBaseCacheRecord(
+      await baseCachePath(directory, "site", git),
+      "site",
+      record(BRANCH, [{ state: "s1" }]),
+      ...(engine === undefined ? [] : [engine]),
+    );
+
+  test("covers the base when the trees are identical", async () => {
+    diffs[BRANCH] = [];
+    await cacheHead();
+    const resolution = await resolveFor(planned("s1"));
+    expect(resolution.missing).toEqual([]);
+    expect(resolution.covering).toHaveLength(1);
+    expect(resolution.covering[0]).toMatchObject({
+      source: "base-cache",
+      record: { commit: BRANCH },
+    });
+    expect(resolution.covering[0]).not.toHaveProperty("ancestor");
+    const capture = vi.fn();
+    const settled = await settleBaseComparison({
+      resolution,
+      flow: "site",
+      configHash: currentHash,
+      capture,
+    });
+    expect(capture).not.toHaveBeenCalled();
+    expect(settled.comparison).toMatchObject({ source: "base-cache" });
+  });
+
+  test("still covers when only non-UI paths differ", async () => {
+    diffs[BRANCH] = ["src/x.ts"];
+    await cacheHead();
+    expect((await resolveFor(planned("s1"))).missing).toEqual([]);
+  });
+
+  test("does not cover when a site path differs", async () => {
+    diffs[BRANCH] = ["site/index.html"];
+    await cacheHead();
+    const resolution = await resolveFor(planned("s1"));
+    expect(resolution.missing).toEqual(planned("s1"));
+    const capture = vi.fn(async () => ({
+      record: record(BASE, [{ state: "s1" }]),
+      failedTupleKeys: [],
+      ms: 1,
+    }));
+    const settled = await settleBaseComparison({
+      resolution,
+      flow: "site",
+      configHash: currentHash,
+      capture,
+    });
+    expect(capture).toHaveBeenCalledOnce();
+    expect(settled.comparison).toMatchObject({ source: "base-capture" });
+  });
+
+  test("does not cover from a different engine", async () => {
+    await cacheHead("0.0.0+other");
+    expect((await resolveFor(planned("s1"))).missing).toEqual(planned("s1"));
+  });
+
+  test("never becomes the fallback", async () => {
+    await cacheHead();
+    const resolution = await resolveFor(planned("s2"));
+    expect(resolution.missing).toEqual(planned("s2"));
+    expect(resolution.fallback).toBeUndefined();
+  });
+
+  test("a stale-config head neither covers nor falls back", async () => {
+    await writeBaseCacheRecord(
+      await baseCachePath(directory, "site", git),
+      "site",
+      record(BRANCH, [{ state: "s1" }], `sha256:${"0".repeat(64)}`),
+    );
+    const resolution = await resolveFor(planned("s1"));
+    expect(resolution.missing).toEqual(planned("s1"));
+    expect(resolution.fallback).toBeUndefined();
+  });
+
+  test("an ancestor record stays the fallback next to a head record", async () => {
+    await cacheHead();
+    await commitBaseline(record(OLD, [{ state: "s2" }]));
+    diffs[OLD] = ["site/index.html"];
+    const resolution = await resolveFor(planned("s1", "s2"));
+    expect(resolution.missing).toEqual(planned("s2"));
+    expect(resolution.covering.map((entry) => entry.record.commit)).toEqual([
+      BRANCH,
+    ]);
+    expect(resolution.fallback?.record.commit).toBe(OLD);
+    expect(resolution.fallback).not.toHaveProperty("ancestor");
+  });
 });
 
 test("a stale-config baseline never covers but still serves as fallback", async () => {

@@ -8,6 +8,7 @@ import { sentence } from "./candidate.js";
 import { type ListedStateCapture, listStateCaptures } from "./capture.js";
 import { subjectTokens } from "./interpret.js";
 import {
+  CONFIDENT_MARGIN,
   type Confidence,
   matchScreenshot,
   type ScoredCandidate,
@@ -97,9 +98,21 @@ export type ProposedPlacement = {
   message: string;
 };
 
+/** The flow is in doubt: learn names the candidates instead of guessing. */
+export type AmbiguousPlacement = {
+  /** `flow/state` keys, or flow ids when no state is in view. */
+  candidates: string[];
+  message: string;
+};
+
 export type Placement =
-  | { matched: MatchedPlacement; proposed?: undefined }
-  | { proposed: ProposedPlacement; matched?: undefined };
+  | { matched: MatchedPlacement; proposed?: undefined; ambiguous?: undefined }
+  | { proposed: ProposedPlacement; matched?: undefined; ambiguous?: undefined }
+  | {
+      ambiguous: AmbiguousPlacement;
+      matched?: undefined;
+      proposed?: undefined;
+    };
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 
@@ -107,11 +120,33 @@ function tupleLabel(capture: ListedStateCapture): string {
   return `${capture.flow}/${capture.state} @ ${capture.viewport}${capture.colorScheme === undefined ? "" : ` (${capture.colorScheme})`}`;
 }
 
-/** The one declared state the words name, if exactly one. */
+type WordMatch =
+  | { kind: "one"; flow: FlowRecord; state: string; tokens: string[] }
+  | { kind: "tied"; candidates: Array<{ flow: FlowRecord; state: string }> };
+
+/**
+ * Equally good word matches: `tied` when they span two or more flows, else
+ * nothing (a tie inside one flow places nowhere, as before).
+ */
+function tieAcrossFlows(
+  items: Array<{ flow: FlowRecord; state: string }>,
+): WordMatch | undefined {
+  return new Set(items.map((item) => item.flow.flow.id)).size >= 2
+    ? {
+        kind: "tied",
+        candidates: items.map(({ flow, state }) => ({ flow, state })),
+      }
+    : undefined;
+}
+
+/**
+ * The one declared state the words name, if exactly one; the tied states
+ * when the best word matches sit in different flows.
+ */
 function wordMatch(
   flows: FlowRecord[],
   observation: string,
-): { flow: FlowRecord; state: string; tokens: string[] } | undefined {
+): WordMatch | undefined {
   const tokens = new Set(contentTokens(observation));
   const states = flows.flatMap((flow) =>
     flow.flow.states.map((state) => ({ flow, state })),
@@ -132,8 +167,10 @@ function wordMatch(
   const [first, second] = named;
   if (first !== undefined)
     return second === undefined || second.tokens.length < first.tokens.length
-      ? first
-      : undefined;
+      ? { kind: "one", ...first }
+      : tieAcrossFlows(
+          named.filter((item) => item.tokens.length === first.tokens.length),
+        );
   // Else the only state sharing two or more content words with its description.
   const described = states
     .map(({ flow, state }) => ({
@@ -146,7 +183,41 @@ function wordMatch(
       ],
     }))
     .filter((item) => item.tokens.length >= 2);
-  return described.length === 1 ? described[0] : undefined;
+  const [only] = described;
+  return described.length === 1 && only !== undefined
+    ? { kind: "one", ...only }
+    : tieAcrossFlows(described);
+}
+
+/** The best-ranked capture of each flow state within the margin of the top. */
+function contenders(
+  ranked: ScoredCandidate<Candidate>[],
+): ScoredCandidate<Candidate>[] {
+  const top = ranked[0];
+  if (top === undefined) return [];
+  const seen = new Set<string>();
+  return ranked.filter((scored) => {
+    if (top.similarity - scored.similarity >= CONFIDENT_MARGIN) return false;
+    if (seen.has(scored.candidate.key)) return false;
+    seen.add(scored.candidate.key);
+    return true;
+  });
+}
+
+const flowsOf = (scored: ScoredCandidate<Candidate>[]) =>
+  new Set(scored.map((item) => item.candidate.flow));
+
+function screenshotAmbiguity(
+  close: ScoredCandidate<Candidate>[],
+  matched: boolean,
+): AmbiguousPlacement {
+  const listed = close.map(
+    (item) => `${item.candidate.key} (${percent(item.similarity)})`,
+  );
+  return {
+    candidates: close.map((item) => item.candidate.key),
+    message: `The screenshot ${matched ? "matches" : "is closest to"} states in several flows: ${listed.join(", ")}; pass --flow <id> to choose.`,
+  };
 }
 
 function slug(tokens: string[]): string {
@@ -213,7 +284,7 @@ export async function proposalSlug(options: {
  * Where an observation with no named state applies: the stored capture its
  * screenshot matches, else the one state its words name, else the only
  * declared state, else a draft state the project can add. Never throws for a
- * missing state.
+ * missing state; reports ambiguity between flows instead of guessing.
  */
 export async function placeObservation(options: {
   projectDirectory: string;
@@ -254,6 +325,7 @@ export async function placeObservation(options: {
   );
 
   let nearest: ScoredCandidate<Candidate> | undefined;
+  let ranked: ScoredCandidate<Candidate>[] = [];
   let screenshotTried = false;
   const explicit = options.proposeState;
   if (options.screenshot !== undefined && explicit === undefined) {
@@ -283,6 +355,7 @@ export async function placeObservation(options: {
         label: options.screenshot,
         candidates,
       });
+      ranked = match.ranked;
       nearest = match.ranked[0];
       const flow =
         match.best === undefined
@@ -291,6 +364,38 @@ export async function placeObservation(options: {
       if (match.best !== undefined && flow !== undefined) {
         const { candidate, similarity, confidence } = match.best;
         const runnerUp = match.runnerUp;
+        const close = contenders(match.ranked);
+        if (confidence === "low" && flowsOf(close).size >= 2) {
+          // Too close to call between flows: let the words settle it.
+          const closeFlows = flowsOf(close);
+          const words = wordMatch(
+            flows.filter((record) => closeFlows.has(record.flow.id)),
+            options.observation,
+          );
+          const named =
+            words?.kind === "one"
+              ? close.find(
+                  (item) =>
+                    item.candidate.key ===
+                    `${words.flow.flow.id}/${words.state}`,
+                )
+              : undefined;
+          const namedFlow =
+            named === undefined
+              ? undefined
+              : flowById.get(named.candidate.flow);
+          if (named === undefined || namedFlow === undefined)
+            return { ambiguous: screenshotAmbiguity(close, true) };
+          return {
+            matched: {
+              flow: namedFlow,
+              state: named.candidate.state,
+              capture: named.candidate,
+              placement: placementFor(named.candidate, named.similarity, "low"),
+              message: `Matched screenshot to ${tupleLabel(named.candidate)} (run ${named.candidate.runId}), ${percent(named.similarity)} similar, low confidence; the words name ${named.candidate.key} among ${close.map((item) => `${item.candidate.key} (${percent(item.similarity)})`).join(", ")}.`,
+            },
+          };
+        }
         return {
           matched: {
             flow,
@@ -306,6 +411,17 @@ export async function placeObservation(options: {
 
   if (!screenshotTried && explicit === undefined) {
     const words = wordMatch(flows, options.observation);
+    if (words?.kind === "tied") {
+      const keys = words.candidates.map(
+        (item) => `${item.flow.flow.id}/${item.state}`,
+      );
+      return {
+        ambiguous: {
+          candidates: keys,
+          message: `The words name states in several flows: ${keys.join(", ")}; pass --flow <id> to choose.`,
+        },
+      };
+    }
     if (words !== undefined)
       return {
         matched: {
@@ -329,11 +445,36 @@ export async function placeObservation(options: {
       };
   }
 
-  // Nothing matches: a draft flow state the project can add.
-  const flow =
-    (nearest === undefined
-      ? undefined
-      : flowById.get(nearest.candidate.flow)) ?? flows[0];
+  // Nothing matches: a draft flow state the project can add, on the flow
+  // `--flow` names, the only flow, or the flow the screenshot clearly leads.
+  let flow: FlowRecord | undefined;
+  if (flows.length === 1) flow = flows[0];
+  else if (nearest !== undefined) {
+    const lead = nearest;
+    const otherFlow = ranked.find(
+      (scored) => scored.candidate.flow !== lead.candidate.flow,
+    );
+    if (
+      otherFlow === undefined ||
+      lead.similarity - otherFlow.similarity >= CONFIDENT_MARGIN
+    )
+      flow = flowById.get(lead.candidate.flow);
+  }
+  if (flow === undefined && flows.length > 1) {
+    const close = contenders(ranked);
+    if (close.length > 0 && flowsOf(close).size >= 2)
+      return { ambiguous: screenshotAmbiguity(close, false) };
+    const ids = flows.map((record) => record.flow.id);
+    return {
+      ambiguous: {
+        candidates: ids,
+        message:
+          explicit !== undefined
+            ? `The new state does not say which flow it belongs to (${ids.join(", ")}); pass --flow <id>.`
+            : `The words do not say which flow this is about (${ids.join(", ")}); pass --flow <id> or --state <id>.`,
+      },
+    };
+  }
   const flowId = flow?.flow.id ?? "unplaced";
   const proposalsDirectory = join(
     projectDirectory,

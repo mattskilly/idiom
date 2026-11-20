@@ -84,6 +84,7 @@ import {
   emitClusterTickets,
   renderClusterTicketsResult,
 } from "../tickets/emit.js";
+import type { BrokenCoverage } from "../unattended/condition.js";
 import { type ValidationResult, validateProject } from "../validation.js";
 import { deterministicFingerprintSet } from "../verify/evaluate.js";
 
@@ -138,6 +139,11 @@ export type CheckSummary = PaintedCoverageReport & {
   trend?: FlowTrend | undefined;
   /** The first development-server sign capture saw; one warning line. */
   devServer?: NonNullable<RunRecord["devServer"]> | undefined;
+  /**
+   * Captured coordinates whose declared expectation no longer matches:
+   * broken coverage, never counted as reviewed. Present only when non-empty.
+   */
+  brokenCoverage?: BrokenCoverage[] | undefined;
 };
 
 export type CheckDesignSystemQuestion = {
@@ -200,6 +206,11 @@ export type CheckOptions = {
   probeRegions?:
     | ReadonlyMap<string, import("../capture/probe.js").ProbeRegion>
     | undefined;
+  /**
+   * The build gate's leased server: already built and started, bound to its
+   * port. Capture uses it like a reused server and never stops it.
+   */
+  leasedServer?: import("../gate/server-lease.js").LeasedServer | undefined;
   inputIdentity?: string | undefined;
   gateReport?: import("../gate/types.js").GateReportSection | undefined;
   /**
@@ -382,6 +393,14 @@ export async function checkWithReview(
   });
   options.dependencies?.capture?.signal?.throwIfAborted();
   const loaded = await loadRunTuples(validated, flow, result.runDirectory);
+  const brokenCoverage: BrokenCoverage[] = loaded.tuples
+    .filter((tuple) => tuple.failure === undefined && tuple.mismatches.length)
+    .map((tuple) => ({
+      state: tuple.state,
+      viewport: tuple.viewport,
+      colorScheme: tuple.colorScheme ?? validated.project.capture.colorScheme,
+      mismatches: tuple.mismatches,
+    }));
   const completeness = captureCompleteness(
     loaded,
     validated.project.capture.colorScheme,
@@ -601,6 +620,7 @@ export async function checkWithReview(
     summary.timedOutTuples = result.scope?.deferredTuples;
   }
   if (captureFailures.length) summary.captureFailures = captureFailures;
+  if (brokenCoverage.length) summary.brokenCoverage = brokenCoverage;
   if (baselineNotRecorded) summary.baselineNotRecorded = baselineNotRecorded;
   summary.scope = result.scope;
   summary.timings = result.timings;
@@ -765,6 +785,22 @@ async function recordDigest(options: {
   }
 }
 
+/** One line per state whose declared expectation stopped matching. */
+export function brokenCoverageLines(
+  broken: readonly BrokenCoverage[] | undefined,
+): string[] {
+  const byState = new Map<string, string[]>();
+  for (const entry of broken ?? [])
+    byState.set(entry.state, [
+      ...(byState.get(entry.state) ?? []),
+      `${entry.viewport}/${entry.colorScheme}`,
+    ]);
+  return [...byState].map(
+    ([state, coordinates]) =>
+      `broken coverage: ${state} (${coordinates.join(", ")}) — expect no longer matches; not counted as reviewed`,
+  );
+}
+
 export function renderCheckSummary(
   summary: CheckSummary,
   options: {
@@ -813,6 +849,7 @@ export function renderCheckSummary(
           ),
         ]
       : []),
+    ...brokenCoverageLines(summary.brokenCoverage),
   ].join("\n");
   const notice =
     summary.baselineRecorded === undefined

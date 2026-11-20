@@ -78,7 +78,11 @@ export async function sweepCritique(options: {
   spec?: { file: string; content: string } | undefined;
   describeFailure: (error: unknown) => string;
 }): Promise<SweepCritique> {
-  const states = [...new Set(options.tuples.map((tuple) => tuple.state))];
+  // Intermediate widths are layout-only: never sent for model review.
+  const reviewable = options.tuples.filter(
+    (tuple) => tuple.intermediateWidth !== true,
+  );
+  const states = [...new Set(reviewable.map((tuple) => tuple.state))];
   const result: SweepCritique = {
     findings: [],
     decisionObservations: [],
@@ -88,7 +92,7 @@ export async function sweepCritique(options: {
     surfaces: [],
   };
   for (const state of states) {
-    const tuples = options.tuples.filter((tuple) => tuple.state === state);
+    const tuples = reviewable.filter((tuple) => tuple.state === state);
     const deterministicFindings = options.deterministicFindings.filter(
       (finding) => finding.state === state,
     );

@@ -96,6 +96,7 @@ export const skipReasons = [
   "duplicate-id",
   "ambiguous-state",
   "unknown-flow",
+  "ambiguous-flow",
 ] as const;
 export type SkipReasonCode = (typeof skipReasons)[number];
 

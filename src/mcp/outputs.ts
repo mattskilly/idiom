@@ -508,9 +508,11 @@ export const mcpOutputSchemas = {
   ),
   idiom_doctor: doctorOutput,
   idiom_baseline: output(
-    "show: recorded commits and which applies at HEAD; record: the written baseline; advance: the target tip recorded in the base cache",
+    "show: recorded commits and which applies at HEAD; record: the written baseline; advance: the target tip and, per flow, whether it advanced, was current, superseded, absent or failed",
     {
-      flow: text,
+      flow: text.optional(),
+      flows: list.optional(),
+      fetched: text.optional(),
       path: text.optional(),
       records: list.optional(),
       applied: text.nullable().optional(),
@@ -525,8 +527,10 @@ export const mcpOutputSchemas = {
       pixelCount: count.optional(),
       pixelDirectory: text.optional(),
       findingNameWarning: text.optional(),
+      stateBudgetFailures: list.optional(),
+      timing: record.optional(),
+      resumed: record.optional(),
       target: text.optional(),
-      failedTuples: z.array(text).optional(),
       cachePath: text.optional(),
     },
   ),
@@ -567,13 +571,14 @@ export const mcpOutputSchemas = {
     },
   ),
   idiom_brief_record: output(
-    "The stored brief's slug, outcome, status and Markdown path, and the question to ask the human (null when none)",
+    "The stored brief's slug, outcome, status and Markdown path, the question to ask the human (null when none), and lint warnings for criteria that cap with no floor or outcome (only when any)",
     {
       slug: text,
       outcome: text,
       status: text,
       markdownPath: text,
       ask: record.nullable(),
+      lint: z.array(record).optional(),
     },
   ),
   idiom_brief_decide: output(

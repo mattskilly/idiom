@@ -343,3 +343,189 @@ describe("lawConfigEdit", () => {
     expect(after.startsWith(`{\n  "version": 1,\n  "baseUrl"`)).toBe(true);
   });
 });
+
+describe("toolbar-layout laws", () => {
+  test("the director's two sentences compile, scoped to the toolbar", () => {
+    expect(law("The toolbar is always exactly one row.")).toEqual({
+      family: "one-row",
+      check: "toolbar-layout",
+      scope: toolbar,
+    });
+    expect(law("Every toolbar control is vertically centred.")).toEqual({
+      family: "toolbar-centring",
+      check: "toolbar-layout",
+      tolerance: 1,
+      scope: toolbar,
+    });
+    expect(law("buttons in the toolbar are centered within 2px")).toMatchObject(
+      { family: "toolbar-centring", tolerance: 2 },
+    );
+    expect(law("the toolbar never wraps")).toMatchObject({
+      family: "one-row",
+      scope: toolbar,
+    });
+    expect(law("controls never wrap in the format bar")).toMatchObject({
+      family: "one-row",
+      scope: { surface: "format bar" },
+    });
+  });
+
+  test("a surface outside the vocabulary keeps its whole phrase without a selector", () => {
+    expect(law("the selection toolbar never wraps")).toEqual({
+      family: "one-row",
+      check: "toolbar-layout",
+      scope: { surface: "selection toolbar" },
+    });
+    expect(law("controls in the selection toolbar are centred")).toEqual({
+      family: "toolbar-centring",
+      check: "toolbar-layout",
+      tolerance: 1,
+      scope: { surface: "selection toolbar" },
+    });
+  });
+
+  test("an unscoped law names what is missing; text sentences are not toolbar laws", () => {
+    expect(compileLaw("everything is one row")).toEqual({
+      notCompiled: "name the toolbar that stays on one row",
+    });
+    // Unscoped controls centred are not a toolbar law: no check, or text-centering as before.
+    expect(compileLaw("icons are vertically centred")).toBeUndefined();
+    expect(law("buttons are centered within 2px")).toEqual({
+      family: "centring",
+      check: "text-centering",
+      tolerance: 2,
+    });
+    expect(compileLaw("toolbar controls are centred within 0px")).toEqual({
+      notCompiled: "a centring tolerance must be above 0px",
+    });
+    // Labels wrapping or centred stay text sentences.
+    expect(compileLaw("Labels never wrap in toolbars")).toBeUndefined();
+    expect(law("labels in the toolbar are centred within 1px")).toMatchObject({
+      family: "centring",
+    });
+    // A share or gap sentence is not a one-row law.
+    expect(
+      law("toolbar buttons share a height within 2px on one row"),
+    ).toMatchObject({ family: "share" });
+  });
+
+  test("centring and one-row sentences about other surfaces never become toolbar scopes", () => {
+    expect(law("Buttons in the modal are centred within 2px")).toEqual({
+      family: "centring",
+      check: "text-centering",
+      tolerance: 2,
+      scope: { surface: "dialog", selector: 'dialog, [role="dialog"]' },
+    });
+    expect(law("Icons in the header are centred within 1px")).toMatchObject({
+      family: "centring",
+      check: "text-centering",
+    });
+    expect(compileLaw("Icons in the header are centred")).toBeUndefined();
+    expect(
+      compileLaw("Buttons in the dialog footer are horizontally centered"),
+    ).toBeUndefined();
+    expect(
+      compileLaw("toolbar buttons are horizontally centred"),
+    ).toBeUndefined();
+    expect(compileLaw("the menu bar doesn't wrap")).toEqual({
+      notCompiled:
+        "toolbar-layout keeps toolbars on one row, and the menu is not one; name the toolbar",
+    });
+    expect(compileLaw("the dialog is always one row")).toEqual({
+      notCompiled:
+        "toolbar-layout keeps toolbars on one row, and the dialog is not one; name the toolbar",
+    });
+  });
+
+  test("summaries name toolbar-layout and the scope", () => {
+    expect(lawSummary(law("The toolbar is always exactly one row."))).toBe(
+      'Compiles to toolbar-layout: every control sits on one row inside the toolbar ([role="toolbar"]).',
+    );
+    expect(
+      lawSummary(law("Every toolbar control is vertically centred.")),
+    ).toBe(
+      'Compiles to toolbar-layout: controls\' vertical centres sit within 1px of each other inside the toolbar ([role="toolbar"]).',
+    );
+    expect(
+      lawSummary(law("the selection toolbar never wraps"), ".selection-bar"),
+    ).toBe(
+      "Compiles to toolbar-layout: every control sits on one row inside the selection toolbar (.selection-bar).",
+    );
+  });
+
+  test("both laws on one toolbar make two scopes; a repeat is refused; a disabled check is enabled", () => {
+    const value: Record<string, unknown> = minimalProject();
+    const apply = (text: string) => {
+      const compiled = law(text);
+      const edit = lawConfigEdit(
+        value,
+        compiled,
+        text,
+        compiled.scope?.selector,
+      );
+      expect(checksConfigSchema.safeParse(value.checks).success).toBe(true);
+      return edit;
+    };
+    expect(apply("The toolbar is always exactly one row.")).toEqual({
+      check: "toolbar-layout",
+      scope: '[role="toolbar"]',
+      entry: {
+        name: "The toolbar is always exactly one row.",
+        selector: '[role="toolbar"]',
+        law: "one-row",
+      },
+      edit: {
+        kind: "append",
+        path: ["checks", "toolbarLayout", "scopes"],
+        item: {
+          name: "The toolbar is always exactly one row.",
+          selector: '[role="toolbar"]',
+          law: "one-row",
+        },
+      },
+    });
+    apply("Every toolbar control is vertically centred.");
+    expect(value.checks).toEqual({
+      toolbarLayout: {
+        scopes: [
+          {
+            name: "The toolbar is always exactly one row.",
+            selector: '[role="toolbar"]',
+            law: "one-row",
+          },
+          {
+            name: "Every toolbar control is vertically centred.",
+            selector: '[role="toolbar"]',
+            law: "centred",
+            tolerance: 1,
+          },
+        ],
+      },
+    });
+    expect(() => apply("the toolbar never wraps")).toThrow(
+      'checks.toolbarLayout.scopes already has [role="toolbar"] (one-row, "The toolbar is always exactly one row."); edit it in .idiom/project.json',
+    );
+
+    const disabled: Record<string, unknown> = {
+      ...minimalProject(),
+      checks: { toolbarLayout: { enabled: false } },
+    };
+    const compiled = law("The toolbar is always exactly one row.");
+    const { edit } = lawConfigEdit(
+      disabled,
+      compiled,
+      "One row.",
+      '[role="toolbar"]',
+    );
+    expect(edit).toEqual({
+      kind: "set",
+      path: ["checks", "toolbarLayout"],
+      value: {
+        enabled: true,
+        scopes: [
+          { name: "One row.", selector: '[role="toolbar"]', law: "one-row" },
+        ],
+      },
+    });
+  });
+});

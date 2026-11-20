@@ -1,0 +1,19 @@
+<!doctype html><meta charset="utf-8"><title>Toolbar on one row</title><style>
+*{box-sizing:border-box}
+body{margin:0;padding:32px;font:14px/1.2 system-ui,sans-serif;color:#1f2328;background:#fff}
+button{font:inherit;color:inherit;margin:0}
+[role=toolbar]{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:4px;border:1px solid #d0d7de;border-radius:8px;background:#fff;width:max-content}
+.icon{width:28px;height:28px;padding:0;border:0;background:none;display:inline-flex;align-items:center;justify-content:center}
+.icon svg{width:16px;height:16px}
+.chip{display:inline-flex;align-items:center;justify-content:space-between;gap:6px;width:72px;height:32px;padding:0 6px;border-radius:999px;background:#eef1f4;font-size:12px}
+.chip .reset{width:16px;height:16px;padding:0;border:0;background:none;line-height:1}
+.text{height:28px;width:140px;padding:0 8px;border:0;background:none}
+</style>
+<div role="toolbar" aria-label="Selection">
+<button class="icon align" aria-label="Align"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v2H2zm0 4h8v2H2zm0 4h12v2H2z"/></svg></button>
+<button class="icon" aria-label="Duplicate"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4h8v8H4z"/></svg></button>
+<button class="icon" aria-label="Lock"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 7h8v7H4zM6 4h4v3H6z"/></svg></button>
+<button class="icon" aria-label="Delete"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10v2H3zm2 3h6v7H5z"/></svg></button>
+<span class="chip"><span class="offset">↑18 ←6</span><button class="reset" aria-label="Clear offset">×</button></span>
+<button class="text">Reset position</button>
+</div>

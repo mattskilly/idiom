@@ -18,14 +18,13 @@
 // timeout only that group, by the PID this script spawned, is killed. Never
 // kill by name or pattern: parallel builds share this host.
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { arch, cpus, release, tmpdir, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { performance } from "node:perf_hooks";
 import { parseArgs } from "node:util";
 import {
   appendRun,
@@ -39,6 +38,7 @@ import {
   parseQuickSummary,
   quickCommand,
 } from "./first-run-lib.mjs";
+import { runStep, stepNote } from "./process-step.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const STEP_TIMEOUT_MS = 600_000;
@@ -67,79 +67,6 @@ const recordPath = resolve(
   repositoryRoot,
   args.record ?? join("docs", "first-run.json"),
 );
-
-/** Spawns one step in its own process group and times it. */
-function runStep(id, argv, { env, cwd, timeoutMs, onStdoutLine }) {
-  return new Promise((resolveStep) => {
-    const started = performance.now();
-    let ms;
-    let stdout = "";
-    const stderrTail = [];
-    let settled = false;
-    let timedOut = false;
-    const child = spawn(argv[0], argv.slice(1), {
-      cwd,
-      env,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {}
-    }, timeoutMs);
-    const stopClock = () => {
-      ms ??= performance.now() - started;
-    };
-    const lines = (stream, onLine) => {
-      let buffer = "";
-      stream.setEncoding("utf8");
-      stream.on("data", (chunk) => {
-        buffer += chunk;
-        const parts = buffer.split("\n");
-        buffer = parts.pop() ?? "";
-        for (const line of parts) onLine(line);
-      });
-      stream.on("end", () => {
-        if (buffer) onLine(buffer);
-      });
-    };
-    lines(child.stdout, (line) => {
-      stdout += `${line}\n`;
-      console.log(`[${id}] ${line}`);
-      if (onStdoutLine?.(line)) stopClock();
-    });
-    lines(child.stderr, (line) => {
-      console.error(`[${id}] ${line}`);
-      stderrTail.push(line);
-      if (stderrTail.length > 40) stderrTail.shift();
-    });
-    const finish = (code, error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      stopClock();
-      resolveStep({
-        ms,
-        code,
-        stdout,
-        stderrTail,
-        timedOut,
-        error: error?.message,
-      });
-    };
-    child.on("error", (error) => finish(null, error));
-    child.on("close", (code) => finish(code));
-  });
-}
-
-function stepNote(result) {
-  if (result.timedOut) return `timed out after ${STEP_TIMEOUT_MS / 1000}s`;
-  if (result.error) return result.error;
-  const tail = result.stderrTail.filter(Boolean).slice(-3).join(" | ");
-  return `exit ${result.code}${tail ? `: ${tail}` : ""}`;
-}
 
 function toolVersion(command, env) {
   const result = spawnSync(command, ["--version"], { env, encoding: "utf8" });

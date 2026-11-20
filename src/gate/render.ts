@@ -22,7 +22,10 @@ export function gatePlanLine(plan: GatePlan): string {
   const schemes = new Set(plan.tuples.map((tuple) => tuple.scheme)).size;
   const probed = plan.states.filter((state) => state.probe);
   const controls = probed.reduce((sum, state) => sum + state.probeControls, 0);
-  const scoped = probed.filter((state) => state.region !== undefined).length;
+  const scoped = probed.filter(
+    (state) =>
+      state.region !== undefined || state.surface?.probeScope !== undefined,
+  ).length;
   const probe = !probed.length
     ? "probe off"
     : `probe on ${scoped === probed.length ? "≤" : ""}${plural(controls, "control")}${scoped === 0 ? " (unscoped: no reference run)" : scoped < probed.length ? ` (${probed.length - scoped} state(s) unscoped: no reference run)` : " (changed region)"}`;
@@ -70,13 +73,29 @@ export function describeComparison(
 
 /** Every stderr line of the plan: headline, widening, skips, notes. */
 export function renderGatePlan(plan: GatePlan): string[] {
-  const states = plan.states.map(
-    (state) =>
-      `  ${state.flow}/${state.state} (${state.rank}): ${state.viewports.join(", ")} × ${state.schemes.join(", ")}${state.probe ? `; probe ${state.region ? `scoped to changes since ${state.region.runId}` : "unscoped"}` : ""}`,
-  );
+  const states = plan.states.map((state) => {
+    const probe = !state.probe
+      ? ""
+      : `; probe ${
+          [
+            ...(state.surface?.probeScope
+              ? [`scoped to ${state.surface.probeScope}`]
+              : []),
+            ...(state.region ? [`changes since ${state.region.runId}`] : []),
+          ].join(", ") || "unscoped"
+        }`;
+    const surface = state.surface
+      ? `; surface ${state.surface.status}${state.surface.matched.length ? `: ${state.surface.matched.slice(0, 4).join(" ")}` : state.surface.reason ? ` (${state.surface.reason})` : ""}`
+      : "";
+    return `  ${state.flow}/${state.state} (${state.rank}): ${state.viewports.join(", ")} × ${state.schemes.join(", ")}${surface}${probe}`;
+  });
   return [
     gatePlanLine(plan),
     `Base: ${plan.base} (${plan.baseReason})`,
+    ...(plan.surface?.identified ?? []).map(
+      (file) =>
+        `surface: ${file.path}: ${file.tokens.slice(0, 8).join(" ")}${file.tokens.length > 8 ? " …" : ""}`,
+    ),
     ...states,
     ...Object.entries(plan.comparisons ?? {}).map(([flow, comparison]) =>
       describeComparison(flow, comparison),

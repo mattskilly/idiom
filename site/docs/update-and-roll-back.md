@@ -21,7 +21,7 @@ idiom --version
 For a project dependency, pin an exact version and commit the package manifest and lockfile:
 
 ```sh
-npm install --save-dev --save-exact @mattskilly/idiom@0.23.0
+npm install --save-dev --save-exact @mattskilly/idiom@0.24.0
 npx --no-install idiom --version
 ```
 
@@ -37,7 +37,7 @@ idiom upgrade
 # For a pinned project dependency: npx --no-install idiom upgrade
 ```
 
-`--project <dir>` chooses an explicit directory. Without it, the command finds an initialized ancestor of the current directory, or uses the current directory for a new installation. In the project it upgrades Idiom skill files, pristine state and owned discovery links. With `autobuild.toml`, an interactive run also offers the default UI gate and legacy verifier rename through an exact diff and confirmation; declining leaves those destinations untouched. Noninteractive/JSON runs report availability, and dry runs write nothing. Its first step updates a global npm or bun CLI, as above; `--no-self-update` skips that step and merges the installed CLI's skills, and `--dry-run` names the CLI install it would run without running it. The optional `idiom-verify` skill participates only if already installed or recorded in pristine state; detecting `autobuild.toml` alone does not install it.
+`--project <dir>` chooses an explicit directory. Without it, the command finds an initialized ancestor of the current directory, or uses the current directory for a new installation. In the project it upgrades Idiom skill files, pristine state and owned discovery links. With `autobuild.toml`, an interactive run also offers the default UI gate and legacy verifier rename through an exact diff and confirmation; declining leaves those destinations untouched. Noninteractive/JSON runs report availability; `--yes` applies it, printing the same diffs. Dry runs write nothing. Its first step updates a global npm or bun CLI, as above; `--no-self-update` skips that step and merges the installed CLI's skills, and `--dry-run` names the CLI install it would run without running it. The optional `idiom-verify` skill participates only if already installed or recorded in pristine state; detecting `autobuild.toml` alone does not install it.
 
 The report names the installed CLI version and previous per-file versions. Legacy files with identical bytes in several releases report candidate versions; partial upgrades may report mixed versions. Each skill starts with one summary line, such as `idiom: merged (2 files)` or `idiom-verify: current`: the highest outcome among its files, in the order conflicted, merged, resolved, adopted, installed, removed, kept, current, and how many files carry it. Its files follow, indented. The outcomes are:
 

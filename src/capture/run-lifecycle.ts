@@ -87,23 +87,35 @@ export class RunLifecycle {
   }
   checkpoint(
     coordinate: RunRecord["selected"][number],
-    timing: RunRecord["timings"]["tuples"][number] | undefined,
+    /** A function is read after `commit`, so it can carry steps the commit measured. */
+    timing:
+      | RunRecord["timings"]["tuples"][number]
+      | undefined
+      | (() => RunRecord["timings"]["tuples"][number] | undefined),
     commit: () => Promise<void>,
+    options: { final?: boolean } = {},
   ): Promise<void> {
     if (this.sealed) return Promise.resolve();
     return this.enqueue(async () => {
       await commit();
+      const settled = typeof timing === "function" ? timing() : timing;
       const key = captureTupleKey(coordinate);
-      const completed = new Set(
-        this.record.completedTuples?.map(captureTupleKey),
+      const inSelectedOrder = (tuples: RunRecord["selected"] | undefined) => {
+        const keys = new Set(tuples?.map(captureTupleKey));
+        keys.add(key);
+        return this.record.selected.filter((tuple) =>
+          keys.has(captureTupleKey(tuple)),
+        );
+      };
+      this.record.completedTuples = inSelectedOrder(
+        this.record.completedTuples,
       );
-      completed.add(key);
-      this.record.completedTuples = this.record.selected.filter((tuple) =>
-        completed.has(captureTupleKey(tuple)),
-      );
-      if (timing)
+      // Only a tuple's last checkpoint holds its final evidence.
+      if (options.final === true)
+        this.record.finalTuples = inSelectedOrder(this.record.finalTuples);
+      if (settled)
         this.record.timings.tuples = this.record.timings.tuples.map((tuple) =>
-          captureTupleKey(tuple) === key ? timing : tuple,
+          captureTupleKey(tuple) === key ? settled : tuple,
         );
       this.record.updatedAt = new Date().toISOString();
       await atomicJson(
@@ -139,11 +151,27 @@ export class RunLifecycle {
         endedAt,
         status: "complete",
         completedTuples: record.selected,
+        finalTuples: record.selected,
       });
       await atomicJson(join(this.directory, "run.json"), complete);
       this.record = complete;
       this.sealed = true;
       return complete;
+    });
+  }
+  /**
+   * A run-root summary readers need beside the tuples, written as soon as it
+   * is known so an interrupted run keeps it. Completion installs the final
+   * version over it.
+   */
+  writeRunFile(
+    name: "combinations.json" | "build.json",
+    value: unknown,
+  ): Promise<void> {
+    if (this.sealed) return Promise.resolve();
+    return this.enqueue(async () => {
+      if (this.sealed) return;
+      await atomicJson(join(this.directory, name), value);
     });
   }
   interrupt(

@@ -5,6 +5,7 @@ import {
   chromium,
   type Page,
   request as playwrightRequest,
+  type Response,
   type Route,
 } from "playwright";
 import { inferredComponentInputs } from "../checks/design-components.js";
@@ -153,11 +154,25 @@ export function deterministicScreenshotOptions(project: Project) {
   };
 }
 
+/** A reference URL that did not load: `status` is the HTTP status, when there was one. */
+export class ReferenceNavigationError extends Error {
+  readonly status: number | undefined;
+  constructor(message: string, status?: number | undefined) {
+    super(message);
+    this.name = "ReferenceNavigationError";
+    this.status = status;
+  }
+}
+
 export async function captureReferenceUrl(options: {
   url: string;
   project: Project;
   viewport: Project["viewports"][number];
   launch?: (() => Promise<Browser>) | undefined;
+  /** Runs after the settle wait, before the screenshot; a throw skips the screenshot. */
+  inspect?:
+    | ((page: Page, response: Response | null) => Promise<void>)
+    | undefined;
 }): Promise<Buffer> {
   const browser = await (
     options.launch ?? (() => chromium.launch({ headless: true }))
@@ -174,12 +189,14 @@ export async function captureReferenceUrl(options: {
     const response = await page.goto(options.url);
     const status = response?.status();
     if (status === undefined || status < 200 || status >= 300)
-      throw new Error(
+      throw new ReferenceNavigationError(
         status === undefined
           ? "navigation returned no HTTP response"
           : `navigation returned HTTP ${status}`,
+        status,
       );
     await page.waitForTimeout(options.project.capture.settleMs);
+    await options.inspect?.(page, response);
     return await page.screenshot({
       ...deterministicScreenshotOptions(options.project),
       fullPage: false,
@@ -510,6 +527,7 @@ async function captureInContext(
       reuseScreenshotGeometry: tuple.reuseScreenshotGeometry,
       now: runtime.now,
       monotonicNow: runtime.monotonicNow,
+      renderedSurface: !tuple.designReference,
       observe: tuple.designReference
         ? { designComparison: true }
         : {

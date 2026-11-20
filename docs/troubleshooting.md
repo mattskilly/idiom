@@ -252,9 +252,23 @@ node --version
 
 **Cause:** Each run's report directory, `.idiom/reports/<runId>/`, exists from the run's first second. Its `run.json` says `status: "running"` and lists the planned tuples, and Idiom adds each tuple to `completedTuples` once that tuple's evidence is saved. A clean finish sets `status: "complete"`. A run stopped before that is `interrupted`; when no process remains to say so, the next command that lists runs finds the `running` record whose process is gone and marks it.
 
-**Fix:** Open `.idiom/reports/<runId>/run.json` to see how far the run got. `completedTuples` names the tuples whose screenshot, DOM and metadata are kept in their state/viewport directories, and `interruption` says why it stopped. That evidence is **unverified**: the run never reached its final source check, report or secret scan of the whole run. `check`, `review`, `decide`, `report`, baselines and MCP ignore interrupted runs, and passing one with `--from` explains that it is interrupted. Idiom cannot resume a run; capture again for a complete one. Delete interrupted run directories you no longer need.
+**Fix:** Open `.idiom/reports/<runId>/run.json` to see how far the run got. `completedTuples` names the tuples whose screenshot, DOM and metadata are kept in their state/viewport directories, and `interruption` says why it stopped. That evidence is **unverified**: the run never reached its final source check, report or secret scan of the whole run. `check`, `review`, `decide`, `report`, baselines and MCP ignore interrupted runs, and passing one with `--from` explains that it is interrupted. A plain capture cannot be resumed; capture again for a complete one. A baseline capture can: `idiom baseline record <flow> --resume` keeps the tuples whose evidence was final and captures the rest. Delete interrupted run directories you no longer need.
 
 Separately, when the first `check` would record the baseline and some tuples failed, it still reports the findings for the tuples that succeeded, lists the failed ones under `Coverage gaps`, and ends with `Baseline not recorded: 3 of 120 tuples failed (<list>). Findings for the other 117 are above.` It exits 1, even with `--fail-on never`. Fix or remove the failing states and check again to record the baseline.
+
+## A capture exceeded capture.maxMinutes
+
+**Symptom.** A capture or `baseline record` fails with `Capture exceeded capture.maxMinutes=<n>: state …, step …; slowest steps so far: …`, and the nightly check reports `baseline-missing`.
+
+**Cause.** The whole capture has one time budget. A large flow (many states, viewports and schemes, with the probe) on a busy host can run out of it near the end.
+
+**Fix:**
+
+1. Read the message: the step named after `step` was running when time ran out, and the slowest steps so far (`capture`, `probe`, `artifacts`, `secret scan`) say where the time went. `baseline record` also prints its slowest tuples on every run.
+2. Continue the capture instead of starting over: `idiom baseline record <flow> --resume` keeps every tuple the stopped run finished and captures the rest, at the same commit and configuration.
+3. If one state is the slow one, set `capture.stateMaxMinutes` so it fails alone and the rest still record.
+
+See [capture.maxMinutes](configuration.md#capture-settings) and [baselines](commands.md#check).
 
 ## Still stuck
 

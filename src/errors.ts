@@ -22,6 +22,8 @@ export type RunFailureJson = {
   hint: string;
   message: string;
   paths?: string[];
+  /** Unattended conditions; present only on an UnattendedFailure. */
+  conditions?: Array<{ key: string; cause: string; line: string }>;
 };
 
 /**
@@ -78,6 +80,49 @@ export class RunFailure extends IdiomError {
       hint: this.hint,
       message: this.headline,
       ...(this.paths === undefined ? {} : { paths: this.paths }),
+    };
+  }
+}
+
+/**
+ * An unattended run (nightly, gate, verify, watch) that hit a setup break:
+ * the app could not start, no usable baseline, or a state's expectation no
+ * longer matches. The CLI prints exactly one line per condition and exits 2.
+ */
+export class UnattendedFailure extends RunFailure {
+  readonly conditions: ReadonlyArray<{
+    key: string;
+    cause: string;
+    line: string;
+  }>;
+
+  constructor(
+    conditions: ReadonlyArray<{ key: string; cause: string; line: string }>,
+  ) {
+    const first = conditions[0];
+    super({
+      stage:
+        first?.cause === "expectation"
+          ? "capture"
+          : first?.cause === "app-start"
+            ? "server"
+            : "preflight",
+      cause: `unattended-${first?.cause ?? "condition"}`,
+      headline: first?.line ?? "unattended run could not review",
+      hint: "follow the fix on each line; idiom doctor lists open conditions",
+    });
+    this.name = "UnattendedFailure";
+    this.conditions = conditions;
+  }
+
+  override failureJson(): RunFailureJson {
+    return {
+      ...super.failureJson(),
+      conditions: this.conditions.map(({ key, cause, line }) => ({
+        key,
+        cause,
+        line,
+      })),
     };
   }
 }

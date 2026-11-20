@@ -7,7 +7,7 @@ Scripts, CI jobs and coding agents depend on Idiom's commands, flags, exit codes
 Idiom has an **interface version**, separate from the package version. It is a single integer, currently interface version 1, and it changes only when a stable surface changes incompatibly. It appears in three places:
 
 - `idiom --version` prints `<version> (<short source commit>) · interface <n>`, for example `0.17.0 (abc1234) · interface 1`. Scripts that want the package version alone should take the first word.
-- Every `--json` payload is an object whose first key is `"interfaceVersion": 1`. Only the deprecated `idiom brief list --json --array` still prints the old bare array, until 0.24.0 (see [JSON output](#json-output)).
+- Every `--json` payload is an object whose first key is `"interfaceVersion": 1`.
 - The MCP server's initialize result carries it under `capabilities.experimental.idiom.interfaceVersion`. Clients read it with their SDK's server-capabilities accessor, for example `client.getServerCapabilities()`.
 
 Pin the interface version you were built against. If it moves, read the **Interface** heading in the [changelog](../CHANGELOG.md) for that release before upgrading.
@@ -16,7 +16,7 @@ Pin the interface version you were built against. If it moves, read the **Interf
 
 Idiom is 0.x until the [1.0 gates](roadmap.md#toward-10-decided-2026-10-29) hold. During 0.x the package version alone does not signal breaking changes: a minor release such as 0.17.0 can contain one. The interface version is the promise instead. A stable surface changes incompatibly only together with an interface version bump, and every interface change is listed under an **Interface** heading in that release's changelog section.
 
-After 1.0, a breaking change to a stable surface also needs a major package release.
+After 1.0, a breaking change to a stable surface also needs a major package release. Moving from 0.x to 1.0 is covered in the [migration guide](migrating-to-1.md).
 
 ## Statuses
 
@@ -34,7 +34,7 @@ These are the rules the contract test applies (see [How the promise is enforced]
 
 **Input** (you write it, Idiom reads it: `.idiom/project.json`, flow manifests, `decisions.jsonl`, baselines, MCP tool inputs, flags). Optional properties may be added. Existing properties stay accepted with the same type or a wider one. Nothing that was optional becomes required. Enum values and variants may be added, never removed. A record type added to a shared log is additive too: see [Records a newer Idiom wrote](#records-a-newer-idiom-wrote).
 
-**Commands.** A stable command never disappears. Its existing options keep their long name and short flag, keep whether they take a value, and never become mandatory. Its positional arguments are never removed, never become required and never stop accepting several values. New options are never mandatory, and new arguments are always optional.
+**Commands.** A stable command never disappears. Its existing options, except options this page names as experimental, keep their long name and short flag, keep whether they take a value, and never become mandatory. Its positional arguments are never removed, never become required and never stop accepting several values. New options are never mandatory, and new arguments are always optional.
 
 **Not frozen**, even on stable surfaces: descriptions and help text, human-readable output and report wording, finding text, numeric bounds and patterns in schemas (limits and validation detail), default values, and the order of lists that are not ranked. Finding ranking can change between releases; it is described in [ranking](ranking.md).
 
@@ -42,55 +42,62 @@ These are the rules the contract test applies (see [How the promise is enforced]
 
 A command's status covers its flags and positional arguments. It is not a promise about its human-readable output, and its `--json` payload has its own status below. The global `--project <path>` option is stable.
 
-| Command | Status |
-| --- | --- |
-| `init` | stable |
-| `upgrade` | stable |
-| `mcp` | stable |
-| `quick` | stable |
-| `validate` | stable |
-| `doctor` | stable |
-| `capture` | stable |
-| `check` | stable |
-| `baseline` | stable |
-| `baseline record` | stable |
-| `baseline accept` | stable |
-| `baseline advance` | experimental |
-| `review` | stable |
-| `report` | stable |
-| `decide` | stable |
-| `verify` | stable |
-| `context` | stable |
-| `fix` | experimental |
-| `sweep` | experimental |
-| `coverage` | experimental |
-| `digest` | experimental |
-| `nightly` | experimental |
-| `bisect` | experimental |
-| `explore` | experimental |
-| `explore resolve` | experimental |
-| `compare` | experimental |
-| `brief` | experimental |
-| `brief triage` | experimental |
-| `brief gate` | experimental |
-| `brief plan` | experimental |
-| `brief record` | experimental |
-| `brief decide` | experimental |
-| `brief export` | experimental |
-| `brief attach` | experimental |
-| `brief list` | experimental |
-| `brief show` | experimental |
-| `ruling` | experimental |
-| `learn` | experimental |
-| `instruction` | experimental |
-| `tickets` | experimental |
-| `system` | experimental |
-| `design` | experimental |
-| `design add` | experimental |
-| `reference` | experimental |
-| `reference add` | experimental |
-| `reference list` | experimental |
-| `reference remove` | experimental |
+| Command | Status | Notes |
+| --- | --- | --- |
+| `init` | stable | — |
+| `upgrade` | stable | — |
+| `mcp` | stable | — |
+| `quick` | stable | — |
+| `validate` | stable | — |
+| `doctor` | stable | — |
+| `capture` | stable | — |
+| `check` | stable | — |
+| `baseline` | stable | — |
+| `baseline record` | stable | — |
+| `baseline accept` | stable | — |
+| `baseline advance` | stable | `--commit-file`, `--fetch` and `--wait` are experimental: the unattended-advance wiring is still changing |
+| `review` | stable | — |
+| `report` | stable | — |
+| `decide` | stable | — |
+| `verify` | stable | — |
+| `context` | stable | — |
+| `fix` | stable | — |
+| `sweep` | experimental | model sweep output and its crops are still being tuned |
+| `coverage` | experimental | route and state discovery is still changing |
+| `digest` | experimental | the summary shape is still changing |
+| `scorecard` | experimental | new; the weekly scorecard shape is still changing |
+| `escalations` | experimental | new; classification, matching thresholds and the JSON shape are still changing |
+| `nightly` | experimental | being superseded by per-merge `watch`; scheduling and filing are still changing |
+| `watch` | experimental | new; merge watching and filing are still changing |
+| `bisect` | experimental | new; range selection is still changing |
+| `explore` | experimental | opt-in design exploration, still being shaped |
+| `explore resolve` | experimental | opt-in design exploration, still being shaped |
+| `compare` | experimental | composite modes are still changing |
+| `brief` | experimental | the brief workflow and its record shape are still changing |
+| `brief triage` | experimental | the brief workflow and its record shape are still changing |
+| `brief gate` | experimental | the brief workflow and its record shape are still changing |
+| `brief lint` | experimental | the brief workflow and its record shape are still changing |
+| `brief plan` | experimental | the brief workflow and its record shape are still changing |
+| `brief research` | experimental | the brief workflow and its record shape are still changing |
+| `brief record` | experimental | the brief workflow and its record shape are still changing |
+| `brief decide` | experimental | the brief workflow and its record shape are still changing |
+| `brief export` | experimental | the brief workflow and its record shape are still changing |
+| `brief attach` | experimental | the brief workflow and its record shape are still changing |
+| `brief list` | experimental | the brief workflow and its record shape are still changing |
+| `brief show` | experimental | the brief workflow and its record shape are still changing |
+| `ruling` | stable | — |
+| `learn` | experimental | capturing, importing and replaying human-found misses is still growing |
+| `instruction` | experimental | instruction handling is still changing |
+| `tickets` | experimental | ticket filing depends on the build tool's tracker, which is still changing |
+| `system` | experimental | the evidence-derived design system view is still a preview |
+| `design` | stable | — |
+| `design add` | stable | — |
+| `reference` | stable | — |
+| `reference add` | stable | — |
+| `reference list` | stable | — |
+| `reference remove` | stable | — |
+
+An option named in Notes is experimental even on a stable command: it may change or disappear without an interface bump.
 
 The full flag reference is [commands](commands.md).
 
@@ -131,7 +138,10 @@ Every payload is an object that starts with `"interfaceVersion": 1`. The stable-
 | `coverage --states` | `coverage` | experimental |
 | `report` | `report` | experimental |
 | `digest` | `digest` | experimental |
+| `scorecard --json` | `scorecard` | experimental |
+| `escalations --json` | `escalations` | experimental |
 | `nightly` | `nightly` | experimental |
+| `watch --json` | `watch` | experimental |
 | `bisect` | `bisect` | experimental |
 | `decide --pending` | `decide` | stable-additive |
 | `decide --list` | `decide` | experimental |
@@ -143,7 +153,9 @@ Every payload is an object that starts with `"interfaceVersion": 1`. The stable-
 | `brief research` | `brief` | experimental |
 | `brief triage` | `brief triage` | experimental |
 | `brief gate` | `brief gate` | experimental |
+| `brief lint` | `brief lint` | experimental |
 | `brief plan` | `brief plan` | experimental |
+| `brief comparables` | `brief research` | experimental |
 | `brief record` | `brief record` | experimental |
 | `brief decide` | `brief decide` | experimental |
 | `brief export` | `brief export` | experimental |
@@ -169,8 +181,9 @@ The stable fields:
   - **Plan only** (`--plan-only`): `gate` with `planOnly: true`, `line` and `plan`. The contents of `plan` are experimental: its estimates, trimming and comparisons are planner detail that is still changing.
   - **Ran**: `gate` with `estimateMs`, `budgetMs`, `skippedWork[]` (`kind`, `flow`, `reason`, `estimatedMs`, and `state`, `viewport` or `scheme` when the skipped work had one) and `server` with `mode` (`reused`, `production-reuse` or `fresh`) and `reason`. At the top level: `decisionNeeded[]` (the pending questions, exactly as `decide --pending` prints them) and `decisionQuestion` (empty when there are none), both always present; then `verdict` and `timedOutTuples` when deferred, and `selection`, `checkedStates` and `checks[]` exactly as in `check --changed`.
   - Experimental in the ran form: `gate.plan` (as above), `gate.comparisons` (added in 0.22.0; its modes are still being tuned) and `gate.timing` (the timing breakdown, still changing).
+  - With `--handoff <dir>`, the skipped and ran forms add `handoff` with `dir`, `round`, `next` (`pass`, `repair`, `stop` or `skip`), `targets` (how many findings this round hands off) and `summaryPath`.
 
-`brief list --json` prints `{ interfaceVersion, briefs }` and is experimental. `briefs[]` holds each stored brief record, newest first, or `{ slug, error }` for one that cannot be read. `brief list --json --array` prints the old bare array of the same elements; it is deprecated and will be removed in 0.24.0 (see [Deprecation policy](#deprecation-policy)).
+`brief list --json` prints `{ interfaceVersion, briefs }` and is experimental. `briefs[]` holds each stored brief record, newest first, or `{ slug, error }` for one that cannot be read.
 
 ## MCP
 
@@ -336,16 +349,16 @@ Deprecated: <surface> will be removed in <release>; use <replacement> instead. S
 
 It prints at most once per process for each surface. Set `IDIOM_NO_DEPRECATION_WARNINGS` to any non-empty value other than `0` to silence every deprecation warning; the deprecated surface still works.
 
-Deprecated now:
+Deprecated now: none.
 
-- `idiom brief list --json --array`, the old bare-array shape of `brief list --json`. Use `idiom brief list --json` and read `.briefs`. Removed in 0.24.0. Moving `brief list --json` to an object needed no interface version bump because the payload is experimental.
+Removed in 0.24.0: `idiom brief list --json --array` (deprecated in 0.23.0), the old bare-array shape of `brief list --json`. Use `idiom brief list --json` and read `.briefs`. Moving `brief list --json` to an object needed no interface version bump because the payload is experimental.
 
 ## How the promise is enforced
 
 This section is for contributors.
 
 - `INTERFACE_VERSION` and the exit codes are defined once, in `src/interface/version.ts`. Every `--json` emitter goes through its `jsonPayload` helper, and a source guard test fails on a pretty-printed `JSON.stringify` written straight to stdout.
-- `src/interface/surfaces.ts` records the status of every command, `--json` payload, MCP tool, MCP tool output and file. It also holds the Zod contracts for the stable-additive payloads (the ones the MCP server also uses live in `src/interface/contracts.ts`), and `bun run typecheck` fails if a payload's type stops satisfying its contract. Tests fail when a new command, `--json` flag or MCP tool has no status, and when this page's tables disagree with the registry.
+- `src/interface/surfaces.ts` records the status of every command, `--json` payload, MCP tool, MCP tool output and file, and in `experimentalOptions` the options on a stable command that are not promised yet (the snapshot marks them and the contract test does not pin them). It also holds the Zod contracts for the stable-additive payloads (the ones the MCP server also uses live in `src/interface/contracts.ts`), and `bun run typecheck` fails if a payload's type stops satisfying its contract. Tests fail when a new command, `--json` flag or MCP tool has no status, and when this page's tables disagree with the registry.
 - `src/mcp/outputs.ts` declares every MCP tool's `outputSchema`; a tool without one fails at server construction. Type ties there fail `bun run typecheck` when a typed tool result gains, loses or retypes a top-level property its schema does not match, or a nested promised field (finding detail, issue). The MCP test client validates every successful call against the advertised schema, and `test/mcp-output-schemas*.test.ts` call every tool.
 - A stable-additive MCP output's promised fields are its contract in `mcpOutputContracts` (`src/mcp/outputs.ts`). Its advertised `outputSchema` is that promised shape plus its loosely typed experimental keys, and a contract test fails unless the advertised schema keeps every promised field, required where promised, and never widens one.
 - Runtime deprecation warnings go through `warnDeprecated` in `src/interface/deprecation.ts`, which keeps them to one consistent stderr line, once per process per surface, silenced by `IDIOM_NO_DEPRECATION_WARNINGS`. Don't print a deprecation warning any other way.

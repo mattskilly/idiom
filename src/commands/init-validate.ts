@@ -144,7 +144,11 @@ export function renderInitValidate(report: InitValidateReport): string[] {
       : "validate: failed",
   ];
   if (report.doctor !== null)
-    lines.push(...renderDoctorReport(report.doctor).trimEnd().split("\n"));
+    lines.push(
+      ...renderDoctorReport(report.doctor, { noneOpenLine: false })
+        .trimEnd()
+        .split("\n"),
+    );
   lines.push("", ...renderSurfaces(report.surfaces));
   if (report.suggestions.length > 0) lines.push("", ...report.suggestions);
   if (report.ready) lines.push("ready");

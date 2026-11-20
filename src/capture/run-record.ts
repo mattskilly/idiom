@@ -24,6 +24,16 @@ const loadSchema = z
     z.number().finite().nonnegative(),
   ])
   .nullable();
+const stepMs = z.number().finite().nonnegative();
+export const tupleStepsSchema = z
+  .object({
+    capture: stepMs.optional(),
+    probe: stepMs.optional(),
+    artifacts: stepMs.optional(),
+    secretScan: stepMs.optional(),
+  })
+  .strict();
+export type TupleSteps = z.infer<typeof tupleStepsSchema>;
 export const runRecordSchema = z
   .object({
     version: z.literal(1),
@@ -40,13 +50,48 @@ export const runRecordSchema = z
     updatedAt: z.string().datetime().optional(),
     endedAt: z.string().datetime().optional(),
     completedTuples: z.array(coordinateSchema).optional(),
+    /**
+     * Tuples whose evidence is final: written by their last checkpoint, so a
+     * resumed capture can keep them. Completed tuples may still be pre-probe.
+     */
+    finalTuples: z.array(coordinateSchema).optional(),
     interruption: z
       .object({
         reason: z.enum(["signal", "process-gone", "capture-failed"]),
         signal: z.enum(["SIGINT", "SIGTERM"]).optional(),
+        /** Set when the run stopped on capture.maxMinutes. */
+        budget: z
+          .object({
+            limit: z.literal("capture.maxMinutes"),
+            step: z.string(),
+            activity: z.string(),
+            slowest: z
+              .array(
+                coordinateSchema
+                  .extend({
+                    step: z.string().min(1),
+                    ms: z.number().finite().nonnegative(),
+                  })
+                  .strict(),
+              )
+              .max(5),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),
+    /** The Idiom version that captured the run (resume refuses another). */
+    idiomVersion: z.string().min(1).optional(),
+    /** Whether the run captured a production build. */
+    production: z.boolean().optional(),
+    /** Hash of the flow's toggles, toggleRegions and toggleCap. */
+    toggleIdentity: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    /** A composed run: the interrupted run it continued, then the partial run. */
+    resumedFrom: z.array(z.string().min(1)).optional(),
     host: z
       .object({
         loadStart: loadSchema,
@@ -95,6 +140,7 @@ export const runRecordSchema = z
           width: z.number().positive(),
           height: z.number().positive(),
           touch: z.boolean().optional(),
+          intermediate: z.literal(true).optional(),
         })
         .strict(),
     ),
@@ -115,7 +161,13 @@ export const runRecordSchema = z
         start: phaseTimingSchema,
         tuples: z.array(
           coordinateSchema
-            .extend({ total: phaseTimingSchema, probe: phaseTimingSchema })
+            .extend({
+              total: phaseTimingSchema,
+              probe: phaseTimingSchema,
+              intermediate: z.literal(true).optional(),
+              /** Milliseconds per step of this tuple's work, summed over passes. */
+              steps: tupleStepsSchema.optional(),
+            })
             .strict(),
         ),
         probe: phaseTimingSchema,
@@ -161,6 +213,7 @@ export const runRecordSchema = z
     };
     subset(record.selected, record.declared, "selected");
     subset(record.completedTuples ?? [], record.selected, "completed");
+    subset(record.finalTuples ?? [], record.selected, "final");
     if (
       record.status !== undefined &&
       (!record.runId ||

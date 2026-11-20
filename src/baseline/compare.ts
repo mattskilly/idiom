@@ -75,6 +75,12 @@ export function compareToBaseline(options: {
   }
   const fixed: Array<BaselineFinding & { where: string }> = [];
   const uncoveredTuples: string[] = [];
+  const recordedKeys = new Set(
+    options.record.tuples.map((tuple) => tupleCoordinateKey(tuple)),
+  );
+  const coversNone =
+    options.currentTupleKeys.size > 0 &&
+    ![...options.currentTupleKeys].some((key) => recordedKeys.has(key));
   for (const tuple of options.record.tuples) {
     const key = tupleCoordinateKey(tuple);
     if (!options.currentTupleKeys.has(key)) {
@@ -90,6 +96,7 @@ export function compareToBaseline(options: {
     preExisting,
     fixed,
     uncoveredTuples: [...new Set(uncoveredTuples)].sort(),
+    ...(coversNone ? { coversNone: true as const } : {}),
     ...(options.record.configHash === options.currentConfigHash
       ? {}
       : {
@@ -204,6 +211,7 @@ export async function compareRunToBaseline(options: {
       configHash: selected.record.configHash,
       ...(comparison.stale === undefined ? {} : { stale: comparison.stale }),
       uncoveredTuples: comparison.uncoveredTuples,
+      ...(comparison.coversNone === true ? { coversNone: true as const } : {}),
       ...(options.comparison === undefined
         ? {}
         : {

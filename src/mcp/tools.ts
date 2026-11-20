@@ -24,6 +24,7 @@ import { MAX_TRIAGE_REQUEST_BYTES } from "../brief/triage.js";
 import { selectColorSchemes, selectViewports } from "../capture/resolve.js";
 import type { CaptureDependencies } from "../capture/run.js";
 import {
+  advanceFailed,
   baselineAdvanceCommand,
   baselineRecordCommand,
   renderBaselineAdvance,
@@ -42,6 +43,7 @@ import {
   renderBriefAttach,
   renderBriefDecide,
   renderBriefExport,
+  renderBriefLint,
   renderTriageRun,
   runBriefPlan,
   runBriefTriage,
@@ -1044,7 +1046,7 @@ export function registerIdiomTools(
           : []),
         ...(output.autobuild.kind === "available-noninteractive"
           ? [
-              "Autobuild detected: run idiom init interactively (CLI-only) to review and approve verification wiring.",
+              "Autobuild detected: run idiom init interactively, or idiom init --wire --yes (CLI-only), to review or apply verification wiring.",
             ]
           : []),
         ...(output.wiring?.proposals.some(
@@ -1588,7 +1590,7 @@ export function registerIdiomTools(
   );
   register(
     "idiom_baseline",
-    "Show, record or advance a flow's compact deterministic finding baseline. show reads recorded commits and which record applies at HEAD; record captures (or reuses from/latest) a clean committed HEAD and writes the baseline file — commit that file deliberately, only after intentional changes; advance captures the target branch's tip (target, default the remote HEAD or main) in its own worktree into the untracked shared base cache the build gate compares with. Never changes Git.",
+    "Show, record or advance a flow's compact deterministic finding baseline. show reads recorded commits and which record applies at HEAD; record captures (or reuses from/latest) a clean committed HEAD and writes the baseline file — commit that file deliberately, only after intentional changes; advance captures the target branch's tip (target, default the remote HEAD or main) in its own worktree into the untracked shared base cache the build gate compares with, for the given flow or every flow that needs it; a failed capture changes nothing and is reported as an error. Never changes Git.",
     z
       .strictObject({
         action: z
@@ -1606,7 +1608,7 @@ export function registerIdiomTools(
         flow: identifier
           .optional()
           .describe(
-            "Configured flow ID; optional when exactly one flow exists",
+            "Configured flow ID; optional when exactly one flow exists (advance: omit it to advance every flow that needs it)",
           ),
         from: identifier
           .optional()
@@ -1617,19 +1619,27 @@ export function registerIdiomTools(
           .describe(
             "record only: use the newest fully passing capture at HEAD",
           ),
+        resume: z
+          .boolean()
+          .default(false)
+          .describe(
+            "record only: continue the newest interrupted capture of the flow at the same commit and configuration",
+          ),
       })
       .refine(
         (args) =>
           args.action === "record" ||
-          (args.from === undefined && args.latest !== true),
-        "from and latest apply only to action record",
+          (args.from === undefined &&
+            args.latest !== true &&
+            args.resume !== true),
+        "from, latest and resume apply only to action record",
       )
       .refine(
         (args) => args.action === "advance" || args.target === undefined,
         "target applies only to action advance",
       ),
     false,
-    async ({ action, flow, from, latest, target }, execution) => {
+    async ({ action, flow, from, latest, resume, target }, execution) => {
       if (action === "advance") {
         const output = await baselineAdvanceCommand({
           flow,
@@ -1638,7 +1648,11 @@ export function registerIdiomTools(
           cwd: root,
           dependencies: review(execution),
         });
-        return result(renderBaselineAdvance(output), output);
+        const rendered = result(renderBaselineAdvance(output), output);
+        // A failed capture changed nothing, and the caller must see it.
+        return advanceFailed(output)
+          ? { ...rendered, isError: true }
+          : rendered;
       }
       if (action === "record") {
         const output = await baselineRecordCommand({
@@ -1647,6 +1661,7 @@ export function registerIdiomTools(
           cwd: root,
           from,
           latest: latest || undefined,
+          resume: resume || undefined,
           dependencies: review(execution),
         });
         return result(`${renderBaselineRecord(output)} ${commitGuidance}`, {
@@ -1826,6 +1841,7 @@ export function registerIdiomTools(
       return result(
         [
           `Recorded brief ${recorded.slug} (${recorded.outcome}, ${recorded.brief.status}) — ${recorded.markdownRelative}`,
+          ...renderBriefLint(recorded.lint),
           ...(recorded.ask === undefined
             ? []
             : ["", renderAsk(recorded.ask, recorded.slug)]),

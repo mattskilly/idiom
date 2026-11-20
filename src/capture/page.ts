@@ -25,6 +25,7 @@ import {
 } from "./loading-stuck.js";
 import { sampleMediaFrames, sampleOrphanInk } from "./media-bands.js";
 import { mergeMotion } from "./motion.js";
+import { observeRenderedSurface } from "./rendered-surface.js";
 import {
   captureScreenshot,
   fullPageSize,
@@ -90,6 +91,8 @@ export async function collectPageEvidence(options: {
   now: () => Date;
   monotonicNow?: (() => number) | undefined;
   observe?: ObserveOptions | undefined;
+  /** Record what the page rendered (classes, ids, components, sheets) for the build gate. */
+  renderedSurface?: boolean | undefined;
   /** Runs last, after console collection, on a page it may freely mutate. */
   probe?: (() => Promise<ProbeArtifact>) | undefined;
   motion?: (() => MotionArtifact | undefined) | undefined;
@@ -371,6 +374,10 @@ export async function collectPageEvidence(options: {
       classifyDocument(observations.document.contentType) === "non-html";
     if (nonHtml) axe = { violations: [] };
     await options.healthGuard?.checkpoint();
+    if (observations.version === 2 && !nonHtml && options.renderedSurface) {
+      const rendered = await observeRenderedSurface(options.page);
+      if (rendered) observations = { ...observations, rendered };
+    }
     if (observations.version === 2)
       observations = {
         ...observations,

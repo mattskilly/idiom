@@ -14,31 +14,38 @@ import {
   briefInstructionLines,
   offerBriefInstruction,
 } from "./brief/instruction.js";
+import { lintJson, renderLint } from "./brief/lint.js";
 import { devServerWarning } from "./capture/dev-server.js";
 import { parsePort } from "./capture/port.js";
 import type { CaptureDependencies } from "./capture/run.js";
 import {
   combineCheckTimings,
+  renderGateTimingLine,
   renderTimingLine,
   renderTimings,
 } from "./capture/timings.js";
 import {
+  advanceFailed,
+  advanceFailureLines,
   baselineAdvanceCommand,
   baselineRecordCommand,
   renderBaselineAdvance,
   renderBaselineRecord,
+  renderBaselineTiming,
 } from "./commands/baseline.js";
 import { bisectCommand } from "./commands/bisect.js";
 import {
-  BRIEF_LIST_ARRAY_DEPRECATION,
+  BRIEF_LIST_ARRAY_REMOVED,
   type BriefDependencies,
   briefAttachCommand,
   briefAttachJson,
+  briefComparablesCommand,
   briefDecideCommand,
   briefDecideJson,
   briefExportCommand,
   briefExportJson,
   briefGateCommand,
+  briefLintCommand,
   briefListCommand,
   briefPlanCommand,
   briefRecordCommand,
@@ -49,8 +56,10 @@ import {
   renderBriefAttach,
   renderBriefDecide,
   renderBriefExport,
+  renderBriefLint,
   renderBriefList,
   renderBriefResearch,
+  renderComparableResearch,
 } from "./commands/brief.js";
 import { captureCommand } from "./commands/capture.js";
 import { checkCommand, renderCheckSummary } from "./commands/check.js";
@@ -78,6 +87,10 @@ import {
 import { type DecideDependencies, decideCommand } from "./commands/decide.js";
 import { addDesignCommand } from "./commands/design.js";
 import { renderDoctorReport, runDoctor } from "./commands/doctor.js";
+import {
+  type EscalationsDependencies,
+  escalationsCommand,
+} from "./commands/escalations.js";
 import {
   type ExploreDependencies,
   exploreCommand,
@@ -109,6 +122,7 @@ import {
   learnReplayCommand,
   renderLearnImport,
   renderLearnReplay,
+  replayUnmeasuredMessage,
 } from "./commands/learn-import.js";
 import {
   learnCoveredCommand,
@@ -126,6 +140,7 @@ import {
 import { reportCommand } from "./commands/report.js";
 import { pageReviewCommand, reviewCommand } from "./commands/review.js";
 import { type RulingDependencies, rulingCommand } from "./commands/ruling.js";
+import { scorecardCommand } from "./commands/scorecard.js";
 import { renderSweepSummary, sweepCommand } from "./commands/sweep.js";
 import { systemCommand } from "./commands/system.js";
 import { clusterTicketsCommand, ticketsCommand } from "./commands/tickets.js";
@@ -135,6 +150,7 @@ import {
   renderUpgrade,
   upgradeCommand,
   upgradeFailed,
+  upgradeHintLine,
 } from "./commands/upgrade.js";
 import { validateCommand } from "./commands/validate.js";
 import { verifyCommand } from "./commands/verify.js";
@@ -149,14 +165,16 @@ import {
   IdiomError,
   RUN_FAILURE_EXIT_CODE,
   RunFailure,
+  UnattendedFailure,
 } from "./errors.js";
 import { severityGateEligible } from "./findings/gate.js";
+import { blockingFindings } from "./fix/handoff/blocking.js";
+import { writeHandoffRound } from "./fix/handoff/write.js";
 import { renderFixSummary } from "./fix/report.js";
 import type { FixDependencies } from "./fix/run.js";
 import type { GenerateFlow } from "./flows/generate.js";
 import { renderGatePlan } from "./gate/render.js";
 import { applyHelp } from "./help.js";
-import { warnDeprecated } from "./interface/deprecation.js";
 import { EXIT_CODES, jsonPayload } from "./interface/version.js";
 import { humanFoundLine, summarizeMisses } from "./learn/misses.js";
 import { nightlySchedule } from "./nightly/schedule.js";
@@ -188,6 +206,13 @@ import type { UpgradeDependencies } from "./skills/upgrade.js";
 import type { SystemRunDependencies } from "./system/run.js";
 import { renderClusterTicketsResult } from "./tickets/emit.js";
 import {
+  type ClearedScope,
+  type Condition,
+  ConditionsRaised,
+  conditionLine,
+} from "./unattended/condition.js";
+import { reportConditions } from "./unattended/file.js";
+import {
   checkForUpdate,
   renderUpdateNotice,
   type UpdateCheckDependencies,
@@ -197,8 +222,16 @@ import {
   type SelfUpdateDependencies,
   selfUpdate,
 } from "./update/self-update.js";
+import { validateProject } from "./validation.js";
 import type { VerifyDependencies } from "./verify/run.js";
 import { IDIOM_VERSION_DISPLAY } from "./version.js";
+import { renderWatchEvent, runWatch, WATCH_MIN_POLL_MS } from "./watch/loop.js";
+import {
+  installWatchService,
+  serviceInstallCommands,
+  uninstallWatchService,
+  watchService,
+} from "./watch/service.js";
 import { WIRING_SURFACES, type WiringDependencies } from "./wiring/types.js";
 
 export type ProgramDependencies = {
@@ -212,8 +245,24 @@ export type ProgramDependencies = {
   review?: ReviewDependencies;
   decide?: DecideDependencies;
   bisect?: import("./attribution/bisect.js").BisectDependencies;
+  /** Test seam for baseline advance: the base capture and lock timing. */
+  baselineAdvance?: {
+    capture?: typeof import("./baseline/base.js").captureBaseRecord;
+    lock?: Partial<import("./baseline/lock.js").LockOptions>;
+  };
   /** Test seam for nightly: the per-flow check, clock and environment. */
   nightly?: import("./commands/nightly.js").NightlyOptions["dependencies"];
+  /** Test seam for watch: its steps, clock, sleep and the service manager. */
+  watch?:
+    | (import("./watch/loop.js").WatchOptions["dependencies"] & {
+        platform?: NodeJS.Platform | undefined;
+        home?: string | undefined;
+        uid?: number | undefined;
+        run?: import("./watch/service.js").ServiceRun | undefined;
+      })
+    | undefined;
+  /** Test seam for escalations: the `ab` runner, environment, clock and lock. */
+  escalations?: EscalationsDependencies;
   brief?: BriefDependencies;
   explore?: ExploreDependencies;
   ruling?: RulingDependencies;
@@ -360,6 +409,22 @@ function parseNonNegativeInt(value: string): number {
 }
 
 /** `90s`, `3m`, `2m30s`, `180000ms`, or bare milliseconds; always positive. */
+// Shared by init and upgrade, so the surface ids stay one list.
+function skipWiringOption(): Option {
+  return new Option(
+    "--skip-wiring <surface>",
+    "leave one wiring surface unchanged (repeatable)",
+  )
+    .choices(WIRING_SURFACES)
+    .argParser((value: string, previous: string[] = []) => {
+      if (!(WIRING_SURFACES as readonly string[]).includes(value))
+        throw new InvalidArgumentError(
+          `Allowed choices are ${WIRING_SURFACES.join(", ")}.`,
+        );
+      return [...previous, value];
+    });
+}
+
 export function parseDuration(value: string): number {
   const trimmed = value.trim();
   let ms: number;
@@ -500,20 +565,7 @@ export function createProgram(
       "on an initialized project, only detect and wire agent files, CI, hooks and Autobuild",
     )
     .option("--dry-run", "print the wiring plan and change nothing")
-    .addOption(
-      new Option(
-        "--skip-wiring <surface>",
-        "leave one wiring surface unchanged (repeatable)",
-      )
-        .choices(WIRING_SURFACES)
-        .argParser((value: string, previous: string[] = []) => {
-          if (!(WIRING_SURFACES as readonly string[]).includes(value))
-            throw new InvalidArgumentError(
-              `Allowed choices are ${WIRING_SURFACES.join(", ")}.`,
-            );
-          return [...previous, value];
-        }),
-    )
+    .addOption(skipWiringOption())
     .option(
       "--git-hook",
       "opt in to a pre-push idiom check --gate --fail-on blocker in husky or lefthook",
@@ -521,6 +573,10 @@ export function createProgram(
     .option(
       "--nightly",
       "opt in to a scheduled idiom nightly in the generated GitHub workflow",
+    )
+    .option(
+      "--advance-baseline",
+      "opt in to a GitHub job that advances the committed baseline on every push to the default branch",
     )
     .option(
       "--design-review",
@@ -533,6 +589,7 @@ export function createProgram(
         skipWiring?: string[];
         gitHook?: boolean;
         nightly?: boolean;
+        advanceBaseline?: boolean;
         designReview?: boolean;
         yes?: boolean;
         flows?: boolean;
@@ -552,13 +609,14 @@ export function createProgram(
         local.skipWiring !== undefined ||
         local.gitHook === true ||
         local.nightly === true ||
+        local.advanceBaseline === true ||
         local.designReview === true;
       if (
         wiringFlags &&
         (local.validate === true || local.printSetupPrompt === true)
       )
         throw new IdiomError(
-          "--wire, --dry-run, --skip-wiring, --git-hook, --nightly and --design-review cannot be combined with --validate or --print-setup-prompt",
+          "--wire, --dry-run, --skip-wiring, --git-hook, --nightly, --advance-baseline and --design-review cannot be combined with --validate or --print-setup-prompt",
         );
       if (
         local.wire === true &&
@@ -641,6 +699,7 @@ export function createProgram(
           skipWiring: local.skipWiring,
           gitHook: local.gitHook,
           nightly: local.nightly,
+          advanceBaseline: local.advanceBaseline,
           designReview: local.designReview,
         },
         wiringDependencies: dependencies.wiring,
@@ -680,6 +739,11 @@ export function createProgram(
       "report proposed changes without writing or calling a model",
     )
     .option("--json", "print a structured upgrade report")
+    .option(
+      "--yes",
+      "apply every offered wiring change without prompting (prints the same diffs)",
+    )
+    .addOption(skipWiringOption())
     .action(async (_options, command: Command) => {
       const options = command.optsWithGlobals<
         SharedOptions & {
@@ -687,6 +751,8 @@ export function createProgram(
           selfUpdate: boolean;
           dryRun?: boolean;
           json?: boolean;
+          yes?: boolean;
+          skipWiring?: string[];
         }
       >();
       const cli = await selfUpdate(
@@ -729,26 +795,40 @@ export function createProgram(
             (dependencies.confirm !== undefined ||
               process.stdin.isTTY === true),
           confirm: dependencies.confirm ?? defaultConfirmation,
-          write: options.json ? undefined : writeOut,
+          // A no-op under --json: --yes prints its diffs only to people.
+          write: options.json ? () => {} : writeOut,
+          yes: options.yes,
+          skipWiring: options.skipWiring,
         },
         dependencies.upgrade,
       );
+      const skipped = new Set(options.skipWiring ?? []);
       const briefInstruction = await offerBriefInstruction({
         projectDirectory: report.projectDirectory,
         interactive:
           options.dryRun !== true &&
-          options.json !== true &&
-          (dependencies.confirm !== undefined || process.stdin.isTTY === true),
-        confirm: dependencies.confirm ?? defaultConfirmation,
+          (options.yes === true ||
+            (options.json !== true &&
+              (dependencies.confirm !== undefined ||
+                process.stdin.isTTY === true))),
+        confirm: options.yes
+          ? async () => true
+          : (dependencies.confirm ?? defaultConfirmation),
+        skip: (path) =>
+          (path === "AGENTS.md" && skipped.has("agents")) ||
+          (path === "CLAUDE.md" && skipped.has("claude")),
       });
       if (options.json)
         writeOut(jsonPayload({ ...report, cli: cli.cli, briefInstruction }));
-      else
+      else {
         writeOut(
           [renderUpgrade(report), ...briefInstructionLines(briefInstruction)]
             .filter((text) => text !== "")
             .join("\n"),
         );
+        const hint = upgradeHintLine(report, briefInstruction, options);
+        if (hint !== undefined) writeOut(hint);
+      }
       if (projectFilesRefused(report)) {
         const refused =
           report.projectFiles?.files.filter(
@@ -1053,6 +1133,10 @@ export function createProgram(
       .option("--from <runId>", "use an existing immutable capture")
       .option("--latest", "use the newest fully passing capture at HEAD")
       .option(
+        "--resume",
+        "continue the newest interrupted capture of this flow at the same commit and configuration",
+      )
+      .option(
         "--out <directory>",
         "write JSON and pixel baselines to this directory",
       )
@@ -1069,6 +1153,7 @@ export function createProgram(
             port?: number;
             from?: string;
             latest?: boolean;
+            resume?: boolean;
             json?: boolean;
             out?: string;
             isolatedRegistry?: boolean;
@@ -1090,6 +1175,7 @@ export function createProgram(
                 port: options.port,
                 from: options.from,
                 latest: options.latest,
+                resume: options.resume,
                 isolatedRegistry: options.isolatedRegistry,
                 dependencies: reviewDependencies,
               }),
@@ -1099,6 +1185,8 @@ export function createProgram(
               ? jsonPayload(result)
               : renderBaselineRecord(result),
           );
+          const timing = renderBaselineTiming(result);
+          if (options.json !== true && timing !== "") writeErr(timing);
           if ("findingNameWarning" in result)
             writeErr(result.findingNameWarning);
         },
@@ -1108,7 +1196,7 @@ export function createProgram(
   baselineCommand
     .command("advance [flow]")
     .description(
-      "capture the target branch's tip in its own worktree and record it as the base the gate compares with (shared, untracked base cache)",
+      "advance the base the gate compares with to the target branch tip, for every flow that needs it (shared, untracked base cache)",
     )
     .option(
       "--target <ref>",
@@ -1118,6 +1206,15 @@ export function createProgram(
       "--commit-file",
       "also write the committed baseline file (for a job that commits it on the target branch)",
     )
+    .option(
+      "--fetch",
+      "fetch the target's remote branch first (for a post-merge or finalize step)",
+    )
+    .option(
+      "--wait <duration>",
+      "wait this long for another advance to finish (default 30m)",
+      parseDuration,
+    )
     .option("--prod", "capture a fresh production build")
     .option("--json", "print machine-readable record metadata")
     .action(
@@ -1126,6 +1223,8 @@ export function createProgram(
         options: {
           target?: string;
           commitFile?: boolean;
+          fetch?: boolean;
+          wait?: number;
           prod?: boolean;
           json?: boolean;
         },
@@ -1137,10 +1236,13 @@ export function createProgram(
             flow,
             target: options.target,
             commitFile: options.commitFile,
+            fetch: options.fetch,
+            waitMs: options.wait,
             project: shared.project,
             cwd: dependencies.cwd,
             prod: options.prod,
             dependencies: reviewDependencies,
+            advance: dependencies.baselineAdvance,
           }),
         );
         writeOut(
@@ -1148,6 +1250,15 @@ export function createProgram(
             ? jsonPayload(result)
             : renderBaselineAdvance(result),
         );
+        if (advanceFailed(result)) {
+          // Loud: a finalize step or CI job records the non-zero exit.
+          for (const line of advanceFailureLines(result)) writeErr(line);
+          throw new CommanderError(
+            EXIT_CODES["run-failure"],
+            "idiom.baseline-advance-failed",
+            "baseline advance failed; the previous baseline is unchanged",
+          );
+        }
       },
     );
 
@@ -1486,6 +1597,10 @@ export function createProgram(
       "use a server already answering at server.readyUrl instead of starting one",
     )
     .option(
+      "--handoff <dir>",
+      "with --gate: write the fix step's ranked handoff (top three blocking findings, round number, summary) under this directory",
+    )
+    .option(
       "--changed [base]",
       "check states affected by changes since base (default: merge base with the default branch); put flow before --changed",
     )
@@ -1582,6 +1697,7 @@ export function createProgram(
           gate?: boolean;
           planOnly?: boolean;
           budget?: number;
+          handoff?: string;
           reuseServer?: boolean;
           refreshDesign?: boolean;
           probeBudget?: number;
@@ -1625,7 +1741,21 @@ export function createProgram(
           throw new IdiomError("--budget requires --gate");
         if (options.planOnly === true && options.gate !== true)
           throw new IdiomError("--plan-only requires --gate");
+        if (options.handoff !== undefined) {
+          if (options.gate !== true)
+            throw new IdiomError("--handoff requires --gate");
+          if (options.planOnly === true)
+            throw new IdiomError(
+              "--handoff cannot be combined with --plan-only; it records gate runs",
+            );
+          if (options.failOn === "never")
+            throw new IdiomError(
+              "--handoff needs a severity gate; drop --fail-on never",
+            );
+        }
         if (options.gate === true) {
+          const gateStarted = performance.now();
+          const handoffCwd = dependencies.cwd ?? process.cwd();
           const result = await withFailureJson(
             options.json,
             flow,
@@ -1655,9 +1785,28 @@ export function createProgram(
               }),
           );
           if (result.skipped) {
+            const handoff =
+              options.handoff === undefined
+                ? undefined
+                : await writeHandoffRound({
+                    dir: options.handoff,
+                    cwd: handoffCwd,
+                    projectDirectory: handoffCwd,
+                    base: result.base,
+                    failOn: options.failOn,
+                    skipLine: result.line,
+                    totalMs: performance.now() - gateStarted,
+                  });
             writeOut(
               options.json
-                ? jsonPayload(await withUpdate(gateSkipJson(result)))
+                ? jsonPayload(
+                    await withUpdate({
+                      ...gateSkipJson(result),
+                      ...(handoff === undefined
+                        ? {}
+                        : { handoff: handoff.json }),
+                    }),
+                  )
                 : result.line,
             );
             return;
@@ -1683,9 +1832,29 @@ export function createProgram(
               .filter((q) => q.kind === "reference-conflict")
               .flatMap((q) => q.findingIds ?? [q.id]),
           );
+          const handoff =
+            options.handoff === undefined
+              ? undefined
+              : await writeHandoffRound({
+                  dir: options.handoff,
+                  cwd: handoffCwd,
+                  projectDirectory: result.projectDirectory,
+                  base: output.selection.git.resolvedBase,
+                  head: output.selection.git.head,
+                  failOn: options.failOn,
+                  failOnJudged: options.failOnJudged,
+                  decisionIds,
+                  checked,
+                  totalMs: performance.now() - gateStarted,
+                });
           writeOut(
             options.json
-              ? jsonPayload(await withUpdate(gateJson))
+              ? jsonPayload(
+                  await withUpdate({
+                    ...gateJson,
+                    ...(handoff === undefined ? {} : { handoff: handoff.json }),
+                  }),
+                )
               : [
                   `idiom check --gate: checked ${output.checkedStates} state(s).`,
                   ...checked.map((entry) =>
@@ -1721,7 +1890,20 @@ export function createProgram(
           for (const entry of checked)
             if (entry.summary.timing && checked.length > 1)
               writeErr(renderTimingLine(entry.summary.timing, entry.flow));
-          writeErr(renderTimingLine(result.timing));
+          writeErr(renderGateTimingLine(result.timing));
+          // A setup break outranks findings: the gate exits 2 with its line.
+          const conditions = await reportConditions({
+            mode: "gate",
+            projectDirectory: result.projectDirectory,
+            config: result.unattended,
+            observed: result.conditions,
+            cleared: result.cleared,
+            environment: reviewDependencies.environment,
+            now: reviewDependencies.now?.(),
+          });
+          for (const message of conditions.messages) writeErr(message);
+          if (conditions.conditions.length > 0)
+            throw new UnattendedFailure(conditions.conditions);
           if (checked.some((entry) => entry.summary.baselineNotRecorded)) {
             for (const entry of checked)
               if (entry.summary.baselineNotRecorded)
@@ -1733,20 +1915,11 @@ export function createProgram(
             options.deferred,
             writeErr,
           );
-          const failing =
-            options.failOn === "never"
-              ? []
-              : checked
-                  .flatMap((entry) => entry.summary.findings)
-                  .filter(
-                    (finding) =>
-                      !decisionIds.has(finding.id) &&
-                      severityGateEligible(
-                        finding,
-                        options.failOn,
-                        options.failOnJudged,
-                      ),
-                  );
+          const failing = blockingFindings(checked, {
+            failOn: options.failOn,
+            failOnJudged: options.failOnJudged,
+            decisionIds,
+          });
           if (failing.length)
             throw new IdiomError(
               `check failed: ${failing.length} new/open finding(s) at or above ${options.failOn}`,
@@ -2131,6 +2304,98 @@ export function createProgram(
     );
 
   program
+    .command("scorecard")
+    .description(
+      "weekly: who found each UI problem first, and how many findings the director accepts",
+    )
+    .option(
+      "--since <date>",
+      "start at the ISO week containing this YYYY-MM-DD day (default: the last four weeks)",
+    )
+    .option("--weeks <n>", "how many ISO weeks to report, 1 to 52 (default 4)")
+    .option(
+      "--verbose",
+      "list every learned record and finding matched, and why",
+    )
+    .option("--json", "print the scorecard as JSON (experimental)")
+    .action(
+      async (
+        options: {
+          since?: string;
+          weeks?: string;
+          verbose?: boolean;
+          json?: boolean;
+        },
+        command: Command,
+      ) => {
+        const shared = command.optsWithGlobals<SharedOptions>();
+        const result = await scorecardCommand({
+          project: shared.project,
+          cwd: dependencies.cwd,
+          since: options.since,
+          weeks: options.weeks,
+          verbose: options.verbose,
+          now: reviewDependencies.now?.(),
+        });
+        for (const warning of result.warnings) writeErr(`warning: ${warning}`);
+        writeOut(
+          options.json === true ? jsonPayload(result.card) : result.text,
+        );
+      },
+    );
+
+  program
+    .command("escalations")
+    .description(
+      "answer Autobuild design escalations that a ruling, decision or learned law already settles",
+    )
+    .option(
+      "--answer",
+      "answer each escalation precedent settles through ab answer (default: list only)",
+    )
+    .option("--history", "list every escalation Idiom answered, newest first")
+    .option("--json", "print the result as JSON (experimental)")
+    .action(
+      async (
+        options: { answer?: boolean; history?: boolean; json?: boolean },
+        command: Command,
+      ) => {
+        const shared = command.optsWithGlobals<SharedOptions>();
+        const seam = dependencies.escalations ?? {};
+        const result = await escalationsCommand({
+          project: shared.project,
+          cwd: dependencies.cwd,
+          answer: options.answer,
+          history: options.history,
+          dependencies: {
+            ...seam,
+            environment:
+              seam.environment ?? reviewDependencies.environment ?? process.env,
+            now: seam.now ?? reviewDependencies.now,
+          },
+        });
+        if (result.kind === "history") {
+          writeOut(
+            options.json === true
+              ? jsonPayload({ history: result.history })
+              : result.text,
+          );
+          return;
+        }
+        for (const warning of result.warnings) writeErr(`warning: ${warning}`);
+        writeOut(
+          options.json === true
+            ? jsonPayload({
+                escalations: result.pass.items,
+                answered: result.pass.answered,
+                warnings: result.warnings,
+              })
+            : result.text,
+        );
+      },
+    );
+
+  program
     .command("nightly")
     .description(
       "check every flow against its baseline and file new findings as triage tickets",
@@ -2235,7 +2500,11 @@ export function createProgram(
         writeOut(
           options.json === true ? jsonPayload(result) : renderNightly(result),
         );
-        // Exit: 2 a flow could not run, 3 deferred, 1 a filing failed, else 0.
+        for (const message of result.conditionMessages) writeErr(message);
+        // Exit: 2 a setup break or a flow could not run, 3 deferred, 1 a
+        // filing failed, else 0.
+        if (result.conditions.length > 0)
+          throw new UnattendedFailure(result.conditions);
         const failed = result.flows.filter((flow) => flow.status === "failed");
         const first = failed[0]?.error;
         if (first !== undefined)
@@ -2257,6 +2526,180 @@ export function createProgram(
           throw new IdiomError(
             `nightly: ${errors} filing(s) failed; what did file is in the ledger, and the next run retries the rest`,
           );
+      },
+    );
+
+  program
+    .command("watch")
+    .description(
+      "run the gate on every merge to the base branch, file regressions into triage and advance the baseline",
+    )
+    .option(
+      "--target <ref>",
+      "the branch to watch (default: the remote HEAD, else main or master)",
+    )
+    .option(
+      "--since <ref>",
+      "first start only: process every merge after this commit instead of starting at the tip",
+    )
+    .option(
+      "--poll <duration>",
+      "how often to look for new merges, at least 5s (default 60s)",
+      parseDuration,
+    )
+    .option("--once", "process the pending merges, then exit")
+    .addOption(
+      new Option(
+        "--severity <severity>",
+        "file findings at or above this severity (default nightly.severity, then major)",
+      ).choices(["blocker", "major", "minor"]),
+    )
+    .option(
+      "--label <name>",
+      "ticket label, repeatable (default nightly.labels, then idiom); each finding's category is added",
+      (value: string, previous: string[] = []) => [...previous, value],
+    )
+    .addOption(
+      new Option(
+        "--tracker <tracker>",
+        "where tickets go: autobuild triage via ab, a proposal directory, or auto (autobuild when available)",
+      )
+        .choices(["auto", "autobuild", "directory"])
+        .default("auto"),
+    )
+    .option(
+      "--out <dir>",
+      "proposal directory without autobuild (default nightly.out, then .idiom/reports/nightly)",
+    )
+    .option("--json", "log each event as a JSON line")
+    .option(
+      "--install-service",
+      "install and start idiom watch as a login service (launchd on macOS, systemd on Linux)",
+    )
+    .option("--uninstall-service", "stop the login service and remove it")
+    .option(
+      "--print-service",
+      "print the login service definition without installing it",
+    )
+    .action(
+      async (
+        options: {
+          target?: string;
+          since?: string;
+          poll?: number;
+          once?: boolean;
+          severity?: "blocker" | "major" | "minor";
+          label?: string[];
+          tracker: "auto" | "autobuild" | "directory";
+          out?: string;
+          json?: boolean;
+          installService?: boolean;
+          uninstallService?: boolean;
+          printService?: boolean;
+        },
+        command: Command,
+      ) => {
+        const shared = command.optsWithGlobals<SharedOptions>();
+        const seam = dependencies.watch ?? {};
+        const environment =
+          seam.environment ?? reviewDependencies.environment ?? process.env;
+        if (options.poll !== undefined && options.poll < WATCH_MIN_POLL_MS)
+          throw new IdiomError("--poll must be at least 5s");
+        const service = [
+          options.installService && "--install-service",
+          options.uninstallService && "--uninstall-service",
+          options.printService && "--print-service",
+        ].filter((flag): flag is string => typeof flag === "string");
+        if (service.length > 1 || (service.length === 1 && options.once))
+          throw new IdiomError(
+            `${[...service, ...(options.once ? ["--once"] : [])].join(", ")} cannot be combined`,
+          );
+        if (service.length === 1) {
+          const root = await findProjectDirectory(
+            resolveProjectArgument(shared.project, dependencies.cwd),
+          );
+          const args = [
+            ...(options.target === undefined
+              ? []
+              : ["--target", options.target]),
+            ...(command.getOptionValueSource("tracker") === "cli"
+              ? ["--tracker", options.tracker]
+              : []),
+            ...(options.severity === undefined
+              ? []
+              : ["--severity", options.severity]),
+            ...(options.label ?? []).flatMap((label) => ["--label", label]),
+            ...(options.poll === undefined
+              ? []
+              : ["--poll", `${options.poll}ms`]),
+          ];
+          const definition = await watchService({
+            platform: seam.platform ?? process.platform,
+            root,
+            args,
+            environment,
+            home: seam.home,
+          });
+          const uid = seam.uid ?? process.getuid?.() ?? 0;
+          if (options.printService) {
+            writeOut(
+              options.json === true
+                ? jsonPayload({
+                    ...definition,
+                    install: serviceInstallCommands(definition, uid),
+                  })
+                : [
+                    `# ${definition.path}`,
+                    definition.text.trimEnd(),
+                    "",
+                    "# install with: idiom watch --install-service",
+                    ...serviceInstallCommands(definition, uid).map(
+                      (line) => `#   or by hand: ${line}`,
+                    ),
+                  ].join("\n"),
+            );
+            return;
+          }
+          const action = options.installService
+            ? await installWatchService(definition, { uid, run: seam.run })
+            : await uninstallWatchService(definition, { uid, run: seam.run });
+          writeOut(
+            options.json === true
+              ? jsonPayload(action)
+              : options.installService
+                ? `Installed ${definition.kind} service ${definition.name} at ${definition.path}; it is running now and starts at login. Log: ${definition.log}. Stop and remove it with idiom watch --uninstall-service.`
+                : `Stopped and removed ${definition.kind} service ${definition.name} (${definition.path}).`,
+          );
+          return;
+        }
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        process.on("SIGTERM", abort);
+        process.on("SIGINT", abort);
+        try {
+          await runWatch({
+            project: shared.project,
+            cwd: dependencies.cwd,
+            target: options.target,
+            since: options.since,
+            pollMs: options.poll,
+            once: options.once,
+            signal: controller.signal,
+            severity: options.severity,
+            labels: options.label,
+            tracker: options.tracker,
+            out: options.out,
+            log: (event) => writeOut(renderWatchEvent(event, options.json)),
+            dependencies: {
+              ...seam,
+              environment,
+              review: { ...reviewDependencies, ...seam.review },
+            },
+          });
+        } finally {
+          process.off("SIGTERM", abort);
+          process.off("SIGINT", abort);
+        }
       },
     );
 
@@ -2422,7 +2865,34 @@ export function createProgram(
         command: Command,
       ) => {
         const shared = command.optsWithGlobals<SharedOptions>();
+        // The verify step runs unattended: setup breaks are conditions.
+        const report = async (
+          observed: Condition[],
+          cleared: ClearedScope[],
+        ) => {
+          const validated = await validateProject({
+            project: shared.project,
+            cwd: dependencies.cwd,
+          }).catch(() => undefined);
+          if (validated === undefined) return [];
+          const reported = await reportConditions({
+            mode: "verify",
+            projectDirectory:
+              validated.stateProjectDirectory ?? validated.projectDirectory,
+            config: validated.project.unattended,
+            observed,
+            cleared,
+            environment: reviewDependencies.environment,
+            now: reviewDependencies.now?.(),
+          });
+          for (const message of reported.messages) writeErr(message);
+          return reported.conditions;
+        };
+        let cleared: ClearedScope[] = [];
         const result = await verifyCommand({
+          onCleared: (scopes) => {
+            cleared = scopes;
+          },
           flow,
           spec: options.spec,
           project: shared.project,
@@ -2439,7 +2909,20 @@ export function createProgram(
               },
             },
           },
+        }).catch(async (error: unknown) => {
+          if (!(error instanceof ConditionsRaised)) throw error;
+          const conditions = await report(error.conditions, error.cleared);
+          throw new UnattendedFailure(
+            conditions.length > 0
+              ? conditions
+              : error.conditions.map((condition) => ({
+                  key: condition.key,
+                  cause: condition.cause,
+                  line: conditionLine(condition),
+                })),
+          );
         });
+        if (cleared.length > 0) await report([], cleared);
         writeOut(
           `Verified ${flow}: ${result.outcome} (${result.findingCount} finding(s)) — ${result.reportPath}`,
         );
@@ -2751,6 +3234,7 @@ export function createProgram(
             `Warning: brief research used fallback provider ${fallback.to} after ${fallback.from} failed: ${fallback.reason}`,
           ),
         onProgress: (message) => writeErr(message),
+        onWarning: writeErr,
         dependencies: dependencies.brief,
       });
       writeOut(renderBriefResearch(result, flags.json === true));
@@ -2792,6 +3276,38 @@ export function createProgram(
     );
 
   brief
+    .command("research")
+    .description(
+      "pick two or three comparable products, capture their equivalent public screens as references, and propose measured criteria",
+    )
+    .argument("<request>", "the request text")
+    .option(
+      "--viewport <name>",
+      "project viewport to capture at (default: the first)",
+    )
+    .option(
+      "--json",
+      "print { request, terms, comparables, criteria, warnings } as JSON",
+    )
+    .action(
+      async (
+        request: string,
+        options: { viewport?: string },
+        command: Command,
+      ) => {
+        const shared = briefFlags(command, "research");
+        const result = await briefComparablesCommand({
+          project: shared.project,
+          cwd: dependencies.cwd,
+          request,
+          viewport: options.viewport,
+          dependencies: dependencies.brief,
+        });
+        writeOut(renderComparableResearch(result, shared.json === true));
+      },
+    );
+
+  brief
     .command("gate")
     .description(
       "warn when a ticket holds a design decision without a decided brief (exit 0 unless --strict)",
@@ -2825,6 +3341,40 @@ export function createProgram(
         if (options.strict === true && result.warnings > 0)
           throw new IdiomError(
             `brief gate: ${result.warnings} ticket(s) need a decided brief`,
+          );
+      },
+    );
+
+  brief
+    .command("lint")
+    .description(
+      "warn when an acceptance criterion caps a size, time, count or length with no floor or outcome (exit 0 unless --strict)",
+    )
+    .argument("<files...>", "ticket or spec Markdown files to check")
+    .option("--strict", "exit 1 when any criterion needs a floor or outcome")
+    .option("--json", "print { strict, warnings, files } as JSON")
+    .action(
+      async (
+        files: string[],
+        options: { strict?: boolean },
+        command: Command,
+      ) => {
+        const shared = briefFlags(command, "lint");
+        const result = await briefLintCommand({
+          project: shared.project,
+          cwd: dependencies.cwd,
+          files,
+          strict: options.strict,
+          onWarning: writeErr,
+        });
+        if (shared.json === true) writeOut(jsonPayload(lintJson(result)));
+        else {
+          const rendered = renderLint(result);
+          if (rendered !== "") writeOut(rendered);
+        }
+        if (options.strict === true && result.warnings > 0)
+          throw new IdiomError(
+            `brief lint: ${result.warnings} criterion warning(s) need a floor or outcome`,
           );
       },
     );
@@ -2887,6 +3437,7 @@ export function createProgram(
         cwd: dependencies.cwd,
         file,
         dependencies: dependencies.brief,
+        onWarning: writeErr,
       });
       if (shared.json === true) {
         writeOut(jsonPayload(briefRecordJson(recorded)));
@@ -2895,6 +3446,7 @@ export function createProgram(
       writeOut(
         [
           `Recorded brief ${recorded.slug} (${recorded.outcome}, ${recorded.brief.status}) — ${recorded.markdownRelative}`,
+          ...renderBriefLint(recorded.lint),
           ...(recorded.ask === undefined
             ? recorded.brief.decidedBy === undefined
               ? []
@@ -2940,14 +3492,19 @@ export function createProgram(
     .command("list")
     .description("list stored decision briefs, newest first")
     .option("--json", "print the stored briefs as JSON")
-    .option(
-      "--array",
-      "with --json, print the old bare array (deprecated; removed in 0.24.0)",
-    )
-    .action(async (options: { array?: boolean }, command: Command) => {
+    // The removed --array flag names its replacement instead of commander's
+    // generic unknown-option error; exitOverride keeps the failure inside run().
+    .exitOverride()
+    .configureOutput({
+      outputError: (message, write) =>
+        write(
+          /^error: unknown option '--array(=[^']*)?'/.test(message)
+            ? `Error: ${BRIEF_LIST_ARRAY_REMOVED}\n`
+            : message,
+        ),
+    })
+    .action(async (_options, command: Command) => {
       const shared = briefFlags(command, "list");
-      if (options.array === true && shared.json !== true)
-        throw new IdiomError("--array applies only with --json");
       const entries = await briefListCommand({
         project: shared.project,
         cwd: dependencies.cwd,
@@ -2959,12 +3516,6 @@ export function createProgram(
       const briefs = entries.map((entry) =>
         "error" in entry ? entry : entry.brief,
       );
-      if (options.array === true) {
-        // Deprecated old shape, kept for one release via --array.
-        warnDeprecated(BRIEF_LIST_ARRAY_DEPRECATION, writeErr);
-        writeOut(JSON.stringify(briefs, null, 2));
-        return;
-      }
       writeOut(jsonPayload({ briefs }));
     });
 
@@ -3173,7 +3724,7 @@ export function createProgram(
     )
     .option(
       "--replay <name|file>",
-      "report how many of an import's misses the latest checks catch",
+      "report how many of an import's misses the latest checks catch, miss, or cannot measure",
     )
     .option(
       "--json",
@@ -3301,6 +3852,8 @@ export function createProgram(
           writeOut(
             options.json ? jsonPayload(result) : renderLearnReplay(result),
           );
+          if (result.measured === 0)
+            throw new IdiomError(replayUnmeasuredMessage(result));
           return;
         }
         if (options.list) {
@@ -3620,6 +4173,11 @@ export async function run(
           return EXIT_CODES["decision-needed"];
         if (error instanceof PartialCheckFailure) return EXIT_CODES.failed;
         if (error instanceof DeferredCheck) return EXIT_CODES.deferred;
+        if (error instanceof UnattendedFailure) {
+          // One actionable line per condition, and nothing else.
+          for (const condition of error.conditions) writeErr(condition.line);
+          return RUN_FAILURE_EXIT_CODE;
+        }
         if (error instanceof RunFailure) {
           // The headline is the first line a wrapper or CI log reads.
           writeErr(error.message);

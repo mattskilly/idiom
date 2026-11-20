@@ -13,6 +13,7 @@ import { type GitRead, readGit } from "../changed/git.js";
 import { IdiomError } from "../errors.js";
 import { IDIOM_BUILD_COMMIT, IDIOM_VERSION } from "../version.js";
 import { tupleCoordinateKey } from "./coordinate.js";
+import { withFileLock } from "./lock.js";
 import { type BaselineRecord, baselineRecordSchema } from "./schema.js";
 import { MAX_RECORDS } from "./store.js";
 
@@ -34,9 +35,25 @@ const baseCacheFileSchema = z
 export type BaseCacheRecord = z.infer<typeof baseCacheRecordSchema>;
 export type BaseCacheFile = z.infer<typeof baseCacheFileSchema>;
 
-/** Check code differs between Idiom builds; a record never crosses them. */
+/**
+ * Set at build time only by this repository's out-of-tree self-gate build
+ * (scripts/idiom-local.mjs): a fingerprint of the capture and check source.
+ * Release and development builds leave it empty.
+ */
+declare const __IDIOM_ENGINE_IDENTITY__: string | undefined;
+
+/**
+ * Check code differs between Idiom builds; a record never crosses them. An
+ * installed CLI is keyed by version + build commit; the out-of-tree self-gate
+ * build is keyed by a source fingerprint of the code that produces a record,
+ * so builds with identical check and capture code share base records.
+ */
 export function engineIdentity(): string {
-  return `${IDIOM_VERSION}+${IDIOM_BUILD_COMMIT}`;
+  const pinned =
+    typeof __IDIOM_ENGINE_IDENTITY__ === "string"
+      ? __IDIOM_ENGINE_IDENTITY__
+      : "";
+  return pinned || `${IDIOM_VERSION}+${IDIOM_BUILD_COMMIT}`;
 }
 
 export async function baseCachePath(
@@ -46,6 +63,26 @@ export async function baseCachePath(
 ): Promise<string> {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(flow))
     throw new IdiomError(`invalid baseline flow: ${flow}`);
+  return join(await baseCacheDirectory(projectDirectory, git), `${flow}.json`);
+}
+
+/** The project's base-cache directory, shared by every worktree. */
+export async function baseCacheDirectory(
+  projectDirectory: string,
+  git: GitRead = readGit,
+): Promise<string> {
+  return commonStateDirectory(projectDirectory, "base-cache", git);
+}
+
+/**
+ * `<git common dir>/idiom/<area>/<key>`: per-project state shared by every
+ * worktree of a checkout, never tracked and never dirtying a tree.
+ */
+export async function commonStateDirectory(
+  projectDirectory: string,
+  area: string,
+  git: GitRead = readGit,
+): Promise<string> {
   const common = resolve(
     projectDirectory,
     (await git(projectDirectory, ["rev-parse", "--git-common-dir"])).trim(),
@@ -59,7 +96,7 @@ export async function baseCachePath(
     .split(sep)
     .join("/");
   const key = createHash("sha256").update(local).digest("hex").slice(0, 12);
-  return join(common, "idiom", "base-cache", key, `${flow}.json`);
+  return join(common, "idiom", area, key);
 }
 
 /** Tolerant: an unreadable or invalid cache is empty, never a failure. */
@@ -79,13 +116,34 @@ export async function readBaseCache(
 
 /**
  * Merge a record into the cache: builds that capture different tuples at the
- * same base add to one record keyed by (commit, configHash, engine).
+ * same base add to one record keyed by (commit, configHash, engine). The
+ * read-merge-write holds a short per-file lock, so a gate's base capture and
+ * a baseline advance on one host never drop each other's record.
  */
 export async function writeBaseCacheRecord(
   path: string,
   flow: string,
   record: BaselineRecord,
   engine: string = engineIdentity(),
+): Promise<BaseCacheRecord> {
+  await mkdir(dirname(path), { recursive: true });
+  return withFileLock(
+    `${path}.lock`,
+    {
+      waitMs: 15_000,
+      staleMs: 60_000,
+      pollMs: 50,
+      describe: "base cache write",
+    },
+    () => mergeBaseCacheRecord(path, flow, record, engine),
+  );
+}
+
+async function mergeBaseCacheRecord(
+  path: string,
+  flow: string,
+  record: BaselineRecord,
+  engine: string,
 ): Promise<BaseCacheRecord> {
   const existing = await readBaseCache(path, flow);
   const same = (item: BaseCacheRecord) =>

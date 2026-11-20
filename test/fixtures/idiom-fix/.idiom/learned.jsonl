@@ -1,0 +1,1 @@
+{"version":1,"id":"learned-1","recordedAt":"2026-11-14T12:00:00.000Z","flow":"orders","state":"list","observation":"Buttons in a toolbar keep at least 8px apart.","kind":"observation","target":{"file":".idiom/rules.json"},"entry":null,"import":{"name":"director-catches","source":"catches.md","row":"1","line":3,"checks":["adjacent-gap"]}}

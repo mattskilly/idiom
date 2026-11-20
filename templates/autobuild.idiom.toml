@@ -8,6 +8,22 @@ skill = "idiom-verify"
 # No paths: the gate detects UI changes itself. Busy hosts warn; run errors fail.
 # Optional finding verification is offered separately for Idiom-originated tickets.
 
+# Fix step (optional, offered by idiom init and idiom upgrade): swap the one
+# line above to
+#   skill = "idiom-fix"  # fixes up to 3 new major findings per round, 3 rounds
+# Same command, step name and order. The step runs the gate on the build's
+# change; a build that touches no UI skips it in under a second. On new major
+# findings it edits the application source for the top three, re-runs the gate
+# (at most three repair rounds), and commits what verifies. Autobuild certifies
+# the head it verified, so a step that committed fixes fails with a "fixed
+# in-build" report: the build returns to implement, which keeps the commits,
+# and the next verify cycle's gate is clean and passes. Findings it cannot fix
+# fail the step with a short summary that becomes the escalation text; the full
+# transcript and crops attach to the PR. Four gate runs fit the default session
+# hour; for slow gates raise it with
+#   [roles.idiom-check]
+#   sessionBudgetSeconds = 5400
+
 # For authorized repairs by the implementing caller:
 # Fix the top three findings in rank order (function before appearance), re-run, and stop after three rounds, reporting what remains.
 # One round is one repair batch followed by one check; the initial check is not a repair round. Stop earlier when nothing remains. Repair only within the caller's authorization; remaining blocking findings still withhold completion and do not permit suppressions.
@@ -43,3 +59,10 @@ skill = "idiom-verify"
 # It is not a [verify] step: a check step runs in the build worktree with no
 # agent session, where the gitignored ticket file is absent, and after dispatch.
 # Add --strict to make it fail once the team trusts triage.
+
+# Criteria lint: in the same grooming pass, flag acceptance criteria that cap a
+# size, time, count or length with no floor or outcome (deterministic, no model):
+#   find .autobuild/tickets/triage .autobuild/tickets/ready -name '*.md' -exec idiom brief lint {} +
+# In plan-review, run idiom brief lint .ab/spec.md after ab context and raise
+# each warning as a finding. Like the gate, it is not a [verify] step: a check
+# step runs after implementation, too late to change the criteria.

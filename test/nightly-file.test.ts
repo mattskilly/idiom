@@ -709,9 +709,12 @@ test("nightly with autobuild: config labels, --label, triage resolution, no tria
   expect(out).toContain(
     "Filing at major and above to autobuild triage (Inbox)",
   );
-  expect(err).toContain(
-    "nightly: 1 flow(s) not checked: booking (baseline-missing)",
+  // A missing baseline is an unattended condition: one actionable line.
+  expect(err).toMatch(
+    /^idiom nightly: baseline: booking: no recorded baseline .* — fix: idiom baseline record booking on a clean main and commit \.idiom\/baselines$/m,
   );
+  expect(err).not.toContain("flow(s) not checked");
+  expect(out).toMatch(/condition baseline:booking: (filed|updated|unchanged) /);
 
   // No triage-role state: refused before any check or create.
   const bare = await fakeAb([{ name: "ready", roles: ["create", "ready"] }]);

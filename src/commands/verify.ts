@@ -14,6 +14,7 @@ export async function verifyCommand(options: {
   refreshDesign?: boolean | undefined;
   fullFlow?: boolean | undefined;
   dependencies?: VerifyDependencies | undefined;
+  onCleared?: Parameters<typeof runVerify>[0]["onCleared"];
 }): Promise<VerifyRunResult> {
   return runVerify(options);
 }

@@ -146,7 +146,60 @@ test("negative spacing judges interface text by default and follows scope, inclu
     }),
   );
   expect(widened).toContainEqual(["idiom:negative-spacing", "p.story"]);
-  expect(widened).toContainEqual(["idiom:negative-spacing", "h2.title"]);
+  // The heading is display-size (24px) tracking within -0.03em: exempt.
+  expect(widened).not.toContainEqual(["idiom:negative-spacing", "h2.title"]);
+});
+
+test("negative letter-spacing on display-size text within the tracking range is not reported", async () => {
+  const expected = [
+    ["idiom:negative-spacing", "a.display-over"],
+    ["idiom:negative-spacing", "a.display-words"],
+    ["idiom:negative-spacing", "a.mini"],
+    ["idiom:negative-spacing", "a.small-tight"],
+    ["idiom:negative-spacing", "label.label-tight"],
+  ];
+  for (const viewport of [desktop, mobile])
+    expect(
+      summary(await review("negative-spacing-display", { viewport })),
+      `at ${viewport.width}`,
+    ).toEqual(expected);
+  const found = await review("negative-spacing-display");
+  // The small anchor inside the tight heading is judged at its own size.
+  const mini = found.find((c) => c.selectorHint === "a.mini");
+  expect(mini?.verification.params).toMatchObject({
+    property: "letter-spacing",
+    em: -0.04,
+  });
+  const words = found.find((c) => c.selectorHint === "a.display-words");
+  expect(words?.verification.params).toMatchObject({
+    property: "word-spacing",
+    value: -2,
+  });
+});
+
+test("displayTracking and displaySize configure the display exemption", async () => {
+  const displayIn = ["idiom:negative-spacing", "a.display-in"];
+  expect(
+    summary(
+      await review("negative-spacing-display", {
+        checks: { negativeSpacing: { displayTracking: 0 } },
+      }),
+    ),
+  ).toContainEqual(displayIn);
+  expect(
+    summary(
+      await review("negative-spacing-display", {
+        checks: { negativeSpacing: { displaySize: 30 } },
+      }),
+    ),
+  ).toContainEqual(displayIn);
+  expect(
+    summary(
+      await review("negative-spacing-display", {
+        checks: { negativeSpacing: { displayTracking: -0.06 } },
+      }),
+    ),
+  ).not.toContainEqual(["idiom:negative-spacing", "a.display-over"]);
 });
 
 test("disabled scans record no field", async () => {

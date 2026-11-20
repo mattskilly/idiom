@@ -1,4 +1,4 @@
-export type SkillName = "idiom" | "idiom-verify";
+export type SkillName = "idiom" | "idiom-verify" | "idiom-fix";
 export type DistributionFile = { content: string; incomingPath: string };
 export type Distribution = {
   version: string;
@@ -42,6 +42,12 @@ export type SkillSummary = {
 };
 export type UpgradeReport = {
   autobuild?: import("../autobuild/setup.js").AutobuildSetupOutcome;
+  /** The verify step that fixes new major UI findings inside the build. */
+  fixStep?: import("../autobuild/setup.js").AutobuildSetupOutcome;
+  /** The finalize step that advances the gate's baseline as builds land. */
+  baselineAdvance?: import("../autobuild/setup.js").AutobuildSetupOutcome;
+  /** --yes wired the gate: its first baseline, recorded at clean HEAD or named as the next step. */
+  firstBaseline?: import("../autobuild/first-baseline.js").FirstBaselineOutcome;
   projectDirectory: string;
   installedVersion: string;
   previous: PreviousVersion | { kind: "mixed"; versions: PreviousVersion[] };

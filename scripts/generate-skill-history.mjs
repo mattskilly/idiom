@@ -28,6 +28,7 @@ for (const tag of tags) {
   if (templates.includes('"idiom-verify"')) paths.push("idiom-verify/SKILL.md");
   else if (init.includes("readAutobuildVerifierSkillTemplate"))
     paths.push("ab-verify-idiom/SKILL.md");
+  if (templates.includes('"idiom-fix"')) paths.push("idiom-fix/SKILL.md");
   const available = new Set(
     git("ls-tree", "-r", "--name-only", commit, "templates").trim().split("\n"),
   );

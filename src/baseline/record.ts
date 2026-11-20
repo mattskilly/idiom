@@ -134,12 +134,26 @@ export function baselineGapDiagnostic(
 async function assembleBaselineRecord(
   validated: ValidationResult,
   loaded: Awaited<ReturnType<typeof loadRunTuples>>,
-  options: { excludeFailed?: boolean } = {},
+  options: {
+    excludeFailed?: boolean;
+    /** Leave out only tuples that failed at these stages. */
+    excludeStages?: readonly string[];
+  } = {},
 ): Promise<{ record: BaselineRecord; failedTupleKeys: string[] }> {
   const failedTupleKeys = loaded.tuples
     .filter((tuple) => tuple.failure !== undefined)
     .map((tuple) => tupleCoordinateKey(tupleCoordinate(tuple)));
-  const failed = new Set(options.excludeFailed ? failedTupleKeys : []);
+  const failed = new Set(
+    options.excludeFailed
+      ? failedTupleKeys
+      : loaded.tuples
+          .filter(
+            (tuple) =>
+              tuple.failure !== undefined &&
+              options.excludeStages?.includes(tuple.failure.stage),
+          )
+          .map((tuple) => tupleCoordinateKey(tupleCoordinate(tuple))),
+  );
   const candidates = deterministicCandidateRecords({
     tuples: loaded.tuples,
     expectedTupleKeys: loaded.expectedTupleKeys,
@@ -246,7 +260,26 @@ export async function recordBaseline(options: {
         "automatic baseline needs a successful capture; fix capture failures and retry, or inspect with --all",
       );
   }
-  const { record } = await assembleBaselineRecord(validated, loaded);
+  // A state that ran out of capture.stateMaxMinutes has no evidence either
+  // way: its tuples are left out and named, and the other states record.
+  const { record } = await assembleBaselineRecord(validated, loaded, {
+    excludeStages: [STATE_BUDGET_STAGE],
+  });
+  const stateBudgetFailures = [
+    ...loaded.tuples
+      .filter((tuple) => tuple.failure?.stage === STATE_BUDGET_STAGE)
+      .reduce((states, tuple) => {
+        const entry = states.get(tuple.state) ?? {
+          state: tuple.state,
+          tuples: 0,
+          message: tuple.failure?.message ?? "",
+        };
+        entry.tuples += 1;
+        states.set(tuple.state, entry);
+        return states;
+      }, new Map<string, { state: string; tuples: number; message: string }>())
+      .values(),
+  ];
   const tuples = record.tuples;
   const configHash = record.configHash;
   const path = baselinePath(
@@ -279,5 +312,9 @@ export async function recordBaseline(options: {
     tupleCount: tuples.length,
     configHash,
     replaced,
+    stateBudgetFailures,
   };
 }
+
+/** The tuple failure stage of a state that ran out of capture.stateMaxMinutes. */
+export const STATE_BUDGET_STAGE = "state-budget";

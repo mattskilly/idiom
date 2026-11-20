@@ -8,7 +8,14 @@
 // which can delete the CLI while a review runs. Building into a temp package
 // directory whose other package files link back here keeps this run
 // independent of the checkout's build/ and of the tracked release dist/.
+//
+// Engine: the out-of-tree CLI is keyed (IDIOM_ENGINE_IDENTITY, baked by
+// tsup.config.ts) by a fingerprint of the code that produces a base record —
+// capture, checks and record building — not by version + commit. Shared
+// base-cache records therefore cross builds whose check and capture code is
+// identical, and never cross builds where it differs.
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -31,7 +38,73 @@ export function packageLinks(manifest) {
   return [...entries].sort();
 }
 
+// The record-producing entry points: base capture (→ review → capture and
+// every check) and record building.
+export const ENGINE_ENTRIES = [
+  "src/baseline/base.ts",
+  "src/baseline/record.ts",
+];
+
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const fileHash = (path) =>
+  existsSync(path) ? sha256(readFileSync(path)) : "absent";
+const stableJson = (value) =>
+  value === null || typeof value !== "object"
+    ? JSON.stringify(value)
+    : Array.isArray(value)
+      ? `[${value.map(stableJson).join(",")}]`
+      : `{${Object.keys(value)
+          .sort()
+          .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+          .join(",")}}`;
+
+/**
+ * `source:<20 hex>`: a hash of every source file in the entries' import
+ * closure, plus the lockfile, the package's dependencies and the build config
+ * (third-party code is external to the closure).
+ */
+export async function engineFingerprint({
+  root = repositoryRoot,
+  entries = ENGINE_ENTRIES,
+} = {}) {
+  const { build } = await import("esbuild");
+  const result = await build({
+    absWorkingDir: root,
+    entryPoints: entries,
+    bundle: true,
+    write: false,
+    metafile: true,
+    packages: "external",
+    platform: "node",
+    format: "esm",
+    outdir: join(tmpdir(), "idiom-engine-fingerprint"),
+    logLevel: "silent",
+    define: {
+      __IDIOM_BUILD_COMMIT__: '""',
+      __IDIOM_ENGINE_IDENTITY__: '""',
+    },
+  });
+  const inputs = Object.keys(result.metafile.inputs)
+    .filter((key) => !key.includes(":"))
+    .map((key) => key.split("\\").join("/"))
+    .sort();
+  const hash = createHash("sha256");
+  for (const input of inputs)
+    hash.update(`${input}\0${fileHash(join(root, input))}\n`);
+  const manifestPath = join(root, "package.json");
+  const dependencies = existsSync(manifestPath)
+    ? stableJson(
+        JSON.parse(readFileSync(manifestPath, "utf8")).dependencies ?? {},
+      )
+    : "absent";
+  hash.update(`package.json#dependencies\0${dependencies}\n`);
+  for (const file of ["bun.lock", "tsup.config.ts"])
+    hash.update(`${file}\0${fileHash(join(root, file))}\n`);
+  return `source:${hash.digest("hex").slice(0, 20)}`;
+}
+
 export async function buildLocalCli({ root = repositoryRoot } = {}) {
+  const engine = await engineFingerprint({ root });
   const temporary = await mkdtemp(join(tmpdir(), "idiom-local-"));
   const cleanup = () => rm(temporary, { recursive: true, force: true });
   try {
@@ -55,6 +128,7 @@ export async function buildLocalCli({ root = repositoryRoot } = {}) {
       const result = spawnSync(command, args, {
         cwd: root,
         stdio: ["ignore", "ignore", "inherit"],
+        env: { ...process.env, IDIOM_ENGINE_IDENTITY: engine },
       });
       if (result.status !== 0)
         throw Object.assign(
@@ -62,7 +136,7 @@ export async function buildLocalCli({ root = repositoryRoot } = {}) {
           { status: result.status },
         );
     }
-    return { cli: join(pkg, "dist", "cli.js"), cleanup };
+    return { cli: join(pkg, "dist", "cli.js"), cleanup, engine };
   } catch (error) {
     await cleanup();
     throw error;

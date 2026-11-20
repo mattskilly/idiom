@@ -31,7 +31,7 @@
     "designFile": "DESIGN.md"
   },
   "brief": {
-    "$comment": "references: the products that set the bar for this project's UI, read by idiom brief. Each entry is { \"name\", \"tier\", \"note\" }; tiers: bar (match or beat it), always (always compare against it), floor (never fall below it). ticketTemplate.sections optionally changes the brief's headings; see docs/brief.md.",
+    "$comment": "references: the products that set the bar for this project's UI, read by idiom brief. Each entry is { \"name\", \"tier\", \"note\" } with an optional \"url\" and \"pages\": [{ \"surface\", \"url\" }], the equivalent public screens idiom brief research captures; tiers: bar (match or beat it), always (always compare against it), floor (never fall below it). ticketTemplate.sections optionally changes the brief's headings; see docs/brief.md.",
     "references": []
   },
   "model": {

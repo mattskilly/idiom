@@ -40,7 +40,13 @@ export function regionReference(
   state: string,
   viewport: string,
   scheme: string,
-): (ProbeRegion & { controls: number }) | undefined {
+):
+  | {
+      reference: NonNullable<ProbeRegion["reference"]>;
+      runId: string;
+      controls: number;
+    }
+  | undefined {
   const key = tupleKey(state, viewport, scheme);
   for (const run of history) {
     const reference = run.fingerprints.get(key);

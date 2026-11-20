@@ -108,7 +108,15 @@ test("import pass: unreached .ts is non-UI only on a complete graph; styles and 
 });
 
 async function gatePlan(directory: string) {
-  const plan = await planGate({ project: directory });
+  const plan = await planGate({
+    project: directory,
+    dependencies: {
+      readHost: () => ({
+        load: [0, 0, 0] as [number, number, number],
+        coreCount: 11,
+      }),
+    },
+  });
   if (plan.skipped) throw new Error(`unexpected skip: ${plan.line}`);
   return plan;
 }
@@ -186,7 +194,15 @@ test("control: on a complete graph a server-only module skips the gate with one 
   const f = await changedFixture({ "server/db.ts": "export const db = 1;\n" });
   try {
     await f.write("server/db.ts", "export const db = 2;\n");
-    const plan = await planGate({ project: f.directory });
+    const plan = await planGate({
+      project: f.directory,
+      dependencies: {
+        readHost: () => ({
+          load: [0, 0, 0] as [number, number, number],
+          coreCount: 11,
+        }),
+      },
+    });
     expect(plan.skipped).toBe(true);
     if (plan.skipped)
       expect(plan.line).toMatch(/^no UI changes since [0-9a-f]{12}; skipped$/);

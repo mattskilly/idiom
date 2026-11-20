@@ -219,7 +219,11 @@ test.each([
           "idiom",
           "check",
           "--changed",
-          ...(gate ? ["--gate"] : ["--all"]),
+          // A budget that lets the base capture run (without it, site has
+          // no baseline and no base capture: an unattended baseline
+          // condition, exit 2), widened because a busy host scales the
+          // gate's estimate; deferral, not the trim, is under test.
+          ...(gate ? ["--gate", "--budget", "30m"] : ["--all"]),
           "--deferred",
           policy,
           "--json",

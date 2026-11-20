@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "overrides": [
+    {
+      "id": "toolbar-buttons-apart",
+      "match": { "rule": "idiom:adjacent-elements-touch" },
+      "action": "severity",
+      "severity": "major",
+      "reason": "Toolbar buttons that touch read as one control; keep them visibly apart."
+    }
+  ]
+}

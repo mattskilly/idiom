@@ -754,6 +754,47 @@ export const checksConfigSchema = z
         scope: z.enum(["interface", "all"]).default("interface"),
         include: selectorList,
         ignore: selectorList,
+        /** Computed font size (px) at and above which tight letter-spacing is display tracking. */
+        displaySize: z.number().finite().positive().default(20),
+        /** Tightest letter-spacing (em) exempt on display-size text; 0 turns the exemption off. */
+        displayTracking: z.number().finite().min(-1).max(0).default(-0.03),
+      })
+      .strict()
+      .prefault({}),
+    toolbarLayout: z
+      .object({
+        enabled: z.boolean().default(true),
+        /** Toolbars measured besides every `[role="toolbar"]`. */
+        selectors: selectorList,
+        centreTolerance: z.number().finite().min(0).max(8).default(1),
+        /**
+         * Laws learned for named toolbars (one row; controls centred). No zod
+         * default: configs without scopes hash as before.
+         */
+        scopes: z
+          .array(
+            z
+              .object({
+                name: z.string().trim().min(1),
+                selector: z.string().trim().min(1),
+                law: z.enum(["one-row", "centred"]),
+                tolerance: z.number().finite().min(0).max(8).optional(),
+              })
+              .strict()
+              .refine(
+                (scope) =>
+                  scope.law === "centred" || scope.tolerance === undefined,
+                "toolbarLayout.scopes tolerance applies to a centred law only",
+              ),
+          )
+          .refine(
+            (scopes) =>
+              new Set(
+                scopes.map((scope) => `${scope.selector}\u0000${scope.law}`),
+              ).size === scopes.length,
+            "toolbarLayout.scopes must not repeat a law for one selector",
+          )
+          .optional(),
       })
       .strict()
       .prefault({}),
@@ -810,7 +851,8 @@ export type CheckMark = {
     | "spacing-include"
     | "spacing-ignore"
     | "gap-scope"
-    | "centering-scope";
+    | "centering-scope"
+    | "toolbar-scope";
   selector: string;
 };
 
@@ -841,6 +883,9 @@ export function legibilityOptions(checks: ChecksSettings) {
     controlGap: checks.controlGap.enabled,
     negativeSpacing: checks.negativeSpacing.enabled,
     negativeSpacingScope: checks.negativeSpacing.scope,
+    negativeSpacingDisplaySize: checks.negativeSpacing.displaySize,
+    negativeSpacingDisplayTracking: checks.negativeSpacing.displayTracking,
+    toolbarLayout: checks.toolbarLayout.enabled,
   };
 }
 
@@ -969,6 +1014,12 @@ export function checkMarks(checks: ChecksSettings): CheckMark[] {
         (checks.textCentering?.scopes ?? []).map(({ selector }) => selector),
       ),
     ].map((selector) => ({ purpose: "centering-scope" as const, selector })),
+    ...[
+      ...new Set([
+        ...checks.toolbarLayout.selectors,
+        ...(checks.toolbarLayout.scopes ?? []).map(({ selector }) => selector),
+      ]),
+    ].map((selector) => ({ purpose: "toolbar-scope" as const, selector })),
   ];
 }
 
@@ -1036,6 +1087,18 @@ const briefReferenceSchema = z
       .regex(/^[a-z][a-z0-9-]*$/, "must be a lowercase tier such as bar"),
     note: z.string().trim().min(1),
     url: z.string().url().optional(),
+    /** The product's equivalent public screens, read by `idiom brief research`. */
+    pages: z
+      .array(
+        z
+          .object({
+            surface: z.string().trim().min(1),
+            url: z.string().url(),
+          })
+          .strict(),
+      )
+      .max(20)
+      .optional(),
   })
   .strict();
 export type BriefReference = z.infer<typeof briefReferenceSchema>;
@@ -1198,6 +1261,12 @@ const projectInputSchema = z
         animationSettleMs: z.number().finite().nonnegative().default(1500),
         maxMinutes: z.number().finite().positive().default(30),
         /**
+         * Optional per-state limit: a state whose own work (time with any of
+         * its tuples in flight) exceeds it fails alone, as `state-budget`
+         * tuple failures, and the rest of the run continues. Off by default.
+         */
+        stateMaxMinutes: z.number().finite().positive().optional(),
+        /**
          * Capture lanes (one per viewport and colour scheme) run at once.
          * Each tuple keeps its own fresh context; only tuples overlap.
          */
@@ -1295,6 +1364,33 @@ const projectInputSchema = z
           .optional(),
         /** Proposal directory without autobuild; default .idiom/reports/nightly. */
         out: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    /** `idiom escalations`: whether `idiom watch` answers settled escalations each pass. */
+    escalations: z
+      .object({
+        /** Off by default. */
+        watch: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    /** Unattended runs (nightly, gate, verify): where their setup breaks are filed. */
+    unattended: z
+      .object({
+        /** auto files when autobuild and ab resolve; off never files. */
+        tracker: z.enum(["auto", "autobuild", "off"]).optional(),
+        labels: z
+          .array(
+            z
+              .string()
+              .regex(
+                /^[A-Za-z0-9][A-Za-z0-9:._-]*$/,
+                "must start with a letter or digit and use only letters, digits, :, ., _ or -",
+              ),
+          )
+          .min(1)
+          .optional(),
       })
       .strict()
       .optional(),

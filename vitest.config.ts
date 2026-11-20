@@ -40,6 +40,8 @@ export const suiteConfig = {
           include: [...unitFiles],
           exclude: suiteExclude,
           setupFiles: signalGuard,
+          // Unattended runs never file into this repo's real tracker.
+          env: { IDIOM_UNATTENDED_TRACKER: "off" },
           ...timeouts,
         },
       },
@@ -51,6 +53,8 @@ export const suiteConfig = {
           include: suiteInclude,
           exclude: [...suiteExclude, ...unitFiles],
           setupFiles: signalGuard,
+          // Unattended runs never file into this repo's real tracker.
+          env: { IDIOM_UNATTENDED_TRACKER: "off" },
           ...timeouts,
         },
       },

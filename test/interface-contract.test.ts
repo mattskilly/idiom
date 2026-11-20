@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
   commandStatus,
   jsonOutputs,
@@ -10,9 +10,11 @@ import { INTERFACE_VERSION } from "../src/interface/version.js";
 import {
   advertisedOutputSchemas,
   buildInterfaceSnapshot,
+  type CommandSnapshot,
   compareInterface,
   type InterfaceSnapshot,
   type JsonSchema,
+  type OptionSnapshot,
   programCommands,
   schemaIssues,
 } from "./contract-support.js";
@@ -293,5 +295,142 @@ describe("stable interface contract", () => {
         ),
         `${tool.name}: the advertised outputSchema must keep every promised field, required where promised, never widened`,
       ).toEqual([]);
+  });
+});
+
+describe("promoted commands", () => {
+  const promoted = [
+    "fix",
+    "ruling",
+    "baseline advance",
+    "design",
+    "design add",
+    "reference",
+    "reference add",
+    "reference list",
+    "reference remove",
+  ];
+  const withOptions = [
+    "fix",
+    "ruling",
+    "baseline advance",
+    "design add",
+    "reference add",
+    "reference remove",
+  ];
+  const withArguments = [
+    "fix",
+    "baseline advance",
+    "design add",
+    "reference add",
+    "reference remove",
+  ];
+  let current: InterfaceSnapshot;
+  let recorded: InterfaceSnapshot;
+  beforeAll(async () => {
+    current = await buildInterfaceSnapshot();
+    recorded = JSON.parse(
+      readFileSync(snapshotFile, "utf8"),
+    ) as InterfaceSnapshot;
+  });
+
+  const entry = (snapshot: InterfaceSnapshot, path: string) => {
+    const found = snapshot.commands.find((command) => command.path === path);
+    if (found === undefined) throw new Error(`no command ${path}`);
+    return found;
+  };
+  /** A copy of the live snapshot with `edit` applied to one command. */
+  const edited = (path: string, edit: (command: CommandSnapshot) => void) => {
+    const next = structuredClone(current);
+    edit(entry(next, path));
+    return next;
+  };
+  const promised = (path: string): OptionSnapshot[] =>
+    entry(current, path).options.filter((option) => !option.experimental);
+
+  it.each(promoted)(
+    "records %s as stable with its current options and arguments",
+    (path) => {
+      expect(entry(current, path).status).toBe("stable");
+      expect(entry(recorded, path)).toEqual(entry(current, path));
+    },
+  );
+
+  it.each(withOptions)("reports removing a promised option from %s", (path) => {
+    const [first] = promised(path);
+    if (first === undefined) throw new Error(`${path} has no promised option`);
+    const next = edited(path, (command) => {
+      command.options = command.options.filter(
+        (option) => option.long !== first.long,
+      );
+    });
+    expect(compareInterface(current, next)).toContain(
+      `command "${path}": option ${first.long} removed`,
+    );
+  });
+
+  it.each(withArguments)("reports removing the argument of %s", (path) => {
+    const [first] = entry(current, path).arguments;
+    if (first === undefined) throw new Error(`${path} has no argument`);
+    const next = edited(path, (command) => {
+      command.arguments = [];
+    });
+    expect(compareInterface(current, next)).toContain(
+      `command "${path}": argument <${first.name}> removed`,
+    );
+  });
+
+  it.each(promoted)("reports renaming %s", (path) => {
+    const next = edited(path, (command) => {
+      command.path = `${path}-renamed`;
+    });
+    expect(compareInterface(current, next)).toContain(
+      `command "${path}": removed`,
+    );
+  });
+
+  it.each(promoted)("allows a new optional option on %s", (path) => {
+    const next = edited(path, (command) => {
+      command.options.push({
+        long: "--brand-new",
+        short: null,
+        takesValue: false,
+        valueOptional: false,
+        mandatory: false,
+        negate: false,
+      });
+    });
+    expect(compareInterface(current, next)).toEqual([]);
+  });
+
+  it("reports an option of fix becoming mandatory", () => {
+    const next = edited("fix", (command) => {
+      const top = command.options.find((option) => option.long === "--top");
+      if (top === undefined) throw new Error("fix has no --top");
+      top.mandatory = true;
+    });
+    expect(compareInterface(current, next)).toEqual([
+      'command "fix": option --top became mandatory',
+    ]);
+  });
+
+  it("does not pin the experimental options of baseline advance, and reports demoting a promised one", () => {
+    const withoutFetch = edited("baseline advance", (command) => {
+      command.options = command.options.filter(
+        (option) => option.long !== "--fetch",
+      );
+    });
+    expect(compareInterface(current, withoutFetch)).toEqual([]);
+    const demoted = edited("baseline advance", (command) => {
+      const target = command.options.find(
+        (option) => option.long === "--target",
+      );
+      if (target === undefined)
+        throw new Error("baseline advance has no --target");
+      target.experimental = true;
+    });
+    expect(compareInterface(current, demoted)).toEqual([
+      'command "baseline advance": option --target demoted to experimental',
+    ]);
   });
 });

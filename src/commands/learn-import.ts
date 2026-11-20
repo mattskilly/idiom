@@ -10,7 +10,11 @@ import {
 } from "node:path";
 import { IdiomError } from "../errors.js";
 import { rulingCheckable, sentence } from "../learn/candidate.js";
-import { findStateCapture } from "../learn/capture.js";
+import {
+  findStateCapture,
+  runCapturedFlows,
+  runsToRead,
+} from "../learn/capture.js";
 import { nextLearnedId } from "../learn/draft.js";
 import {
   type IgnoredColumn,
@@ -23,11 +27,11 @@ import {
 import { interpretObservation } from "../learn/interpret.js";
 import {
   evidenceCatches,
+  type MissEvidence,
   readLearnedLog,
-  runEvidence,
+  readRunEvidence,
 } from "../learn/misses.js";
 import { placeObservation, type StateProposal } from "../learn/place.js";
-import { resolveStoredRun } from "../review/artifacts.js";
 import {
   type Checkable,
   type LearnedCandidate,
@@ -346,6 +350,15 @@ export async function learnImportCommand(
           reserved,
           ownProposal: old?.entry.id,
         });
+        if (placement.ambiguous !== undefined) {
+          skipped.push({
+            line: row.line,
+            id: row.id,
+            code: "ambiguous-flow",
+            reason: placement.ambiguous.message,
+          });
+          continue;
+        }
         if (placement.matched !== undefined)
           placed = {
             flow: placement.matched.flow.flow.id,
@@ -510,13 +523,23 @@ export function renderLearnImport(result: LearnImportResult): string {
   return lines.join("\n");
 }
 
+/** Why a replayed record could not be measured against a run. */
+export type ReplayUnmeasuredReason =
+  | "no-check"
+  | "proposed"
+  | "undeclared"
+  | "no-run";
+
 export type ReplayRecord = {
   id: string;
   row: string;
   flow: string;
   state: string;
-  status: "caught" | "not-caught";
-  reason?: string | undefined;
+  status: "caught" | "missed" | "unmeasured";
+  /** Only on an unmeasured record. */
+  reason?: ReplayUnmeasuredReason | undefined;
+  /** Human text for a missed or unmeasured record. */
+  detail?: string | undefined;
   runId?: string | undefined;
   check?: string | undefined;
 };
@@ -525,15 +548,43 @@ export type LearnReplayResult = {
   name: string;
   total: number;
   caught: number;
-  notCaught: number;
+  missed: number;
+  unmeasured: number;
+  /** caught + missed. */
+  measured: number;
+  /** caught / measured; null when nothing was measured. */
+  catchRate: number | null;
+  unmeasuredBy: Record<ReplayUnmeasuredReason, number>;
+  /** Flow → the run ids actually read for evidence. */
   runs: Record<string, string[]>;
+  /** Every declared flow → its newest reviewable run, or null. */
+  newestRuns: Record<string, string | null>;
   records: ReplayRecord[];
 };
 
+/** The breakdown's fixed order. */
+const REPLAY_REASONS: readonly ReplayUnmeasuredReason[] = [
+  "no-run",
+  "proposed",
+  "undeclared",
+  "no-check",
+];
+
+const REPLAY_REASON_LABELS: Record<ReplayUnmeasuredReason, string> = {
+  "no-run": "no reviewed run captured the state",
+  proposed: "state proposed but not added",
+  undeclared: "state not declared in any flow",
+  "no-check": "no check named and no matching finding category",
+};
+
 /**
- * How many of an import's misses the latest checks catch: for each record,
- * the newest complete stored run that captured its flow state, and whether
- * that run has a finding from one of the record's checks there. Read-only.
+ * How many of an import's misses the latest checks catch, miss, or cannot
+ * measure. For each record with a check and a declared state, the newest
+ * complete, reviewable stored run (one with `findings.json` or a digest
+ * record) that captured its flow state, and whether that run has a finding
+ * from one of the record's checks there. Capture-only runs and vanished
+ * directories are skipped; a record with no reviewable run is unmeasured,
+ * never missed. Read-only.
  */
 export async function learnReplayCommand(
   options: ProjectOptions & { importName: string },
@@ -548,7 +599,17 @@ export async function learnReplayCommand(
   const declared = new Map(
     flows.map((record) => [record.flow.id, record] as const),
   );
-  const evidenceByRun = new Map<string, ReturnType<typeof runEvidence>>();
+  const evidenceByRun = new Map<string, Promise<MissEvidence[] | undefined>>();
+  const evidenceOf = (runId: string, runDirectory: string) => {
+    let evidence = evidenceByRun.get(runId);
+    if (evidence === undefined) {
+      evidence = readRunEvidence(runDirectory, runId);
+      evidenceByRun.set(runId, evidence);
+    }
+    return evidence;
+  };
+  const accept = async (runId: string, runDirectory: string) =>
+    (await evidenceOf(runId, runDirectory)) !== undefined;
   const records: ReplayRecord[] = [];
   const runs: Record<string, string[]> = {};
   for (const entry of entries.filter((item) => item.import?.name === name)) {
@@ -558,15 +619,13 @@ export async function learnReplayCommand(
       flow: entry.flow,
       state: entry.state,
     };
-    const open = (reason: string, runId?: string): ReplayRecord => ({
-      ...base,
-      status: "not-caught",
-      reason,
-      ...(runId === undefined ? {} : { runId }),
-    });
+    const unmeasured = (
+      reason: ReplayUnmeasuredReason,
+      detail: string,
+    ): ReplayRecord => ({ ...base, status: "unmeasured", reason, detail });
     const checks = entry.import?.checks ?? [];
     if (checks.length === 0) {
-      records.push(open("no check named"));
+      records.push(unmeasured("no-check", "no check named"));
       continue;
     }
     const flow = declared.get(entry.flow);
@@ -575,9 +634,12 @@ export async function learnReplayCommand(
       !flow.flow.states.some((state) => state.id === entry.state)
     ) {
       records.push(
-        open(
-          `state not declared${entry.placement?.proposal === undefined ? "" : ` (${entry.placement.proposal})`}`,
-        ),
+        entry.placement?.via === "proposed"
+          ? unmeasured(
+              "proposed",
+              `state proposed but not added${entry.placement.proposal === undefined ? "" : ` (${entry.placement.proposal})`}`,
+            )
+          : unmeasured("undeclared", "state not declared in any flow"),
       );
       continue;
     }
@@ -590,44 +652,111 @@ export async function learnReplayCommand(
         ...project.viewports.map((viewport) => viewport.name),
       ],
       colorScheme: project.capture.colorScheme,
+      accept,
     });
-    if (capture === undefined) {
-      records.push(open("never captured"));
+    const evidence =
+      capture === undefined
+        ? undefined
+        : await evidenceByRun.get(capture.runId);
+    if (capture === undefined || evidence === undefined) {
+      records.push(unmeasured("no-run", "no reviewed run captured this state"));
       continue;
     }
     const flowRuns = runs[entry.flow] ?? [];
     if (!flowRuns.includes(capture.runId)) flowRuns.push(capture.runId);
     runs[entry.flow] = flowRuns;
-    let evidence = evidenceByRun.get(capture.runId);
-    if (evidence === undefined) {
-      evidence = runEvidence(
-        resolveStoredRun(projectDirectory, capture.runId),
-        capture.runId,
-      );
-      evidenceByRun.set(capture.runId, evidence);
-    }
-    const check = (await evidence)
+    const check = evidence
       .filter((item) => item.flow === entry.flow && item.state === entry.state)
       .map((item) => evidenceCatches(entry, item))
       .find((value) => value !== undefined);
     records.push(
       check === undefined
-        ? open(
-            `no ${checks.join(", ")} finding in run ${capture.runId}`,
-            capture.runId,
-          )
+        ? {
+            ...base,
+            status: "missed",
+            detail: `no ${checks.join(", ")} finding in run ${capture.runId}`,
+            runId: capture.runId,
+          }
         : { ...base, status: "caught", runId: capture.runId, check },
     );
   }
-  const caught = records.filter((record) => record.status === "caught").length;
+  const newestRuns: Record<string, string | null> = Object.fromEntries(
+    flows.map((record) => [record.flow.id, null]),
+  );
+  let unresolved = flows.length;
+  if (unresolved > 0)
+    for (const { runId, runDirectory } of await runsToRead(
+      projectDirectory,
+      undefined,
+    )) {
+      const captured = await runCapturedFlows(runDirectory);
+      const open = [...captured].filter(
+        (flow) => flow in newestRuns && newestRuns[flow] === null,
+      );
+      if (open.length === 0) continue;
+      if ((await evidenceOf(runId, runDirectory)) === undefined) continue;
+      for (const flow of open) newestRuns[flow] = runId;
+      unresolved -= open.length;
+      if (unresolved === 0) break;
+    }
+  const count = (status: ReplayRecord["status"]) =>
+    records.filter((record) => record.status === status).length;
+  const caught = count("caught");
+  const missed = count("missed");
+  const measured = caught + missed;
+  const unmeasuredBy = Object.fromEntries(
+    REPLAY_REASONS.map((reason) => [
+      reason,
+      records.filter((record) => record.reason === reason).length,
+    ]),
+  ) as Record<ReplayUnmeasuredReason, number>;
   return {
     name,
     total: records.length,
     caught,
-    notCaught: records.length - caught,
+    missed,
+    unmeasured: count("unmeasured"),
+    measured,
+    catchRate: measured === 0 ? null : caught / measured,
+    unmeasuredBy,
     runs,
+    newestRuns,
     records,
   };
+}
+
+/** The next step that unblocks each unmeasured reason. */
+function replayNextStep(
+  reason: ReplayUnmeasuredReason,
+  result: LearnReplayResult,
+): string {
+  switch (reason) {
+    case "no-run": {
+      const flows = [
+        ...new Set(
+          result.records
+            .filter((record) => record.reason === "no-run")
+            .map((record) => record.flow),
+        ),
+      ];
+      return `capture the flow: ${flows.map((flow) => `idiom check ${flow}`).join(", ")}`;
+    }
+    case "proposed":
+      return "add the proposed state (drafts in .idiom/proposals/states/)";
+    case "undeclared":
+      return "declare it in a flow, or re-import with --flow or flow/state";
+    case "no-check":
+      return 'record a ruling: idiom learn "<rule>" --ruling';
+  }
+}
+
+/** The stderr line when a replay measured none of its records. */
+export function replayUnmeasuredMessage(result: LearnReplayResult): string {
+  const reasons = REPLAY_REASONS.map(
+    (reason) =>
+      `${reason === "no-run" ? "no reviewed run" : reason === "no-check" ? "no check named" : REPLAY_REASON_LABELS[reason]} ${result.unmeasuredBy[reason]}`,
+  ).join(", ");
+  return `replay of "${result.name}" measured none of its ${result.total} records (${reasons}); see the reasons above`;
 }
 
 export function renderLearnReplay(result: LearnReplayResult): string {
@@ -637,16 +766,44 @@ export function renderLearnReplay(result: LearnReplayResult): string {
     ...result.records.map((record) => `${record.flow}/${record.state}`.length),
     1,
   );
+  const reasons = REPLAY_REASONS.filter(
+    (reason) => result.unmeasuredBy[reason] > 0,
+  );
+  const label = Math.max(
+    ...reasons.map((reason) => REPLAY_REASON_LABELS[reason].length),
+    1,
+  );
+  const tally = Math.max(
+    ...reasons.map((reason) => String(result.unmeasuredBy[reason]).length),
+    1,
+  );
   const runs = Object.entries(result.runs);
+  const newest = Object.entries(result.newestRuns);
   return [
-    `Replay "${result.name}": the latest checks catch ${result.caught} of ${result.total}.`,
+    result.measured === 0
+      ? `Replay "${result.name}": nothing measured — all ${result.total} records are unmeasured.`
+      : `Replay "${result.name}": caught ${result.caught}, missed ${result.missed}, unmeasured ${result.unmeasured} of ${result.total}. Catch rate ${Math.round((100 * result.caught) / result.measured)}% of ${result.measured} measured.`,
+    ...(reasons.length === 0
+      ? []
+      : [
+          "Unmeasured, by reason:",
+          ...reasons.map(
+            (reason) =>
+              `  ${REPLAY_REASON_LABELS[reason].padEnd(label)}  ${String(result.unmeasuredBy[reason]).padStart(tally)}  ${replayNextStep(reason, result)}`,
+          ),
+        ]),
     ...result.records.map(
       (record) =>
-        `  ${(record.status === "caught" ? "caught" : "open").padEnd(6)}  ${record.id.padEnd(id)}  ${record.row.padEnd(row)}  ${`${record.flow}/${record.state}`.padEnd(where)}  ${record.status === "caught" ? `${record.check} (run ${record.runId})` : record.reason}`,
+        `  ${record.status.padEnd(10)}  ${record.id.padEnd(id)}  ${record.row.padEnd(row)}  ${`${record.flow}/${record.state}`.padEnd(where)}  ${record.status === "caught" ? `${record.check} (run ${record.runId})` : record.detail}`,
     ),
     runs.length === 0
-      ? "Read runs: none (no record's state has a stored capture)."
+      ? "Read runs: none (no record's state has a reviewed run)."
       : `Read runs: ${runs.map(([flow, ids]) => `${flow} ${ids.join(", ")}`).join("; ")}`,
+    ...(newest.length === 0
+      ? []
+      : [
+          `Newest reviewed run: ${newest.map(([flow, runId]) => `${flow} ${runId ?? "none"}`).join("; ")}`,
+        ]),
     "To replay against the current checks, run idiom check <flow> (or idiom review <flow> --from <run> --deterministic-only) first.",
   ].join("\n");
 }

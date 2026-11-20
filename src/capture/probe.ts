@@ -77,6 +77,7 @@ import {
   type InitiatedRequest,
 } from "./probe-network.js";
 import { MAX_RECLICKS, reclickLimitReason, testReclick } from "./reclick.js";
+import { markNearSurface, type SurfaceMatchToken } from "./rendered-surface.js";
 import type { ReplayLedger } from "./replay-ledger.js";
 import {
   ignoredRequest,
@@ -190,13 +191,25 @@ export type ProbeOptions = CaptureHooks & {
 };
 
 export type ProbeRegion = {
-  reference: ReadonlyMap<string, string>;
-  runId: string;
+  /** Rendered fingerprints from a reference run; unchanged controls are left out. */
+  reference?: ReadonlyMap<string, string> | undefined;
+  runId?: string | undefined;
+  /**
+   * The changed surface: only controls inside, containing, or within
+   * `nearPx` of an element it names are probed.
+   */
+  surface?:
+    | { tokens: SurfaceMatchToken[]; nearPx: number; label: string }
+    | undefined;
 };
 
 /** Why the gate left a control out: it renders exactly as in the reference. */
 export const gateUnchangedReason = (runId: string) =>
   `gate: unchanged since ${runId}`;
+
+/** Why the gate left a control out: it is away from the changed surface. */
+export const gateOutsideSurfaceReason = (label: string) =>
+  `gate: outside the changed surface (${label})`;
 
 /** Default `checks.probe.maxRevealed`. */
 export const DEFAULT_MAX_REVEALED = 12;
@@ -4542,7 +4555,8 @@ export async function probeControls(
       if (error instanceof DeadlineExpired) throw error;
     }
     const region = options.region;
-    if (region) {
+    if (region?.reference) {
+      const reference = region.reference;
       const names = new Map<string, number>();
       for (const candidate of candidates)
         names.set(candidate.name, (names.get(candidate.name) ?? 0) + 1);
@@ -4552,9 +4566,40 @@ export async function probeControls(
           !candidate.unavailable &&
           candidate.fingerprint !== undefined &&
           !checkCandidate(candidate, names) &&
-          region.reference.get(key) === candidate.fingerprint
+          reference.get(key) === candidate.fingerprint
         )
-          candidate.unavailable = gateUnchangedReason(region.runId);
+          candidate.unavailable = gateUnchangedReason(
+            region.runId ?? "the reference run",
+          );
+      }
+    }
+    if (region?.surface) {
+      const scope = region.surface;
+      try {
+        const marked = await state.run(() =>
+          options.page.evaluate(markNearSurface, {
+            paths: candidates.map((candidate) => candidate.path),
+            tokens: scope.tokens,
+            nearPx: scope.nearPx,
+          }),
+        );
+        let outside = 0;
+        // No surface element on the page: probing nothing would hide the
+        // change, so the probe stays unscoped and says so.
+        if (marked.matched > 0)
+          for (const [index, candidate] of candidates.entries())
+            if (!candidate.unavailable && marked.near[index] !== true) {
+              candidate.unavailable = gateOutsideSurfaceReason(scope.label);
+              outside++;
+            }
+        artifact.surfaceScope = {
+          label: scope.label,
+          matched: marked.matched,
+          outside,
+        };
+      } catch (error) {
+        if (options.signal?.aborted || state.signal.aborted) throw error;
+        if (error instanceof DeadlineExpired) throw error;
       }
     }
     if (options.enumerateOnly || ledger?.planned(partition))

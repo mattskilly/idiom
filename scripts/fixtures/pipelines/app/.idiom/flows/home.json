@@ -1,0 +1,16 @@
+{
+  "id": "home",
+  "title": "Home",
+  "setup": [],
+  "intent": ["A guest can see how to reserve a table."],
+  "states": [
+    {
+      "id": "home",
+      "description": "The reservation landing page",
+      "url": "/",
+      "expect": {
+        "textPresent": ["Reserve a table"]
+      }
+    }
+  ]
+}

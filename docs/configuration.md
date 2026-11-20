@@ -24,6 +24,8 @@ Every top-level area of `.idiom/project.json`, its purpose and the default to kn
 | `findingNames` | Whether a worktree consults the primary's names | Shared with the primary checkout | [Finding names](#finding-names) |
 | `attribution` | Ticket-id pattern for a new finding's likely cause | `[A-Z]+-\d+` or `file-\d+` | [Attribution](#attribution) |
 | `nightly` | What `idiom nightly` files: severity, labels, proposal directory | `major`, `["idiom"]`, `.idiom/reports/nightly` | [Nightly](#nightly) |
+| `escalations` | Whether `idiom watch` answers Autobuild design escalations precedent settles | Off | [Escalations](#escalations) |
+| `unattended` | Where nightly, the gate and the verify step file their setup breaks | tracker `auto`, labels `["idiom", "idiom-condition"]` | [Unattended conditions](#unattended-conditions) |
 | `updateCheck` | The once-a-day check for a newer release | On | [Update check](#update-check) |
 | `model` | Provider, model and fallback for the optional critique | Required; `claude-code` in new projects, at most 5 findings, no fallback | [review](commands.md#review) |
 
@@ -111,7 +113,9 @@ The probe's own check candidates run first, ranked across the flow before any or
 
 `capture.concurrency` defaults to **4** (1–8). Evidence collection uses one lane per viewport and color scheme, with states in flow order within each lane. The later probe pass uses independent state lanes at the same concurrency. Every capture and probe state gets a fresh context, navigation and settle. Results, timings and reports retain the original tuple order. `IDIOM_CAPTURE_CONCURRENCY` overrides the setting for one run, as a diagnostic (for example `1` for sequential execution).
 
-`capture.maxMinutes` defaults to **30** (finite positive fractional minutes are allowed). This single budget covers the complete capture, including setup/build, readiness, launch, measurement, tuples, artifact publication and teardown, with or without probing and for web or Electron. Expiry fails with the state, viewport, scheme and step in progress (`pending` coordinates during setup). Resource cleanup has at most **5 seconds** of additional grace after the deadline. Zero never means unlimited.
+`capture.maxMinutes` defaults to **30** (finite positive fractional minutes are allowed). This single budget covers the complete capture, including setup/build, readiness, launch, measurement, tuples, artifact publication and teardown, with or without probing and for web or Electron. Expiry fails with the state, viewport, scheme and step in progress (`pending` coordinates during setup). Resource cleanup has at most **5 seconds** of additional grace after the deadline. Zero never means unlimited. The expiry message also names the slowest steps so far (each tuple's capture, probe, artifact writing and secret scan), and the interrupted run's `run.json` keeps them. A baseline capture that stops on this budget, or is interrupted, keeps the tuples it finished: continue it with `idiom baseline record <flow> --resume` ([baseline](commands.md#check)).
+
+`capture.stateMaxMinutes` sets an optional limit per state; it is off by default. A state's clock runs only while some of its own work (a tuple's capture or probe pass, or a design reference) is in flight, so time it spends queued behind other states is not charged to it. A state that exceeds it fails alone: each of its tuples fails at stage `state-budget`, with a message naming the state, the limit and the step that was running, and the rest of the run continues. `baseline record` records the other states and names the failed one; a resumed capture captures it again. It is scheduling, like `maxMinutes`, so it does not change a run's capture settings identity.
 
 Color scheme is an opt-in capture axis. `colorSchemes` defaults to the existing `capture.colorScheme`, and a flow may narrow it with its own `colorSchemes` list. Each selected state is captured at every selected viewport and scheme. The scheme is applied through Playwright's `prefers-color-scheme` emulation; `capture.colorSchemeAttribute` can additionally name an HTML attribute such as `data-theme`, whose value is set before application scripts run. `idiom validate` prints the effective schemes for every flow. If a complete multi-scheme capture renders one declared scheme identically to the preceding declared scheme across the full stable semantic profile, review emits a `missing-state` blocker naming the inert scheme.
 
@@ -148,6 +152,25 @@ Keep the rest of the generated object intact. Then define `.idiom/flows/home.jso
 ```
 
 Flow states also accept `"viewports": [...]` (narrow the flow's viewports for one state, for a panel that is offscreen by design on mobile) and `"focus": "<selector>"` (capture the state with that element focused, to catch focus rings colliding with neighbors). A web flow can list `"routes": ["/", "/leads"]` to capture plain routes without hand-writing states.
+
+### Intermediate widths
+
+UI that adapts to space (toolbars, chip rows, panels) often breaks between the declared viewports: a toolbar that is one row at 768px (collapsed) and at 1280px can wrap at 900px, and no declared viewport sees it. A web state can opt into a few extra widths, captured cheaply:
+
+```json
+{ "id": "editor", "url": "/edit", "expect": {}, "intermediateWidths": true }
+```
+
+- **Where.** `intermediateWidths` goes on a web state or on a web flow (a default for its states). A state's own value wins over the flow's; `"intermediateWidths": false` opts one state out of a flow-level `true`. Electron flows do not accept it.
+- **`true`, the default widths.** The midpoint (rounded) of each adjacent pair of distinct widths among the state's declared viewports, plus 900 and 768 when each lies strictly between the narrowest and widest declared width. A width equal to a declared width is dropped. Viewports 768 and 1280 give `[900, 1024]`; 375, 768 and 1280 give `[572, 900, 1024]`; a single declared viewport gives none.
+- **A list.** `"intermediateWidths": [900, 1100]` captures exactly those widths (integers 200–4096, unique, at most 8; a width equal to a declared one is dropped). Listed widths may fall outside the declared range.
+- **The viewport.** Each width is captured as a synthetic viewport named `intermediate-<width>` (a project or flow viewport with that name is an error), with the height and `touch` of the narrowest declared viewport wider than it, or of the widest declared viewport when none is wider: an editor at 900px is a narrowed desktop window.
+- **Default color scheme only.** `capture.colorScheme` when the flow selects it, otherwise the flow's first scheme.
+- **Layout checks only.** At intermediate widths Idiom runs the per-tuple layout checks: `toolbar-layout`, `overflow-clip`, `clipped-text`, `element-overlap`, `text-occlusion` and `word-break`. There is no interaction probe and no model review, and intermediate tuples never take part in cross-tuple checks (missing color scheme, spacing rhythm, scheme parity), so opting in does not change any finding at a declared viewport. Reports label each such tuple `— intermediate width (layout checks only)`.
+- **Scope.** `--viewports` (an explicit width narrowing) captures no intermediate widths, nor does a `--schemes` that leaves out the default scheme. `--states` and exact tuple selections (the build gate, `--changed`) capture them for every opted-in state with at least one selected tuple.
+- **Toggle combinations** take the base state's own `intermediateWidths` but not the flow default, so a flow-level `true` does not multiply by the combination count. Route, page and pattern states take the flow value.
+- **Finding candidates.** `idiom coverage --states` lists states, not yet opted in, whose captures show a toolbar near a width boundary: one row at one declared width and wrapped at another, or one row filling 85% or more of its width. Each comes with the change that opts it in (`add "intermediateWidths": true to state <id> in flow <flow>`). "Toolbar" means what the toolbar-layout scan measures: `role="toolbar"` and `checks.toolbarLayout.selectors`.
+- **Cost.** Each width adds one capture tuple per opted-in state: budget about one declared tuple's capture time per width, less the probe. On the test fixture (one state, viewports 768 and 1280 in light and dark), `true` added two widths, about 11s of tuple capture time and about 5s of wall clock (13s to 18s) at the default concurrency. The timing line breaks it out inside capture, for example `capture 18s (probe 1.1s; intermediate widths +11s: editor +11s over 2 widths)`, naming at most three states; the time is summed per tuple, so with several capture lanes the wall clock grows less. The build gate's line shows the same after `captures`.
 
 ### Electron flows
 
@@ -621,7 +644,8 @@ Besides the original ten checks, `check` and `review` run additional checks buil
 | `text-occlusion` | on by default (`checks.textOcclusion`): text more than 30% covered, by hit test, by an opaque element painted above it in the same layer |
 | `state-jump` | an element present in two linked states (a `from` state and its source, or toggle combinations of one base) that moves or changes size by more than 1px; a state's `intendedChanges` exempt elements |
 | `control-gap` | on by default (`checks.controlGap`): text runs, icons and nested controls side by side inside one button, chip, pill or toolbar item whose ink sits closer than `min` (default 4px, at most 12), or a stricter `scopes[].min` inside a named surface; segmented and joined groups, keycaps and symbol affixes are exempt |
-| `negative-spacing` | on by default (`checks.negativeSpacing`): a negative `letter-spacing` or `word-spacing` on interface text, once at the element that sets it; `scope: "all"` and `include` widen it to page content, `ignore` narrows it |
+| `negative-spacing` | on by default (`checks.negativeSpacing`): a negative `letter-spacing` or `word-spacing` on interface text, once at the element that sets it, except display tracking (letter-spacing on text of at least `displaySize`, default 20px, within `displayTracking`, default -0.03em); `scope: "all"` and `include` widen it to page content, `ignore` narrows it |
+| `toolbar-layout` | on by default (`checks.toolbarLayout`): a `role="toolbar"` (or a `selectors` match) whose items wrap to a second row (major), an item whose vertical centre sits more than `centreTolerance` (default 1px) from its row's, or one control whose border, radius or height differs from all its agreeing siblings; segmented groups are exempt |
 | `spacing-target` | ordered border-box gaps outside declared spacing targets |
 
 Every rule, with why it matters, its severity, its source and how to configure or decide it, is listed in [rules.md](rules.md).
@@ -696,7 +720,8 @@ The font, link, focus, typography, image, layout-shift and interaction-shift che
     "raggedRow": { "enabled": true },
     "textOcclusion": { "enabled": true },
     "controlGap": { "enabled": true, "min": 4 },
-    "negativeSpacing": { "enabled": true, "scope": "interface", "include": [], "ignore": [] },
+    "negativeSpacing": { "enabled": true, "scope": "interface", "include": [], "ignore": [], "displaySize": 20, "displayTracking": -0.03 },
+    "toolbarLayout": { "enabled": true, "selectors": [], "centreTolerance": 1 },
     "images": { "enabled": true, "distortionTolerance": 0.03 },
     "layoutShift": { "enabled": true, "max": 0.1 },
     "interactionShift": { "enabled": true, "minDistance": 4 }
@@ -1084,10 +1109,12 @@ When a director states a measurable law, `idiom learn` (and `idiom ruling --word
 | Centring within a tolerance | "labels in the toolbar are centred within 1px" | `text-centering` | `checks.textCentering.scopes[]`, or `centeringTolerance` |
 | A shared top edge or height | "toolbar buttons share a height within 2px" | `layout-invariants` | a `share` invariant in `checks.invariants` |
 | Equal widths for fields | "fields in a field group are equal widths" | `layout-invariants` | a `share: "width"` invariant in `checks.invariants` |
+| A surface stays on one row | "the toolbar is always exactly one row" | `toolbar-layout` | a `law: "one-row"` entry in `checks.toolbarLayout.scopes[]` |
+| Controls vertically centred | "every toolbar control is vertically centred" | `toolbar-layout` | a `law: "centred"` entry (tolerance from "within Npx", default 1px) in `checks.toolbarLayout.scopes[]` |
 
 Unstated share tolerances default to 1px. Centring tolerances below 1.5px are measured at the 1.5px font-metric floor, and the diff says so. Learned scopes and invariants carry the director's sentence as their `name`, and findings cite it.
 
-The surface comes from a fixed vocabulary, so the same words always give the same configuration: toolbar → `[role="toolbar"]`, menu → `[role="menu"], [role="menubar"]`, field group or fieldset → `fieldset, [role="group"]`, form → `form`, dialog or modal → `dialog, [role="dialog"]`, tab list or tab bar → `[role="tablist"]`, navigation or nav → `nav, [role="navigation"]`. Another surface ("in the inspector") is resolved from `--selector`, then from the state's newest capture; without either it stays a ruling and the diff says why. `idiom ruling` uses the vocabulary only. Share laws on buttons or items must name a surface; menu items, tabs and fields imply menu, tab list and form.
+The surface comes from a fixed vocabulary, so the same words always give the same configuration: toolbar → `[role="toolbar"]`, menu → `[role="menu"], [role="menubar"]`, field group or fieldset → `fieldset, [role="group"]`, form → `form`, dialog or modal → `dialog, [role="dialog"]`, tab list or tab bar → `[role="tablist"]`, navigation or nav → `nav, [role="navigation"]`. Another surface ("in the inspector") is resolved from `--selector`, then from the state's newest capture; without either it stays a ruling and the diff says why. `idiom ruling` uses the vocabulary only. Share laws on buttons or items must name a surface; menu items, tabs and fields imply menu, tab list and form. One-row and controls-centred laws compile only on a toolbar: the vocabulary's toolbar, or a surface outside it whose name ends in "toolbar" or "bar" ("the selection toolbar", "in the format bar"). Centring sentences about any other surface, or about labels and text, stay with text-centering or a ruling. A one-row sentence about another surface stays a ruling and says why. "Horizontally centred" is never a toolbar law. The surface can be the sentence's subject ("the toolbar is…"); a modified noun outside the vocabulary ("the selection toolbar") is kept whole and resolved like any other unknown surface.
 
 Words that state a law but cannot configure it (a 16px minimum gap, a 0px centring tolerance) and every other banned property stay a ruling, in the director's words, with a `Not compiled to a check:` line explaining why. `idiom learn --ruling` always records a ruling. A second law for a surface that already has one is refused; edit the entry in `.idiom/project.json`. Laws are listed under Craft checks in `idiom context`.
 
@@ -1189,6 +1216,16 @@ To isolate capture from changes or merges in the invoking checkout, use [`captur
 
 **The base cache.** `check --gate`, `check --changed` and `baseline advance` keep captures of a build's base commit in `<git-common-dir>/idiom/base-cache/<project key>/<flow>.json` (the project key hashes the project's path inside the repository). It sits inside Git's own directory, so it is never tracked, never makes a tree dirty, and is shared by every worktree of the checkout: a base one build captured is reused by the next. Entries use the baseline record format, keyed by commit, checks configuration hash and the Idiom build that wrote them (an entry from another Idiom version or build is never reused), with up to twenty records per flow. Deleting the directory is safe; the next gate captures the base again. See [Gate a build](commands.md#gate-a-build).
 
+**Advancing on every merge.** `idiom baseline advance` keeps the base current so gates compare with a stored record instead of capturing the base or falling back to gating every open finding. With no flow it covers every flow, and reports one line per flow:
+
+- `advanced`: the missing tuples were captured at the target commit and one record there was written to the base cache (and, with `--commit-file`, to `.idiom/baselines/<flow>.json`).
+- `current`: a stored record already speaks for the target by the gate's own rule, so nothing was captured. The rule is the same one the gate uses: a record at the target, or at an ancestor with only non-UI or bookkeeping changes since and the same checks configuration. That rule is how the advance decides which flows a merge affected. A merge that touches no UI captures nothing.
+- `superseded`: a stored record is newer than the target, so the older advance writes nothing and exits 0.
+- `absent`: the flow is not on the target yet. This is not a failure.
+- `FAILED`: the capture threw or any tuple failed. **Nothing is written**: the previous baseline stays in place. The command prints `idiom: baseline advance failed for <flow> at <sha>: <reason>; the previous baseline is unchanged` on stderr and exits 2.
+
+The advance captures only what the **target** commit declares (its own flow and project files), so a branch that adds states or viewports never makes the target's advance fail. Advances of one project are serialised by a lock beside the base cache (`advance.lock`). A second advance waits up to `--wait` (default `30m`) and then fails, naming the holder. A lock whose process is gone, or that is over two hours old, is taken over. If an intermediate merge's advance never ran, the next one covers everything since the last stored record.
+
 ## Finding names
 
 In a linked Git worktree, finding names union `.idiom/finding-names.json` with the primary checkout's, so a worktree keeps the names main already gave its findings. When the two disagree, this checkout's names win and the run prints one warning line (see [finding names](commands.md#review)). A throwaway worktree that should not consult the primary at all can opt out:
@@ -1229,6 +1266,33 @@ Every distinct match is recorded, in order; the first is shown. The default `[A-
 
 `severity` is `blocker`, `major` (default) or `minor`. `labels` are added to every ticket (default `["idiom"]`), each starting with a letter or digit and using only letters, digits, `:`, `.`, `_` and `-`; the first is the label nightly lists to recover what it filed when `.idiom/filed-tickets.json` is missing, so keep it stable. Each finding's category is added as a label too. `out` is where proposals go without autobuild, relative to the project. Commit `.idiom/filed-tickets.json` after a run.
 
+## Escalations
+
+[`idiom escalations --answer`](commands.md#escalations) answers Autobuild design escalations that a ruling, decision or learned law already settles. To have [`idiom watch`](commands.md#watch) run that pass on every look:
+
+```json
+{
+  "escalations": { "watch": true }
+}
+```
+
+`watch` is off by default. Run `idiom escalations` by hand first to see what it would answer.
+
+## Unattended conditions
+
+When nightly, `check --gate` or `idiom verify` cannot start the app, has no usable baseline, or finds a state whose `expect` no longer matches, it exits 2 with one line and files one triage ticket per distinct cause ([commands.md](commands.md#unattended-runs-never-fail-quietly)). This sets where the gate and verify step file; nightly files through its own `--tracker`:
+
+```json
+{
+  "unattended": {
+    "tracker": "auto",
+    "labels": ["idiom", "idiom-condition"]
+  }
+}
+```
+
+`tracker` is `auto` (default: file when `autobuild.toml` is above the project and `ab` is on `PATH`), `autobuild` (file, and say so on stderr when it cannot), or `off` (record for `idiom doctor` only). The environment variable `IDIOM_UNATTENDED_TRACKER=off|autobuild|auto` overrides it. `labels` follow the `nightly.labels` rules; the first is the label listed to find a condition's ticket again, so keep it stable. Conditions never change what is detected, only where they are filed.
+
 ## Update check
 
 Idiom checks the npm registry for a newer release at most once a day and says so on stderr, in `--json` output and over MCP. To turn that off for everyone working in this project:
@@ -1267,7 +1331,7 @@ A glob starting with `/` matches the route; any other matches the project-relati
 }
 ```
 
-`brief.references` names the products that set the bar for this project's UI: `name`, a lowercase `tier` (`bar`: match or beat it; `always`: always compare against it; `floor`: never fall below it), a `note` on what to take from it and an optional `url`. Triage reads them with PRODUCT.md (`design.productFile`) as context.
+`brief.references` names the products that set the bar for this project's UI: `name`, a lowercase `tier` (`bar`: match or beat it; `always`: always compare against it; `floor`: never fall below it), a `note` on what to take from it and an optional `url`. Triage reads them with PRODUCT.md (`design.productFile`) as context. An entry's optional `pages` (up to 20 `{ "surface", "url" }` objects) names the product's equivalent public screens, such as `{ "surface": "editor selection toolbar", "url": "https://…" }`; `idiom brief research` captures the one whose surface best matches the request ([comparable research](brief.md#comparable-research)). When `.idiom/project.json` is created and an existing PRODUCT.md lists products under `## Comparable products`, `idiom init` seeds `brief.references` from them; an existing `project.json` is left alone.
 
 `brief.researchBudgetMs` (default `900000`, 15 minutes; 60000–3600000) is the wall-clock budget for `idiom brief "<request>" --research`, covering triage, research and options. `brief.researchMaxSearches` (default `5`; 1–20) bounds the web searches for each research question. See [brief.md](brief.md#two-ways-to-research).
 
@@ -1300,15 +1364,36 @@ When Autobuild's vendored phase skills exist, `idiom init` and `idiom init --wir
 - Implement: for UI work, run `idiom check --changed --fail-on major` before finishing, inspect and fix findings within the authorized change, or record why the check or repair could not be completed and what remains.
 - Code review: when the ticket includes an Idiom design asset, compare the change with its criteria and cite mismatches in the normal review.
 
-These rows are discovered independently of `autobuild.toml`; missing skills are never installed. At an interactive prompt they start selected, show exact diffs, and can each be deselected. One final confirmation applies all selected wiring together. An interactive `--dry-run` previews the offer without writing. Bare `--yes`, report-only invocations, and noninteractive dry runs do not install new skill sections. Reruns preserve current sections byte-for-byte and can refresh older managed sections; `--skip-wiring autobuild-plan`, `--skip-wiring autobuild-implement`, and `--skip-wiring autobuild-code-review` always leave their respective files unchanged.
+These rows are discovered independently of `autobuild.toml`; missing skills are never installed. At an interactive prompt they start selected, show exact diffs, and can each be deselected. One final confirmation applies all selected wiring together. Any `--dry-run` previews the offer without writing. `idiom init --wire --yes` installs them without a prompt; a plain `idiom init --yes` (no `--wire`) and report-only invocations do not install new skill sections. Reruns preserve current sections byte-for-byte and can refresh older managed sections; `--skip-wiring autobuild-plan`, `--skip-wiring autobuild-implement`, and `--skip-wiring autobuild-code-review` always leave their respective files unchanged.
 
-To remove a section, delete its complete `<!-- idiom:wiring:autobuild-plan:begin -->` / `<!-- idiom:wiring:autobuild-plan:end -->` pair and everything between, including the section's following newline. Substitute `autobuild-implement` or `autobuild-code-review` for the other roles. Preserve all surrounding phase instructions and frontmatter. A source without a final newline gains a separator newline on installation; removal can leave that newline. A later interactive run may offer removed sections again; bare `--yes` does not restore them.
+To remove a section, delete its complete `<!-- idiom:wiring:autobuild-plan:begin -->` / `<!-- idiom:wiring:autobuild-plan:end -->` pair and everything between, including the section's following newline. Substitute `autobuild-implement` or `autobuild-code-review` for the other roles. Preserve all surrounding phase instructions and frontmatter. A source without a final newline gains a separator newline on installation; removal can leave that newline. A later interactive run or `idiom init --wire --yes` may add removed sections again; a plain `idiom init --yes` does not restore them.
 
 `idiom doctor` reports each role as `wired` (current section), `missing` (installed skill without the section), `stale` (older section, malformed markers, invalid identity or unsafe/unreadable path), or `not-applicable` (absent skill). It recommends selecting the row in `idiom init --wire`, or repairing invalid files by hand first.
 
 Commit the live skill changes so every agent shares them. Idiom never edits `.agents/skills/.ab-pristine/`: Autobuild owns that baseline and three-way merges pristine × local live skill × incoming defaults during `ab upgrade`, advancing pristine to the incoming bytes. The isolated sections survive independent upstream edits. Overlapping upstream edits can still produce ordinary Autobuild merge conflicts; inspect its upgrade report and resolve them normally.
 
-Interactive `idiom init` (as the `autobuild-gate` row of its [wiring plan](commands.md#wire-agents-ci-hooks-and-autobuild)) and `idiom upgrade` detect `autobuild.toml` and offer the gate as the default integration, with an exact diff and confirmation. Gate setup installs `.agents/skills/idiom-verify/SKILL.md`, its `.claude/skills/idiom-verify` discovery link and pristine provenance within the same exact-diff consent and rollback boundary; flow discovery remains optional. To wire it manually, add the command under the existing `[commands]` table, append `"idiom-check"` to the existing `[verify].steps` array, and add the verify table:
+Interactive `idiom init` (as the `autobuild-gate` row of its [wiring plan](commands.md#wire-agents-ci-hooks-and-autobuild)) and `idiom upgrade` detect `autobuild.toml` and offer the gate as the default integration, with an exact diff and confirmation. Gate setup installs `.agents/skills/idiom-verify/SKILL.md`, its `.claude/skills/idiom-verify` discovery link and pristine provenance within the same exact-diff consent and rollback boundary; flow discovery remains optional.
+
+With no terminal (a build agent or a setup script), apply every offered change with `--yes`:
+
+```sh
+idiom upgrade --yes            # no terminal: apply every offered Autobuild change, printing each diff
+idiom upgrade --yes --dry-run  # print the diffs; write nothing
+```
+
+`idiom upgrade --yes` wires the gate, installs `idiom-verify` with its discovery link and pristine record, adds the baseline finalize step below, and adds the brief instruction to `AGENTS.md`/`CLAUDE.md`. It prints the same exact diffs a prompt would show, then applies them. `--skip-wiring autobuild-gate` or `--skip-wiring autobuild-baseline` (and `agents`/`claude` for the brief instruction) leaves that surface alone. `idiom init --wire --yes` is the init equivalent, and also adds the phase skill sections above. Without `--yes`, a noninteractive run writes nothing and ends with one line naming the command: `Apply the offered wiring without a prompt: idiom upgrade --yes`.
+
+**First run: record and commit the baseline.** The gate compares a build with the baseline committed on main; a new project has none, so its first gated build exits 2 with `no baseline reachable from base … — fix: idiom baseline record <flow> on a clean main and commit .idiom/baselines`. Run the setup on a clean main. When `idiom upgrade --yes` or `idiom init --wire --yes` wires the gate and a flow has no committed baseline, it records one at clean HEAD before writing the wiring, then names the files to commit. If HEAD is not clean, it records nothing and prints the command instead. Either way, finish on main:
+
+```sh
+idiom baseline record <flow>   # only if the setup printed this; once per flow it names
+git add -A                     # main was clean: this is the wiring and .idiom/baselines
+git commit -m "Wire Idiom into Autobuild"
+```
+
+Branch builds from that commit. The baseline finalize step below keeps it current as builds land.
+
+To wire it manually, add the command under the existing `[commands]` table, append `"idiom-check"` to the existing `[verify].steps` array, and add the verify table:
 
 ```toml
 [commands]
@@ -1343,15 +1428,31 @@ product code. The offline branch keeps its independent skip and paired-evidence
 contract and runs no additional gate.
 
 Managed old check recipes migrate in place to this agent recipe, preserving step
-order, `always`, `afterReconcile` and comments. Custom commands are never rewritten;
-noninteractive init/upgrade only reports available setup. Edited skills retain
-normal upgrade protection. Manual wiring must install the skill as well.
+order, `always`, `afterReconcile` and comments. Custom commands are never rewritten.
+Without `--yes`, noninteractive init/upgrade only reports available setup. Edited skills retain
+normal upgrade protection. Manual wiring must also install the skill, which `idiom upgrade --yes` does.
 
 Finding verification is separate and optional. The same installed skill is reused. Select `autobuild-verifier` in init's wiring plan if the project uses Idiom-originated tickets; init then offers actual detected flows by name. The selected flow supplies `[commands].idiom-verify`; the `verify.idiom` agent step uses `skill = "idiom-verify"` and project UI/source, manifest and design/product paths. If narrower paths cannot be established, the preview explains the conservative `"**"` fallback. This step may skip specs without embedded findings unless the build carries an Idiom design asset; the gate covers ordinary UI builds.
 
 Existing installs of the legacy `ab-verify-idiom` skill are offered a migration with the gate: the directory, discovery link and pristine ownership move to `idiom-verify`, and live skill references change without renaming logical steps or discarding local edits. Both-name or ownership conflicts require manual recovery. Declining the preview changes none of those destinations.
 
 **Design assets.** `idiom brief attach <slug> --ticket <id>` pins a decided brief to a ticket as its `design` asset ([brief.md](brief.md#attach-to-an-autobuild-ticket)). In that build, the gate adds every state the asset asserts and does not skip for "no UI changes"; the verifier captures and judges those states even when the spec embeds no findings, and the `idiom-verify` skill does not skip; and the asset's `brief-mismatch` findings always block, even when a recorded baseline already holds them.
+
+**Advance the baseline as builds land.** Interactive `idiom init` (the `autobuild-baseline` row of its [wiring plan](commands.md#wire-agents-ci-hooks-and-autobuild)) and `idiom upgrade` offer a finalize check step that runs `idiom baseline advance --fetch`, with an exact diff and confirmation. `idiom init --wire --yes` and `idiom upgrade --yes` add it; a plain `idiom init --yes` does not; a rerun keeps an existing step. To wire it by hand:
+
+```toml
+[commands]
+idiom-baseline = "idiom baseline advance --fetch"
+
+[finalize]
+steps = ["idiom-baseline"]
+
+[finalize.idiom-baseline]
+kind = "check"
+command = "idiom-baseline"
+```
+
+Autobuild has no post-merge hook. Finalize steps run after the PR opens and before it lands, so the step advances the target branch as fetched at that moment, which includes every build merged so far. The base cache therefore trails the branch tip by at most one merge, and the next build's finalize catches up. A failed advance is recorded on the build (exit 2 with the failure line) and never blocks the PR. `--fetch` fetches the target's remote-tracking branch first. The default target is the remote HEAD. When Autobuild's `baseBranch` is not the default branch, add `--target <remote>/<branch>`, for example `--target origin/release`. The base cache is keyed by Idiom build, so the advance helps gates run by the same installed Idiom.
 
 To make tickets labeled `design-review` wait for a person before merging, `idiom init --wire --design-review` adds a marked `[[landing]]` rule (`label = "design-review"`, `mode = "consent"`) before your other landing rules. It is off by default.
 
@@ -1392,6 +1493,8 @@ jobs:
 ```
 
 The root `action.yml` installs the published `@mattskilly/idiom` CLI. It first runs the gate's plan (`idiom check --gate --plan-only`) in a worktree at head, before installing Chromium or running your setup command. For a pull request or push it then captures the base and head in separate worktrees, forces a private baseline at the base even when head contains a newer accepted record, and runs `idiom compare` for before/after evidence. A flow missing at the base fails explicitly. The caller checkout is preserved. Only the check's new deterministic findings decide the severity gate; pixel changes supply evidence.
+
+**Advance the baseline on every merge.** `idiom init --wire --advance-baseline` (or the `advance` choice at the interactive prompt) adds a `baseline` job to the generated workflow. On each push to the default branch it runs `idiom baseline advance --target <pushed sha> --commit-file`, commits only `.idiom/baselines/` as `github-actions[bot]` with `[skip ci]`, and pushes it. CI keeps no base cache between runs, so the committed file is what carries the record to later branches and to local gates. The gate treats a commit that only touches `.idiom/baselines/` as render-neutral, so the bookkeeping commit never makes the next gate recapture. The job needs `contents: write`. Branch protection must allow `github-actions[bot]` to push to the default branch; otherwise the push fails and so does the job, loudly. With the job selected, default-branch runs queue instead of cancelling each other, and the job has its own non-cancelling concurrency group. If the push loses a race with another merge, the job resets to the new tip and advances again, up to three attempts. A newer committed record makes the older advance `superseded`. A failed capture fails the job and commits nothing.
 
 **No UI, no cost.** When every changed file is non-UI by the gate's rules (docs, tests, CI, lockfiles, server-only modules on a complete import graph, and your `checks.gate.nonUi` globs; see [commands.md](commands.md#gate-a-build)), the Action prints `no UI changes since <base>; skipped` and exits 0 without installing browsers, running setup or capturing anything. The job summary says the same.
 

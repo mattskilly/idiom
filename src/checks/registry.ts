@@ -1,3 +1,4 @@
+import { isIntermediateViewportName } from "../capture/intermediate.js";
 import { defaultChecksSettings } from "../schemas/project.js";
 import { a11yLabelCheck } from "./a11y-label.js";
 import { adjacentGapCheck } from "./adjacent-gap.js";
@@ -100,6 +101,7 @@ import { targetSizeCheck } from "./target-size.js";
 import { textCenteringCheck } from "./text-centering.js";
 import { textOcclusionCheck } from "./text-occlusion.js";
 import { tokenDriftCheck } from "./token-drift.js";
+import { toolbarLayoutCheck } from "./toolbar-layout.js";
 import { touchReachabilityCheck } from "./touch-reachability.js";
 import { typeLegibilityCheck } from "./type-legibility.js";
 import type {
@@ -219,6 +221,7 @@ export const signalChecks: DeterministicCheck[] = [
   stateJumpCheck,
   controlGapCheck,
   negativeSpacingCheck,
+  toolbarLayoutCheck,
 ];
 
 /**
@@ -232,6 +235,22 @@ export const revealedStateChecks: DeterministicCheck[] = [
   clippedTextCheck,
   overflowClipCheck,
   selectionOutlineCheck,
+];
+
+/**
+ * Checks run at intermediate widths (intermediateWidths): per-tuple layout
+ * checks only. Each reads its own tuple and config, never the run's other
+ * tuples, so intermediates stay out of every cross-tuple comparison.
+ * element-overlap reads `narrowViewport`, which is passed from the tuple's
+ * own width against the narrowest declared one rather than from `tuples`.
+ */
+export const intermediateWidthChecks: DeterministicCheck[] = [
+  toolbarLayoutCheck,
+  overflowClipCheck,
+  clippedTextCheck,
+  elementOverlapCheck,
+  textOcclusionCheck,
+  wordBreakCheck,
 ];
 
 export function checksConfigFrom(
@@ -277,6 +296,13 @@ export function checksConfigFrom(
     negativeSpacing: {
       enabled: merged.negativeSpacing.enabled,
       scope: merged.negativeSpacing.scope,
+    },
+    toolbarLayout: {
+      enabled: merged.toolbarLayout.enabled,
+      centreTolerance: merged.toolbarLayout.centreTolerance,
+      ...(merged.toolbarLayout.scopes === undefined
+        ? {}
+        : { scopes: merged.toolbarLayout.scopes }),
     },
     images: { ...merged.images },
     layoutShift: { ...merged.layoutShift },
@@ -408,9 +434,11 @@ export function minimumCapturedWidth(tuples: CheckTuple[]): number | undefined {
 }
 
 export function runDeterministicChecks(
-  tuples: CheckTuple[],
-  expectedTupleKeys?: readonly string[],
+  allTuples: CheckTuple[],
+  allExpectedTupleKeys?: readonly string[],
   config: ChecksConfig = checksConfigFrom(),
+  /** Measures each tuple's per-tuple checks into `tupleMs` when given. */
+  clock?: () => number,
 ): {
   candidates: Array<{
     tuple: CheckTuple;
@@ -420,7 +448,23 @@ export function runDeterministicChecks(
   coverage: Array<{ tuple: CheckTuple; coverage: CheckCoverage }>;
   captureCoverage: CheckCoverage[];
   narrowWidth?: number | undefined;
+  /** Per-tuple check time, keyed `state\0viewport\0scheme`; with `clock` only. */
+  tupleMs?: Map<string, number> | undefined;
 } {
+  // Intermediate widths run only the per-tuple layout set, after the
+  // declared tuples; every other pass sees the declared tuples alone.
+  const intermediate = allTuples.filter(
+    (tuple) => tuple.intermediateWidth === true,
+  );
+  const tuples =
+    intermediate.length === 0
+      ? allTuples
+      : allTuples.filter((tuple) => tuple.intermediateWidth !== true);
+  // A failed intermediate capture still has an expected key; the reserved
+  // `intermediate-<width>` viewport name drops it as well.
+  const expectedTupleKeys = allExpectedTupleKeys?.filter(
+    (key) => !isIntermediateViewportName(key.split("\0")[1] ?? ""),
+  );
   const narrowWidth = minimumCapturedWidth(tuples);
   const captureCoverage =
     tuples.length === 0
@@ -432,7 +476,9 @@ export function runDeterministicChecks(
       : [];
   const candidates = [];
   const coverage = [];
+  const tupleMs = clock === undefined ? undefined : new Map<string, number>();
   for (const tuple of tuples) {
+    const started = clock?.();
     for (const [checkOrder, check] of deterministicChecks.entries()) {
       const result = check.run({
         tuple,
@@ -449,6 +495,11 @@ export function runDeterministicChecks(
         })),
       );
     }
+    if (tupleMs !== undefined && started !== undefined && clock !== undefined)
+      tupleMs.set(
+        `${tuple.state}\0${tuple.viewport}\0${tuple.colorScheme ?? "light"}`,
+        Math.max(0, clock() - started),
+      );
   }
   const spacing = spacingRhythmCheck.run(tuples);
   coverage.push(...spacing.coverage);
@@ -530,10 +581,29 @@ export function runDeterministicChecks(
       }
     }
   }
+  for (const tuple of intermediate) {
+    for (const check of intermediateWidthChecks) {
+      const result = check.run({
+        tuple,
+        narrowViewport: narrowWidth !== undefined && tuple.width <= narrowWidth,
+        config,
+        tuples: [tuple],
+      });
+      coverage.push({ tuple, coverage: result.coverage });
+      candidates.push(
+        ...result.candidates.map((candidate) => ({
+          tuple,
+          candidate,
+          checkOrder: orderOf(check),
+        })),
+      );
+    }
+  }
   return {
     candidates,
     coverage,
     captureCoverage,
     ...(narrowWidth === undefined ? {} : { narrowWidth }),
+    ...(tupleMs === undefined ? {} : { tupleMs }),
   };
 }

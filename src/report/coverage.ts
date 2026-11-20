@@ -626,9 +626,12 @@ function probeCoverageMarkdown(coverage: ReportCoverage): string[] {
 }
 
 function gateLines(gate: NonNullable<ReportCoverage["gate"]>): string[] {
-  return gate.skippedWork.length
-    ? gate.skippedWork.map(describeSkip)
-    : ["Nothing was skipped to fit the budget."];
+  return [
+    ...(gate.coverageGap === undefined ? [] : [gate.coverageGap]),
+    ...(gate.skippedWork.length
+      ? gate.skippedWork.map(describeSkip)
+      : ["Nothing was skipped to fit the budget."]),
+  ];
 }
 
 function gateMarkdown(coverage: ReportCoverage): string[] {

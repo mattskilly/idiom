@@ -33,6 +33,7 @@ Do not select a branch from the presence of a command or a finding fence.
    parsed argument for transport. Do not use a shell, eval, command substitution,
    or execute a copied command string. Preserve stdout, stderr and exit status
    under `.ab/idiom-decisions/`; never clear the durable answer snapshots.
+<!-- idiom:shared decision-guidance:start -->
 2. Before the normal gate, if the manifest's feedback is `guidance`, read its
    materialized `.ab/guidance.json` with `escalation` and `answer`. Retrieve the
    exact question snapshot revision and report referenced by that escalation
@@ -60,6 +61,7 @@ Do not select a branch from the presence of a command or a finding fence.
    and finding-name registry changes. Stage those explicit paths, never `.ab/`
    or unrelated files. Never push. Track whether HEAD changed, including a
    successful append/commit from an interrupted earlier attempt at this step.
+<!-- idiom:shared decision-guidance:end -->
 5. Run the validated gate exactly once per normal attempt (after applying any
    guidance). Parse its JSON and preserve its complete output, stderr and status.
    Status 0 passes only after report delivery succeeds; status 1 fails ordinary
@@ -67,6 +69,7 @@ Do not select a branch from the presence of a command or a finding fence.
    status 3 reports incomplete host-deferred evidence. This supported recipe
    explicitly uses deferred warn. Invalid JSON/unknown status is infrastructure
    failure. Never convert ordinary findings into escalation questions.
+<!-- idiom:shared decision-escalation:start -->
 6. Status 4: require a nonempty validated `decisionNeeded` array and nonblank
    `decisionQuestion`. Use that exact shared renderer text, without rewriting
    options, evidence/crop paths, citations, values or shell-quoted examples.
@@ -92,6 +95,7 @@ Do not select a branch from the presence of a command or a finding fence.
    initial HEAD. The next verification, with committed memory incorporated,
    passes or reports actual chosen-reference/scale drift and never asks the
    resolved question again.
+<!-- idiom:shared decision-escalation:end -->
 8. For every non-escalation terminal, write and deposit the gate report, include
    evidence paths and execution diagnostics, and emit exactly one pass or fail
    verdict. A delivery failure fails with a diagnostic report.

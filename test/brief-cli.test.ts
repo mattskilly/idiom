@@ -2,14 +2,10 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test } from "vitest";
 import { triageId } from "../src/brief/store.js";
 import { type ProgramDependencies, run } from "../src/cli.js";
 import { initProject } from "../src/commands/init.js";
-import {
-  DEPRECATION_SILENCE_ENV,
-  resetDeprecationWarnings,
-} from "../src/interface/deprecation.js";
 import { INTERFACE_VERSION } from "../src/interface/version.js";
 
 const fixtureText = readFileSync(
@@ -17,11 +13,7 @@ const fixtureText = readFileSync(
   "utf8",
 );
 const directories: string[] = [];
-beforeEach(() => {
-  resetDeprecationWarnings();
-});
 afterEach(async () => {
-  vi.unstubAllEnvs();
   await Promise.all(
     directories.splice(0).map((d) => rm(d, { recursive: true, force: true })),
   );
@@ -139,7 +131,7 @@ test("record, list and show round-trip a brief", async () => {
   expect(recorded.code).toBe(0);
   expect(recorded.stdout).toMatch(
     new RegExp(
-      `^Recorded brief pinned-group-in-the-add-drawer \\(created, proposed\\) — ${join(".idiom", "briefs", "pinned-group-in-the-add-drawer.md").replace(/\./g, "\\.")}\n\nAsk the requester: `,
+      `^Recorded brief pinned-group-in-the-add-drawer \\(created, proposed\\) — ${join(".idiom", "briefs", "pinned-group-in-the-add-drawer.md").replace(/\./g, "\\.")}\nWarning: criterion 1 caps size [^]*?\n\nAsk the requester: `,
     ),
   );
   expect(recorded.stdout).toContain(
@@ -471,6 +463,11 @@ test("--research triages, researches, stores, and prints the cost", async () => 
     [
       `Recorded brief pinned-group-in-the-add-drawer (created, proposed) — ${join(".idiom", "briefs", "pinned-group-in-the-add-drawer.md")}`,
       "Cost: 46s, 3 calls, 9 turns, 2,000 input / 400 output tokens (budget 15 minutes)",
+      'Warning: criterion 1 caps size with no floor or outcome: "The pin icon is at most 20px square and tile height is unchanged."',
+      "  Pair it with: keep ≥4px between items, glyph to glyph",
+      "  Pair it with: no overlap with neighbouring controls or text",
+      "  Pair it with: stays on one row at 1440px",
+      "  Pair it with: text keeps its normal word- and letter-spacing (no negative spacing)",
       "",
     ].join("\n"),
   );
@@ -503,6 +500,15 @@ test("--research --json prints the outcome", async () => {
       turns: 9,
       tokens: { input: 2_000, output: 400 },
     },
+    lint: [
+      {
+        criterion:
+          "The pin icon is at most 20px square and tile height is unchanged.",
+        line: 1,
+        cap: { kind: "size", text: "at most 20px" },
+        suggestions: expect.any(Array),
+      },
+    ],
   });
 });
 
@@ -919,7 +925,7 @@ test("brief list --json prints an empty briefs array when nothing is stored", as
   });
 });
 
-test("brief list --json --array keeps the old shape and warns on stderr once", async () => {
+test("brief list --json prints { interfaceVersion, briefs }, newest first", async () => {
   const directory = await temporary(true);
   await writeFile(join(directory, "brief.json"), fixtureText);
   await writeFile(
@@ -929,55 +935,203 @@ test("brief list --json --array keeps the old shape and warns on stderr once", a
   await idiom(directory, ["brief", "record", "brief.json"]);
   await idiom(directory, ["brief", "record", "other.json"]);
 
-  const object = JSON.parse(
-    (await idiom(directory, ["brief", "list", "--json"])).stdout,
-  );
-  expect(object.briefs).toHaveLength(2);
-
-  const first = await idiom(directory, ["brief", "list", "--json", "--array"]);
-  expect(first.code).toBe(0);
-  const array = JSON.parse(first.stdout);
-  expect(Array.isArray(array)).toBe(true);
-  expect(array).toEqual(object.briefs);
-  expect(first.stdout).not.toContain("Deprecated");
-  const warnings = first.stderr
-    .split("\n")
-    .filter((line) => line.startsWith("Deprecated:"));
-  expect(warnings).toEqual([
-    "Deprecated: idiom brief list --json --array will be removed in 0.24.0; use idiom brief list --json, which prints { interfaceVersion, briefs } instead. Set IDIOM_NO_DEPRECATION_WARNINGS=1 to silence this warning.",
-  ]);
-
-  const parentFlag = await idiom(directory, [
-    "brief",
-    "--json",
-    "list",
-    "--array",
-  ]);
-  expect(parentFlag.stdout).toBe(first.stdout);
-  expect(parentFlag.stderr).not.toContain("Deprecated");
+  const listed = await idiom(directory, ["brief", "list", "--json"]);
+  expect(listed.code).toBe(0);
+  expect(listed.stderr).toBe("");
+  const payload = JSON.parse(listed.stdout);
+  expect(Object.keys(payload)).toEqual(["interfaceVersion", "briefs"]);
+  expect(payload.interfaceVersion).toBe(INTERFACE_VERSION);
+  expect(payload.briefs).toHaveLength(2);
+  expect(payload.briefs[0].title).toBe("Another brief");
 });
 
-test("brief list --json --array is silent with IDIOM_NO_DEPRECATION_WARNINGS", async () => {
+test("brief list --array is removed and names the replacement", async () => {
+  const directory = await temporary(true);
+  for (const args of [
+    ["brief", "list", "--json", "--array"],
+    ["brief", "list", "--array"],
+    ["brief", "--json", "list", "--array"],
+  ]) {
+    const result = await idiom(directory, args);
+    expect(result.code, args.join(" ")).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("--array was removed in 0.24.0");
+    expect(result.stderr).toContain("idiom brief list --json");
+    expect(result.stderr).toContain(".briefs");
+    expect(result.stderr).not.toContain("unknown option");
+    expect(result.stderr).not.toContain("Deprecated:");
+  }
+});
+
+test("brief list keeps commander's error for other unknown flags", async () => {
+  const directory = await temporary(true);
+  const result = await idiom(directory, ["brief", "list", "--bogus"]);
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("unknown option '--bogus'");
+});
+
+const lintFixture = (name: string) =>
+  readFileSync(
+    new URL(`./fixtures/brief-lint/${name}`, import.meta.url),
+    "utf8",
+  );
+
+test("lint warns on the offset-chip criterion and exits 0 without a project", async () => {
+  const directory = await temporary(false);
+  await writeFile(join(directory, "chip.md"), lintFixture("offset-chip.md"));
+  const result = await idiom(directory, ["brief", "lint", "chip.md"]);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toBe(
+    [
+      'Warning: chip.md:9 caps size with no floor or outcome: "The chip adds at most 64px to the toolbar."',
+      "  Pair it with: keep ≥4px between items, glyph to glyph",
+      "  Pair it with: no overlap with neighbouring controls or text",
+      "  Pair it with: stays on one row at 1024px",
+      "  Pair it with: text keeps its normal word- and letter-spacing (no negative spacing)",
+      "  Pair it with: each control stays ≥24px (≥44px below 768px)",
+      "1 criterion warning(s) in 1 file(s).\n",
+    ].join("\n"),
+  );
+});
+
+test("lint prints nothing for a paired spec, and --strict exits 1 only on warnings", async () => {
+  const directory = await temporary(false);
+  await writeFile(join(directory, "paired.md"), lintFixture("paired.md"));
+  await writeFile(join(directory, "chip.md"), lintFixture("offset-chip.md"));
+  const clean = await idiom(directory, [
+    "brief",
+    "lint",
+    "paired.md",
+    "--strict",
+  ]);
+  expect(clean).toMatchObject({ code: 0, stdout: "", stderr: "" });
+  const strict = await idiom(directory, [
+    "brief",
+    "lint",
+    "paired.md",
+    "chip.md",
+    "--strict",
+  ]);
+  expect(strict.code).toBe(1);
+  expect(strict.stdout).toContain("Warning: chip.md:9 caps size");
+  expect(strict.stderr).toContain(
+    "brief lint: 1 criterion warning(s) need a floor or outcome",
+  );
+});
+
+test("lint --json prints the envelope and each file", async () => {
+  const directory = await temporary(false);
+  await writeFile(join(directory, "chip.md"), lintFixture("offset-chip.md"));
+  await writeFile(join(directory, "notes.md"), "# Notes\n\nNo criteria.\n");
+  const result = await idiom(directory, [
+    "brief",
+    "lint",
+    "chip.md",
+    "notes.md",
+    "--json",
+  ]);
+  expect(result.code).toBe(0);
+  const printed = JSON.parse(result.stdout);
+  expect(Object.keys(printed)).toEqual([
+    "interfaceVersion",
+    "strict",
+    "warnings",
+    "files",
+  ]);
+  expect(printed).toMatchObject({
+    interfaceVersion: INTERFACE_VERSION,
+    strict: false,
+    warnings: 1,
+    files: [
+      {
+        path: "chip.md",
+        section: true,
+        criteria: 2,
+        warnings: [
+          {
+            line: 9,
+            cap: { kind: "size", text: "at most 64px" },
+          },
+        ],
+      },
+      { path: "notes.md", section: false, criteria: 0, warnings: [] },
+    ],
+  });
+  expect(printed.files[0].warnings[0].suggestions[0]).toEqual({
+    text: "keep ≥4px between items, glyph to glyph",
+    source: "control-gap",
+  });
+});
+
+test("lint usage errors exit 1 before any output", async () => {
+  const directory = await temporary(false);
+  await writeFile(join(directory, "chip.md"), lintFixture("offset-chip.md"));
+  const missing = await idiom(directory, [
+    "brief",
+    "lint",
+    "chip.md",
+    "nope.md",
+  ]);
+  expect(missing.code).toBe(1);
+  expect(missing.stdout).toBe("");
+  expect(missing.stderr).toContain("no ticket file at nope.md");
+});
+
+test("lint takes its numbers from the project's config", async () => {
+  const directory = await temporary(true);
+  const path = join(directory, ".idiom", "project.json");
+  const project = JSON.parse(await readFile(path, "utf8"));
+  project.checks = { ...project.checks, controlGap: { min: 6 } };
+  project.viewports = [
+    { name: "laptop", width: 1280, height: 800 },
+    { name: "mobile", width: 390, height: 844 },
+  ];
+  await writeFile(path, JSON.stringify(project));
+  await writeFile(join(directory, "chip.md"), lintFixture("offset-chip.md"));
+  const result = await idiom(directory, ["brief", "lint", "chip.md", "--json"]);
+  expect(result.code).toBe(0);
+  const suggestions = JSON.parse(result.stdout).files[0].warnings[0]
+    .suggestions;
+  expect(suggestions).toContainEqual({
+    text: "keep ≥6px between items, glyph to glyph",
+    source: "control-gap",
+  });
+  expect(suggestions).toContainEqual({
+    text: "stays on one row at 1280px",
+    source: "viewports",
+  });
+});
+
+test("record reports lint warnings for unpaired caps, and omits lint when clean", async () => {
   const directory = await temporary(true);
   await writeFile(join(directory, "brief.json"), fixtureText);
-  await idiom(directory, ["brief", "record", "brief.json"]);
-  vi.stubEnv(DEPRECATION_SILENCE_ENV, "1");
-  const silenced = await idiom(directory, [
-    "brief",
-    "list",
-    "--json",
-    "--array",
-  ]);
-  expect(silenced.code).toBe(0);
-  expect(JSON.parse(silenced.stdout)[0].slug).toBe(
-    "pinned-group-in-the-add-drawer",
+  const human = await idiom(directory, ["brief", "record", "brief.json"]);
+  expect(human.code).toBe(0);
+  expect(human.stdout).toContain(
+    'Warning: criterion 1 caps size with no floor or outcome: "The pin icon is at most 20px square and tile height is unchanged."',
   );
-  expect(silenced.stderr).not.toContain("Deprecated");
-});
-
-test("brief list --array without --json is a usage error", async () => {
-  const directory = await temporary(true);
-  const result = await idiom(directory, ["brief", "list", "--array"]);
-  expect(result.code).toBe(1);
-  expect(result.stderr).toContain("--array applies only with --json");
+  const json = await idiom(directory, [
+    "brief",
+    "record",
+    "brief.json",
+    "--json",
+  ]);
+  const printed = JSON.parse(json.stdout);
+  expect(printed.lint).toHaveLength(1);
+  expect(printed.lint[0]).toMatchObject({
+    line: 1,
+    cap: { kind: "size", text: "at most 20px" },
+  });
+  const brief = JSON.parse(fixtureText);
+  brief.acceptanceCriteria[0].statement =
+    "The pin icon is at most 20px square, at least 16px, and never overlaps the tile label.";
+  await writeFile(join(directory, "clean.json"), JSON.stringify(brief));
+  const clean = await idiom(directory, [
+    "brief",
+    "record",
+    "clean.json",
+    "--json",
+  ]);
+  expect(clean.code).toBe(0);
+  expect(JSON.parse(clean.stdout)).not.toHaveProperty("lint");
 });

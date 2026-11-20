@@ -60,6 +60,8 @@ export const unitFiles = [
   "test/duplicate-entry-menu-unit.test.ts",
   "test/duplicate-entry-navigation-unit.test.ts",
   "test/empty-container-coverage.test.ts",
+  "test/escalations-classify.test.ts",
+  "test/escalations-match.test.ts",
   "test/exploration-content.test.ts",
   "test/exploration-provider.test.ts",
   "test/exploration-schema.test.ts",
@@ -137,13 +139,17 @@ export const unitFiles = [
   "test/subscription-environment.test.ts",
   "test/suite-groups.test.ts",
   "test/sweep-geometry.test.ts",
+  "test/scorecard-match.test.ts",
+  "test/scorecard-weeks.test.ts",
   "test/sweep-group.test.ts",
   "test/target-size-defaults.test.ts",
   "test/target-size-exemptions.test.ts",
   "test/timeline.test.ts",
+  "test/toolbar-layout-unit.test.ts",
   "test/touch-liveness-unit.test.ts",
   "test/version.test.ts",
   "test/visible-explanations-unit.test.ts",
+  "test/watch-service.test.ts",
 ] as const;
 
 export function suiteFor(file: string): "unit" | "heavy" {
@@ -257,5 +263,12 @@ export const injectedResources: Array<{
     resource: "node:child_process",
     reason:
       "Every process runner exercised by this adapter suite is injected; real runner tests remain heavy.",
+  },
+  {
+    test: "test/watch-service.test.ts",
+    file: "src/watch/service.ts",
+    resource: "node:child_process",
+    reason:
+      "Every launchctl and systemctl call goes through the injected run; the real runner is never reached.",
   },
 ];

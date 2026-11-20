@@ -21,15 +21,20 @@ import {
   pristinePath,
 } from "../skills/pristine.js";
 import {
+  readAutobuildFixSkillTemplate,
   readAutobuildTemplate,
   readAutobuildVerifierSkillTemplate,
 } from "../templates.js";
 import { validateProject } from "../validation.js";
 import { IDIOM_VERSION } from "../version.js";
 import {
+  baselineFinalizeAddition,
   createAutobuildDiff,
+  fixStepAddition,
   isValidAutobuildPath,
   planAutobuildWiring,
+  planBaselineFinalize,
+  planFixStep,
   renameVerifierReferences,
 } from "./wiring.js";
 
@@ -40,7 +45,8 @@ export type AutobuildSetupOutcome =
         | "available-noninteractive"
         | "declined"
         | "applied"
-        | "already-wired";
+        | "already-wired"
+        | "skipped";
       diff?: string;
       migration?: string;
     }
@@ -49,6 +55,12 @@ export type SetupOptions = {
   projectDirectory: string;
   interactive?: boolean | undefined;
   dryRun?: boolean | undefined;
+  /** Apply without prompting; the same preview is written first. */
+  yes?: boolean | undefined;
+  /** Leave this surface alone (--skip-wiring): nothing is read or written. */
+  skip?: boolean | undefined;
+  /** Runs under --yes just before the writes, while the tree is still as it was. */
+  beforeApply?: (() => Promise<void>) | undefined;
   confirm?: Confirmation | undefined;
   write?: ((message: string) => void) | undefined;
   apply?: ApplyDependencies | undefined;
@@ -65,10 +77,23 @@ export type PreparedAutobuild = {
     dependencies?: ApplyDependencies,
   ) => Promise<void>;
 };
+/** The skill the gate step runs in a configuration, when it is one of ours. */
+function gateSkill(source: string): StepSkill {
+  try {
+    const verify = parse(source).verify as Record<string, unknown> | undefined;
+    const step = verify?.["idiom-check"] as Record<string, unknown> | undefined;
+    if (step?.skill === "idiom-fix") return "idiom-fix";
+  } catch {
+    /* The plan has already validated the candidate. */
+  }
+  return "idiom-verify";
+}
+
 /** Read-only preparation shared by init's single consent boundary and upgrade. */
 export async function prepareAutobuild(
   root: string,
   source?: string,
+  installs?: SkillInstalls,
 ): Promise<PreparedAutobuild | undefined> {
   const snapshots = new Map<string, string>();
   const config = await inspect(root, "autobuild.toml", snapshots);
@@ -82,7 +107,9 @@ export async function prepareAutobuild(
     await readAutobuildTemplate(),
   );
   if (plan.kind === "manual") throw new Error(plan.reason);
-  const install = migration ? undefined : await prepareVerifierInstall(root);
+  const install = migration
+    ? undefined
+    : await prepareSkillInstall(root, gateSkill(plan.candidate), installs);
   for (const [path, token] of install?.snapshots ?? [])
     snapshots.set(path, token);
   return {
@@ -103,14 +130,29 @@ export async function prepareAutobuild(
 export async function setupAutobuild(
   options: SetupOptions,
 ): Promise<AutobuildSetupOutcome> {
+  if (options.skip) return { kind: "skipped" };
   const addition = await readAutobuildTemplate();
   try {
     const prepared = await prepareAutobuild(options.projectDirectory);
     if (!prepared) return { kind: "not-detected" };
     if (!prepared.preview) return { kind: "already-wired" };
     const preview = { diff: prepared.preview };
+    // One write path for the prompt and for --yes, so the two cannot drift.
+    const apply = async (): Promise<AutobuildSetupOutcome> => {
+      await unchanged(options.projectDirectory, prepared.snapshots);
+      const writes = [{ path: "autobuild.toml", content: prepared.candidate }];
+      if (prepared.apply) await prepared.apply(writes, options.apply);
+      else await applyWrites(options.projectDirectory, writes, options.apply);
+      return { kind: "applied", ...preview };
+    };
+    if (options.dryRun) return { kind: "available-noninteractive", ...preview };
+    if (options.yes) {
+      // Only the caller's writer: never stdout, so --json stays one document.
+      options.write?.(prepared.preview);
+      await options.beforeApply?.();
+      return await apply();
+    }
     if (
-      options.dryRun ||
       !(options.interactive ?? (options.confirm !== undefined || stdin.isTTY))
     )
       return { kind: "available-noninteractive", ...preview };
@@ -134,13 +176,162 @@ export async function setupAutobuild(
       }))
     )
       return { kind: "declined" };
-    await unchanged(options.projectDirectory, prepared.snapshots);
-    const writes = [{ path: "autobuild.toml", content: prepared.candidate }];
-    if (prepared.apply) await prepared.apply(writes, options.apply);
-    else await applyWrites(options.projectDirectory, writes, options.apply);
-    return { kind: "applied", ...preview };
+    return await apply();
   } catch (error) {
     return { kind: "manual", reason: (error as Error).message, addition };
+  }
+}
+
+/**
+ * Offer the finalize step that advances the gate's baseline as builds land:
+ * one yes/no, then the exact diff and a second confirmation, as for the gate.
+ */
+export async function setupBaselineAdvance(
+  options: SetupOptions,
+): Promise<AutobuildSetupOutcome> {
+  if (options.skip) return { kind: "skipped" };
+  try {
+    const snapshots = new Map<string, string>();
+    const config = await inspect(
+      options.projectDirectory,
+      "autobuild.toml",
+      snapshots,
+    );
+    if (config.kind === "absent") return { kind: "not-detected" };
+    if (config.kind !== "file")
+      throw new Error("autobuild.toml is not a regular file");
+    const { candidate } = planBaselineFinalize(config.content);
+    const diff = createAutobuildDiff(config.content, candidate);
+    if (!diff) return { kind: "already-wired" };
+    const apply = async (): Promise<AutobuildSetupOutcome> => {
+      await unchanged(options.projectDirectory, snapshots);
+      await applyWrites(
+        options.projectDirectory,
+        [{ path: "autobuild.toml", content: candidate }],
+        options.apply,
+      );
+      return { kind: "applied", diff };
+    };
+    if (options.dryRun) return { kind: "available-noninteractive", diff };
+    if (options.yes) {
+      options.write?.(diff);
+      return await apply();
+    }
+    if (
+      !(options.interactive ?? (options.confirm !== undefined || stdin.isTTY))
+    )
+      return { kind: "available-noninteractive", diff };
+    const confirm = options.confirm ?? defaultConfirmation;
+    if (
+      !(await confirm({
+        kind: "offer-baseline-advance",
+        path: "autobuild.toml",
+        prompt:
+          "Autobuild is detected. Advance Idiom's baseline as each build finalizes? [y/N] ",
+      }))
+    )
+      return { kind: "declined" };
+    (options.write ?? ((message) => stdout.write(message)))(diff);
+    if (
+      !(await confirm({
+        kind: "apply-autobuild-config",
+        path: "autobuild.toml",
+        diff,
+        prompt: "Apply the configuration change shown above? [y/N] ",
+      }))
+    )
+      return { kind: "declined" };
+    return await apply();
+  } catch (error) {
+    return {
+      kind: "manual",
+      reason: `Autobuild configuration could not be edited safely: ${(error as Error).message}`,
+      addition: baselineFinalizeAddition,
+    };
+  }
+}
+
+/**
+ * Prepare the fix step: swap the gate's skill to `idiom-fix` (wiring the gate
+ * first when absent) and install the skill. Read-only; throws with a reason
+ * when the configuration is custom or cannot be edited safely.
+ */
+export async function prepareFixStep(
+  root: string,
+  source?: string,
+  installs = new SkillInstalls(root),
+): Promise<PreparedAutobuild | undefined> {
+  const snapshots = new Map<string, string>();
+  const config = await inspect(root, "autobuild.toml", snapshots);
+  if (config.kind === "absent") return undefined;
+  if (config.kind !== "file")
+    throw new Error("autobuild.toml is not a regular file");
+  const original = source ?? config.content;
+  const plan = planFixStep(original, await readAutobuildTemplate());
+  if (plan.kind === "manual") throw new Error(plan.reason);
+  const extra = await installs.add("idiom-fix");
+  for (const [path, token] of installs.snapshots) snapshots.set(path, token);
+  return {
+    candidate: plan.candidate,
+    preview: createAutobuildDiff(original, plan.candidate) + extra,
+    extra,
+    snapshots,
+    apply: installs.apply,
+  };
+}
+
+/**
+ * Offer the fix step: one yes/no, then the exact diff and a second
+ * confirmation, as for the baseline finalize step.
+ */
+export async function setupFixStep(
+  options: SetupOptions,
+): Promise<AutobuildSetupOutcome> {
+  if (options.skip) return { kind: "skipped" };
+  try {
+    const prepared = await prepareFixStep(options.projectDirectory);
+    if (!prepared) return { kind: "not-detected" };
+    if (!prepared.preview) return { kind: "already-wired" };
+    const diff = prepared.preview;
+    // --yes never applies it (it changes what builds do) and never prompts.
+    if (
+      options.dryRun ||
+      options.yes ||
+      !(options.interactive ?? (options.confirm !== undefined || stdin.isTTY))
+    )
+      return { kind: "available-noninteractive", diff };
+    const confirm = options.confirm ?? defaultConfirmation;
+    if (
+      !(await confirm({
+        kind: "offer-fix-step",
+        path: "autobuild.toml",
+        prompt:
+          "Autobuild is detected. Have Idiom fix new major UI findings inside each build at verify time (up to 3 findings × 3 rounds)? [y/N] ",
+      }))
+    )
+      return { kind: "declined" };
+    (options.write ?? ((message) => stdout.write(message)))(diff);
+    if (
+      !(await confirm({
+        kind: "apply-autobuild-config",
+        path: "autobuild.toml",
+        diff,
+        prompt: "Apply the configuration and file changes shown above? [y/N] ",
+      }))
+    )
+      return { kind: "declined" };
+    await unchanged(options.projectDirectory, prepared.snapshots);
+    await prepared.apply?.(
+      [{ path: "autobuild.toml", content: prepared.candidate }],
+      options.apply,
+    );
+    return { kind: "applied", diff };
+  } catch (error) {
+    return {
+      kind: "manual",
+      reason: (error as Error).message,
+      addition: fixStepAddition(await readAutobuildTemplate()),
+    };
   }
 }
 
@@ -174,7 +365,11 @@ export async function setupOptionalVerifier(
   }
 }
 export async function prepareOptionalVerifier(
-  options: SetupOptions & { selected?: boolean; source?: string },
+  options: SetupOptions & {
+    selected?: boolean;
+    source?: string;
+    installs?: SkillInstalls;
+  },
 ): Promise<PreparedAutobuild | undefined> {
   if (
     options.dryRun ||
@@ -269,7 +464,11 @@ export async function prepareOptionalVerifier(
     write(`${plan.reason}\n${template}`);
     return;
   }
-  const install = await prepareVerifierInstall(root);
+  const install = await prepareSkillInstall(
+    root,
+    "idiom-verify",
+    options.installs,
+  );
   for (const [path, token] of install.snapshots) snapshots.set(path, token);
   return {
     candidate: plan.candidate,
@@ -280,75 +479,127 @@ export async function prepareOptionalVerifier(
   };
 }
 
-/** Prepare the one shared skill without touching edited/custom destinations. */
-async function prepareVerifierInstall(root: string) {
-  const snapshots = new Map<string, string>();
-  const main = ".agents/skills/idiom-verify/SKILL.md";
-  const directory = ".agents/skills/idiom-verify";
-  const link = ".claude/skills/idiom-verify";
-  const target = "../../.agents/skills/idiom-verify";
-  const parent = await inspect(root, directory, snapshots);
-  const local = await inspect(root, main, snapshots);
-  if (parent.kind !== "absent" && parent.kind !== "directory")
-    throw new Error(`Protected verifier destination: ${directory}`);
-  if (
-    local.kind !== "absent" &&
-    (local.kind !== "file" || skillIdentity(local.content) !== "idiom-verify")
-  )
-    throw new Error(`Protected verifier destination: ${main}`);
-  if (local.kind === "absent" && parent.kind !== "absent")
-    throw new Error(`Occupied verifier directory: ${directory}`);
-  const discovery = await inspect(root, link, snapshots);
-  if (
-    discovery.kind !== "absent" &&
-    !(discovery.kind === "symlink" && discovery.target === target)
-  )
-    throw new Error(`Protected verifier discovery: ${link}`);
-  const content = await readAutobuildVerifierSkillTemplate();
-  const writes: import("../skills/paths.js").Write[] = [];
-  let extra = "";
-  if (local.kind === "absent") {
-    writes.push({ path: main, content });
-    extra += `Create ${main}\n`;
-    const manifest = await loadPristine(root, snapshots);
-    const key = "idiom-verify/SKILL.md";
-    const baseline = await inspect(root, pristinePath(key), snapshots);
-    if (manifest.files[key] || baseline.kind !== "absent")
-      throw new Error("Verifier pristine destination is already occupied");
-    manifest.files[key] = { version: IDIOM_VERSION, digest: digest(content) };
-    writes.push(
-      { path: pristinePath(key), content },
-      { path: manifestPath, content: manifestBytes(manifest) },
-    );
-    extra += `Seed ${pristinePath(key)} and ${manifestPath}\n`;
+/** The Autobuild step skills wiring installs on demand. */
+export type StepSkill = "idiom-verify" | "idiom-fix";
+
+const stepSkillTemplate = (skill: StepSkill) =>
+  skill === "idiom-fix"
+    ? readAutobuildFixSkillTemplate()
+    : readAutobuildVerifierSkillTemplate();
+
+/**
+ * One transaction that installs any number of step skills: the canonical
+ * file, its `.claude/skills` link and its pristine seed, sharing one pristine
+ * manifest write. Edited or custom destinations are never touched.
+ */
+export class SkillInstalls {
+  readonly snapshots = new Map<string, string>();
+  private readonly writes: import("../skills/paths.js").Write[] = [];
+  private readonly links: Array<{ link: string; target: string }> = [];
+  private readonly prepared = new Set<StepSkill>();
+  private manifest: import("../skills/types.js").PristineManifest | undefined;
+  private seeded = false;
+  constructor(private readonly root: string) {}
+
+  get empty(): boolean {
+    return this.writes.length === 0 && this.links.length === 0;
   }
-  if (discovery.kind === "absent") extra += `Create ${link} → ${target}\n`;
-  return {
-    extra,
-    snapshots,
-    async apply(
-      configWrites: import("../skills/paths.js").Write[],
-      dependencies?: ApplyDependencies,
-    ) {
-      await unchanged(root, snapshots);
-      const created: string[] = [];
-      let linked = false;
-      try {
-        if (discovery.kind === "absent") {
-          for (const path of [".claude", ".claude/skills"])
-            if ((await inspect(root, path)).kind === "absent") {
-              await mkdir(join(root, path));
-              created.push(path);
-            }
-          await symlink(target, join(root, link), "dir");
-          linked = true;
-        }
-        await applyWrites(root, [...writes, ...configWrites], dependencies);
-      } catch (error) {
-        if (linked) await rm(join(root, link));
-        for (const path of created.reverse()) await rmdir(join(root, path));
-        throw error;
+
+  /** Prepare one skill; returns the file/link lines it adds to a preview. */
+  async add(skill: StepSkill): Promise<string> {
+    if (this.prepared.has(skill)) return "";
+    const root = this.root;
+    const snapshots = this.snapshots;
+    const directory = `.agents/skills/${skill}`;
+    const main = `${directory}/SKILL.md`;
+    const link = `.claude/skills/${skill}`;
+    const target = `../../.agents/skills/${skill}`;
+    const label = skill === "idiom-fix" ? "fix-step skill" : "verifier";
+    const parent = await inspect(root, directory, snapshots);
+    const local = await inspect(root, main, snapshots);
+    if (parent.kind !== "absent" && parent.kind !== "directory")
+      throw new Error(`Protected ${label} destination: ${directory}`);
+    if (
+      local.kind !== "absent" &&
+      (local.kind !== "file" || skillIdentity(local.content) !== skill)
+    )
+      throw new Error(`Protected ${label} destination: ${main}`);
+    if (local.kind === "absent" && parent.kind !== "absent")
+      throw new Error(`Occupied ${label} directory: ${directory}`);
+    const discovery = await inspect(root, link, snapshots);
+    if (
+      discovery.kind !== "absent" &&
+      !(discovery.kind === "symlink" && discovery.target === target)
+    )
+      throw new Error(`Protected ${label} discovery: ${link}`);
+    const content = await stepSkillTemplate(skill);
+    let extra = "";
+    if (local.kind === "absent") {
+      this.writes.push({ path: main, content });
+      extra += `Create ${main}\n`;
+      this.manifest ??= await loadPristine(root, snapshots);
+      const key = `${skill}/SKILL.md`;
+      const baseline = await inspect(root, pristinePath(key), snapshots);
+      if (this.manifest.files[key] || baseline.kind !== "absent")
+        throw new Error(
+          `${skill === "idiom-fix" ? "Fix-step" : "Verifier"} pristine destination is already occupied`,
+        );
+      this.manifest.files[key] = {
+        version: IDIOM_VERSION,
+        digest: digest(content),
+      };
+      this.writes.push({ path: pristinePath(key), content });
+      this.seeded = true;
+      extra += `Seed ${pristinePath(key)} and ${manifestPath}\n`;
+    }
+    if (discovery.kind === "absent") {
+      this.links.push({ link, target });
+      extra += `Create ${link} → ${target}\n`;
+    }
+    this.prepared.add(skill);
+    return extra;
+  }
+
+  /** Create the links, then write the skill files with the config writes. */
+  readonly apply = async (
+    configWrites: import("../skills/paths.js").Write[],
+    dependencies?: ApplyDependencies,
+  ): Promise<void> => {
+    const root = this.root;
+    await unchanged(root, this.snapshots);
+    const created: string[] = [];
+    const linked: string[] = [];
+    const writes = [...this.writes];
+    if (this.seeded && this.manifest !== undefined)
+      writes.push({
+        path: manifestPath,
+        content: manifestBytes(this.manifest),
+      });
+    try {
+      for (const { link, target } of this.links) {
+        for (const path of [".claude", ".claude/skills"])
+          if ((await inspect(root, path)).kind === "absent") {
+            await mkdir(join(root, path));
+            created.push(path);
+          }
+        await symlink(target, join(root, link), "dir");
+        linked.push(link);
       }
-    },
+      await applyWrites(root, [...writes, ...configWrites], dependencies);
+    } catch (error) {
+      for (const link of linked.reverse()) await rm(join(root, link));
+      for (const path of created.reverse()) await rmdir(join(root, path));
+      throw error;
+    }
   };
+}
+
+/** Prepare one step skill without touching edited/custom destinations. */
+export async function prepareSkillInstall(
+  root: string,
+  skill: StepSkill,
+  installs = new SkillInstalls(root),
+) {
+  const extra = await installs.add(skill);
+  return { extra, snapshots: installs.snapshots, apply: installs.apply };
 }

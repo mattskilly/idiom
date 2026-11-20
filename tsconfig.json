@@ -12,5 +12,9 @@
     "types": ["node"]
   },
   "include": ["src", "test", "api", "site/*.ts"],
-  "exclude": ["test/fixtures/gate-app"]
+  "exclude": [
+    "test/fixtures/gate-app",
+    "test/fixtures/builder-app",
+    "test/fixtures/idiom-fix"
+  ]
 }

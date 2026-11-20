@@ -254,3 +254,45 @@ export function estimateGate(options: {
     noHistory: model.noHistory,
   };
 }
+
+/** The most a busy host scales the gate's estimate. */
+export const MAX_HOST_FACTOR = 4;
+
+/**
+ * How much slower than its history the host runs now: load per core now
+ * over the median load per core the history was measured at, each at least
+ * 1 (an idle host is not faster than one busy process), capped. 1 when
+ * either is unknown.
+ */
+export function hostFactor(
+  history: StoredRun[],
+  now: { load: [number, number, number] | null; coreCount: number },
+): number {
+  if (now.load === null) return 1;
+  const current = Math.max(1, now.load[0] / Math.max(1, now.coreCount));
+  const past = median(
+    history.flatMap((run) => {
+      const host = run.record.host;
+      const start = host?.loadStart;
+      const end = host?.loadEnd;
+      if (!host || !start) return [];
+      const load = end ? (start[0] + end[0]) / 2 : start[0];
+      return [Math.max(1, load / Math.max(1, host.coreCount))];
+    }),
+  );
+  return Math.min(MAX_HOST_FACTOR, Math.max(1, current / (past ?? 1)));
+}
+
+/** A cost model whose capture, probe and checks run `factor` times slower. */
+export function scaleCostModel(model: CostModel, factor: number): CostModel {
+  if (factor <= 1) return model;
+  return {
+    ...model,
+    tupleCaptureMs: (state, viewport, scheme) =>
+      model.tupleCaptureMs(state, viewport, scheme) * factor,
+    controlProbeMs: model.controlProbeMs * factor,
+    startMs: model.startMs * factor,
+    buildMs: model.buildMs * factor,
+    checksMs: model.checksMs * factor,
+  };
+}

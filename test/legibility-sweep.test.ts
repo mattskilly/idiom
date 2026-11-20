@@ -14,6 +14,7 @@ import { observePage } from "../src/checks/observe.js";
 import { raggedRowCheck } from "../src/checks/ragged-row.js";
 import { checksConfigFrom } from "../src/checks/registry.js";
 import { textOcclusionCheck } from "../src/checks/text-occlusion.js";
+import { toolbarLayoutCheck } from "../src/checks/toolbar-layout.js";
 import { typeLegibilityCheck } from "../src/checks/type-legibility.js";
 import { evidenceTuple } from "./blank-media-support.js";
 // @ts-expect-error Fixture server is authored Node ESM.
@@ -40,6 +41,7 @@ const checks = [
   textOcclusionCheck,
   controlGapCheck,
   negativeSpacingCheck,
+  toolbarLayoutCheck,
 ];
 type Entry = {
   source: string;
@@ -136,6 +138,7 @@ test("legibility and layout precision sweep over the gate and field apps", {
             raggedRow: true,
             controlGap: true,
             negativeSpacing: true,
+            toolbarLayout: true,
           },
           textOcclusion: true,
         },
@@ -151,6 +154,7 @@ test("legibility and layout precision sweep over the gate and field apps", {
         observations.raggedRows === undefined ||
         observations.controlGaps === undefined ||
         observations.negativeSpacings === undefined ||
+        observations.toolbarLayouts === undefined ||
         observations.textOcclusions === undefined
       )
         throw Error("missing legibility scans");

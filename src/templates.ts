@@ -51,12 +51,20 @@ export function autobuildVerifierSkillTemplatePath(): string {
   return join(templatesDirectory(), "idiom-verify", "SKILL.md");
 }
 
+export function autobuildFixSkillTemplatePath(): string {
+  return join(templatesDirectory(), "idiom-fix", "SKILL.md");
+}
+
 export async function readAutobuildTemplate(): Promise<string> {
   return readFile(autobuildTemplatePath(), "utf8");
 }
 
 export async function readAutobuildVerifierSkillTemplate(): Promise<string> {
   return readFile(autobuildVerifierSkillTemplatePath(), "utf8");
+}
+
+export async function readAutobuildFixSkillTemplate(): Promise<string> {
+  return readFile(autobuildFixSkillTemplatePath(), "utf8");
 }
 
 /** Idiom-owned, not project-owned: never copied into `.idiom/` by init. */

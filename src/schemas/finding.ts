@@ -247,6 +247,7 @@ export const findingCategories = [
   "state-jump",
   "control-gap",
   "negative-spacing",
+  "toolbar-layout",
 ] as const;
 
 /** Critique focus areas a page review can request (`idiom review --page --focus`). */

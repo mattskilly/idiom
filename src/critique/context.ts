@@ -167,6 +167,11 @@ export async function buildCritiqueContext(options: {
   deterministicFindings: Finding[];
   modelCandidateAllowance: number;
 }): Promise<CritiqueInput> {
+  // Intermediate widths are layout-only: never sent for model review.
+  options = {
+    ...options,
+    tuples: options.tuples.filter((tuple) => tuple.intermediateWidth !== true),
+  };
   const { screenshots, domExcerpts } = await tupleCritiqueMaterial(
     options.tuples,
     options.runDirectory,

@@ -1,5 +1,6 @@
 import { IdiomError } from "../errors.js";
 import { Deadline, DeadlineExpired } from "./deadline.js";
+import { formatDuration } from "./timings.js";
 import type { CaptureActivity } from "./types.js";
 
 export class CaptureInterrupted extends IdiomError {
@@ -12,6 +13,31 @@ export type CaptureLifetime = {
   signal?: AbortSignal | undefined;
   onActivity?: ((activity: CaptureActivity) => void) | undefined;
 };
+
+export type StepTiming = {
+  state: string;
+  viewport: string;
+  colorScheme: "light" | "dark";
+  step: string;
+  ms: number;
+};
+
+/** What a capture.maxMinutes expiry names: the running step and the slowest so far. */
+export type BudgetReport = {
+  limit: "capture.maxMinutes";
+  step: string;
+  activity: string;
+  slowest: StepTiming[];
+};
+
+export function renderSlowestSteps(steps: StepTiming[]): string {
+  return steps
+    .map(
+      (entry) =>
+        `${entry.state}/${entry.viewport}/${entry.colorScheme} ${entry.step} ${formatDuration(entry.ms)}`,
+    )
+    .join(", ");
+}
 
 /** Fixed maximum grace after deadline expiry, including all resource teardown. */
 const CLEANUP_GRACE_MS = 5000;
@@ -29,6 +55,10 @@ export class CaptureOwnership {
   deadline: Deadline;
   /** Coordinates captured concurrently, named when the deadline expires. */
   private inFlight = new Map<object, string>();
+  /** Per-tuple step durations, summed; the expiry message names the slowest. */
+  private steps = new Map<string, StepTiming>();
+  /** The activity at expiry, copied so late continuations cannot rewrite it. */
+  private expiredAt: CaptureActivity | undefined;
   constructor(
     maxMinutes: number,
     private onActivity?: (activity: CaptureActivity) => void,
@@ -38,6 +68,7 @@ export class CaptureOwnership {
       Math.min(Number.MAX_SAFE_INTEGER, maxMinutes * 60000),
       () => {
         const a = this.activity;
+        this.expiredAt = { ...a };
         const current = `state ${a.state}, viewport ${a.viewport}, scheme ${a.colorScheme}, step ${a.step}`;
         return this.inFlight.size > 1
           ? `${current}; in flight: ${[...this.inFlight.values()].join(", ")}`
@@ -87,6 +118,54 @@ export class CaptureOwnership {
       this.inFlight.delete(token);
     };
   }
+  /** Add a measured step of one tuple's work. */
+  recordStep(
+    coordinate: {
+      state: string;
+      viewport: string;
+      colorScheme: "light" | "dark";
+    },
+    step: string,
+    ms: number,
+  ): void {
+    if (!Number.isFinite(ms) || ms < 0) return;
+    const key = `${coordinate.state}\0${coordinate.viewport}\0${coordinate.colorScheme}\0${step}`;
+    const entry = this.steps.get(key);
+    if (entry) entry.ms += ms;
+    else
+      this.steps.set(key, {
+        state: coordinate.state,
+        viewport: coordinate.viewport,
+        colorScheme: coordinate.colorScheme,
+        step,
+        ms,
+      });
+  }
+  /** The n slowest recorded steps, longest first. */
+  slowestSteps(n = 5): StepTiming[] {
+    return [...this.steps.values()]
+      .sort(
+        (a, b) =>
+          b.ms - a.ms ||
+          `${a.state}/${a.viewport}/${a.colorScheme}/${a.step}`.localeCompare(
+            `${b.state}/${b.viewport}/${b.colorScheme}/${b.step}`,
+          ),
+      )
+      .slice(0, n)
+      .map((entry) => ({ ...entry }));
+  }
+  /** Set once the capture deadline expired: the step running and the slowest steps. */
+  budgetReport(): BudgetReport | undefined {
+    const reason = this.signal.reason;
+    if (!(reason instanceof DeadlineExpired) || reason.scope !== "capture")
+      return undefined;
+    return {
+      limit: "capture.maxMinutes",
+      step: (this.expiredAt ?? this.activity).step,
+      activity: reason.activity,
+      slowest: this.slowestSteps(5),
+    };
+  }
   own<T extends object>(value: T, close: (value: T) => Promise<unknown>): T {
     if (!this.resources.has(value))
       this.resources.set(value, () => close(value));
@@ -124,6 +203,13 @@ export class CaptureOwnership {
       [...this.resources.keys()].map((value) => this.close(value)),
     );
   }
+}
+
+function slowestSuffix(owner: CaptureOwnership): string {
+  const slowest = owner.slowestSteps(3);
+  return slowest.length === 0
+    ? ""
+    : `; slowest steps so far: ${renderSlowestSteps(slowest)}`;
 }
 
 export async function withCaptureOwnership<T>(
@@ -186,7 +272,7 @@ export async function withCaptureOwnership<T>(
     failure =
       error instanceof DeadlineExpired && error.scope === "capture"
         ? new IdiomError(
-            `Capture exceeded capture.maxMinutes=${maxMinutes}: ${error.activity}`,
+            `Capture exceeded capture.maxMinutes=${maxMinutes}: ${error.activity}${slowestSuffix(owner)}`,
           )
         : error;
   } finally {

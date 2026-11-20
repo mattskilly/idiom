@@ -8,6 +8,13 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { stdin, stdout } from "node:process";
+import {
+  type FirstBaselineDependencies,
+  type FirstBaselineOutcome,
+  firstBaselineLines,
+  recordFirstBaselines,
+} from "../autobuild/first-baseline.js";
+import { parseProductComparables } from "../brief/comparables.js";
 import type { BriefInstructionOutcome } from "../brief/instruction.js";
 import { sanitizeCritiqueDiagnostic } from "../critique/claude-code.js";
 import {
@@ -16,6 +23,7 @@ import {
   generateSiteFlow,
 } from "../flows/generate.js";
 import { resolveProjectArgument } from "../project.js";
+import type { BriefReference } from "../schemas/project.js";
 import { projectViewportSuggestion } from "../setup/viewports.js";
 import { skillIdentity } from "../skills/merge.js";
 import { applyWrites, inspect } from "../skills/paths.js";
@@ -74,6 +82,10 @@ export type InitResult = {
   wiring?: WiringReport;
   /** Wiring-only (--wire) or preview-only (--dry-run) runs skip scaffolding. */
   mode?: "wire" | "dry-run";
+  /** --wire --yes wired the gate: its first baseline, recorded or named as the next step. */
+  firstBaseline?: FirstBaselineOutcome;
+  /** Comparable products copied from PRODUCT.md into brief.references. */
+  seededComparables?: number;
   /** Viewports skip from phone to desktop: suggest a tablet width. */
   viewportSuggestion?: string;
   systemLearning: {
@@ -263,6 +275,30 @@ async function atomicReplaceConfig(
   await applyWrites(dirname(path), [{ path: basename(path), content }]);
 }
 
+/** Comparable products listed in an existing, user-written PRODUCT.md. */
+async function productComparables(
+  projectDirectory: string,
+): Promise<BriefReference[]> {
+  const path = join(projectDirectory, "PRODUCT.md");
+  try {
+    if (!(await lstat(path)).isFile()) return [];
+    return parseProductComparables(await readFile(path, "utf8")).references;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+/** The scaffold's empty `"references": []`, filled from PRODUCT.md. */
+export function seedBriefReferences(
+  content: string,
+  references: BriefReference[],
+): string {
+  if (references.length === 0) return content;
+  const indented = JSON.stringify(references, null, 2).replace(/\n/g, "\n    ");
+  return content.replace('"references": []', () => `"references": ${indented}`);
+}
+
 async function desiredFiles(
   projectDirectory: string,
 ): Promise<Map<string, string>> {
@@ -273,6 +309,10 @@ async function desiredFiles(
       content = content.replace('"__IDIOM_APP_NAME__"', () =>
         JSON.stringify(basename(projectDirectory)),
       );
+      content = seedBriefReferences(
+        content,
+        await productComparables(projectDirectory),
+      );
     }
     const destination =
       name === "PRODUCT.md" || name === "DESIGN.md"
@@ -282,6 +322,12 @@ async function desiredFiles(
   }
   files.set(join(".idiom", ".gitignore"), "reports/\n/agent-hooks/\n");
   return files;
+}
+
+function seededFrom(result: InitResult, content: string): void {
+  const count = (JSON.parse(content) as { brief?: { references?: unknown[] } })
+    .brief?.references?.length;
+  if (count !== undefined && count > 0) result.seededComparables = count;
 }
 
 export async function initProject(options: {
@@ -302,6 +348,8 @@ export async function initProject(options: {
   wiringApplication?: "allow" | "report-only" | undefined;
   /** Test seams: selection, PATH/Git lookups and the safe-write hook. */
   wiringDependencies?: WiringDependencies | undefined;
+  /** Test seam for the gate's first baseline under --wire --yes. */
+  firstBaseline?: FirstBaselineDependencies | undefined;
 }): Promise<InitResult> {
   const projectDirectory = resolveProjectArgument(options.project, options.cwd);
   const result: InitResult = {
@@ -329,6 +377,26 @@ export async function initProject(options: {
         ...wiringOptions,
         yes: options.yes,
         application: options.wiringApplication,
+        offerAutobuild:
+          wiringOptions.wire === true || wiringOptions.dryRun === true,
+        // Recorded before the wiring writes, while HEAD may still be clean.
+        beforeApply: async (plan) => {
+          if (
+            wiringOptions.wire === true &&
+            plan.proposals.some(
+              (row) =>
+                row.surface === "autobuild-gate" &&
+                row.selected &&
+                (row.disposition === "create" || row.disposition === "update"),
+            )
+          ) {
+            const outcome = await recordFirstBaselines(
+              projectDirectory,
+              options.firstBaseline,
+            );
+            if (outcome !== undefined) result.firstBaseline = outcome;
+          }
+        },
       },
       {
         ...options.wiringDependencies,
@@ -383,6 +451,8 @@ export async function initProject(options: {
     if (existing === undefined) {
       await writeFile(file, content, "utf8");
       result.created.push(relativePath);
+      if (relativePath === join(".idiom", "project.json"))
+        seededFrom(result, content);
     } else if (existing === content) {
       result.unchanged.push(relativePath);
     } else if (options.yes === true) {
@@ -396,6 +466,8 @@ export async function initProject(options: {
     ) {
       await writeFile(file, content, "utf8");
       result.replaced.push(relativePath);
+      if (relativePath === join(".idiom", "project.json"))
+        seededFrom(result, content);
     } else {
       result.skipped.push(relativePath);
     }
@@ -537,19 +609,16 @@ export async function initProject(options: {
     result.autobuild.kind === "applied" ||
     result.autobuild.kind === "already-wired"
   ) {
-    try {
-      if (
-        (
-          await inspect(
-            projectDirectory,
-            ".agents/skills/idiom-verify/SKILL.md",
-          )
-        ).kind === "file"
-      )
-        deferred.push("idiom-verify");
-    } catch {
-      /* Setup already reports protected verifier paths; retain that diagnostic. */
-    }
+    for (const skill of ["idiom-verify", "idiom-fix"] as const)
+      try {
+        if (
+          (await inspect(projectDirectory, `.agents/skills/${skill}/SKILL.md`))
+            .kind === "file"
+        )
+          deferred.push(skill);
+      } catch {
+        /* Setup already reports protected step-skill paths; retain that diagnostic. */
+      }
   }
   if (deferred.length)
     try {
@@ -636,6 +705,10 @@ function briefProjection(report: WiringReport): BriefInstructionOutcome[] {
 /** The last line of every init summary: the readiness check that marks setup done. */
 export const INIT_NEXT_LINE = "Next: idiom init --validate";
 
+/** The last line of a --wire run with no terminal that left wiring unapplied. */
+export const INIT_WIRE_HINT_LINE =
+  "Apply the offered wiring without a prompt: idiom init --wire --yes";
+
 /** The human summary `idiom init` prints after scaffolding; MCP reuses it. */
 export function initSummaryLines(result: InitResult): string[] {
   const lines: string[] = [];
@@ -658,6 +731,10 @@ export function initSummaryLines(result: InitResult): string[] {
     if (outcome.content !== undefined && outcome.stateCount === 0)
       lines.push("TODO-only flow: no concrete states are ready to capture.");
   }
+  if (result.seededComparables !== undefined)
+    lines.push(
+      `Seeded ${result.seededComparables} comparable product(s) from PRODUCT.md into brief.references.`,
+    );
   for (const file of result.skipped) lines.push(`Preserved existing ${file}`);
   for (const warning of result.skillWarnings ?? []) lines.push(warning);
   if (result.skillUpgrade) {
@@ -674,7 +751,7 @@ export function initSummaryLines(result: InitResult): string[] {
   }
   if (result.autobuild.kind === "available-noninteractive")
     lines.push(
-      "Autobuild verification is available; rerun `idiom init` interactively to review and approve wiring.",
+      "Autobuild verification is available; apply it with idiom init --wire --yes, or rerun idiom init in a terminal to review it.",
     );
   else if (result.autobuild.kind === "declined")
     lines.push("Autobuild wiring declined; no Autobuild files changed.");
@@ -690,6 +767,7 @@ export function initSummaryLines(result: InitResult): string[] {
     lines.push(result.autobuild.addition);
   }
   if (result.wiring) lines.push(...wiringSummaryLines(result.wiring));
+  lines.push(...firstBaselineLines(result.firstBaseline));
   if (result.viewportSuggestion !== undefined)
     lines.push(result.viewportSuggestion);
   if (result.mode === undefined) lines.push(INIT_NEXT_LINE);
@@ -699,5 +777,15 @@ export function initSummaryLines(result: InitResult): string[] {
         ? "Dry run: nothing was created or changed."
         : "Wiring only: scaffold, skills and app setup were not touched. Rerun idiom init --wire to update wiring.",
     );
+  if (
+    result.mode === "wire" &&
+    result.wiring?.mode === "available" &&
+    result.wiring.proposals.some(
+      (row) =>
+        row.selected &&
+        (row.disposition === "create" || row.disposition === "update"),
+    )
+  )
+    lines.push(INIT_WIRE_HINT_LINE);
   return lines;
 }

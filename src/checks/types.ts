@@ -118,6 +118,7 @@ export const deterministicCheckIds = [
   "state-jump",
   "control-gap",
   "negative-spacing",
+  "toolbar-layout",
 ] as const;
 
 export type DeterministicCheckId = (typeof deterministicCheckIds)[number];
@@ -924,6 +925,14 @@ export type ProbeArtifact = {
   candidates?: import("../capture/probe.js").ProbeCandidate[] | undefined;
   /** Control identity → rendered fingerprint, the build gate's reference. */
   fingerprints?: Record<string, string> | undefined;
+  /**
+   * The build gate limited the probe to controls in or next to the changed
+   * surface; `matched: 0` means the page showed none and the probe ran
+   * unscoped.
+   */
+  surfaceScope?:
+    | { label: string; matched: number; outside: number }
+    | undefined;
   selector?: string | undefined;
   step?: string | undefined;
   explanations?: ExplanationArtifact | undefined;
@@ -1250,7 +1259,17 @@ export type SelectorMarkPurpose =
   /** A surface whose controls keep a stricter control-gap minimum (a learned law). */
   | "gap-scope"
   /** A surface whose labels keep a text-centering tolerance (a learned law). */
-  | "centering-scope";
+  | "centering-scope"
+  /** A toolbar toolbar-layout measures (configured selectors and learned laws' surfaces). */
+  | "toolbar-scope";
+
+/** A learned toolbar law: one row, or controls centred within a tolerance. */
+export type ToolbarLayoutScope = {
+  name: string;
+  selector: string;
+  law: "one-row" | "centred";
+  tolerance?: number | undefined;
+};
 
 /** A configured selector resolved at capture time to observed selectors. */
 export type SelectorMark = {
@@ -1350,6 +1369,52 @@ export type ControlGapObservation = {
   text: string;
   /** Configured `controlGap.scopes` selectors whose matches contain the control; absent when none do. */
   scopes?: string[] | undefined;
+};
+
+/** One of a toolbar's direct items: its row and vertical centre. */
+export type ToolbarItemObservation = {
+  selector: string;
+  /** Row index, 0 the topmost. */
+  row: number;
+  /** Vertical centre of the border box, CSS px, rounded to 0.5px. */
+  centre: number;
+  top: number;
+  height: number;
+  text: string;
+};
+
+/** One of a toolbar's controls: the chrome toolbar-layout compares across siblings. */
+export type ToolbarControlObservation = {
+  selector: string;
+  /** "none", or "<max width>px <style>" for the widest visible side. */
+  border: string;
+  /** Top-left radius, CSS px; absent when the control paints no box. */
+  radius?: number | undefined;
+  /** Border-box height, CSS px; absent when the control sits inside an item. */
+  height?: number | undefined;
+  text: string;
+};
+
+/** A rendered toolbar: its rows, its items' centres and its controls' chrome. */
+export type ToolbarLayoutObservation = {
+  toolbar: string;
+  rect: Rect;
+  /** Vertical toolbars record controls only (no rows, no centring, no heights). */
+  vertical: boolean;
+  /** The toolbar's border-box height. */
+  height: number;
+  /** The height it would have with only row 0's items. */
+  singleRowHeight: number;
+  rows: number;
+  items: ToolbarItemObservation[];
+  controls: ToolbarControlObservation[];
+  /** `toolbar-scope` mark selectors whose matches include the toolbar itself. */
+  scopes?: string[] | undefined;
+  /**
+   * Horizontal toolbars: items, margins and gaps over the content-box width
+   * (0.93 = the row is 93% full). Absent in older captures.
+   */
+  fill?: number | undefined;
 };
 
 /** A negative letter-spacing or word-spacing on painted text, at the element that sets it. */
@@ -1885,6 +1950,10 @@ export type ObservationArtifactV2 = Omit<
     | undefined;
   elements: ObservedElementV2[];
   maskMembership: Array<{ selector: string; paths: string[] }>;
+  /** What the tuple rendered, for the build gate's surface ranking; absent in older captures. */
+  rendered?:
+    | import("../capture/rendered-surface.js").RenderedSurface
+    | undefined;
   components?: ComponentObservation[] | undefined;
   spacingTargets?: SpacingTargetObservation[] | undefined;
   invariants?: InvariantObservation[] | undefined;
@@ -1931,6 +2000,8 @@ export type ObservationArtifactV2 = Omit<
   controlGaps?: GeometryScan<ControlGapObservation> | undefined;
   /** Absent in captures that predate the negative-spacing scan (or when disabled). */
   negativeSpacings?: GeometryScan<NegativeSpacingObservation> | undefined;
+  /** Absent in captures that predate the toolbar-layout scan (or when disabled). */
+  toolbarLayouts?: GeometryScan<ToolbarLayoutObservation> | undefined;
   /** Absent in captures that predate the heading-rhythm scan (or when disabled). */
   headingRhythms?: GeometryScan<HeadingRhythmObservation> | undefined;
   /** Absent in captures that predate the type-legibility scan (or when disabled). */
@@ -2085,6 +2156,8 @@ export type CheckTuple = {
   viewport: string;
   colorScheme?: ColorScheme | undefined;
   colorSchemeAxis?: boolean | undefined;
+  /** Captured at a synthetic intermediate width: layout checks only. */
+  intermediateWidth?: true | undefined;
   width: number;
   height: number;
   metadataPath: string;
@@ -2216,6 +2289,13 @@ export type ChecksConfig = {
     | undefined;
   negativeSpacing?:
     | { enabled: boolean; scope: "interface" | "all" }
+    | undefined;
+  toolbarLayout?:
+    | {
+        enabled: boolean;
+        centreTolerance: number;
+        scopes?: ToolbarLayoutScope[] | undefined;
+      }
     | undefined;
   images?: { enabled: boolean; distortionTolerance: number } | undefined;
   layoutShift?: { enabled: boolean; max: number } | undefined;

@@ -1236,6 +1236,14 @@ const probeSchema = z
       .strict()
       .optional(),
     fingerprints: z.record(z.string(), z.string()).optional(),
+    surfaceScope: z
+      .object({
+        label: z.string(),
+        matched: z.number().int().min(0),
+        outside: z.number().int().min(0),
+      })
+      .strict()
+      .optional(),
     heldReplay: z
       .object({
         delayMs: z.number().int().positive(),
@@ -1672,6 +1680,46 @@ const controlGapSchema = z
     rect: rectSchema,
     text: z.string().max(80),
     scopes: z.array(z.string().min(1)).min(1).optional(),
+  })
+  .strict();
+
+const toolbarLayoutSchema = z
+  .object({
+    toolbar: z.string().min(1),
+    rect: rectSchema,
+    vertical: z.boolean(),
+    height: dimension,
+    singleRowHeight: dimension,
+    rows: z.number().int().min(0),
+    items: z
+      .array(
+        z
+          .object({
+            selector: z.string().min(1),
+            row: z.number().int().min(0),
+            centre: finite,
+            top: finite,
+            height: dimension,
+            text: z.string().max(40),
+          })
+          .strict(),
+      )
+      .max(40),
+    controls: z
+      .array(
+        z
+          .object({
+            selector: z.string().min(1),
+            border: z.string().min(1),
+            radius: dimension.optional(),
+            height: dimension.optional(),
+            text: z.string().max(40),
+          })
+          .strict(),
+      )
+      .max(40),
+    scopes: z.array(z.string().min(1)).min(1).optional(),
+    fill: z.number().finite().nonnegative().optional(),
   })
   .strict();
 
@@ -2383,6 +2431,18 @@ const observationArtifactV2Schema = z
         })
         .strict(),
     ),
+    rendered: z
+      .object({
+        version: z.literal(1),
+        classes: z.array(z.string()),
+        ids: z.array(z.string()),
+        testIds: z.array(z.string()),
+        components: z.array(z.string()),
+        sheets: z.array(z.string()),
+        truncated: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     components: z.array(componentSchema).optional(),
     spacingTargets: z.array(spacingTargetObservationSchema).optional(),
     invariants: z.array(invariantObservationSchema).optional(),
@@ -2424,6 +2484,7 @@ const observationArtifactV2Schema = z
               "spacing-ignore",
               "gap-scope",
               "centering-scope",
+              "toolbar-scope",
             ]),
             selector: z.string().min(1),
             matches: z.array(z.string().min(1)),
@@ -2468,6 +2529,7 @@ const observationArtifactV2Schema = z
     crampedPaddings: boundedScan(crampedPaddingSchema, 50).optional(),
     controlGaps: boundedScan(controlGapSchema, 50).optional(),
     negativeSpacings: boundedScan(negativeSpacingSchema, 50).optional(),
+    toolbarLayouts: boundedScan(toolbarLayoutSchema, 30).optional(),
     headingRhythms: boundedScan(headingRhythmSchema, 50).optional(),
     typeLegibility: boundedScan(typeLegibilitySchema, 100).optional(),
     numericColumns: boundedScan(numericColumnSchema, 50).optional(),

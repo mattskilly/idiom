@@ -1,0 +1,17 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`upgrade offers the fix step: yes applies, no declines, noninteractive shows the diff 1`] = `
+"--- a/autobuild.toml
++++ b/autobuild.toml
+@@ -13,5 +13,5 @@
+ # Idiom's step; keep this comment.
+ [verify.idiom-check]
+ kind = "agent"
+-skill = "idiom-verify"
++skill = "idiom-fix"  # fixes up to 3 new major findings per round, 3 rounds
+ # No paths: the gate detects UI changes itself.
+Create .agents/skills/idiom-fix/SKILL.md
+Seed .agents/skills/.idiom-pristine/idiom-fix/SKILL.md and .agents/skills/.idiom-pristine/manifest.json
+Create .claude/skills/idiom-fix → ../../.agents/skills/idiom-fix
+"
+`;

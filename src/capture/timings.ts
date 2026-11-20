@@ -58,6 +58,9 @@ export type RunTimings = {
     colorScheme: "light" | "dark";
     total: PhaseTiming;
     probe: PhaseTiming;
+    /** Captured at a synthetic intermediate width (intermediateWidths). */
+    intermediate?: true | undefined;
+    steps?: TupleStepTimings | undefined;
   }>;
   probe: PhaseTiming;
   checks: PhaseTiming;
@@ -65,6 +68,94 @@ export type RunTimings = {
   capture?: PhaseTiming | undefined;
   historical?: boolean | undefined;
 };
+/** Milliseconds per step of one tuple; `checks` comes from review. */
+export type TupleStepTimings = {
+  capture?: number | undefined;
+  probe?: number | undefined;
+  artifacts?: number | undefined;
+  secretScan?: number | undefined;
+  checks?: number | undefined;
+};
+export type SlowTuple = {
+  state: string;
+  viewport: string;
+  colorScheme: "light" | "dark";
+  /** Sum of the tuple's steps (or its measured total when it has none). */
+  ms: number;
+  steps: TupleStepTimings;
+};
+const stepNames = [
+  "capture",
+  "probe",
+  "artifacts",
+  "secretScan",
+  "checks",
+] as const;
+
+/**
+ * The n tuples that took longest, each with its step breakdown. `checks`
+ * maps `state\0viewport\0scheme` to the review's per-tuple check time.
+ */
+export function slowTupleSteps(
+  timings: Pick<RunTimings, "tuples"> | undefined,
+  checks: ReadonlyMap<string, number> = new Map(),
+  n = 5,
+): SlowTuple[] {
+  return (timings?.tuples ?? [])
+    .map((tuple) => {
+      const check = checks.get(
+        `${tuple.state}\0${tuple.viewport}\0${tuple.colorScheme}`,
+      );
+      const steps: TupleStepTimings = {
+        ...(tuple.steps ?? {}),
+        ...(check === undefined ? {} : { checks: check }),
+      };
+      const summed = stepNames.reduce(
+        (sum, name) => sum + (steps[name] ?? 0),
+        0,
+      );
+      return {
+        state: tuple.state,
+        viewport: tuple.viewport,
+        colorScheme: tuple.colorScheme,
+        ms: tuple.steps === undefined ? tuple.total.ms + (check ?? 0) : summed,
+        steps,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.ms - a.ms ||
+        `${a.state}/${a.viewport}/${a.colorScheme}`.localeCompare(
+          `${b.state}/${b.viewport}/${b.colorScheme}`,
+        ),
+    )
+    .slice(0, n);
+}
+
+const stepLabel: Record<(typeof stepNames)[number], string> = {
+  capture: "capture",
+  probe: "probe",
+  artifacts: "artifacts",
+  secretScan: "secret scan",
+  checks: "checks",
+};
+
+/** "Slowest tuples:" then one line per tuple with its steps. */
+export function renderSlowTuples(slow: SlowTuple[]): string {
+  if (slow.length === 0) return "";
+  return [
+    "Slowest tuples:",
+    ...slow.map((tuple) => {
+      const parts = stepNames.flatMap((name) =>
+        tuple.steps[name] === undefined
+          ? []
+          : [`${stepLabel[name]} ${formatDuration(tuple.steps[name] ?? 0)}`],
+      );
+      return `  ${tuple.state}/${tuple.viewport}/${tuple.colorScheme} ${formatDuration(tuple.ms)}${parts.length ? ` (${parts.join(", ")})` : ""}`;
+    }),
+  ].join("\n");
+}
+
 export function renderTimings(timings: RunTimings | undefined): string {
   if (!timings)
     return "Timings (ms): build unavailable; start unavailable; capture unavailable; probe unavailable; checks unavailable";
@@ -78,7 +169,7 @@ export function renderTimings(timings: RunTimings | undefined): string {
       : []),
     ...timings.tuples.map(
       (tuple) =>
-        `  capture ${tuple.state}/${tuple.viewport}/${tuple.colorScheme}: ${phase(tuple.total)}; probe (included): ${phase(tuple.probe)}`,
+        `  capture ${tuple.state}/${tuple.viewport}/${tuple.colorScheme}${tuple.intermediate ? " (intermediate width)" : ""}: ${phase(tuple.total)}; probe (included): ${phase(tuple.probe)}`,
     ),
     ...(timings.slowestControls ?? []).map(
       (control) =>
@@ -94,6 +185,11 @@ export type TimingPhase =
   | "capture"
   | "probe"
   | "checks";
+/** Capture time spent at intermediate widths, part of `capture`. */
+export type IntermediateWidthTiming = {
+  ms: number;
+  states: Array<{ state: string; widths: number; ms: number }>;
+};
 /** One check's wall clock and where it went; `capture` includes `probe`. */
 export type CheckTiming = {
   totalMs: number;
@@ -108,7 +204,41 @@ export type CheckTiming = {
   probeIncludedInCapture: true;
   /** Capture phases come from a stored run (`--from`, `--latest`). */
   historical?: boolean | undefined;
+  /** Capture time added by intermediate widths; absent when none ran. */
+  intermediateWidths?: IntermediateWidthTiming | undefined;
 };
+
+/** Intermediate-width tuples' capture time, grouped by state in run order. */
+export function intermediateWidthTiming(
+  tuples: RunTimings["tuples"],
+): IntermediateWidthTiming | undefined {
+  const states = new Map<string, { widths: number; ms: number }>();
+  for (const tuple of tuples) {
+    if (tuple.intermediate !== true) continue;
+    const entry = states.get(tuple.state) ?? { widths: 0, ms: 0 };
+    entry.widths += 1;
+    entry.ms += tuple.total.ms;
+    states.set(tuple.state, entry);
+  }
+  if (states.size === 0) return undefined;
+  const list = [...states].map(([state, entry]) => ({ state, ...entry }));
+  return {
+    ms: list.reduce((sum, entry) => sum + entry.ms, 0),
+    states: list,
+  };
+}
+
+/** "intermediate widths +3.1s: editor +1.6s over 2 widths, …". */
+export function intermediateWidthText(timing: IntermediateWidthTiming): string {
+  const shown = timing.states
+    .slice(0, 3)
+    .map(
+      (entry) =>
+        `${entry.state} +${formatDuration(entry.ms)} over ${entry.widths} width${entry.widths === 1 ? "" : "s"}`,
+    );
+  const more = timing.states.length - shown.length;
+  return `intermediate widths +${formatDuration(timing.ms)}: ${shown.join(", ")}${more > 0 ? `, +${more} more` : ""}`;
+}
 
 export function formatDuration(ms: number): string {
   const value = Math.max(0, ms);
@@ -157,12 +287,16 @@ export function checkTiming(
   const slowest = candidates.reduce((best, entry) =>
     entry[1] > best[1] ? entry : best,
   )[0];
+  const intermediate = historical
+    ? undefined
+    : intermediateWidthTiming(timings?.tuples ?? []);
   return {
     totalMs: Math.max(0, totalMs),
     phases,
     slowest,
     probeIncludedInCapture: true,
     ...(historical ? { historical: true } : {}),
+    ...(intermediate ? { intermediateWidths: intermediate } : {}),
   };
 }
 
@@ -174,13 +308,20 @@ const phaseText = (label: string, phase: PhaseTiming) =>
 /** The last line of every check: one glance at why a run was slow. */
 export function renderTimingLine(timing: CheckTiming, label?: string): string {
   const { phases } = timing;
-  const probe =
+  const probeText =
     phases.probe.status === "measured"
-      ? ` (probe ${formatDuration(phases.probe.ms)})`
+      ? `probe ${formatDuration(phases.probe.ms)}`
       : phases.probe.status === "skipped" ||
           phases.probe.status === "unsupported"
-        ? ""
-        : ` (probe ${phases.probe.status})`;
+        ? undefined
+        : `probe ${phases.probe.status}`;
+  const details = [
+    probeText,
+    timing.intermediateWidths
+      ? intermediateWidthText(timing.intermediateWidths)
+      : undefined,
+  ].filter((part) => part !== undefined);
+  const probe = details.length ? ` (${details.join("; ")})` : "";
   return `Timing${label === undefined ? "" : ` ${label}`}: ${formatDuration(timing.totalMs)} — ${[
     phaseText("build", phases.build),
     phaseText("server start", phases.serverStart),
@@ -218,6 +359,9 @@ export function combineCheckTimings(
     ["probe", phases.probe.ms],
     ["checks", phases.checks.ms],
   ];
+  const intermediateStates = timings.flatMap(
+    (timing) => timing.intermediateWidths?.states ?? [],
+  );
   return {
     totalMs,
     phases,
@@ -225,5 +369,68 @@ export function combineCheckTimings(
       entry[1] > best[1] ? entry : best,
     )[0],
     probeIncludedInCapture: true,
+    ...(intermediateStates.length
+      ? {
+          intermediateWidths: {
+            ms: intermediateStates.reduce((sum, entry) => sum + entry.ms, 0),
+            states: intermediateStates,
+          },
+        }
+      : {}),
   };
+}
+
+/** Where the build gate's wall clock went, phase by phase. */
+export type GateTimingBreakdown = {
+  /** Servers the gate started (a lease counts once), base included. */
+  servers: number;
+  /** Servers already running that the gate reused. */
+  serversReused: number;
+  /** Build + start of every server the gate started. */
+  serverStartMs: number;
+  /** Base capture minus its server start; 0 when none ran. */
+  baseCaptureMs: number;
+  /** How the base was settled: captured, stored records, or not at all. */
+  baseCapture: "captured" | "baseline" | "cached" | "skipped" | "none";
+  /** Head capture minus the probe. */
+  captureMs: number;
+  probeMs: number;
+  checksMs: number;
+  /** Head capture time spent at intermediate widths, inside `captureMs`. */
+  intermediateWidths?: IntermediateWidthTiming | undefined;
+};
+export type GateTiming = CheckTiming & { gate: GateTimingBreakdown };
+
+/** The gate's last line: server start, base capture, captures, probe, checks. */
+export function renderGateTimingLine(timing: GateTiming): string {
+  const gate = timing.gate;
+  const plural = (count: number, word: string) =>
+    `${count} ${word}${count === 1 ? "" : "s"}`;
+  const server =
+    gate.servers === 0
+      ? `server start reused${gate.serversReused ? ` (${plural(gate.serversReused, "server")})` : ""}`
+      : `server start ${formatDuration(gate.serverStartMs)} (${plural(gate.servers, "server")}${gate.serversReused ? `, ${gate.serversReused} reused` : ""})`;
+  const base =
+    gate.baseCapture === "captured"
+      ? `base capture ${formatDuration(gate.baseCaptureMs)}`
+      : gate.baseCapture === "skipped" || gate.baseCapture === "none"
+        ? "base capture skipped"
+        : `base capture ${formatDuration(0)} (${gate.baseCapture})`;
+  const phases: Array<[string, number]> = [
+    ["server start", gate.serverStartMs],
+    ["base capture", gate.baseCaptureMs],
+    ["captures", gate.captureMs],
+    ["probe", gate.probeMs],
+    ["checks", gate.checksMs],
+  ];
+  const slowest = phases.reduce((best, entry) =>
+    entry[1] > best[1] ? entry : best,
+  )[0];
+  return `Timing: ${formatDuration(timing.totalMs)} — ${[
+    server,
+    base,
+    `captures ${formatDuration(gate.captureMs)}${gate.intermediateWidths ? ` (${intermediateWidthText(gate.intermediateWidths)})` : ""}`,
+    `probe ${formatDuration(gate.probeMs)}`,
+    `checks ${formatDuration(gate.checksMs)}`,
+  ].join(", ")}; slowest: ${slowest}`;
 }

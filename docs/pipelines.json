@@ -1,0 +1,887 @@
+{
+  "version": 1,
+  "runs": [
+    {
+      "measuredAt": "2026-11-15T22:47:57.316Z",
+      "idiomVersion": "0.23.0",
+      "source": {
+        "kind": "npm",
+        "spec": "@mattskilly/idiom@0.23.0"
+      },
+      "docsCommit": "1b1ca951d084f6a104d8770c25d5e66b6f9cf969",
+      "machine": {
+        "platform": "darwin",
+        "release": "25.5.0",
+        "arch": "arm64",
+        "cpuModel": "Apple M3 Pro",
+        "cpuCount": 11,
+        "memoryGb": 36,
+        "node": "v24.4.0"
+      },
+      "taskPrompt": "On the home page, change the main heading to 'Book a table' and finish the change.",
+      "regression": {
+        "rule": "contrast",
+        "file": "public/styles.css",
+        "branch": "regression"
+      },
+      "setups": [
+        {
+          "id": "autobuild",
+          "status": "failed",
+          "reason": "docs drift: manual-wiring: no documented noninteractive step installs it: `idiom upgrade` without a terminal only reports the gate and wrote no idiom-verify skill",
+          "installedVersion": "0.23.0",
+          "caught": true,
+          "fixVerified": true,
+          "wallMs": 93515,
+          "docsDrift": [
+            {
+              "step": "manual-wiring",
+              "doc": "docs/configuration.md#autobuild",
+              "expected": "manual wiring must install the idiom-verify skill (.agents/skills/idiom-verify/SKILL.md)",
+              "found": "no documented noninteractive step installs it: `idiom upgrade` without a terminal only reports the gate and wrote no idiom-verify skill"
+            }
+          ],
+          "substitutions": [
+            "no Autobuild agent: a stub `ab verify-step idiom-check` runs the verify step's [commands] gate command directly, as the idiom-verify skill's gate branch does",
+            "the existing Autobuild project is a minimal autobuild.toml (one `test` verify step) written by the harness"
+          ],
+          "evidence": {
+            "upgradeOutput": "Idiom CLI 0.23.0 is the latest release.\nIdiom skills unknown → 0.23.0\nidiom: installed (2 files)\n  installed: .agents/skills/idiom/SKILL.md\n  installed: .agents/skills/idiom/init.md\nAutobuild: available-noninteractive\n--- a/autobuild.toml\n+++ b/autobuild.toml\n@@ -2,8 +2,13 @@\n \n [commands]\n test = \"true\"\n+idiom-check = \"idiom check --gate --fail-on major --deferred warn\"\n \n [verify]\n-steps = [\"test\"]\n+steps = [\"test\", \"idiom-check\"]\n \n [verify.test]\n+\n+[verify.idiom-check]\n+kind = \"agent\"\n+skill = \"idiom-verify\"\nCreate .agents/skills/idiom-verify/SKILL.md\nSeed .agents/skills/.idiom-pristine/idiom-verify/SKILL.md and .agents/skills/.idiom-pristine/manifest.json\nCreate .claude/skills/idiom-verify → ../../.agents/skills/idiom-verify\n\n\nProject files: 4 current\nOptional: add these two lines to CLAUDE.md or AGENTS.md so agents triage design decisions first:\n## Design decisions (Idiom)\nBefore writing a ticket or code that involves a design decision, run `idiom brief triage \"<request>\"` (or the `idiom_brief_triage` MCP tool) and follow it.\n",
+            "verifySkillInstalled": false,
+            "wiring": {
+              "command": "idiom check --gate --fail-on major --deferred warn",
+              "inSteps": true,
+              "verify": {
+                "kind": "agent",
+                "skill": "idiom-verify"
+              },
+              "designReview": true
+            },
+            "fixedHead": "7712189785a3c5e7b6fd5765730b02e1da05448f",
+            "regressionGate": {
+              "exitCode": 1,
+              "tail": "  build: 34.6 ms (measured); start: 127.7 ms (measured)\n  capture home/desktop/light: 12630.8 ms (measured); probe (included): 649.4 ms (measured)\n  capture home/desktop/dark: 6108.4 ms (measured); probe (included): 0.0 ms (skipped)\n  probe (included in capture): 649.4 ms (measured); checks: 8.3 ms (measured)\nTiming: 15s — build 0.0s, server start 0.1s, capture 14s (probe 0.6s), checks 0.0s; slowest: capture\nError: check failed: 1 new/open finding(s) at or above major"
+            },
+            "fixGate": {
+              "exitCode": 0,
+              "tail": "Timings:\n  build: 30.2 ms (measured); start: 122.7 ms (measured)\n  capture home/desktop/light: 12182.5 ms (measured); probe (included): 627.6 ms (measured)\n  capture home/desktop/dark: 5862.2 ms (measured); probe (included): 0.0 ms (skipped)\n  probe (included in capture): 627.6 ms (measured); checks: 5.3 ms (measured)\nTiming: 13s — build 0.0s, server start 0.1s, capture 12s (probe 0.6s), checks 0.0s; slowest: capture"
+            },
+            "postCheck": {
+              "regression": {
+                "exitCode": 1,
+                "planted": true,
+                "skipped": false,
+                "findings": [
+                  {
+                    "category": "contrast",
+                    "rule": "axe:color-contrast",
+                    "severity": "major"
+                  }
+                ]
+              },
+              "fix": {
+                "exitCode": 0,
+                "planted": false,
+                "skipped": false,
+                "findings": []
+              }
+            }
+          },
+          "steps": [
+            {
+              "id": "install",
+              "doc": "site/docs/getting-started.md#1-install",
+              "command": "npm install -g @mattskilly/idiom@0.23.0",
+              "ms": 6914,
+              "ok": true
+            },
+            {
+              "id": "browser",
+              "command": "npx playwright@1.62.1 install chromium",
+              "doc": "site/docs/getting-started.md#1-install",
+              "ms": 20858,
+              "ok": true
+            },
+            {
+              "id": "upgrade",
+              "command": "idiom upgrade",
+              "doc": "docs/configuration.md#autobuild",
+              "ms": 796,
+              "ok": true
+            },
+            {
+              "id": "design-review",
+              "command": "idiom init --wire --design-review --yes",
+              "doc": "docs/commands.md#wire-agents-ci-hooks-and-autobuild",
+              "ms": 610,
+              "ok": true
+            },
+            {
+              "id": "verify-regression",
+              "command": "ab verify-step idiom-check",
+              "ms": 15924,
+              "ok": true
+            },
+            {
+              "id": "post-check-regression",
+              "command": "idiom check --gate --fail-on major --deferred warn --json",
+              "ms": 27084,
+              "ok": true
+            },
+            {
+              "id": "verify-fix",
+              "command": "ab verify-step idiom-check",
+              "ms": 14029,
+              "ok": true
+            },
+            {
+              "id": "post-check-fix",
+              "command": "idiom check --gate --fail-on major --deferred warn --json",
+              "ms": 13983,
+              "ok": true
+            }
+          ]
+        },
+        {
+          "id": "github-action",
+          "status": "passed",
+          "reason": null,
+          "installedVersion": "0.23.0",
+          "caught": true,
+          "fixVerified": true,
+          "wallMs": 136208,
+          "docsDrift": [],
+          "substitutions": [
+            "no GitHub runner: the pull-request job's run steps and the Action's composite steps run locally on this machine",
+            "actions/checkout: the sample repo checked out at the PR head sha, full history",
+            "actions/setup-node: the host's Node from the clean environment",
+            "upload-artifact and the PR comment POST are not run (outcomes passed as success); the comment body is rendered with the Action's own renderComment",
+            "Action input version pinned to 0.23.0 instead of the workflow's `latest`"
+          ],
+          "evidence": {
+            "actionRef": "main",
+            "actionSha": "7b32757df419986067b35c59cd04d6fef41e72df",
+            "regression": {
+              "failed": false,
+              "resolvedInputs": {
+                "flow": "home",
+                "project": ".",
+                "version": "latest",
+                "fail-on": "major",
+                "setup-command": "npm ci"
+              },
+              "outcome": "checked",
+              "newFindings": 2,
+              "operationalErrors": [],
+              "gateExit": 1,
+              "gateOutput": "2 new finding(s) at or above major"
+            },
+            "fix": {
+              "failed": false,
+              "resolvedInputs": {
+                "flow": "home",
+                "project": ".",
+                "version": "latest",
+                "fail-on": "major",
+                "setup-command": "npm ci"
+              },
+              "outcome": "checked",
+              "newFindings": 0,
+              "operationalErrors": [],
+              "gateExit": 0,
+              "gateOutput": ""
+            },
+            "postCheck": {
+              "regression": {
+                "exitCode": 1,
+                "planted": true,
+                "skipped": false,
+                "findings": [
+                  {
+                    "category": "contrast",
+                    "rule": "axe:color-contrast",
+                    "severity": "major"
+                  }
+                ]
+              },
+              "fix": {
+                "exitCode": 0,
+                "planted": false,
+                "skipped": false,
+                "findings": []
+              }
+            },
+            "commentExcerpt": "<!-- idiom-regression-guard -->\n## Idiom regression check: home\nHead: ea265ef421daf06a62022371d45b1b4a3ab2bf5a · merge base: 01990593dd308bdf4ccc42fe8589cb4d15b9a93d\nNew: 2 · Pre-existing: 0 · fail-on: major\nOperational status: complete\n\n### Flow: home\n\n#### Blocks merge (2)\n\n- **major** home/desktop/light · measured\n  - **Problem:** \\.note fails axe&\\#39;s rendered color\\-contrast rule\\.\n  - **Fix:** \\.note meets the applicable WCAG text contrast threshold\\.\n  - **Evidence:** Full screenshot \\(element crop unavailable\\): home/crops/current/1\\.png\n  - **Done when:** \\.note meets the applicable WCAG text contrast threshold\\.\n- **major** home/mobile/light · measured\n  - **Problem:** \\.note fails axe&\\#39;s rendered color\\-contrast rule\\.\n  - **Fix:** \\.note meets the applicable WCAG text contrast threshold\\.\n  - **Evidence:** Full screenshot \\(element crop unavailable\\): home/crops/current/2\\.png\n  - **Done when:** \\.note meets the applicable WCAG text contrast threshold\\.\n#### Should fix (0)\n\n#### Opportunities (0)\n\n\n<details><summary>Resolved (0): 0 since previous push; 0 since merge base</summary>\n\nPrevious-push evidence reproduces the preceding revision, rather than retaining an earlier run's pixels.\n\n\n</details>\n\n<details><summary>Comparison and evidence diagnostics</summary>\n\n- Merge base: unchanged 2; only before 0; only after 0; not comparable 0\\.\n- merge\\-base composite home/desktop/light: compare/merge\\-base/1\\.png\n- merge\\-base composite home/mobile/light: compare/me"
+          },
+          "steps": [
+            {
+              "id": "install",
+              "doc": "site/docs/getting-started.md#1-install",
+              "command": "npm install -g @mattskilly/idiom@0.23.0",
+              "ms": 6914,
+              "ok": true
+            },
+            {
+              "id": "wire",
+              "command": "idiom init --wire --yes",
+              "doc": "site/docs/getting-started.md#5-gate-pull-requests",
+              "ms": 992,
+              "ok": true
+            },
+            {
+              "id": "action-clone",
+              "command": "git clone --quiet --depth 1 --branch main https://github.com/mattskilly/idiom <setup root>/action",
+              "ms": 1748,
+              "ok": true
+            },
+            {
+              "id": "browser",
+              "command": "npx playwright@1.62.1 install chromium",
+              "doc": "site/docs/getting-started.md#1-install",
+              "ms": 20423,
+              "ok": true
+            },
+            {
+              "id": "regression-run-flow",
+              "command": "run: Discover first PR flow (sorted root manifests)",
+              "ms": 31,
+              "ok": true
+            },
+            {
+              "id": "regression-action",
+              "command": "mattskilly/idiom@main (run.mjs)",
+              "ms": 38403,
+              "ok": true
+            },
+            {
+              "id": "regression-gate",
+              "command": "mattskilly/idiom@main (run.mjs gate)",
+              "ms": 34,
+              "ok": true
+            },
+            {
+              "id": "post-check-regression",
+              "command": "idiom check --gate --fail-on major --deferred warn --json",
+              "ms": 13737,
+              "ok": true
+            },
+            {
+              "id": "fix-run-flow",
+              "command": "run: Discover first PR flow (sorted root manifests)",
+              "ms": 31,
+              "ok": true
+            },
+            {
+              "id": "fix-action",
+              "command": "mattskilly/idiom@main (run.mjs)",
+              "ms": 33795,
+              "ok": true
+            },
+            {
+              "id": "fix-gate",
+              "command": "mattskilly/idiom@main (run.mjs gate)",
+              "ms": 34,
+              "ok": true
+            },
+            {
+              "id": "post-check-fix",
+              "command": "idiom check --gate --fail-on major --deferred warn --json",
+              "ms": 26735,
+              "ok": true
+            }
+          ]
+        },
+        {
+          "id": "claude-code",
+          "status": "not-run",
+          "reason": "no model credentials in the isolated home (pass --model-key-env to forward ANTHROPIC_API_KEY)",
+          "installedVersion": "0.23.0",
+          "caught": null,
+          "fixVerified": null,
+          "wallMs": 3491,
+          "docsDrift": [],
+          "substitutions": [
+            "the documented /plugin slash commands run as their `claude plugin` shell equivalents (no interactive session)"
+          ],
+          "evidence": {
+            "toolVersion": "2.1.319 (Claude Code)",
+            "pluginList": "Installed plugins:\n\n  ❯ idiom@idiom\n    Version: 0.23.0\n    Scope: user\n    Status: ✔ enabled",
+            "auth": {
+              "loggedIn": false,
+              "detail": "authMethod none",
+              "forwarded": []
+            }
+          },
+          "steps": [
+            {
+              "id": "install",
+              "doc": "site/docs/getting-started.md#1-install",
+              "command": "npm install -g @mattskilly/idiom@0.23.0",
+              "ms": 6914,
+              "ok": true
+            },
+            {
+              "id": "install-1",
+              "command": "claude plugin marketplace add mattskilly/idiom",
+              "doc": "site/docs/getting-started.md#3-hand-it-to-your-agent (/plugin marketplace add mattskilly/idiom)",
+              "ms": 2855,
+              "ok": true
+            },
+            {
+              "id": "install-2",
+              "command": "claude plugin install idiom@idiom",
+              "doc": "site/docs/getting-started.md#3-hand-it-to-your-agent (/plugin install idiom@idiom)",
+              "ms": 234,
+              "ok": true
+            },
+            {
+              "id": "plugin-list",
+              "command": "claude plugin list",
+              "ms": 221,
+              "ok": true
+            },
+            {
+              "id": "auth-status",
+              "command": "claude auth status",
+              "ms": 121,
+              "ok": true
+            }
+          ]
+        },
+        {
+          "id": "codex",
+          "status": "not-run",
+          "reason": "no model credentials in the isolated home (pass --model-key-env to forward CODEX_API_KEY or OPENAI_API_KEY)",
+          "installedVersion": "0.23.0",
+          "caught": null,
+          "fixVerified": null,
+          "wallMs": 2826,
+          "docsDrift": [],
+          "substitutions": [],
+          "evidence": {
+            "toolVersion": "codex-cli 0.163.0",
+            "mcpList": "Name   Command  Args                                                                                                              Env  Cwd  Status   Auth       \nidiom  npx      -y --package=https://github.com/mattskilly/idiom/releases/download/v0.23.0/mattskilly-idiom-0.23.0.tgz idiom mcp  -    -    enabled  Unsupported",
+            "mcpVersion": "0.23.0",
+            "auth": {
+              "loggedIn": false,
+              "detail": "Not logged in",
+              "forwarded": []
+            }
+          },
+          "steps": [
+            {
+              "id": "install",
+              "doc": "site/docs/getting-started.md#1-install",
+              "command": "npm install -g @mattskilly/idiom@0.23.0",
+              "ms": 6914,
+              "ok": true
+            },
+            {
+              "id": "install-1",
+              "command": "codex plugin marketplace add mattskilly/idiom",
+              "doc": "site/docs/getting-started.md#3-hand-it-to-your-agent (codex plugin marketplace add mattskilly/idiom)",
+              "ms": 2248,
+              "ok": true
+            },
+            {
+              "id": "install-2",
+              "command": "codex plugin add idiom@idiom",
+              "doc": "site/docs/getting-started.md#3-hand-it-to-your-agent (codex plugin add idiom@idiom)",
+              "ms": 309,
+              "ok": true
+            },
+            {
+              "id": "install-3",
+              "command": "codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.23.0/mattskilly-idiom-0.23.0.tgz idiom mcp",
+              "doc": "site/docs/getting-started.md#3-hand-it-to-your-agent (codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.23.0/mattskilly-idiom-0.23.0.tgz idiom mcp)",
+              "ms": 58,
+              "ok": true
+            },
+            {
+              "id": "mcp-list",
+              "command": "codex mcp list",
+              "ms": 64,
+              "ok": true
+            },
+            {
+              "id": "auth-status",
+              "command": "codex login status",
+              "ms": 47,
+              "ok": true
+            }
+          ]
+        },
+        {
+          "id": "cursor",
+          "status": "manual-pending",
+          "reason": "manual: follow the printed checklist, then rerun with --only cursor --cursor-result <file>",
+          "installedVersion": null,
+          "caught": null,
+          "fixVerified": null,
+          "wallMs": null,
+          "docsDrift": [],
+          "substitutions": [],
+          "evidence": {},
+          "steps": []
+        }
+      ],
+      "verdict": "failed",
+      "notRun": [
+        {
+          "id": "claude-code",
+          "reason": "no model credentials in the isolated home (pass --model-key-env to forward ANTHROPIC_API_KEY)"
+        },
+        {
+          "id": "codex",
+          "reason": "no model credentials in the isolated home (pass --model-key-env to forward CODEX_API_KEY or OPENAI_API_KEY)"
+        },
+        {
+          "id": "cursor",
+          "reason": "manual: follow the printed checklist, then rerun with --only cursor --cursor-result <file>"
+        }
+      ],
+      "totalMs": 244088
+    },
+    {
+      "measuredAt": "2026-11-15T23:42:24.955Z",
+      "idiomVersion": "0.23.0",
+      "source": {
+        "kind": "npm",
+        "spec": "@mattskilly/idiom@0.23.0"
+      },
+      "docsCommit": "567a6de92a55812d719352b3820fe8f297351ea6",
+      "machine": {
+        "platform": "darwin",
+        "release": "25.5.0",
+        "arch": "arm64",
+        "cpuModel": "Apple M3 Pro",
+        "cpuCount": 11,
+        "memoryGb": 36,
+        "node": "v24.4.0"
+      },
+      "taskPrompt": "On the home page, change the main heading to 'Book a table' and finish the change.",
+      "regression": {
+        "rule": "contrast",
+        "file": "public/styles.css",
+        "branch": "regression"
+      },
+      "setups": [
+        {
+          "id": "autobuild",
+          "status": "failed",
+          "reason": "docs drift: manual-wiring: no documented noninteractive step installs it: `idiom upgrade` without a terminal only reports the gate and wrote no idiom-verify skill",
+          "installedVersion": "0.23.0",
+          "caught": true,
+          "fixVerified": true,
+          "wallMs": 88586,
+          "docsDrift": [
+            {
+              "step": "manual-wiring",
+              "doc": "docs/configuration.md#autobuild",
+              "expected": "manual wiring must install the idiom-verify skill (.agents/skills/idiom-verify/SKILL.md)",
+              "found": "no documented noninteractive step installs it: `idiom upgrade` without a terminal only reports the gate and wrote no idiom-verify skill"
+            }
+          ],
+          "substitutions": [
+            "no Autobuild agent: a stub `ab verify-step idiom-check` runs the verify step's [commands] gate command directly, as the idiom-verify skill's gate branch does",
+            "the existing Autobuild project is a minimal autobuild.toml (one `test` verify step) written by the harness"
+          ],
+          "evidence": {
+            "upgradeOutput": "Idiom CLI 0.23.0 is the latest release.\nIdiom skills unknown → 0.23.0\nidiom: installed (2 files)\n  installed: .agents/skills/idiom/SKILL.md\n  installed: .agents/skills/idiom/init.md\nAutobuild: available-noninteractive\n--- a/autobuild.toml\n+++ b/autobuild.toml\n@@ -2,8 +2,13 @@\n \n [commands]\n test = \"true\"\n+idiom-check = \"idiom check --gate --fail-on major --deferred warn\"\n \n [verify]\n-steps = [\"test\"]\n+steps = [\"test\", \"idiom-check\"]\n \n [verify.test]\n+\n+[verify.idiom-check]\n+kind = \"agent\"\n+skill = \"idiom-verify\"\nCreate .agents/skills/idiom-verify/SKILL.md\nSeed .agents/skills/.idiom-pristine/idiom-verify/SKILL.md and .agents/skills/.idiom-pristine/manifest.json\nCreate .claude/skills/idiom-verify → ../../.agents/skills/idiom-verify\n\n\nProject files: 4 current\nOptional: add these two lines to CLAUDE.md or AGENTS.md so agents triage design decisions first:\n## Design decisions (Idiom)\nBefore writing a ticket or code that involves a design decision, run `idiom brief triage \"<request>\"` (or the `idiom_brief_triage` MCP tool) and follow it.\n",
+            "verifySkillInstalled": false,
+            "wiring": {
+              "command": "idiom check --gate --fail-on major --deferred warn",
+              "inSteps": true,
+              "verify": {
+                "kind": "agent",
+                "skill": "idiom-verify"
+              },
+              "designReview": true
+            },
+            "fixedHead": "0b2290f4b080a9d58a4633762cc9c6d3ba560957",
+            "regressionGate": {
+              "exitCode": 1,
+              "tail": "  build: 31.6 ms (measured); start: 120.7 ms (measured)\n  capture home/desktop/light: 12247.4 ms (measured); probe (included): 619.6 ms (measured)\n  capture home/desktop/dark: 5973.2 ms (measured); probe (included): 0.0 ms (skipped)\n  probe (included in capture): 619.6 ms (measured); checks: 4.7 ms (measured)\nTiming: 14s — build 0.0s, server start 0.1s, capture 14s (probe 0.6s), checks 0.0s; slowest: capture\nError: check failed: 1 new/open finding(s) at or above major"
+            },
+            "fixGate": {
+              "exitCode": 0,
+              "tail": "Timings:\n  build: 28.2 ms (measured); start: 120.5 ms (measured)\n  capture home/desktop/light: 12178.5 ms (measured); probe (included): 625.7 ms (measured)\n  capture home/desktop/dark: 5824.9 ms (measured); probe (included): 0.0 ms (skipped)\n  probe (included in capture): 625.7 ms (measured); checks: 7.0 ms (measured)\nTiming: 13s — build 0.0s, server start 0.1s, capture 12s (probe 0.6s), checks 0.0s; slowest: capture"
+            },
+            "postCheck": {
+              "regression": {
+                "exitCode": 1,
+                "planted": true,
+                "skipped": false,
+                "findings": [
+                  {
+                    "category": "contrast",
+                    "rule": "axe:color-contrast",
+                    "severity": "major"
+                  }
+                ]
+              },
+              "fix": {
+                "exitCode": 0,
+                "planted": false,
+                "skipped": false,
+                "findings": []
+              }
+            }
+          },
+          "steps": [
+            {
+              "id": "install",
+              "doc": "site/docs/getting-started.md#1-install",
+              "command": "npm install -g @mattskilly/idiom@0.23.0",
+              "ms": 7080,
+              "ok": true
+            },
+            {
+              "id": "browser",
+              "command": "npx playwright@1.62.1 install chromium",
+              "doc": "site/docs/getting-started.md#1-install",
+              "ms": 17909,
+              "ok": true
+            },
+            {
+              "id": "upgrade",
+              "command": "idiom upgrade",
+              "doc": "docs/configuration.md#autobuild",
+              "ms": 769,
+              "ok": true
+            },
+            {
+              "id": "design-review",
+              "command": "idiom init --wire --design-review --yes",
+              "doc": "docs/commands.md#wire-agents-ci-hooks-and-autobuild",
+              "ms": 589,
+              "ok": true
+            },
+            {
+              "id": "verify-regression",
+              "command": "ab verify-step idiom-check",
+              "ms": 15253,
+              "ok": true
+            },
+            {
+              "id": "post-check-regression",
+              "command": "idiom check --gate --fail-on major --deferred warn --json",
+              "ms": 26164,
+              "ok": true
+            },
+            {
+              "id": "verify-fix",
+              "command": "ab verify-step idiom-check",
+              "ms": 13811,
+              "ok": true
+            },
+            {
+              "id": "post-check-fix",
+              "command": "idiom check --gate --fail-on major --deferred warn --json",
+              "ms": 13920,
+              "ok": true
+            }
+          ]
+        },
+        {
+          "id": "github-action",
+          "status": "passed",
+          "reason": null,
+          "installedVersion": "0.23.0",
+          "caught": true,
+          "fixVerified": true,
+          "wallMs": 131741,
+          "docsDrift": [],
+          "substitutions": [
+            "no GitHub runner: the pull-request job's run steps and the Action's composite steps run locally on this machine",
+            "actions/checkout: the sample repo checked out at the PR head sha, full history",
+            "actions/setup-node: the host's Node from the clean environment",
+            "upload-artifact and the PR comment POST are not run (outcomes passed as success); the comment body is rendered with the Action's own renderComment",
+            "Action input version pinned to 0.23.0 instead of the workflow's `latest`"
+          ],
+          "evidence": {
+            "actionRef": "main",
+            "actionSha": "7b32757df419986067b35c59cd04d6fef41e72df",
+            "regression": {
+              "failed": false,
+              "resolvedInputs": {
+                "flow": "home",
+                "project": ".",
+                "version": "latest",
+                "fail-on": "major",
+                "setup-command": "npm ci"
+              },
+              "outcome": "checked",
+              "newFindings": 2,
+              "operationalErrors": [],
+              "gateExit": 1,
+              "gateOutput": "2 new finding(s) at or above major"
+            },
+            "fix": {
+              "failed": false,
+              "resolvedInputs": {
+                "flow": "home",
+                "project": ".",
+                "version": "latest",
+                "fail-on": "major",
+                "setup-command": "npm ci"
+              },
+              "outcome": "checked",
+              "newFindings": 0,
+              "operationalErrors": [],
+              "gateExit": 0,
+              "gateOutput": ""
+            },
+            "postCheck": {
+              "regression": {
+                "exitCode": 1,
+                "planted": true,
+                "skipped": false,
+                "findings": [
+                  {
+                    "category": "contrast",
+                    "rule": "axe:color-contrast",
+                    "severity": "major"
+                  }
+                ]
+              },
+              "fix": {
+                "exitCode": 0,
+                "planted": false,
+                "skipped": false,
+                "findings": []
+              }
+            },
+            "commentExcerpt": "<!-- idiom-regression-guard -->\n## Idiom regression check: home\nHead: 62f5f42fc1e0fef305465f70105b2b153241dc67 · merge base: 7fd61859f9ab63d7e1d4d2dcba482b04dce0e4aa\nNew: 2 · Pre-existing: 0 · fail-on: major\nOperational status: complete\n\n### Flow: home\n\n#### Blocks merge (2)\n\n- **major** home/desktop/light · measured\n  - **Problem:** \\.note fails axe&\\#39;s rendered color\\-contrast rule\\.\n  - **Fix:** \\.note meets the applicable WCAG text contrast threshold\\.\n  - **Evidence:** Full screenshot \\(element crop unavailable\\): home/crops/current/1\\.png\n  - **Done when:** \\.note meets the applicable WCAG text contrast threshold\\.\n- **major** home/mobile/light · measured\n  - **Problem:** \\.note fails axe&\\#39;s rendered color\\-contrast rule\\.\n  - **Fix:** \\.note meets the applicable WCAG text contrast threshold\\.\n  - **Evidence:** Full screenshot \\(element crop unavailable\\): home/crops/current/2\\.png\n  - **Done when:** \\.note meets the applicable WCAG text contrast threshold\\.\n#### Should fix (0)\n\n#### Opportunities (0)\n\n\n<details><summary>Resolved (0): 0 since previous push; 0 since merge base</summary>\n\nPrevious-push evidence reproduces the preceding revision, rather than retaining an earlier run's pixels.\n\n\n</details>\n\n<details><summary>Comparison and evidence diagnostics</summary>\n\n- Merge base: unchanged 2; only before 0; only after 0; not comparable 0\\.\n- merge\\-base composite home/desktop/light: compare/merge\\-base/1\\.png\n- merge\\-base composite home/mobile/light: compare/me"
+          },
+          "steps": [
+            {
+              "id": "install",
+              "doc": "site/docs/getting-started.md#1-install",
+              "command": "npm install -g @mattskilly/idiom@0.23.0",
+              "ms": 7080,
+              "ok": true
+            },
+            {
+              "id": "wire",
+              "command": "idiom init --wire --yes",
+              "doc": "site/docs/getting-started.md#5-gate-pull-requests",
+              "ms": 787,
+              "ok": true
+            },
+            {
+              "id": "action-clone",
+              "command": "git clone --quiet --depth 1 --branch main https://github.com/mattskilly/idiom <setup root>/action",
+              "ms": 1809,
+              "ok": true
+            },
+            {
+              "id": "browser",
+              "command": "npx playwright@1.62.1 install chromium",
+              "doc": "site/docs/getting-started.md#1-install",
+              "ms": 18062,
+              "ok": true
+            },
+            {
+              "id": "regression-run-flow",
+              "command": "run: Discover first PR flow (sorted root manifests)",
+              "ms": 32,
+              "ok": true
+            },
+            {
+              "id": "regression-action",
+              "command": "mattskilly/idiom@main (run.mjs)",
+              "ms": 37639,
+              "ok": true
+            },
+            {
+              "id": "regression-gate",
+              "command": "mattskilly/idiom@main (run.mjs gate)",
+              "ms": 31,
+              "ok": true
+            },
+            {
+              "id": "post-check-regression",
+              "command": "idiom check --gate --fail-on major --deferred warn --json",
+              "ms": 13623,
+              "ok": true
+            },
+            {
+              "id": "fix-run-flow",
+              "command": "run: Discover first PR flow (sorted root manifests)",
+              "ms": 33,
+              "ok": true
+            },
+            {
+              "id": "fix-action",
+              "command": "mattskilly/idiom@main (run.mjs)",
+              "ms": 33017,
+              "ok": true
+            },
+            {
+              "id": "fix-gate",
+              "command": "mattskilly/idiom@main (run.mjs gate)",
+              "ms": 36,
+              "ok": true
+            },
+            {
+              "id": "post-check-fix",
+              "command": "idiom check --gate --fail-on major --deferred warn --json",
+              "ms": 26427,
+              "ok": true
+            }
+          ]
+        },
+        {
+          "id": "claude-code",
+          "status": "not-run",
+          "reason": "no model credentials in the isolated home (pass --model-key-env to forward ANTHROPIC_API_KEY)",
+          "installedVersion": "0.23.0",
+          "caught": null,
+          "fixVerified": null,
+          "wallMs": 3715,
+          "docsDrift": [],
+          "substitutions": [
+            "the documented /plugin slash commands run as their `claude plugin` shell equivalents (no interactive session)"
+          ],
+          "evidence": {
+            "toolVersion": "2.1.319 (Claude Code)",
+            "pluginList": "Installed plugins:\n\n  ❯ idiom@idiom\n    Version: 0.23.0\n    Scope: user\n    Status: ✔ enabled",
+            "auth": {
+              "loggedIn": false,
+              "detail": "authMethod none",
+              "forwarded": []
+            }
+          },
+          "steps": [
+            {
+              "id": "install",
+              "doc": "site/docs/getting-started.md#1-install",
+              "command": "npm install -g @mattskilly/idiom@0.23.0",
+              "ms": 7080,
+              "ok": true
+            },
+            {
+              "id": "install-1",
+              "command": "claude plugin marketplace add mattskilly/idiom",
+              "doc": "site/docs/getting-started.md#3-hand-it-to-your-agent (/plugin marketplace add mattskilly/idiom)",
+              "ms": 3024,
+              "ok": true
+            },
+            {
+              "id": "install-2",
+              "command": "claude plugin install idiom@idiom",
+              "doc": "site/docs/getting-started.md#3-hand-it-to-your-agent (/plugin install idiom@idiom)",
+              "ms": 283,
+              "ok": true
+            },
+            {
+              "id": "plugin-list",
+              "command": "claude plugin list",
+              "ms": 217,
+              "ok": true
+            },
+            {
+              "id": "auth-status",
+              "command": "claude auth status",
+              "ms": 106,
+              "ok": true
+            }
+          ]
+        },
+        {
+          "id": "codex",
+          "status": "not-run",
+          "reason": "no model credentials in the isolated home (pass --model-key-env to forward CODEX_API_KEY or OPENAI_API_KEY)",
+          "installedVersion": "0.23.0",
+          "caught": null,
+          "fixVerified": null,
+          "wallMs": 2966,
+          "docsDrift": [],
+          "substitutions": [],
+          "evidence": {
+            "toolVersion": "codex-cli 0.163.0",
+            "mcpList": "Name   Command  Args                                                                                                              Env  Cwd  Status   Auth       \nidiom  npx      -y --package=https://github.com/mattskilly/idiom/releases/download/v0.23.0/mattskilly-idiom-0.23.0.tgz idiom mcp  -    -    enabled  Unsupported",
+            "mcpVersion": "0.23.0",
+            "auth": {
+              "loggedIn": false,
+              "detail": "Not logged in",
+              "forwarded": []
+            }
+          },
+          "steps": [
+            {
+              "id": "install",
+              "doc": "site/docs/getting-started.md#1-install",
+              "command": "npm install -g @mattskilly/idiom@0.23.0",
+              "ms": 7080,
+              "ok": true
+            },
+            {
+              "id": "install-1",
+              "command": "codex plugin marketplace add mattskilly/idiom",
+              "doc": "site/docs/getting-started.md#3-hand-it-to-your-agent (codex plugin marketplace add mattskilly/idiom)",
+              "ms": 2317,
+              "ok": true
+            },
+            {
+              "id": "install-2",
+              "command": "codex plugin add idiom@idiom",
+              "doc": "site/docs/getting-started.md#3-hand-it-to-your-agent (codex plugin add idiom@idiom)",
+              "ms": 348,
+              "ok": true
+            },
+            {
+              "id": "install-3",
+              "command": "codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.23.0/mattskilly-idiom-0.23.0.tgz idiom mcp",
+              "doc": "site/docs/getting-started.md#3-hand-it-to-your-agent (codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.23.0/mattskilly-idiom-0.23.0.tgz idiom mcp)",
+              "ms": 77,
+              "ok": true
+            },
+            {
+              "id": "mcp-list",
+              "command": "codex mcp list",
+              "ms": 84,
+              "ok": true
+            },
+            {
+              "id": "auth-status",
+              "command": "codex login status",
+              "ms": 49,
+              "ok": true
+            }
+          ]
+        },
+        {
+          "id": "cursor",
+          "status": "manual-pending",
+          "reason": "manual: follow the printed checklist, then rerun with --only cursor --cursor-result <file>",
+          "installedVersion": null,
+          "caught": null,
+          "fixVerified": null,
+          "wallMs": null,
+          "docsDrift": [],
+          "substitutions": [],
+          "evidence": {},
+          "steps": []
+        }
+      ],
+      "verdict": "failed",
+      "notRun": [
+        {
+          "id": "claude-code",
+          "reason": "no model credentials in the isolated home (pass --model-key-env to forward ANTHROPIC_API_KEY)"
+        },
+        {
+          "id": "codex",
+          "reason": "no model credentials in the isolated home (pass --model-key-env to forward CODEX_API_KEY or OPENAI_API_KEY)"
+        },
+        {
+          "id": "cursor",
+          "reason": "manual: follow the printed checklist, then rerun with --only cursor --cursor-result <file>"
+        }
+      ],
+      "totalMs": 235155
+    }
+  ]
+}

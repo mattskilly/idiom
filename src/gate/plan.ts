@@ -8,8 +8,13 @@ import {
 } from "../baseline/base.js";
 import { checksConfigHash } from "../baseline/config-hash.js";
 import { assertedStates, readDesignAssets } from "../brief/design-asset.js";
+import { readHost } from "../capture/host-pressure.js";
 import { captureConcurrency } from "../capture/lanes.js";
 import type { ProbeRegion } from "../capture/probe.js";
+import {
+  type SurfaceMatchToken,
+  surfaceMatches,
+} from "../capture/rendered-surface.js";
 import { PROBE_WALL_TARGET_MS } from "../capture/run.js";
 import {
   type CaptureScope,
@@ -31,25 +36,118 @@ import {
   classifySelection,
   detectStyleScope,
   type FileClass,
+  orderSchemes,
+  orderViewports,
 } from "./classify.js";
 import {
   costModel,
   estimateGate,
   GATE_DEFAULTS,
+  hostFactor,
   loadFlowHistory,
+  scaleCostModel,
   tupleKey,
 } from "./estimate.js";
+import {
+  controlsNearSurface,
+  loadRenderedEvidence,
+  type StateEvidence,
+} from "./evidence.js";
 import { reflectsBase, regionReference } from "./region.js";
+import { serverLeaseEligible } from "./server-lease.js";
 import { planServerReuse } from "./server-reuse.js";
-import { trimToBudget } from "./trim.js";
+import {
+  extractChangedSurface,
+  formatToken,
+  type SurfaceFile,
+} from "./surface.js";
+import { CHECK_CANDIDATE_FLOOR, trimToBudget } from "./trim.js";
 import type {
   GateComparisonPlan,
+  GateCoverageGap,
   GateFile,
   GatePlan,
   GateRank,
   GateSkipResult,
   GateStatePlan,
+  GateStateSurface,
+  GateSurface,
 } from "./types.js";
+
+/** Controls within this many CSS pixels of the changed surface are probed. */
+export const SURFACE_NEAR_PX = 48;
+
+/** One state's surface status from its newest capture. */
+export function classifyStateSurface(options: {
+  files: SurfaceFile[];
+  evidence: StateEvidence | undefined;
+  asserted?: boolean | undefined;
+}): GateStateSurface & { tokens: SurfaceMatchToken[] } {
+  if (options.asserted)
+    return {
+      status: "shows",
+      matched: [],
+      reason: "a design asset asserts it",
+      tokens: [],
+    };
+  const identified = options.files.filter((file) => file.identified);
+  const unidentified = options.files.some((file) => !file.identified);
+  const evidence = options.evidence;
+  if (!evidence)
+    return {
+      status: "unknown",
+      matched: [],
+      reason: "no stored capture of this state",
+      tokens: [],
+    };
+  const base = {
+    runId: evidence.runId,
+    ...(evidence.derived ? { derived: true } : {}),
+  };
+  const matched: string[] = [];
+  const tokens: SurfaceMatchToken[] = [];
+  let checkable = false;
+  // A component name is only checkable against an inventory that can see
+  // component names: a derived inventory never can, and a rendered one sees
+  // none on production builds, Svelte/Astro, or unnamed forwardRef/memo.
+  const seesComponents =
+    !evidence.derived && evidence.surface.components.length > 0;
+  for (const file of identified) {
+    // A stylesheet that loads says little on its own: global sheets load
+    // everywhere. The file's classes, ids and components decide.
+    const own = file.tokens.filter(
+      (token) =>
+        token.kind !== "sheet" &&
+        !(token.kind === "component" && !seesComponents),
+    );
+    if (own.length) checkable = true;
+    const hits = surfaceMatches(evidence.surface, own);
+    if (!hits.length) continue;
+    matched.push(
+      ...hits,
+      ...surfaceMatches(
+        evidence.surface,
+        file.tokens.filter((token) => token.kind === "sheet"),
+      ),
+    );
+    tokens.push(...own.filter((token) => hits.includes(formatToken(token))));
+  }
+  if (matched.length)
+    return { status: "shows", matched: [...new Set(matched)], ...base, tokens };
+  if (unidentified || !checkable)
+    return {
+      status: "unknown",
+      matched: [],
+      ...base,
+      reason: unidentified
+        ? "part of the change has no identified surface"
+        : evidence.derived
+          ? "the capture predates the component inventory"
+          : "the capture's inventory carries no component names",
+      tokens: [],
+    };
+  return { status: "absent", matched: [], ...base, tokens: [] };
+}
 
 export type GatePlanOptions = {
   project?: string | undefined;
@@ -69,6 +167,8 @@ export type GatePlanOptions = {
         fetch?: typeof globalThis.fetch | undefined;
         select?: typeof selectChangedStates | undefined;
         environment?: NodeJS.ProcessEnv | undefined;
+        /** Host load now; the estimate scales by it (tests pin it). */
+        readHost?: typeof readHost | undefined;
       }
     | undefined;
 };
@@ -85,6 +185,8 @@ export type GateExecution = {
   /** Per gated flow: the resolution, settled unless the base is captured. */
   baseComparisons: Map<string, GateBaseComparison>;
   configHash: string;
+  /** One server for every gated flow's head capture (and one at the base). */
+  serverLease: boolean;
 };
 
 export type GateBaseComparison = {
@@ -264,6 +366,29 @@ export async function planGate(
     colorSchemeAttribute: project.capture.colorSchemeAttribute,
     git,
   });
+  const changedSurface = await extractChangedSurface({
+    repository: changes.repository,
+    base: changes.resolvedBase,
+    files: uiFiles,
+    untracked,
+    git,
+  });
+  const surface: GateSurface = {
+    identified: changedSurface.files
+      .filter((file) => file.identified)
+      .map((file) => ({
+        path: file.path,
+        tokens: file.tokens.map(formatToken),
+      })),
+    unidentified: changedSurface.files
+      .filter((file) => !file.identified)
+      .map((file) => ({
+        path: file.path,
+        reason: file.reason ?? "no identified surface",
+      })),
+  };
+  /** Per state key: its evidence, for the coverage gap. */
+  const evidenceByState = new Map<string, StateEvidence | undefined>();
   const explicitViewports = options.scope?.viewports !== undefined;
   const explicitSchemes = options.scope?.schemes !== undefined;
   const states: GateStatePlan[] = [];
@@ -325,25 +450,39 @@ export async function planGate(
       flow,
       scope: { ...options.scope, states: chosen.join(",") },
     });
-    const allViewports = [
-      ...new Set(selected.map((tuple) => tuple.viewport.name)),
+    const viewportObjects = [
+      ...new Map(
+        selected.map((tuple) => [tuple.viewport.name, tuple.viewport]),
+      ).values(),
     ];
+    const allViewports = viewportObjects.map((viewport) => viewport.name);
     const allSchemes = [
       ...new Set(selected.map((tuple) => tuple.colorScheme)),
     ] as ColorScheme[];
-    const viewports =
-      explicitViewports || styleScope.responsive.length
-        ? allViewports
+    const viewports = explicitViewports
+      ? allViewports
+      : styleScope.responsive.length
+        ? orderViewports(viewportObjects, styleScope.breakpoints ?? [])
         : allViewports.slice(0, 1);
     const defaultScheme = allSchemes.includes(project.capture.colorScheme)
       ? project.capture.colorScheme
       : allSchemes[0];
-    const schemes =
-      explicitSchemes || styleScope.theme.length
-        ? allSchemes
+    const schemes = explicitSchemes
+      ? allSchemes
+      : styleScope.theme.length
+        ? orderSchemes(allSchemes, defaultScheme, styleScope)
         : defaultScheme === undefined
           ? []
           : [defaultScheme];
+    const evidence = await loadRenderedEvidence(
+      projectDirectory,
+      flow.id,
+      chosen,
+      {
+        viewport: allViewports[0],
+        scheme: defaultScheme,
+      },
+    );
     const narrowed = selected.filter(
       (tuple) =>
         viewports.includes(tuple.viewport.name) &&
@@ -370,11 +509,53 @@ export async function planGate(
               probeTuple.viewport.name,
               probeTuple.colorScheme,
             );
-      if (probeTuple && reference)
+      const asserted = assetStates.some(
+        (entry) => entry.flow === flow.id && entry.state === id,
+      );
+      const stateEvidence = evidence.get(id);
+      evidenceByState.set(
+        stateKey({ flow: flow.id, state: id }),
+        stateEvidence,
+      );
+      const { tokens: surfaceTokens, ...stateSurface } = classifyStateSurface({
+        files: changedSurface.files,
+        evidence: stateEvidence,
+        asserted,
+      });
+      const scopeLabel =
+        surfaceTokens.length > 0
+          ? [...new Set(surfaceTokens.map(formatToken))].slice(0, 3).join(" ")
+          : undefined;
+      if (probeTuple && (reference || scopeLabel !== undefined))
         flowRegions.set(
           tupleKey(id, probeTuple.viewport.name, probeTuple.colorScheme),
-          { reference: reference.reference, runId: reference.runId },
+          {
+            ...(reference
+              ? { reference: reference.reference, runId: reference.runId }
+              : {}),
+            ...(scopeLabel === undefined
+              ? {}
+              : {
+                  surface: {
+                    tokens: surfaceTokens.map(({ kind, value, stem }) => ({
+                      kind,
+                      value,
+                      ...(stem === undefined ? {} : { stem }),
+                    })),
+                    nearPx: SURFACE_NEAR_PX,
+                    label: scopeLabel,
+                  },
+                }),
+          },
         );
+      const nearControls =
+        scopeLabel !== undefined && stateEvidence
+          ? controlsNearSurface(
+              stateEvidence.elements,
+              surfaceTokens,
+              SURFACE_NEAR_PX,
+            )
+          : undefined;
       const region = reference
         ? { runId: reference.runId, controls: reference.controls }
         : undefined;
@@ -389,16 +570,33 @@ export async function planGate(
         expandedViewports: viewports.slice(1),
         expandedSchemes: schemes.slice(1),
         probe: probeTuple !== undefined,
-        probeControls:
-          region?.controls ??
-          model.probedControls(id) ??
-          project.checks.probe.maxControls,
+        probeControls: (() => {
+          const controls =
+            region?.controls ??
+            model.probedControls(id) ??
+            project.checks.probe.maxControls;
+          return nearControls === undefined
+            ? controls
+            : Math.min(controls, nearControls + CHECK_CANDIDATE_FLOOR);
+        })(),
         ...(region ? { region } : {}),
+        surface: {
+          ...stateSurface,
+          ...(scopeLabel !== undefined && probeTuple
+            ? { probeScope: scopeLabel }
+            : {}),
+        },
       });
     }
     referenceMaps.set(flow.id, flowRegions);
   }
   if (!states.length) return skip(files);
+  const coverageGap = surfaceCoverage(
+    changedSurface.files,
+    states,
+    evidenceByState,
+    notes,
+  );
   const production = flows.some(
     (flow) =>
       states.some((state) => state.flow === flow.id) &&
@@ -424,7 +622,13 @@ export async function planGate(
   const firstModel = models.values().next().value as ReturnType<
     typeof costModel
   >;
-  const model: ReturnType<typeof costModel> = {
+  const host = (options.dependencies?.readHost ?? readHost)();
+  const factor = hostFactor([...histories.values()].flat(), host);
+  if (factor > 1.05)
+    notes.push(
+      `host busy: load ${host.load?.[0].toFixed(1)} on ${host.coreCount} cores; estimates scaled ×${factor.toFixed(1)} over their history`,
+    );
+  const unscaled: ReturnType<typeof costModel> = {
     ...firstModel,
     tupleCaptureMs: (state, viewport, scheme) => {
       const owner = states.find((entry) => entry.state === state)?.flow;
@@ -436,6 +640,7 @@ export async function planGate(
     },
     noHistory: [...models.values()].some((entry) => entry.noHistory),
   };
+  const model = scaleCostModel(unscaled, factor);
   const probeTargetMs =
     options.probeBudgetMs ??
     project.checks.probe.flowBudgetMs ??
@@ -556,6 +761,13 @@ export async function planGate(
       schemes: first.schemes.join(","),
     });
   }
+  const gatedFlows = flows.filter((flow) => scopes.has(flow.id));
+  const lease = serverLeaseEligible(project, gatedFlows, {
+    production,
+    reused: server.mode === "reused",
+  });
+  if (!lease.eligible && gatedFlows.length > 1 && server.mode !== "reused")
+    notes.push(`server: one per flow (${lease.reason})`);
   const kept = new Set(trimmed.states.map((state) => stateKey(state)));
   const tuples = trimmed.states.flatMap((state) =>
     state.viewports.flatMap((viewport) =>
@@ -579,6 +791,8 @@ export async function planGate(
     graph,
     files,
     styleScope,
+    surface,
+    ...(coverageGap === undefined ? {} : { coverageGap }),
     states: trimmed.states,
     tuples,
     server,
@@ -604,6 +818,80 @@ export async function planGate(
       production,
       baseComparisons,
       configHash,
+      serverLease: lease.eligible,
     },
   };
+}
+
+/**
+ * Identified changed surface that no candidate state's capture renders: the
+ * gate says so (a `warning:` note) instead of passing silently. Unidentified
+ * files get one note each. Returns the headline gap when nothing shows.
+ */
+function surfaceCoverage(
+  files: SurfaceFile[],
+  states: GateStatePlan[],
+  evidence: Map<string, StateEvidence | undefined>,
+  notes: string[],
+): GateCoverageGap | undefined {
+  for (const file of files)
+    if (!file.identified)
+      notes.push(
+        `surface unknown for ${file.path}: ${file.reason ?? "no identified surface"}; ranked by route`,
+      );
+  const identified = files.filter((file) => file.identified);
+  if (!identified.length) return undefined;
+  const withEvidence = states.filter(
+    (state) => evidence.get(stateKey(state)) !== undefined,
+  );
+  const without = states
+    .filter((state) => evidence.get(stateKey(state)) === undefined)
+    .map((state) => `${state.flow}/${state.state}`);
+  // A file is a gap only when every state with a capture checked its
+  // surface and found it absent. A state that could not tell (an inventory
+  // without component names, or one derived from an older capture) leaves
+  // the surface unconfirmed: that is reported, but not as "renders nothing".
+  const gapFiles: SurfaceFile[] = [];
+  for (const file of identified) {
+    const classified = withEvidence.map((state) =>
+      classifyStateSurface({
+        files: [file],
+        evidence: evidence.get(stateKey(state)),
+      }),
+    );
+    if (classified.some((entry) => entry.status === "shows")) continue;
+    const unknown = classified.find((entry) => entry.status === "unknown");
+    if (!unknown) {
+      gapFiles.push(file);
+      continue;
+    }
+    const fileTokens = file.tokens
+      .filter((token) => token.kind !== "sheet")
+      .map(formatToken);
+    notes.push(
+      `surface unconfirmed for ${file.path} (${fileTokens.slice(0, 6).join(" ")}${fileTokens.length > 6 ? " …" : ""}): ${unknown.reason ?? "no state could tell"}; ranked by route`,
+    );
+  }
+  if (!gapFiles.length) return undefined;
+  const tokens = [
+    ...new Set(
+      gapFiles.flatMap((file) =>
+        file.tokens.filter((token) => token.kind !== "sheet").map(formatToken),
+      ),
+    ),
+  ];
+  const line = (subject: SurfaceFile[]) =>
+    `warning: coverage gap: no captured state renders the changed surface of ${subject.map((file) => file.path).join(", ")} (${tokens.slice(0, 6).join(" ")}${tokens.length > 6 ? " …" : ""}); ${withEvidence.length} state(s) had captures${without.length ? `, ${without.length} had none: ${without.slice(0, 6).join(", ")}${without.length > 6 ? ", …" : ""}` : ""}. Add a state that shows it, or capture the states without one.`;
+  const anyShows = states.some((state) => state.surface?.status === "shows");
+  if (gapFiles.length === identified.length && !anyShows) {
+    notes.push(line(gapFiles));
+    return {
+      files: gapFiles.map((file) => file.path),
+      tokens,
+      statesWithEvidence: withEvidence.length,
+      statesWithoutEvidence: without,
+    };
+  }
+  notes.push(line(gapFiles));
+  return undefined;
 }

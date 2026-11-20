@@ -478,7 +478,9 @@ export function planAutobuildWiring(
         (gate
           ? !(
               (existing.kind === "check" && existing.command === commandKey) ||
-              (existing.kind === "agent" && existing.skill === "idiom-verify")
+              (existing.kind === "agent" &&
+                (existing.skill === "idiom-verify" ||
+                  existing.skill === "idiom-fix"))
             ) ||
             Object.keys(existing).some(
               (key) =>
@@ -573,7 +575,7 @@ export function planAutobuildWiring(
       candidate =
         candidate.slice(0, start) +
         line.replace(/command(\s*=\s*)$/, "skill$1") +
-        '"idiom-verify"' +
+        JSON.stringify(expected.skill) +
         candidate
           .slice(span.end)
           .replace(
@@ -596,7 +598,12 @@ export function planAutobuildWiring(
       av[stepName].kind !== expected.kind ||
       (gate
         ? (ac[commandKey] !== gateCommand && normalized !== gateCommand) ||
-          av[stepName].skill !== "idiom-verify" ||
+          !(
+            av[stepName].skill === expected.skill ||
+            (isRecord(existing) &&
+              existing.kind === "agent" &&
+              av[stepName].skill === existing.skill)
+          ) ||
           av[stepName].paths !== undefined
         : !isCompatibleIdiomCommand(ac[commandKey]) ||
           av[stepName].skill !== "idiom-verify")
@@ -661,4 +668,238 @@ export function renameVerifierReferences(source: string): string {
   )
     throw new Error("Unpatchable legacy reference");
   return candidate;
+}
+
+/** The finalize step that advances the gate's baseline as builds land. */
+export const baselineCommand = "idiom baseline advance --fetch";
+export const baselineStep = "idiom-baseline";
+export const baselineFinalizeAddition = `[commands]
+${baselineStep} = "${baselineCommand}"
+
+[finalize]
+steps = ["${baselineStep}"]
+
+[finalize.${baselineStep}]
+kind = "check"
+command = "${baselineStep}"
+`;
+
+const normalizeCommand = (value: unknown) =>
+  typeof value === "string"
+    ? value
+        .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "")
+        .split(/[\t\n\f\r ]+/)
+        .join(" ")
+    : value;
+
+/**
+ * Insert a table after the last of a family (`finalize`, `finalize.*`), right
+ * after its last assignment, so comments that introduce the next section stay
+ * with it.
+ */
+function addTableAfterFamily(
+  source: string,
+  family: string,
+  header: string,
+  body: string[],
+): string {
+  const analysis = analyzeTables(source);
+  const anchor = analysis.tables
+    .filter(
+      (table) => table.name === family || table.name.startsWith(`${family}.`),
+    )
+    .at(-1);
+  if (anchor === undefined) return addTableAtEnd(source, header, body);
+  const newline = newlineOf(source);
+  let last = anchor.end - 1;
+  while (last >= anchor.bodyStart && /\s/.test(analysis.mask[last] ?? ""))
+    last -= 1;
+  if (last < anchor.bodyStart) last = anchor.headerStart;
+  const lineFeed = source.indexOf("\n", last);
+  let position = lineFeed === -1 ? source.length : lineFeed;
+  if (position > 0 && source[position - 1] === "\r") position -= 1;
+  const block = [`[${header}]`, ...body].join(newline);
+  return `${source.slice(0, position)}${newline}${newline}${block}${position === source.length && endsWithNewline(source) ? newline : ""}${source.slice(position)}`;
+}
+
+/**
+ * Wire `idiom baseline advance --fetch` as an Autobuild finalize check step.
+ * Throws, with a reason, when the configuration cannot be edited safely or
+ * already holds a different command or step under the same name.
+ */
+export function planBaselineFinalize(original: string): {
+  candidate: string;
+} {
+  const document = parse(original);
+  const commands = document.commands;
+  const finalize = document.finalize;
+  if (commands !== undefined && !isRecord(commands))
+    throw new Error("[commands] is not a table");
+  if (finalize !== undefined && !isRecord(finalize))
+    throw new Error("[finalize] is not a table");
+  const command = commands?.[baselineStep];
+  if (command !== undefined && normalizeCommand(command) !== baselineCommand)
+    throw new Error(
+      `[commands].${baselineStep} is owned by a different command`,
+    );
+  const steps = finalize?.steps;
+  if (
+    steps !== undefined &&
+    (!Array.isArray(steps) || steps.some((step) => typeof step !== "string"))
+  )
+    throw new Error("finalize.steps is not a string array");
+  const count = Array.isArray(steps)
+    ? steps.filter((step) => step === baselineStep).length
+    : 0;
+  if (count > 1)
+    throw new Error(`finalize.steps selects "${baselineStep}" more than once`);
+  const existing = finalize?.[baselineStep];
+  if (
+    existing !== undefined &&
+    (!isRecord(existing) ||
+      existing.kind !== "check" ||
+      existing.command !== baselineStep ||
+      Object.keys(existing).some((key) => key !== "kind" && key !== "command"))
+  )
+    throw new Error(
+      `[finalize.${baselineStep}] is owned by a different finalize step`,
+    );
+  let candidate = original;
+  if (command === undefined)
+    candidate = addAssignmentToTable(
+      candidate,
+      "commands",
+      `${baselineStep} = ${JSON.stringify(baselineCommand)}`,
+    );
+  if (!count) {
+    if (uniqueTable(candidate, "finalize") === undefined)
+      candidate = addTableAfterFamily(candidate, "finalize", "finalize", [
+        `steps = [${JSON.stringify(baselineStep)}]`,
+      ]);
+    else if (steps === undefined)
+      candidate = addAssignmentToTable(
+        candidate,
+        "finalize",
+        `steps = [${JSON.stringify(baselineStep)}]`,
+      );
+    else {
+      const span = assignmentValueSpan(candidate, "finalize", "steps");
+      if (!span) throw new Error("finalize.steps has no patchable source span");
+      candidate = appendIdiomToArray(candidate, span, baselineStep);
+    }
+  }
+  if (existing === undefined)
+    candidate = addTableAfterFamily(
+      candidate,
+      "finalize",
+      `finalize.${baselineStep}`,
+      ['kind = "check"', `command = ${JSON.stringify(baselineStep)}`],
+    );
+  if (!endsWithNewline(original) && endsWithNewline(candidate))
+    candidate = candidate.slice(0, -newlineOf(candidate).length);
+  const after = parse(candidate);
+  const ac = after.commands;
+  const af = after.finalize;
+  if (
+    !isRecord(ac) ||
+    normalizeCommand(ac[baselineStep]) !== baselineCommand ||
+    !isRecord(af) ||
+    !Array.isArray(af.steps) ||
+    af.steps.filter((step) => step === baselineStep).length !== 1 ||
+    !isRecord(af[baselineStep]) ||
+    af[baselineStep].kind !== "check" ||
+    af[baselineStep].command !== baselineStep
+  )
+    throw new Error("Patched configuration did not validate semantically");
+  if (endsWithNewline(candidate) !== endsWithNewline(original))
+    throw new Error("Patch changed trailing-newline convention");
+  return { candidate };
+}
+
+/** The fix step's one-line `skill` swap, with what it does as a comment. */
+export const fixSkillLine =
+  'skill = "idiom-fix"  # fixes up to 3 new major findings per round, 3 rounds';
+
+/** The gate snippet with the fix step's skill in place of the verifier's. */
+export function fixStepAddition(gateTemplate: string): string {
+  return gateTemplate.replace(/^skill = "idiom-verify"$/m, fixSkillLine);
+}
+
+/**
+ * Turn the Idiom gate into the fix step: the `[verify.idiom-check]` agent
+ * step runs the `idiom-fix` skill instead of `idiom-verify`, with the same
+ * command, role key and step order. An unwired gate is wired first; a custom
+ * `idiom-check` (a check step or another skill) is never rewritten.
+ */
+export function planFixStep(
+  original: string,
+  gateTemplate: string,
+): AutobuildWiringPlan {
+  const addition = fixStepAddition(gateTemplate);
+  let existing: TomlValue | undefined;
+  try {
+    const verify = parse(original).verify;
+    existing = isRecord(verify) ? verify["idiom-check"] : undefined;
+  } catch (error) {
+    return manualPlan(
+      original,
+      addition,
+      `Autobuild configuration could not be edited safely: ${(error as Error).message}`,
+    );
+  }
+  if (
+    existing !== undefined &&
+    !(
+      isRecord(existing) &&
+      existing.kind === "agent" &&
+      (existing.skill === "idiom-verify" || existing.skill === "idiom-fix")
+    )
+  )
+    return manualPlan(
+      original,
+      addition,
+      'a custom idiom-check step is not rewritten; set skill = "idiom-fix" on an agent [verify.idiom-check] step by hand',
+    );
+  const gate = planAutobuildWiring(original, gateTemplate);
+  if (gate.kind === "manual") return { ...gate, manualAddition: addition };
+  try {
+    let candidate = gate.candidate;
+    const step = parse(candidate).verify as TomlTable;
+    if ((step["idiom-check"] as TomlTable).skill !== "idiom-fix") {
+      const span = assignmentValueSpan(
+        candidate,
+        "verify.idiom-check",
+        "skill",
+      );
+      if (!span) throw new Error("skill has no patchable source span");
+      const start = candidate.lastIndexOf("\n", span.start) + 1;
+      const indent = /^[ \t]*/.exec(candidate.slice(start))?.[0] ?? "";
+      candidate = `${candidate.slice(0, start)}${indent}${fixSkillLine}${candidate.slice(span.end)}`;
+    }
+    const after = parse(candidate);
+    const av = after.verify;
+    if (
+      !isRecord(av) ||
+      !isRecord(av["idiom-check"]) ||
+      av["idiom-check"].kind !== "agent" ||
+      av["idiom-check"].skill !== "idiom-fix"
+    )
+      throw new Error("Patched configuration did not validate semantically");
+    if (endsWithNewline(candidate) !== endsWithNewline(original))
+      throw new Error("Patch changed trailing-newline convention");
+    return {
+      kind: "ready",
+      original,
+      candidate,
+      diff: createAutobuildDiff(original, candidate),
+      complete: original === candidate,
+      manualAddition: addition,
+    };
+  } catch (error) {
+    return manualPlan(
+      original,
+      addition,
+      `Autobuild configuration could not be edited safely: ${(error as Error).message}`,
+    );
+  }
 }

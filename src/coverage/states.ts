@@ -29,6 +29,11 @@ import {
   type SurfaceCoverage,
   surfaceCoverageLines,
 } from "./surfaces.js";
+import {
+  computeIntermediateWidthCoverage,
+  type IntermediateWidthCoverage,
+  intermediateWidthCoverageLines,
+} from "./widths.js";
 
 export type StateDimensionKind =
   | "viewport"
@@ -84,6 +89,8 @@ export type FlowStateCoverage = Totals & {
   emptyContainers?: EmptyContainerCoverage | undefined;
   /** Menus, popovers, toolbars, editors and selectable elements no state shows open, with draft states to reach them. */
   surfaces?: SurfaceCoverage | undefined;
+  /** States whose toolbars sit near a width boundary, to opt into intermediateWidths. */
+  intermediateWidths?: IntermediateWidthCoverage | undefined;
 };
 
 export type StateCoverageSummary = { flows: FlowStateCoverage[] };
@@ -96,6 +103,7 @@ type CoverageTuple = Pick<
   | "failure"
   | "mismatches"
   | "observations"
+  | "intermediateWidth"
 >;
 
 const dataStates: DataState[] = ["empty", "one", "many", "error"];
@@ -496,6 +504,12 @@ export function computeFlowStateCoverage(options: {
   const labels = Object.fromEntries(
     flow.states.map((state) => [state.id, stateChainLabel(state)]),
   );
+  const intermediateWidths = computeIntermediateWidthCoverage({
+    project,
+    flow,
+    tuples: options.tuples,
+    labels,
+  });
   return {
     flow: flow.id,
     ...(options.runId === undefined
@@ -519,6 +533,7 @@ export function computeFlowStateCoverage(options: {
       flow,
       labels,
     ),
+    ...(intermediateWidths === undefined ? {} : { intermediateWidths }),
   };
 }
 
@@ -651,6 +666,11 @@ export function renderStateCoverage(summary: StateCoverageSummary): string {
       lines.push("", ...emptyContainerCoverageLines(flow.emptyContainers));
     if (flow.surfaces !== undefined)
       lines.push("", ...surfaceCoverageLines(flow.surfaces));
+    if (flow.intermediateWidths !== undefined)
+      lines.push(
+        "",
+        ...intermediateWidthCoverageLines(flow.intermediateWidths),
+      );
     if (flow.missing.length > 0) {
       lines.push("", "To cover:");
       const all = flow.states.length;

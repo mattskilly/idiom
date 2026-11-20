@@ -1,0 +1,12 @@
+# The fix step as idiom init / idiom upgrade wire it.
+baseBranch = "main"
+
+[commands]
+idiom-check = "idiom check --gate --fail-on major --deferred warn"
+
+[verify]
+steps = ["idiom-check"]
+
+[verify.idiom-check]
+kind = "agent"
+skill = "idiom-fix"  # fixes up to 3 new major findings per round, 3 rounds

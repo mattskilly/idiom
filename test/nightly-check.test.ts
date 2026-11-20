@@ -63,7 +63,7 @@ const flag = (name) => argv[argv.indexOf(name) + 1];
 if (argv[1] === "states") process.stdout.write(JSON.stringify([{ name: "triage", roles: ["create", "triage"], tickets: 0 }]));
 else if (argv[1] === "list") process.stdout.write("[]");
 else if (argv[1] === "create") {
-  fs.writeFileSync(process.env.AB_LOG + ".body", fs.readFileSync(flag("--body"), "utf8"));
+  if (!fs.existsSync(process.env.AB_LOG + ".body")) fs.writeFileSync(process.env.AB_LOG + ".body", fs.readFileSync(flag("--body"), "utf8"));
   process.stdout.write(JSON.stringify({ revision: "1", ref: { source: "file", id: "file-1", title: argv[2] }, title: argv[2], body: "", state: flag("--state"), resolved: false, labels: flag("--labels").split(",") }));
 } else process.exit(2);
 `,
@@ -104,7 +104,25 @@ else if (argv[1] === "create") {
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as string[]);
-  expect(calls.map((argv) => argv[1])).toEqual(["states", "list", "create"]);
+  // The finding files first; then the two setup breaks, one ticket each:
+  // booking has no baseline, and studio's expectation no longer matches.
+  expect(calls.map((argv) => argv[1])).toEqual([
+    "states",
+    "list",
+    "create",
+    "states",
+    "list",
+    "create",
+    "create",
+  ]);
+  expect(result.conditions.map((condition) => condition.key)).toEqual([
+    "baseline:booking",
+    expect.stringMatching(/^expectation:studio\//),
+  ]);
+  expect(result.conditionOutcomes.map((outcome) => outcome.kind)).toEqual([
+    "created",
+    "created",
+  ]);
   const body = await readFile(`${log}.body`, "utf8");
   const embedded = parseFindingBlocks(body);
   expect(embedded).toHaveLength(1);

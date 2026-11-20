@@ -40,7 +40,7 @@ For Codex, in your shell:
 ```sh
 codex plugin marketplace add mattskilly/idiom
 codex plugin add idiom@idiom
-codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.23.0/mattskilly-idiom-0.23.0.tgz idiom mcp
+codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.24.0/mattskilly-idiom-0.24.0.tgz idiom mcp
 ```
 
 Codex starts a plugin's MCP server inside the plugin's own directory rather than your project, so the Codex plugin supplies the Idiom skill and `codex mcp add` registers the MCP server, which Codex starts in each thread's project directory.
@@ -98,7 +98,7 @@ idiom check home --fail-on major  # later runs fail only on new problems
 
 The first check on a clean commit records a baseline. After that, `check` reports only findings the baseline didn't have, and `idiom baseline accept home` accepts intentional changes. The [GitHub Action](/docs/configuration#github-action) runs this on every pull request and posts one comment; `idiom init` writes that workflow for you when `.github/workflows/` exists, with a full check of every flow on pushes to the default branch.
 
-When `autobuild.toml` exists, interactive `idiom init` (in its wiring plan) and `idiom upgrade` offer the default `idiom-check` gate with an exact diff and confirmation. It runs `idiom check --gate --fail-on major --deferred warn`, with no path filter or verifier-skill requirement. Busy hosts warn about incomplete coverage; actual findings and run failures still fail. Finding verification is a separate opt-in for Idiom-originated tickets, using a detected project flow and project-derived paths.
+When `autobuild.toml` exists, interactive `idiom init` (in its wiring plan) and `idiom upgrade` offer the default `idiom-check` gate with an exact diff and confirmation. Without a terminal (a build agent or setup script), run `idiom upgrade --yes` on a clean main: it applies the same diffs and prints them, and records the gate's first baseline (or prints the `idiom baseline record <flow>` command when HEAD is not clean). Commit the wiring and `.idiom/baselines` on main before branching builds. The gate runs `idiom check --gate --fail-on major --deferred warn`, with no path filter or verifier-skill requirement. Busy hosts warn about incomplete coverage; actual findings and run failures still fail. Finding verification is a separate opt-in for Idiom-originated tickets, using a detected project flow and project-derived paths. Once the gate is wired, both also offer the **fix step**, a one-line `skill = "idiom-fix"` swap on the same step (never applied by `--yes`): it fixes up to three new major findings per round inside the build, re-verifies, and fails with a short summary only for what it could not fix. See [fix findings inside the build](/docs/commands#fix-findings-inside-the-build).
 
 To gate every build an agent makes manually, use `idiom check --gate --fail-on major --deferred warn`. It checks only what the change affects within a 3-minute budget, skips docs- and test-only changes in under a second, and ends with a `Timing:` line. Keep the full check on a schedule.
 

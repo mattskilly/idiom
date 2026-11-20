@@ -135,7 +135,12 @@ import {
   writeGroups,
 } from "./groups.js";
 import { renderReviewHtmlReport } from "./html-report.js";
-import { FindingNamingSession, findingNameDivergenceWarning } from "./names.js";
+import {
+  FindingNameConflict,
+  FindingNamingSession,
+  findingNameConflictFailure,
+  findingNameWarnings,
+} from "./names.js";
 import {
   buildIssueRankingContext,
   type IssueRankingContext,
@@ -347,6 +352,11 @@ export async function runReview(options: {
   probeRegions?:
     | ReadonlyMap<string, import("../capture/probe.js").ProbeRegion>
     | undefined;
+  /**
+   * The build gate's leased server: already built and started, bound to its
+   * port. Capture uses it like a reused server and never stops it.
+   */
+  leasedServer?: import("../gate/server-lease.js").LeasedServer | undefined;
   reuseServer?: boolean | undefined;
   inputIdentity?: string | undefined;
   /** `idiom check --gate`: rendered under **Build gate** in the report. */
@@ -468,6 +478,9 @@ export async function runReview(options: {
       probeDisabled: options.probeDisabled,
       probeRegions: options.probeRegions,
       reuseServer: options.reuseServer,
+      ...(options.leasedServer === undefined
+        ? {}
+        : { leasedServer: options.leasedServer }),
       inputIdentity: options.inputIdentity,
       dependencies: options.dependencies?.capture,
     }).catch((error) => {
@@ -513,6 +526,7 @@ export async function runReview(options: {
     loaded.tuples,
     loaded.expectedTupleKeys,
     checksConfig,
+    clock,
   );
   // Deterministic, so asked on every review outcome; the findings they
   // stand for are already withheld from the candidates.
@@ -529,9 +543,14 @@ export async function runReview(options: {
     status: "measured" as const,
     ms: Math.max(0, clock() - checksStarted),
   };
+  // Per-tuple check time lets a slow tuple's report name its checks too.
+  const tupleChecks = [...(reviewed.tupleMs ?? new Map())].map(([key, ms]) => {
+    const [state = "", viewport = "", colorScheme = "light"] = key.split("\0");
+    return { state, viewport, colorScheme, ms };
+  });
   await writeFile(
     join(runDirectory, "checks-timings.json"),
-    `${JSON.stringify({ version: 1, checks: checksTiming }, null, 2)}\n`,
+    `${JSON.stringify({ version: 1, checks: checksTiming, ...(tupleChecks.length === 0 ? {} : { tuples: tupleChecks }) }, null, 2)}\n`,
   );
   const historical = options.from !== undefined || options.latest === true;
   const unavailable = { status: "unavailable" as const, ms: 0 };
@@ -545,11 +564,18 @@ export async function runReview(options: {
     checks: checksTiming,
     historical,
   };
+  // The run under review is strict against the registry; its conflict is a
+  // refused run whose hint is the fix naming that run folder.
   const catalog = await loadReviewCatalog({
     project: validated.stateProjectDirectory ?? validated.projectDirectory,
     isolatedRegistry: options.isolatedRegistry,
+    currentRunDirectory: runDirectory,
+  }).catch((error: unknown) => {
+    if (error instanceof FindingNameConflict)
+      throw findingNameConflictFailure(error);
+    throw error;
   });
-  const findingNameWarning = findingNameDivergenceWarning(catalog.names);
+  const findingNameWarning = findingNameWarnings(catalog.names);
   const naming = new FindingNamingSession(catalog.names);
   const identifiedDecisions = await readIdentifiedDecisions(
     validated.stateProjectDirectory ?? validated.projectDirectory,
@@ -612,10 +638,14 @@ export async function runReview(options: {
       options.dependencies?.environment ?? process.env,
     );
 
+  // Intermediate widths are layout-only: model review never sees them.
+  const reviewTuples = loaded.tuples.filter(
+    (tuple) => tuple.intermediateWidth !== true,
+  );
   if (options.deterministicOnly === true) {
     outcome = { kind: "deterministic-only" };
-  } else if (!hasReviewableScreenshot(loaded.tuples)) {
-    outcome = noReviewableScreenshotsOutcome(loaded.tuples);
+  } else if (!hasReviewableScreenshot(reviewTuples)) {
+    outcome = noReviewableScreenshotsOutcome(reviewTuples);
   } else if (sweepMode) {
     const deterministicFindings = finalizeFindings({
       runId: loaded.runId,
@@ -638,7 +668,7 @@ export async function runReview(options: {
         runDirectory,
         project: validated.project,
         flow: record.flow,
-        tuples: loaded.tuples,
+        tuples: reviewTuples,
         priorDecisions: ruleRejections,
         priorRules,
         deterministicFindings,
@@ -714,7 +744,7 @@ export async function runReview(options: {
         runDirectory,
         project: validated.project,
         flow: record.flow,
-        tuples: loaded.tuples,
+        tuples: reviewTuples,
         priorDecisions: ruleRejections,
         priorRules: validated.rules.overrides.filter(
           (override) =>

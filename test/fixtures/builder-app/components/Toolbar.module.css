@@ -1,0 +1,17 @@
+.toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #c9ced6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.button {
+  font: inherit;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2933;
+}

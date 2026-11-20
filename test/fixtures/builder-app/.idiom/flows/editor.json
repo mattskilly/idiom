@@ -1,0 +1,136 @@
+{
+  "id": "editor",
+  "title": "Page builder editor",
+  "setup": [],
+  "intent": [],
+  "states": [
+    {
+      "id": "empty-canvas",
+      "description": "Editor: empty canvas",
+      "url": "/editor?view=empty-canvas",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "page-selected",
+      "description": "Editor: page selected",
+      "url": "/editor?view=page-selected",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "section-selected",
+      "description": "Editor: section selected",
+      "url": "/editor?view=section-selected",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "layers-open",
+      "description": "Editor: layers open",
+      "url": "/editor?view=layers-open",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "layers-dragging",
+      "description": "Editor: layers dragging",
+      "url": "/editor?view=layers-dragging",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "inspector-layout",
+      "description": "Editor: inspector layout",
+      "url": "/editor?view=inspector-layout",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "inspector-style",
+      "description": "Editor: inspector style",
+      "url": "/editor?view=inspector-style",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "library-open",
+      "description": "Editor: library open",
+      "url": "/editor?view=library-open",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "library-search",
+      "description": "Editor: library search",
+      "url": "/editor?view=library-search",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "image-selected",
+      "description": "Editor: image selected",
+      "url": "/editor?view=image-selected",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "button-selected",
+      "description": "Editor: button selected",
+      "url": "/editor?view=button-selected",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "form-selected",
+      "description": "Editor: form selected",
+      "url": "/editor?view=form-selected",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "text-selected",
+      "description": "Editor: text selected",
+      "url": "/editor?view=text-selected",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "publish-dialog",
+      "description": "Editor: publish dialog",
+      "url": "/editor?view=publish-dialog",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "heading-editing",
+      "description": "Editor: heading editing",
+      "url": "/editor?view=heading-editing",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    },
+    {
+      "id": "preview-mode",
+      "description": "Editor: preview mode",
+      "url": "/editor?view=preview-mode",
+      "expect": {
+        "textPresent": ["Builder fixture"]
+      }
+    }
+  ]
+}

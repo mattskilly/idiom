@@ -8,6 +8,7 @@ const config = parse(
 ) as {
   commands: Record<string, string>;
   verify: { steps: string[] } & Record<string, unknown>;
+  finalize: { steps: string[] } & Record<string, unknown>;
 };
 
 describe("autobuild.toml site gate", () => {
@@ -19,5 +20,16 @@ describe("autobuild.toml site gate", () => {
       always: true,
     });
     expect(config.commands["idiom-check"]).toBe("node scripts/site-gate.mjs");
+  });
+
+  test("advances the shared site base record after every build", () => {
+    expect(config.commands["idiom-advance"]).toBe(
+      "node scripts/site-gate.mjs --advance",
+    );
+    expect(config.finalize.steps).toContain("idiom-advance");
+    expect(config.finalize["idiom-advance"]).toEqual({
+      kind: "check",
+      command: "idiom-advance",
+    });
   });
 });

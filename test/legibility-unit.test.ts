@@ -349,6 +349,37 @@ test("legibilityOptions follows the in-page toggles and the negative-spacing sco
     controlGap: true,
     negativeSpacing: true,
     negativeSpacingScope: "interface",
+    negativeSpacingDisplaySize: 20,
+    negativeSpacingDisplayTracking: -0.03,
+    toolbarLayout: true,
+  });
+});
+
+test("checks.negativeSpacing validates and passes through the display exemption", () => {
+  const parsed = checksConfigSchema.parse({});
+  expect(parsed.negativeSpacing).toMatchObject({
+    displaySize: 20,
+    displayTracking: -0.03,
+  });
+  for (const negativeSpacing of [
+    { displayTracking: 0.01 },
+    { displayTracking: -1.5 },
+    { displaySize: 0 },
+    { displaySize: -4 },
+  ])
+    expect(
+      checksConfigSchema.safeParse({ negativeSpacing }).success,
+      JSON.stringify(negativeSpacing),
+    ).toBe(false);
+  expect(
+    legibilityOptions(
+      checksConfigSchema.parse({
+        negativeSpacing: { displaySize: 28, displayTracking: 0 },
+      }),
+    ),
+  ).toMatchObject({
+    negativeSpacingDisplaySize: 28,
+    negativeSpacingDisplayTracking: 0,
   });
 });
 

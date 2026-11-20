@@ -11,6 +11,8 @@ export const WIRING_SURFACES = [
   "lefthook",
   "autobuild-landing",
   "autobuild-gate",
+  "autobuild-fix",
+  "autobuild-baseline",
   "autobuild-verifier",
   "autobuild-plan",
   "autobuild-implement",
@@ -23,6 +25,8 @@ export type WiringOptions = {
   skipWiring?: string[] | undefined;
   gitHook?: boolean | undefined;
   nightly?: boolean | undefined;
+  /** Add the GitHub job that advances the committed baseline on each merge. */
+  advanceBaseline?: boolean | undefined;
   designReview?: boolean | undefined;
   /** A person will see the plan at a prompt: the existing gate is offered. */
   offerGate?: boolean | undefined;
@@ -86,7 +90,12 @@ export type WiringReport = {
   proposals: Proposal[];
   schedule?: NightlyScheduleOffer | undefined;
 };
-export type WiringSelection = { selected: WiringSurface[]; nightly: boolean };
+export type WiringSelection = {
+  selected: WiringSurface[];
+  nightly: boolean;
+  /** The GitHub baseline job (default off). */
+  advanceBaseline?: boolean | undefined;
+};
 export type SelectWiring = (request: {
   proposals: Proposal[];
   defaults: WiringSelection;

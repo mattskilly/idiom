@@ -18,7 +18,10 @@ export type SourceIdentity = {
   changedDuringCapture?: boolean | undefined;
 };
 
-export type SelectedViewport = Project["viewports"][number];
+export type SelectedViewport = Project["viewports"][number] & {
+  /** A synthetic width between declared viewports (intermediateWidths). */
+  intermediate?: true | undefined;
+};
 export type SelectedColorScheme = ColorScheme;
 export type FlowState = Flow["states"][number];
 
@@ -144,7 +147,8 @@ export type TupleFailureStage =
   | "dom"
   | "axe"
   | "screenshot"
-  | "console";
+  | "console"
+  | "state-budget";
 
 export type TimeoutDiagnostic = {
   kind: "navigation" | "readiness";

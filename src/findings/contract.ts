@@ -229,6 +229,7 @@ export function buildRuleContract(
             "ragged-row",
             "state-jump",
             "control-gap",
+            "toolbar-layout",
           ].includes(candidate.category)
             ? { units: { distance: "CSS px" } }
             : {}),

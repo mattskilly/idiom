@@ -487,3 +487,72 @@ export function classifyCorrection(text: string): Classification {
     sentences: qualifying.map((item) => item.sentence.text),
   };
 }
+
+/** Nouns a design question names that a correction rarely does. */
+export const QUESTION_NOUNS = [
+  "control",
+  "spacing",
+  "wording",
+  "copy",
+  "empty state",
+  "component",
+] as const;
+
+// A question noun that is also a category word ("copy", "spacing") is
+// already counted by its category, so only the others are matched here.
+/** A slash-separated path such as `src/ui/form`. */
+const PATH_PATTERN = /(?<![\w/])[\w.-]+(?:\/[\w.-]+)+\/?/g;
+
+const questionNounMatcher = matcher(
+  QUESTION_NOUNS.filter(
+    (noun) =>
+      !Object.values(CATEGORY_WORDS).some((words) => words.includes(noun)),
+  ),
+);
+
+export type QuestionClass = {
+  /** True when the question is about the UI or UX rather than the work. */
+  design: boolean;
+  categories: UiCategory[];
+  uiHits: number;
+  processHits: number;
+};
+
+/**
+ * Classify a question someone asked (an autobuild escalation): is it a UI or
+ * UX design question? Unlike `classifySentence` it needs no correction
+ * signal, since a question asks rather than corrects. Code spans, quoted
+ * lines and fences are masked first, so a path or a snippet never counts.
+ */
+export function classifyQuestion(text: string): QuestionClass {
+  const read = sentences(text)
+    .map((sentence) => sentence.read)
+    .join(" ");
+  // Code-shaped tokens count as process, then leave the text, so a path
+  // like `src/ui/form.ts` never counts its "ui" and "form" as UI.
+  const processHits =
+    count(processMatcher, read.toLowerCase()) +
+    PROCESS_PATTERNS.reduce((sum, pattern) => sum + count(pattern, read), 0) +
+    count(PATH_PATTERN, read);
+  const prose = [...PROCESS_PATTERNS, PATH_PATTERN].reduce(
+    (current, pattern) => current.replace(pattern, " "),
+    read,
+  );
+  const normal = prose.replace(/[‘’]/g, "'").toLowerCase();
+  const categories: UiCategory[] = [];
+  let uiHits = 0;
+  for (const [category, pattern] of categoryMatchers) {
+    const hits =
+      count(pattern, normal) +
+      (category === "visual" ? count(PIXEL_PATTERN, normal) : 0);
+    if (hits > 0) categories.push(category);
+    uiHits += hits;
+  }
+  uiHits += count(nounMatcher, normal) + count(questionNounMatcher, normal);
+  return {
+    design: uiHits >= 2 && uiHits > processHits,
+    categories,
+    uiHits,
+    processHits,
+  };
+}

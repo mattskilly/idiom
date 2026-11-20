@@ -1,0 +1,11 @@
+{
+  "file": "public/styles.css",
+  "line": "  --muted: #4a4a4a;",
+  "regression": "  --muted: #a8a8a8;",
+  "fix": "  --muted: #555555;",
+  "rule": "contrast",
+  "ruleIds": ["axe:color-contrast"],
+  "branch": "regression",
+  "commitMessage": "Soften the reservation note colour",
+  "fixMessage": "Restore readable contrast on the reservation note"
+}

@@ -11,6 +11,9 @@ import type {
   NumericColumnObservation,
   RaggedRowObservation,
   Rect,
+  ToolbarControlObservation,
+  ToolbarItemObservation,
+  ToolbarLayoutObservation,
   TypeLegibilityObservation,
 } from "./types.js";
 
@@ -24,12 +27,17 @@ export type LegibilityToggles = {
   raggedRow: boolean;
   controlGap: boolean;
   negativeSpacing: boolean;
+  toolbarLayout: boolean;
 };
 
 /** What observe passes for the legibility scans: the toggles and the negative-spacing scope. */
 export type LegibilityOptions = LegibilityToggles & {
   /** negative-spacing: judge interface text only (default), or all painted text. */
   negativeSpacingScope?: "interface" | "all" | undefined;
+  /** negative-spacing: computed font size (px) from which tight letter-spacing is display tracking. */
+  negativeSpacingDisplaySize?: number | undefined;
+  /** negative-spacing: tightest letter-spacing (em) exempt on display-size text. */
+  negativeSpacingDisplayTracking?: number | undefined;
 };
 
 export type LegibilityInput = {
@@ -43,8 +51,20 @@ export type LegibilityInput = {
   spacingInclude?: readonly Element[] | undefined;
   /** negative-spacing: subtrees never judged (wins over include and scope). */
   spacingIgnore?: readonly Element[] | undefined;
+  /**
+   * negative-spacing: an element whose own computed font size is at least
+   * this many px (default 20) is display text; its letter-spacing within
+   * `spacingDisplayTracking` is typographic tracking, not reported.
+   */
+  spacingDisplaySize?: number | undefined;
+  /** negative-spacing: tightest exempt letter-spacing on display text, in em (default -0.03; 0 = off). */
+  spacingDisplayTracking?: number | undefined;
   /** control-gap: configured scope selectors and the elements they matched. */
   gapScopes?:
+    | ReadonlyArray<{ selector: string; elements: readonly Element[] }>
+    | undefined;
+  /** toolbar-layout: configured and learned toolbar selectors and the elements they matched. */
+  toolbarScopes?:
     | ReadonlyArray<{ selector: string; elements: readonly Element[] }>
     | undefined;
 };
@@ -59,6 +79,7 @@ export type LegibilityResult = {
   raggedRows?: GeometryScan<RaggedRowObservation>;
   controlGaps?: GeometryScan<ControlGapObservation>;
   negativeSpacings?: GeometryScan<NegativeSpacingObservation>;
+  toolbarLayouts?: GeometryScan<ToolbarLayoutObservation>;
 };
 
 export type LegibilityWindow = Window & {
@@ -109,6 +130,8 @@ export const legibilityLimits = {
   controlMaxHeight: 40,
   /** control-gap: and a chip or pill at most this wide. */
   controlMaxWidth: 480,
+  /** toolbar-layout: items and controls recorded per toolbar. */
+  toolbarMaxParts: 40,
   /** Text blocks scanned per state before the scans report partial. */
   maxBlocks: 2000,
 } as const;
@@ -159,6 +182,12 @@ export function installLegibilityDom(limits: typeof legibilityLimits) {
     });
     const clean = (value: string | null | undefined) =>
       (value ?? "").replace(/\s+/g, " ").trim();
+    /** Rects grouped into rows (vertical overlap at least half the shorter). */
+    const sameRow = (a: Edges, b: Edges) => {
+      const overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      const shorter = Math.min(a.bottom - a.top, b.bottom - b.top);
+      return shorter > 0 && overlap >= shorter / 2;
+    };
     const alpha = (color: string): number => {
       const value = color.trim();
       if (value === "" || value === "transparent") return 0;
@@ -1373,12 +1402,6 @@ export function installLegibilityDom(limits: typeof legibilityLimits) {
       text: string;
       pieces: Edges[];
     };
-    /** Rects grouped into rows (vertical overlap at least half the shorter). */
-    const sameRow = (a: Edges, b: Edges) => {
-      const overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
-      const shorter = Math.min(a.bottom - a.top, b.bottom - b.top);
-      return shorter > 0 && overlap >= shorter / 2;
-    };
     const lines = (rects: readonly DOMRect[]): Edges[] => {
       const rows: Edges[] = [];
       for (const rect of [...rects].sort((a, b) => a.top - b.top)) {
@@ -1621,6 +1644,8 @@ export function installLegibilityDom(limits: typeof legibilityLimits) {
     };
     const spacingValue = (value: string) =>
       value === "normal" ? 0 : Number.parseFloat(value) || 0;
+    const displaySize = input.spacingDisplaySize ?? 20;
+    const displayTracking = input.spacingDisplayTracking ?? -0.03;
     const scanNegativeSpacing = () => {
       const records: NegativeSpacingObservation[] = [];
       const seen = new Set<string>();
@@ -1635,13 +1660,33 @@ export function installLegibilityDom(limits: typeof legibilityLimits) {
           const value = spacingValue(raw);
           if (!(value < -0.005)) continue;
           if (!spacingInScope(element)) continue;
+          // Tight tracking on display-size type is typographic practice, not
+          // crushed interface text. Judged by the element's own computed
+          // size, so an anchor inheriting a heading's tracking is judged like
+          // the heading. Word-spacing is never exempt.
+          const ownSize = style(element).fontSize;
+          const ownPx = Number.parseFloat(ownSize) || 16;
+          if (
+            property === "letter-spacing" &&
+            ownPx >= displaySize - 0.01 &&
+            value / ownPx >= displayTracking - 1e-4
+          )
+            continue;
           let rootElement = element;
           for (
             let parent = rootElement.parentElement;
             parent !== null && parent !== document.documentElement;
             parent = parent.parentElement
           ) {
-            if (style(parent)[key] !== raw || !spacingInScope(parent)) break;
+            const parentStyle = style(parent);
+            // A different size is a different judgement: never merge a small
+            // child up into a tight display-size parent (or vice versa).
+            if (
+              parentStyle[key] !== raw ||
+              parentStyle.fontSize !== ownSize ||
+              !spacingInScope(parent)
+            )
+              break;
             rootElement = parent;
           }
           const selector = selectorFor(rootElement);
@@ -1662,6 +1707,249 @@ export function installLegibilityDom(limits: typeof legibilityLimits) {
       return scan(records, 50);
     };
 
+    // ── toolbar-layout ──────────────────────────────────────────────
+    const toolbarControlSelector =
+      "button, a[href], input:not([type=hidden]), select, textarea, [role=button], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], [role=tab], [role=switch], [role=checkbox], [role=radio], [role=combobox]";
+    const shut = '[aria-hidden="true"], [inert]';
+    const labelOf = (element: Element) =>
+      (
+        clean(element.textContent) || clean(element.getAttribute("aria-label"))
+      ).slice(0, 40);
+    const px = (value: string) => Number.parseFloat(value) || 0;
+    /** "none", or the widest visible side's width and style. */
+    const borderOf = (element: Element): string => {
+      const s = style(element) as unknown as Record<string, string>;
+      let widest: { width: number; style: string } | undefined;
+      for (const side of sides) {
+        const name = cap(side);
+        const width = px(s[`border${name}Width`] ?? "0");
+        const kind = s[`border${name}Style`] ?? "none";
+        if (
+          width < 0.5 ||
+          kind === "none" ||
+          kind === "hidden" ||
+          !(alpha(s[`border${name}Color`] ?? "") > 0)
+        )
+          continue;
+        if (widest === undefined || width > widest.width)
+          widest = { width, style: kind };
+      }
+      return widest === undefined
+        ? "none"
+        : `${half(widest.width)}px ${widest.style}`;
+    };
+    /** The visible top-left corner, when the control paints a box. */
+    const radiusOf = (element: Element, border: string): number | undefined => {
+      const s = style(element);
+      if (border === "none" && !(alpha(s.backgroundColor) > 0))
+        return undefined;
+      const r = element.getBoundingClientRect();
+      const shorter = Math.min(r.width, r.height);
+      const first = s.borderTopLeftRadius.trim().split(/\s+/)[0] ?? "0";
+      const value = first.endsWith("%")
+        ? (px(first) / 100) * shorter
+        : px(first);
+      return half(Math.max(0, Math.min(value, shorter / 2)));
+    };
+    const scanToolbars = () => {
+      const scopeMarks = input.toolbarScopes ?? [];
+      const root = document.body ?? document.documentElement;
+      const toolbars = new Set<Element>(
+        root.querySelectorAll("[role=toolbar]"),
+      );
+      for (const { elements } of scopeMarks)
+        for (const element of elements) toolbars.add(element);
+      const ordered = [...toolbars].sort((a, b) =>
+        a === b
+          ? 0
+          : a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING
+            ? -1
+            : 1,
+      );
+      const records: ToolbarLayoutObservation[] = [];
+      for (const toolbar of ordered) {
+        if (
+          inExempt(toolbar) ||
+          toolbar.closest(shut) !== null ||
+          !painted(toolbar) ||
+          visuallyHidden(toolbar)
+        )
+          continue;
+        const s = style(toolbar);
+        const vertical =
+          toolbar.getAttribute("aria-orientation") === "vertical" ||
+          s.flexDirection.startsWith("column");
+        // Direct items, `display: contents` flattened; out-of-flow children are not items.
+        const items: Element[] = [];
+        const collect = (parent: Element) => {
+          for (const child of parent.children) {
+            if (child.matches(partSkip)) continue;
+            const cs = style(child);
+            if (cs.display === "contents") {
+              collect(child);
+              continue;
+            }
+            if (cs.display === "none" || cs.visibility === "hidden") continue;
+            if (cs.position === "absolute" || cs.position === "fixed") continue;
+            const r = child.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) continue;
+            if (
+              visuallyHidden(child) ||
+              child.closest(shut) !== null ||
+              inExempt(child)
+            )
+              continue;
+            items.push(child);
+          }
+        };
+        collect(toolbar);
+        const placed: Array<{ element: Element; edges: Edges; row: number }> =
+          [];
+        const rows: Edges[] = [];
+        if (!vertical)
+          for (const element of [...items].sort(
+            (a, b) =>
+              a.getBoundingClientRect().top - b.getBoundingClientRect().top,
+          )) {
+            const r = element.getBoundingClientRect();
+            const edges = {
+              left: r.left,
+              top: r.top,
+              right: r.right,
+              bottom: r.bottom,
+            };
+            let row = rows.findIndex((candidate) => sameRow(candidate, edges));
+            if (row < 0) {
+              rows.push({ ...edges });
+              row = rows.length - 1;
+            } else {
+              const line = rows[row] as Edges;
+              line.top = Math.min(line.top, edges.top);
+              line.bottom = Math.max(line.bottom, edges.bottom);
+            }
+            placed.push({ element, edges, row });
+          }
+        const tr = toolbar.getBoundingClientRect();
+        const first = rows[0];
+        const singleRowHeight =
+          first === undefined
+            ? tr.height
+            : first.bottom -
+              first.top +
+              px(s.paddingTop) +
+              px(s.paddingBottom) +
+              borderWidth(toolbar, "top") +
+              borderWidth(toolbar, "bottom");
+        const itemRecords: ToolbarItemObservation[] = placed
+          .sort((a, b) =>
+            a.element === b.element
+              ? 0
+              : a.element.compareDocumentPosition(b.element) &
+                  Node.DOCUMENT_POSITION_FOLLOWING
+                ? -1
+                : 1,
+          )
+          .slice(0, limits.toolbarMaxParts)
+          .map(({ element, edges, row }) => ({
+            selector: selectorFor(element),
+            row,
+            centre: half((edges.top + edges.bottom) / 2),
+            top: half(edges.top),
+            height: half(edges.bottom - edges.top),
+            text: labelOf(element),
+          }));
+        // Controls: the outermost interactive elements inside an item, not in a nested toolbar.
+        const controls: ToolbarControlObservation[] = [];
+        for (const control of toolbar.querySelectorAll(
+          toolbarControlSelector,
+        )) {
+          if (controls.length >= limits.toolbarMaxParts) break;
+          const item = items.find(
+            (candidate) => candidate === control || candidate.contains(control),
+          );
+          if (item === undefined) continue;
+          if (
+            !painted(control) ||
+            visuallyHidden(control) ||
+            control.closest(shut) !== null ||
+            inExempt(control)
+          )
+            continue;
+          let skip = false;
+          for (
+            let current = control.parentElement;
+            current !== null && current !== toolbar;
+            current = current.parentElement
+          ) {
+            if (
+              toolbars.has(current) ||
+              current.matches(toolbarControlSelector) ||
+              current.matches("[role=tablist], [role=radiogroup]") ||
+              (drawn(current) &&
+                current.querySelectorAll(toolbarControlSelector).length >= 2)
+            ) {
+              skip = true;
+              break;
+            }
+          }
+          if (skip) continue;
+          const border = borderOf(control);
+          const radius = radiusOf(control, border);
+          controls.push({
+            selector: selectorFor(control),
+            border,
+            ...(radius === undefined ? {} : { radius }),
+            ...(!vertical && item === control
+              ? { height: half(control.getBoundingClientRect().height) }
+              : {}),
+            text: labelOf(control),
+          });
+        }
+        const scopes = scopeMarks
+          .filter(({ elements }) => elements.includes(toolbar))
+          .map(({ selector }) => selector);
+        // How full the row is: items, their margins and the gaps between
+        // them over the content box. Near 1 means one row at this width but
+        // little room before it wraps.
+        const contentWidth =
+          tr.width -
+          px(s.paddingLeft) -
+          px(s.paddingRight) -
+          borderWidth(toolbar, "left") -
+          borderWidth(toolbar, "right");
+        const fill =
+          vertical || items.length === 0 || contentWidth <= 0
+            ? undefined
+            : Math.round(
+                ((items.reduce((sum, item) => {
+                  const cs = style(item);
+                  return (
+                    sum +
+                    item.getBoundingClientRect().width +
+                    px(cs.marginLeft) +
+                    px(cs.marginRight)
+                  );
+                }, 0) +
+                  px(s.columnGap) * (items.length - 1)) /
+                  contentWidth) *
+                  100,
+              ) / 100;
+        records.push({
+          toolbar: selectorFor(toolbar),
+          rect: box(toolbar),
+          vertical,
+          height: half(tr.height),
+          singleRowHeight: half(singleRowHeight),
+          rows: rows.length,
+          items: vertical ? [] : itemRecords,
+          controls,
+          ...(scopes.length === 0 ? {} : { scopes }),
+          ...(fill === undefined ? {} : { fill }),
+        });
+      }
+      return scan(records, 30);
+    };
+
     const { enabled } = input;
     return {
       ...(enabled.hiddenAtRest ? { hiddenAtRest: scanHiddenAtRest() } : {}),
@@ -1679,6 +1967,7 @@ export function installLegibilityDom(limits: typeof legibilityLimits) {
       ...(enabled.negativeSpacing
         ? { negativeSpacings: scanNegativeSpacing() }
         : {}),
+      ...(enabled.toolbarLayout ? { toolbarLayouts: scanToolbars() } : {}),
     };
   };
 }

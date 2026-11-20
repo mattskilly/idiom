@@ -23,6 +23,7 @@ import { type Finding, findingSchema } from "../schemas/finding.js";
 import { validateProject } from "../validation.js";
 import { deterministicCandidateRecords } from "../verify/evaluate.js";
 import type { Occurrence } from "./compare.js";
+import { rankFindingIds } from "./handoff/rank.js";
 
 export type FixSnapshot = {
   projectDirectory: string;
@@ -93,37 +94,14 @@ export function selectTargets(
   top: number,
 ): CatalogFinding[] {
   const byId = new Map(records.map((record) => [record.finding.id, record]));
-  const resolve = (ids: string[]) =>
-    [...new Set(ids)].flatMap((id) => {
-      const record = byId.get(id);
-      return record === undefined ? [] : [record];
-    });
-  const issues = snapshot.summary.issues;
-  if (issues === undefined)
-    return resolve(
-      snapshot.summary.findings.map((finding) => finding.id),
-    ).slice(0, top);
-  const groups = new Map(
-    snapshot.summary.groups?.map((group) => [group.id, group]),
-  );
-  const selected: CatalogFinding[] = [];
-  for (const issue of issues) {
-    const eligible = resolve(
-      issue.groups.flatMap(
-        (id) => groups.get(id)?.members.map((member) => member.id) ?? [],
-      ),
-    ).filter((record) => !selected.includes(record));
-    if (eligible.length === 0) continue;
-    if (issue.rootCause !== undefined) {
-      if (selected.length === 0) return eligible;
-      break;
-    }
-    for (const record of eligible) {
-      if (selected.length >= top) return selected;
-      selected.push(record);
-    }
-  }
-  return selected;
+  return rankFindingIds(
+    snapshot.summary,
+    records.map((record) => record.finding.id),
+    top,
+  ).flatMap((id) => {
+    const record = byId.get(id);
+    return record === undefined ? [] : [record];
+  });
 }
 
 /** The root cause a selection attempts, when it is one. */

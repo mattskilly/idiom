@@ -4,6 +4,7 @@ import { deterministicCheckIds } from "../src/checks/types.js";
 import { createProgram } from "../src/cli.js";
 import {
   commandStatus,
+  experimentalOptions,
   fileFormats,
   jsonOutputs,
   mcpOutputs,
@@ -23,6 +24,8 @@ export type OptionSnapshot = {
   valueOptional: boolean;
   mandatory: boolean;
   negate: boolean;
+  /** Present on an option docs/stability.md names experimental; not pinned. */
+  experimental?: true;
 };
 export type ArgumentSnapshot = {
   name: string;
@@ -147,6 +150,11 @@ export async function buildInterfaceSnapshot(): Promise<InterfaceSnapshot> {
       arguments: command.registeredArguments.map(argumentSnapshot),
       options: command.options
         .map(optionSnapshot)
+        .map((option) =>
+          experimentalOptions[path]?.includes(option.long)
+            ? { ...option, experimental: true as const }
+            : option,
+        )
         .sort(byKey((option) => option.long)),
     }))
     .sort(byKey((command) => command.path));
@@ -231,11 +239,14 @@ function compareOptions(
   const now = new Map(current.map((option) => [option.long, option]));
   const before = new Set(previous.map((option) => option.long));
   for (const old of previous) {
+    if (old.experimental) continue;
     const next = now.get(old.long);
     if (next === undefined) {
       issues.push(`${label}: option ${old.long} removed`);
       continue;
     }
+    if (next.experimental)
+      issues.push(`${label}: option ${old.long} demoted to experimental`);
     if (old.short !== null && next.short !== old.short)
       issues.push(
         `${label}: option ${old.long} lost its short flag ${old.short}`,

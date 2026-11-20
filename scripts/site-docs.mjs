@@ -88,6 +88,13 @@ export const docsGroups = [
           "What is stable in Idiom's CLI, JSON output, MCP tools and project files, the interface version and the deprecation policy.",
       },
       {
+        slug: "migrating-to-1",
+        source: "docs/migrating-to-1.md",
+        title: "Migrating to 1.0",
+        description:
+          "Move from a 0.x release to 1.0: what 1.0 promises, what was removed, what idiom upgrade migrates, plugin and MCP updates, and how to roll back.",
+      },
+      {
         slug: "glossary",
         source: "docs/glossary.md",
         description:

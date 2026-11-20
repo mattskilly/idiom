@@ -21,7 +21,9 @@ import {
   learnListCommand,
   renderLearnList,
 } from "../src/commands/learn-misses.js";
+import { findStateCapture } from "../src/learn/capture.js";
 import { nextLearnedId } from "../src/learn/draft.js";
+import { readRunEvidence } from "../src/learn/misses.js";
 import {
   type LearnedEntry,
   learnedEntrySchema,
@@ -102,12 +104,17 @@ async function expectIdsConsistent(project: string) {
   expect(await nextLearnedId(project)).toBe(`learned-${ids.length + 1}`);
 }
 
-/** A stored run with a captured DOM per state and these findings. */
+/**
+ * A stored run with a captured DOM per state and these findings; with
+ * `findings: undefined`, a capture-only run with no review evidence.
+ */
 async function storedRun(
   project: string,
   runId: string,
   states: string[],
-  findings: Array<{ state: string; category: string; createdAt: string }>,
+  findings:
+    | Array<{ state: string; category: string; createdAt: string }>
+    | undefined,
 ) {
   const directory = join(project, ".idiom", "reports", runId);
   for (const state of states) {
@@ -119,6 +126,7 @@ async function storedRun(
       JSON.stringify({ flow: { id: "studio-lab" } }),
     );
   }
+  if (findings === undefined) return;
   await writeFile(
     join(directory, "findings.json"),
     JSON.stringify(
@@ -368,6 +376,57 @@ test("lines a newer Idiom wrote are preserved verbatim and keep their ids", asyn
   expect(lines.filter((line) => line !== "")).toHaveLength(22);
 });
 
+test("with several flows, a row whose flow cannot be told is skipped as ambiguous-flow; the rest import", async () => {
+  const project = await importProject();
+  await writeFile(
+    join(project, ".idiom", "flows", "studio-two.json"),
+    JSON.stringify({
+      id: "studio-two",
+      title: "Studio two",
+      intent: ["Second editor"],
+      setup: [],
+      viewports: ["desktop"],
+      states: [
+        {
+          id: "canvas",
+          description: "canvas",
+          url: "/two",
+          expect: { status: 200 },
+        },
+      ],
+    }),
+  );
+  await writeFile(
+    join(project, "misses.md"),
+    [
+      "| ID | Observation | Rule | State |",
+      "| --- | --- | --- | --- |",
+      "| B-1 | The toolbar labels feel cramped | Labels breathe | |",
+      "| B-2 | The canvas handles overlap | Handles never overlap | |",
+      "| B-3 | The settings are cramped | Settings breathe | settings |",
+    ].join("\n"),
+  );
+  const result = await importFile(project);
+  expect(result.skipped).toEqual([
+    {
+      line: 3,
+      id: "B-1",
+      code: "ambiguous-flow",
+      reason:
+        "The words do not say which flow this is about (studio-lab, studio-two); pass --flow <id> or --state <id>.",
+    },
+  ]);
+  expect(
+    result.records.map((record) => [record.row, record.flow, record.state]),
+  ).toEqual([
+    ["B-2", "studio-two", "canvas"],
+    ["B-3", "studio-lab", "settings"],
+  ]);
+  await expect(
+    readdir(join(project, ".idiom", "proposals", "states")),
+  ).rejects.toThrow();
+});
+
 test("an ambiguous state and an unknown flow are skipped with reasons; --flow resolves the ambiguity", async () => {
   const project = await importProject();
   await writeFile(
@@ -566,6 +625,29 @@ test("replay reads the latest capture of each record's state and counts what its
       },
     ],
   );
+  // Folders that are not complete runs are skipped, never validated.
+  const reports = join(project, ".idiom", "reports");
+  await mkdir(join(reports, ".cache"), { recursive: true });
+  await mkdir(join(reports, "my notes", "editor", "desktop"), {
+    recursive: true,
+  });
+  const unfinished = "2026-11-16T12-00-00-000Z";
+  await storedRun(
+    project,
+    unfinished,
+    ["editor"],
+    [
+      {
+        state: "editor",
+        category: "contrast",
+        createdAt: "2026-11-16T12:00:00.000Z",
+      },
+    ],
+  );
+  await writeFile(
+    join(reports, unfinished, "run.json"),
+    JSON.stringify({ version: 1, status: "interrupted", runId: unfinished }),
+  );
   const log = await readFile(logPath(project), "utf8");
   const result = await learnReplayCommand({
     project,
@@ -577,13 +659,18 @@ test("replay reads the latest capture of each record's state and counts what its
     name: "misses",
     total: 20,
     caught: 2,
-    notCaught: 18,
+    measured: result.caught + result.missed,
   });
+  expect(result.caught + result.missed + result.unmeasured).toBe(result.total);
+  expect(
+    Object.values(result.unmeasuredBy).reduce((sum, count) => sum + count, 0),
+  ).toBe(result.unmeasured);
   expect(result.runs).toEqual({ "studio-lab": [newer, older] });
+  expect(result.newestRuns).toEqual({ "studio-lab": newer });
   const byRow = new Map(result.records.map((record) => [record.row, record]));
   expect(byRow.get("M-01")).toMatchObject({
-    status: "not-caught",
-    reason: `no contrast finding in run ${newer}`,
+    status: "missed",
+    detail: `no contrast finding in run ${newer}`,
     runId: newer,
   });
   expect(byRow.get("M-04")).toMatchObject({
@@ -597,32 +684,268 @@ test("replay reads the latest capture of each record's state and counts what its
     runId: newer,
   });
   expect(byRow.get("M-05")).toMatchObject({
-    status: "not-caught",
-    reason: "no check named",
+    status: "unmeasured",
+    reason: "no-check",
+    detail: "no check named",
   });
   expect(byRow.get("M-08")).toMatchObject({
-    status: "not-caught",
-    reason: "state not declared (.idiom/proposals/states/learned-8.json)",
+    status: "unmeasured",
+    reason: "proposed",
+    detail:
+      "state proposed but not added (.idiom/proposals/states/learned-8.json)",
   });
   expect(byRow.get("M-03")).toMatchObject({
-    status: "not-caught",
-    reason: "never captured",
+    status: "unmeasured",
+    reason: "no-run",
+    detail: "no reviewed run captured this state",
   });
   const text = renderLearnReplay(result);
-  expect(text.split("\n")[0]).toBe(
-    'Replay "misses": the latest checks catch 2 of 20.',
+  expect(text.split("\n")[0]).toMatch(
+    /^Replay "misses": caught 2, missed \d+, unmeasured \d+ of 20\. Catch rate \d+% of \d+ measured\.$/,
+  );
+  expect(text).not.toContain("latest checks catch");
+  expect(text).toMatch(
+    /^ {2}caught {6}learned-4 +M-04 +studio-lab\/settings +target-size \(run 2026-11-14T12-00-00-000Z\)$/m,
   );
   expect(text).toMatch(
-    /^ {2}caught {2}learned-4 +M-04 +studio-lab\/settings +target-size \(run 2026-11-14T12-00-00-000Z\)$/m,
+    /^ {2}unmeasured {2}learned-8 +M-08 +studio-lab\/template-card-uneven-gap +state proposed but not added/m,
   );
   expect(text).toMatch(
-    /^ {2}open {4}learned-8 +M-08 +studio-lab\/template-card-uneven-gap +state not declared/m,
+    /^ {2}no reviewed run captured the state +\d+ {2}capture the flow: idiom check studio-lab$/m,
   );
   expect(text).toContain(`Read runs: studio-lab ${newer}, ${older}`);
   expect(text).toContain(
     "idiom review <flow> --from <run> --deterministic-only",
   );
 });
+
+test("replay hand count: a deleted newest run, a capture-only run and an undeclared state are never counted as missed", async () => {
+  const project = await importProject();
+  await importFile(project);
+  // publish-dialog is no longer declared.
+  const flowPath = join(project, ".idiom", "flows", "studio-lab.json");
+  const flow = JSON.parse(await readFile(flowPath, "utf8"));
+  flow.states = flow.states.filter(
+    (state: { id: string }) => state.id !== "publish-dialog",
+  );
+  await writeFile(flowPath, JSON.stringify(flow));
+  const r1 = "2026-11-14T12-00-00-000Z";
+  const r2 = "2026-11-15T12-00-00-000Z";
+  const r3 = "2026-11-16T12-00-00-000Z";
+  await storedRun(
+    project,
+    r1,
+    ["editor", "settings"],
+    [
+      {
+        state: "editor",
+        category: "contrast",
+        createdAt: "2026-11-14T12:00:00.000Z",
+      },
+      {
+        state: "settings",
+        category: "target-size",
+        createdAt: "2026-11-14T12:00:00.000Z",
+      },
+    ],
+  );
+  // The editor's newest reviewed run would catch M-22 and miss M-01, but it
+  // has been deleted.
+  await storedRun(
+    project,
+    r2,
+    ["editor"],
+    [
+      {
+        state: "editor",
+        category: "glyph-icon",
+        createdAt: "2026-11-15T12:00:00.000Z",
+      },
+    ],
+  );
+  await rm(join(project, ".idiom", "reports", r2), { recursive: true });
+  // Newest of all: captured the editor but was never reviewed.
+  await storedRun(project, r3, ["editor"], undefined);
+
+  const result = await learnReplayCommand({
+    project,
+    cwd: project,
+    importName: "misses",
+  });
+  // Hand count from catalog.md's 20 imported rows and their placements.
+  expect(
+    Object.fromEntries(
+      result.records.map((record) => [
+        record.row,
+        record.reason === undefined
+          ? record.status
+          : `${record.status}/${record.reason}`,
+      ]),
+    ),
+  ).toEqual({
+    "M-01": "caught",
+    "M-02": "missed",
+    "M-03": "unmeasured/undeclared",
+    "M-04": "caught",
+    "M-05": "unmeasured/no-check",
+    "M-06": "missed",
+    "M-07": "unmeasured/undeclared",
+    "M-08": "unmeasured/proposed",
+    "M-09": "unmeasured/no-check",
+    "M-10": "unmeasured/proposed",
+    "M-11": "unmeasured/no-check",
+    "M-12": "missed",
+    "M-13": "missed",
+    "M-14": "unmeasured/no-check",
+    "M-15": "unmeasured/proposed",
+    "M-16": "unmeasured/undeclared",
+    "M-17": "missed",
+    "M-18": "missed",
+    "M-21": "unmeasured/proposed",
+    "M-22": "missed",
+  });
+  expect(result).toMatchObject({
+    total: 20,
+    caught: 2,
+    missed: 7,
+    unmeasured: 11,
+    measured: 9,
+    unmeasuredBy: { "no-run": 0, proposed: 4, undeclared: 3, "no-check": 4 },
+  });
+  expect(result.catchRate).toBeCloseTo(2 / 9);
+  expect(result.runs).toEqual({ "studio-lab": [r1] });
+  expect(result.newestRuns).toEqual({ "studio-lab": r1 });
+  const text = renderLearnReplay(result);
+  expect(text.split("\n").slice(0, 5)).toEqual([
+    'Replay "misses": caught 2, missed 7, unmeasured 11 of 20. Catch rate 22% of 9 measured.',
+    "Unmeasured, by reason:",
+    "  state proposed but not added                     4  add the proposed state (drafts in .idiom/proposals/states/)",
+    "  state not declared in any flow                   3  declare it in a flow, or re-import with --flow or flow/state",
+    '  no check named and no matching finding category  4  record a ruling: idiom learn "<rule>" --ruling',
+  ]);
+  expect(text).toContain(`Read runs: studio-lab ${r1}`);
+  expect(text).toContain(`Newest reviewed run: studio-lab ${r1}`);
+  expect(text).not.toContain(r3);
+});
+
+test("a state whose only run is capture-only is unmeasured, and an older reviewed run measures it", async () => {
+  const project = await importProject();
+  await importFile(project);
+  const older = "2026-11-14T12-00-00-000Z";
+  const newer = "2026-11-15T12-00-00-000Z";
+  await storedRun(project, newer, ["settings"], undefined);
+  const replay = () =>
+    learnReplayCommand({ project, cwd: project, importName: "misses" });
+  let byRow = new Map(
+    (await replay()).records.map((record) => [record.row, record]),
+  );
+  expect(byRow.get("M-04")).toMatchObject({
+    status: "unmeasured",
+    reason: "no-run",
+  });
+  await storedRun(
+    project,
+    older,
+    ["settings"],
+    [
+      {
+        state: "settings",
+        category: "target-size",
+        createdAt: "2026-11-14T12:00:00.000Z",
+      },
+    ],
+  );
+  const result = await replay();
+  byRow = new Map(result.records.map((record) => [record.row, record]));
+  expect(byRow.get("M-04")).toMatchObject({
+    status: "caught",
+    runId: older,
+  });
+  expect(byRow.get("M-06")).toMatchObject({ status: "missed", runId: older });
+  expect(result.newestRuns).toEqual({ "studio-lab": older });
+});
+
+test("findStateCapture skips a whole run the caller rejects, and readRunEvidence says when a run is not reviewable", async () => {
+  const project = await importProject();
+  const older = "2026-11-14T12-00-00-000Z";
+  const newer = "2026-11-15T12-00-00-000Z";
+  await storedRun(project, older, ["editor"], []);
+  await storedRun(project, newer, ["editor"], []);
+  // A second viewport in the rejected run must not be returned either.
+  const tablet = join(project, ".idiom", "reports", newer, "editor", "tablet");
+  await mkdir(tablet, { recursive: true });
+  await writeFile(join(tablet, "dom.html"), "<main></main>");
+  await writeFile(
+    join(tablet, "metadata.json"),
+    JSON.stringify({ flow: { id: "studio-lab" } }),
+  );
+  const options = {
+    projectDirectory: project,
+    flow: "studio-lab",
+    state: "editor",
+    viewports: ["desktop"],
+    colorScheme: "light",
+  };
+  expect((await findStateCapture(options))?.runId).toBe(newer);
+  const seen: string[] = [];
+  const capture = await findStateCapture({
+    ...options,
+    accept: async (runId) => {
+      seen.push(runId);
+      return runId !== newer;
+    },
+  });
+  expect(capture?.runId).toBe(older);
+  expect(seen).toEqual([newer, older]);
+
+  const reports = join(project, ".idiom", "reports");
+  expect(await readRunEvidence(join(reports, "gone"), "gone")).toBeUndefined();
+  expect(await readRunEvidence(join(reports, older), older)).toEqual([]);
+  await storedRun(project, "capture-only", ["editor"], undefined);
+  expect(
+    await readRunEvidence(join(reports, "capture-only"), "capture-only"),
+  ).toBeUndefined();
+  const digested = join(reports, "digested");
+  await mkdir(digested, { recursive: true });
+  await writeFile(join(digested, "digest.json"), JSON.stringify(DIGEST_RECORD));
+  expect(await readRunEvidence(digested, "digested")).toEqual([
+    expect.objectContaining({
+      flow: "studio-lab",
+      state: "editor",
+      category: "contrast",
+      runId: "digested",
+    }),
+  ]);
+});
+
+/** A minimal valid digest record with one contrast occurrence on the editor. */
+const DIGEST_RECORD = {
+  version: 1,
+  flow: "studio-lab",
+  runId: "digested",
+  completedAt: "2026-11-15T12:00:00.000Z",
+  commit: "abc123",
+  dirty: false,
+  reportPath: ".idiom/reports/digested/report.html",
+  configHash: "hash",
+  scope: "full",
+  coverage: { selected: 1, captured: ["editor/desktop"], problems: [] },
+  occurrences: [
+    {
+      id: "finding-1",
+      fingerprint: "fp",
+      where: "editor/desktop",
+      state: "editor",
+      viewport: "desktop",
+      category: "contrast",
+      severity: "major",
+      problem: "low contrast",
+      disposition: "open",
+      score: 1,
+      impactReasons: [],
+    },
+  ],
+};
 
 async function cli(project: string, args: string[]) {
   const output: string[] = [];
@@ -668,16 +991,36 @@ test("learn CLI imports, lists by import, replays, prints JSON, and rejects conf
   expect(listedJson.importName).toBe("misses");
   expect(listedJson.statuses[0].entry.import.row).toBe("M-01");
 
+  // With no runs at all, nothing is measured: exit 1, never "catch 0 of".
   const replay = await cli(project, ["learn", "--replay", "misses"]);
-  expect(replay.code).toBe(0);
+  expect(replay.code).toBe(1);
   expect(replay.text).toContain(
-    'Replay "misses": the latest checks catch 0 of 20.',
+    'Replay "misses": nothing measured — all 20 records are unmeasured.',
   );
-  expect(
-    JSON.parse(
-      (await cli(project, ["learn", "--replay", "misses", "--json"])).text,
-    ),
-  ).toMatchObject({ total: 20, caught: 0 });
+  expect(replay.text).toContain("Unmeasured, by reason:");
+  expect(replay.text).toMatch(
+    /no reviewed run captured the state +12 {2}capture the flow: idiom check studio-lab/,
+  );
+  expect(replay.text).not.toContain("catch 0 of");
+  expect(replay.error).toContain(
+    'Error: replay of "misses" measured none of its 20 records (no reviewed run 12, state proposed but not added 4, state not declared in any flow 0, no check named 4); see the reasons above',
+  );
+  const replayJson = await cli(project, [
+    "learn",
+    "--replay",
+    "misses",
+    "--json",
+  ]);
+  expect(replayJson.code).toBe(1);
+  expect(JSON.parse(replayJson.text)).toMatchObject({
+    total: 20,
+    caught: 0,
+    missed: 0,
+    unmeasured: 20,
+    measured: 0,
+    catchRate: null,
+    unmeasuredBy: { "no-run": 12, proposed: 4, undeclared: 0, "no-check": 4 },
+  });
 
   for (const [args, message] of [
     [

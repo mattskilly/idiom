@@ -107,6 +107,7 @@ All unlisted rules within a known category use its category default.
 | `state-jump` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
 | `control-gap` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
 | `negative-spacing` | All rules | 4 | Hierarchy, density, type, copy and brand alignment. |
+| `toolbar-layout` | All rules | 7 | Visible misalignment, off-system sizing or unexplained controls. |
 | `hierarchy` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `density` | All rules | 4 | General consistency, semantics or contextual quality. |
 | `brand-alignment` | All rules | 4 | General consistency, semantics or contextual quality. |

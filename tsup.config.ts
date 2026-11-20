@@ -20,6 +20,16 @@ try {
   );
 }
 
+// Set only by scripts/idiom-local.mjs (this repository's self-gate build): a
+// fingerprint of the capture and check source that keys shared base records.
+// Releases and development builds never set it; never export it in a release shell.
+const engineIdentity = process.env.IDIOM_ENGINE_IDENTITY ?? "";
+if (engineIdentity !== "" && !/^source:[0-9a-f]{20}$/.test(engineIdentity)) {
+  throw new Error(
+    `IDIOM_ENGINE_IDENTITY must be empty or source:<20 hex>, got ${JSON.stringify(engineIdentity)}`,
+  );
+}
+
 export default defineConfig({
   // Development builds write the untracked build/; `bun run build:release` writes the tracked dist/ from this same config.
   // cli.js is the bin: a launcher that checks the Node version with no imports, then loads main.js.
@@ -32,5 +42,6 @@ export default defineConfig({
   clean: true,
   define: {
     __IDIOM_BUILD_COMMIT__: JSON.stringify(buildCommit),
+    __IDIOM_ENGINE_IDENTITY__: JSON.stringify(engineIdentity),
   },
 });

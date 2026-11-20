@@ -1,6 +1,6 @@
 # Upgrading
 
-Update the CLI, run `idiom upgrade` in each project (for a global npm or bun install, that one command does both), then work through the [action-required items](#action-required-by-release) for every release you skipped.
+Update the CLI, run `idiom upgrade` in each project (for a global npm or bun install, that one command does both), then work through the [action-required items](#action-required-by-release) for every release you skipped. Moving from 0.x to 1.0 is covered in the [1.0 migration guide](migrating-to-1.md).
 
 ## Update by install kind
 
@@ -62,6 +62,14 @@ What you must do after moving past each release, newest first. Everything else i
 
 None.
 
+### v0.24.0
+
+- **A gate with no baseline now stops instead of passing.** `idiom check --gate`, `idiom nightly` and `idiom verify` exit `2` with one `baseline` line when no recorded baseline is reachable from the base and the base could not be captured; before, the gate gated every open finding. Record a baseline on your target branch (`idiom baseline record <flow>`, committed), or let `idiom upgrade --yes` add the Autobuild finalize step that runs `idiom baseline advance --fetch` as builds land. The same exit applies when an app cannot start or a state's `expect` no longer matches ([unattended runs](commands.md#unattended-runs-never-fail-quietly)).
+- **Re-vendor skills with `idiom upgrade`.** It refreshes the `idiom-verify` skill and offers the opt-in `idiom-fix` verify step (a one-line `skill = "idiom-fix"` swap on the gate step). In a script or build agent, `idiom upgrade --yes` applies what it would offer at a prompt.
+- **Recapture to pick up the negative-spacing change.** Display-size type with slightly tight tracking is no longer reported, so findings in stored runs and baselines go away only after a new capture.
+- **`idiom brief list --json --array` is removed.** It was deprecated in 0.23.0. Use `idiom brief list --json` and read `.briefs` from `{ interfaceVersion, briefs }`; `--array` now exits 1 with a message naming the replacement.
+- **`idiom baseline advance --json` returns every flow.** The experimental payload is now `{ target, commit, fetched?, cachePath, flows: [...] }` with a per-flow `status`, instead of one flow's fields; scripts that read it must read the flow's entry from `.flows[]`.
+
 ### v0.23.0
 
 - **`idiom brief list --json` prints an object.** Scripts that read it must read `.briefs` from `{ interfaceVersion, briefs }` instead of the bare array. For one release, `idiom brief list --json --array` still prints the old array, with a deprecation warning on stderr; it will be removed in 0.24.0. Set `IDIOM_NO_DEPRECATION_WARNINGS=1` to silence the warning.
@@ -69,7 +77,7 @@ None.
 ### v0.22.0
 
 - **Shared decision logs:** this release can append attribution corrections (`idiom decide --reattribute`). Idiom 0.21.0 and older skip those records with a "written by a newer Idiom" note and show the original actor, so upgrade every machine that shares the log.
-- **Autobuild gates:** none required. To keep gates from capturing the base branch, optionally run `idiom baseline advance` after merges or nightly ([Gate a build](commands.md#gate-a-build)).
+- **Autobuild gates:** none required. To keep gates from capturing the base branch, `idiom upgrade` offers a finalize step that runs `idiom baseline advance --fetch` as builds land ([configuration](configuration.md#autobuild)).
 
 ### v0.21.0
 

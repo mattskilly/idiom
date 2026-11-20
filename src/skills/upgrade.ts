@@ -160,7 +160,12 @@ export async function upgradeSkills(
         skillSnapshots,
       );
       canonicalAbsent = directory.kind === "absent";
-      if (skill === "idiom-verify" && canonicalAbsent && !tracked.length)
+      // Autobuild step skills are installed by wiring, never uninvited.
+      if (
+        (skill === "idiom-verify" || skill === "idiom-fix") &&
+        canonicalAbsent &&
+        !tracked.length
+      )
         continue;
       if (directory.kind !== "absent" && directory.kind !== "directory")
         protectedReason = "Canonical skill path is a protected entry";

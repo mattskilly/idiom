@@ -106,6 +106,7 @@ export const categorySalience = {
   "state-jump": 7,
   "control-gap": 7,
   "negative-spacing": 4,
+  "toolbar-layout": 7,
   hierarchy: 4,
   density: 4,
   "brand-alignment": 4,

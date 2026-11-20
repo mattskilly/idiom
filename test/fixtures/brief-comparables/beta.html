@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Beta board</title>
+    <style>
+      body { margin: 0; font-family: sans-serif; }
+      .selection-toolbar {
+        position: absolute; left: 40px; top: 100px; width: 360px; height: 44px;
+        display: flex; gap: 8px; border-radius: 12px; font-size: 15px;
+        background: #fff; border: 1px solid #ccc; box-sizing: border-box;
+      }
+      .offset-chip {
+        position: absolute; left: 412px; top: 110px; width: 48px; height: 24px;
+        border-radius: 4px; font-size: 13px; background: #def;
+      }
+    </style>
+  </head>
+  <body>
+    <div role="toolbar" class="selection-toolbar" aria-label="Selection">
+      <button class="tool">Align</button>
+      <button class="tool">Group</button>
+    </div>
+    <span class="offset-chip">2 more</span>
+  </body>
+</html>

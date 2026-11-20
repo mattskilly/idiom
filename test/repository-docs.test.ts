@@ -41,6 +41,7 @@ let troubleshootingDoc: string;
 let upgradingDoc: string;
 let glossaryDoc: string;
 let stabilityDoc: string;
+let migrationDoc: string;
 let architectureDoc: string;
 let landingPage: string;
 let packageMetadata: PackageMetadata;
@@ -58,6 +59,7 @@ beforeAll(async () => {
     upgradingDoc,
     glossaryDoc,
     stabilityDoc,
+    migrationDoc,
     architectureDoc,
     landingPage,
     packageMetadata,
@@ -73,6 +75,7 @@ beforeAll(async () => {
     readFile(join(repositoryRoot, "docs", "upgrading.md"), "utf8"),
     readFile(join(repositoryRoot, "docs", "glossary.md"), "utf8"),
     readFile(join(repositoryRoot, "docs", "stability.md"), "utf8"),
+    readFile(join(repositoryRoot, "docs", "migrating-to-1.md"), "utf8"),
     readFile(join(repositoryRoot, "docs", "architecture.md"), "utf8"),
     readFile(join(repositoryRoot, "site", "index.html"), "utf8"),
     readFile(join(repositoryRoot, "package.json"), "utf8").then(
@@ -303,6 +306,7 @@ test("README links the command and configuration references", async () => {
     ["docs/upgrading.md", upgradingDoc],
     ["docs/glossary.md", glossaryDoc],
     ["docs/stability.md", stabilityDoc],
+    ["docs/migrating-to-1.md", migrationDoc],
   ];
   const targets: string[] = [];
   for (const [path, contents] of documents) {
@@ -366,6 +370,7 @@ test("every documented command exists", () => {
     troubleshootingDoc,
     upgradingDoc,
     glossaryDoc,
+    migrationDoc,
   ].flatMap(documentedInvocations);
   expect(invocations.length).toBeGreaterThan(0);
   for (const [name, subcommand] of invocations) {

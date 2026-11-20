@@ -495,6 +495,53 @@ test("a measurable law configures its check, names it and the scope, and leaves 
   });
 });
 
+test("a toolbar centring law compiles to toolbar-layout and shows the summary above the diff", async () => {
+  const { project } = await studioProject(directories);
+  let shown = "";
+  const result = await learnCommand({
+    project,
+    state: "editor",
+    observation: "Every toolbar control is vertically centred",
+    yes: true,
+    write: (message) => {
+      shown += `${message}\n`;
+    },
+    dependencies: { gitTopology: noTopology },
+  });
+  expect(result).toMatchObject({ recorded: true, kind: "law" });
+  expect(shown).toContain(
+    'Compiles to toolbar-layout: controls\' vertical centres sit within 1px of each other inside the toolbar ([role="toolbar"]).\n',
+  );
+  expect(shown.indexOf("Compiles to")).toBeLessThan(
+    shown.indexOf("+++ b/.idiom/project.json"),
+  );
+  expect(await projectChecks(project)).toMatchObject({
+    toolbarLayout: {
+      scopes: [
+        {
+          name: "Every toolbar control is vertically centred.",
+          selector: '[role="toolbar"]',
+          law: "centred",
+          tolerance: 1,
+        },
+      ],
+    },
+  });
+  const entry = learnedEntrySchema.parse(
+    JSON.parse(
+      (await readFile(join(project, ".idiom", "learned.jsonl"), "utf8")).trim(),
+    ),
+  );
+  expect(entry).toMatchObject({
+    kind: "law",
+    target: {
+      file: ".idiom/project.json",
+      check: "toolbar-layout",
+      scope: '[role="toolbar"]',
+    },
+  });
+});
+
 test("a law on an unknown surface with no capture or selector stays a ruling and says why; prose stays a ruling word for word", async () => {
   const { project } = await studioProject(directories);
   let shown = "";

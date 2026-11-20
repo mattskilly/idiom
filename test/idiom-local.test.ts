@@ -2,8 +2,12 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "vitest";
-// @ts-expect-error The local CLI builder is a dependency-free Node module.
-import { buildLocalCli, packageLinks } from "../scripts/idiom-local.mjs";
+import {
+  buildLocalCli,
+  engineFingerprint,
+  packageLinks,
+  // @ts-expect-error The local CLI builder is a dependency-free Node module.
+} from "../scripts/idiom-local.mjs";
 
 const root = join(import.meta.dirname, "..");
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -31,8 +35,14 @@ describe("idiom-local", () => {
         encoding: "utf8",
       });
     const before = status();
-    const { cli, cleanup } = await buildLocalCli({ root });
+    const { cli, cleanup, engine } = await buildLocalCli({ root });
     try {
+      // The source fingerprint is baked in, so shared base records key on it.
+      expect(engine).toMatch(/^source:[0-9a-f]{20}$/);
+      expect(engine).toBe(await engineFingerprint({ root }));
+      expect(readFileSync(join(dirname(cli), "main.js"), "utf8")).toContain(
+        JSON.stringify(engine),
+      );
       const version = execFileSync(process.execPath, [cli, "--version"], {
         cwd: root,
         encoding: "utf8",

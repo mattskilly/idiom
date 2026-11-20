@@ -1,0 +1,63 @@
+:root {
+  color-scheme: light dark;
+  --page: #ffffff;
+  --text: #1f1f1f;
+  --muted: #4a4a4a;
+  --accent: #1d4ed8;
+  --accent-text: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #121212;
+    --text: #f2f2f2;
+    --muted: #c4c4c4;
+    --accent: #93b4ff;
+    --accent-text: #0b1530;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text);
+  font:
+    16px / 1.5 system-ui,
+    sans-serif;
+}
+
+.card {
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 48px 24px;
+}
+
+h1 {
+  margin: 0 0 16px;
+  font-size: 2rem;
+  line-height: 1.2;
+}
+
+.lede {
+  margin: 0 0 24px;
+}
+
+.button {
+  display: inline-block;
+  padding: 12px 20px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.note {
+  margin: 24px 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}

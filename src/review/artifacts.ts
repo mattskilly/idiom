@@ -408,15 +408,18 @@ function parseObservations(value: unknown, path: string) {
   return parsed.data;
 }
 
+/** Whether `name` is a simple run ID: one path segment, no leading dot. */
+export function isSimpleRunId(name: string): boolean {
+  return (
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) && name !== "." && name !== ".."
+  );
+}
+
 export function resolveStoredRun(
   projectDirectory: string,
   runId: string,
 ): string {
-  if (
-    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runId) ||
-    runId === "." ||
-    runId === ".."
-  ) {
+  if (!isSimpleRunId(runId)) {
     throw new IdiomError(
       "--from must be a simple run ID beneath .idiom/reports",
     );
@@ -447,6 +450,7 @@ export async function findLatestCapture(options: {
   const reports = resolve(options.projectDirectory, ".idiom", "reports");
   const runs = await storedRunsNewestFirst(reports);
   for (const run of runs) {
+    if (!isSimpleRunId(run)) continue;
     let baseline: string;
     try {
       baseline = await readFile(join(reports, run, "baseline.md"), "utf8");
@@ -833,6 +837,11 @@ export async function loadCaptureRun(options: {
       viewport: record.viewport.name,
       colorScheme: record.colorScheme ?? options.legacyColorScheme ?? "light",
       colorSchemeAxis: record.colorSchemeAxis ?? false,
+      ...(runRecord?.viewports.find(
+        (viewport) => viewport.name === record.viewport.name,
+      )?.intermediate === true
+        ? { intermediateWidth: true as const }
+        : {}),
       width: record.viewport.width,
       height: record.viewport.height,
       metadataPath: reportPath(runDirectory, metadataPath),
@@ -965,8 +974,18 @@ export async function loadCaptureRun(options: {
   const stateOrder = new Map(
     (options.stateOrder ?? []).map((state, index) => [state, index]),
   );
+  // Intermediate widths sort after the declared viewports, narrowest first.
   const viewportOrder = new Map(
-    (options.viewportOrder ?? []).map((viewport, index) => [viewport, index]),
+    [
+      ...(options.viewportOrder ??
+        (runRecord?.viewports ?? [])
+          .filter((viewport) => viewport.intermediate !== true)
+          .map((viewport) => viewport.name)),
+      ...(runRecord?.viewports ?? [])
+        .filter((viewport) => viewport.intermediate === true)
+        .sort((left, right) => left.width - right.width)
+        .map((viewport) => viewport.name),
+    ].map((viewport, index) => [viewport, index]),
   );
   const colorSchemeOrder = new Map(
     (options.colorSchemeOrder ?? []).map((scheme, index) => [scheme, index]),

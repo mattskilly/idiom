@@ -2890,6 +2890,9 @@ async function observeWithTokens(
                 .flatMap(({ elements }) => elements),
               enabled: legibilityInput,
               spacingScope: legibilityInput.negativeSpacingScope,
+              spacingDisplaySize: legibilityInput.negativeSpacingDisplaySize,
+              spacingDisplayTracking:
+                legibilityInput.negativeSpacingDisplayTracking,
               spacingInclude: markMatches
                 .filter(({ mark }) => mark.purpose === "spacing-include")
                 .flatMap(({ elements }) => elements),
@@ -2898,6 +2901,12 @@ async function observeWithTokens(
                 .flatMap(({ elements }) => elements),
               gapScopes: markMatches
                 .filter(({ mark }) => mark.purpose === "gap-scope")
+                .map(({ mark, elements }) => ({
+                  selector: mark.selector,
+                  elements,
+                })),
+              toolbarScopes: markMatches
+                .filter(({ mark }) => mark.purpose === "toolbar-scope")
                 .map(({ mark, elements }) => ({
                   selector: mark.selector,
                   elements,

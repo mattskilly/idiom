@@ -454,6 +454,17 @@ export function craftCheckEntries(
         `- No negative letter- or word-spacing on text inside ${selector} (negative-spacing).`,
       ]);
   }
+  if (checks.toolbarLayout.enabled) {
+    entries.push([
+      `- Toolbars stay on one row; their controls share a vertical centre within ${checks.toolbarLayout.centreTolerance}px and match each other's border, radius and height (toolbar-layout).`,
+    ]);
+    for (const scope of checks.toolbarLayout.scopes ?? [])
+      entries.push([
+        scope.law === "one-row"
+          ? `- ${scope.name.replace(/[.!?]$/, "")}: ${scope.selector} stays on one row at every width (toolbar-layout).`
+          : `- ${scope.name.replace(/[.!?]$/, "")}: inside ${scope.selector}, controls' vertical centres sit within ${scope.tolerance ?? checks.toolbarLayout.centreTolerance}px of each other (toolbar-layout).`,
+      ]);
+  }
   for (const scope of checks.textCentering?.scopes ?? [])
     entries.push([
       `- ${scope.name.replace(/[.!?]$/, "")}: inside ${scope.selector}, single-line labels sit within ${scope.tolerance}px of their box's vertical centre (text-centering).`,

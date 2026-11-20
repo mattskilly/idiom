@@ -1,4 +1,15 @@
-import { type SetupOptions, setupAutobuild } from "../autobuild/setup.js";
+import {
+  type FirstBaselineDependencies,
+  type FirstBaselineOutcome,
+  firstBaselineLines,
+  recordFirstBaselines,
+} from "../autobuild/first-baseline.js";
+import {
+  type SetupOptions,
+  setupAutobuild,
+  setupBaselineAdvance,
+  setupFixStep,
+} from "../autobuild/setup.js";
 import {
   migrateProjectFiles,
   type ProjectFileOutcome,
@@ -20,6 +31,12 @@ export async function upgradeCommand(
     interactive?: boolean | undefined;
     confirm?: SetupOptions["confirm"];
     write?: SetupOptions["write"];
+    /** Apply every offered Autobuild change without prompting. */
+    yes?: boolean | undefined;
+    /** Wiring surfaces to leave alone (init's --skip-wiring ids). */
+    skipWiring?: string[] | undefined;
+    /** Test seam for the gate's first baseline under --yes. */
+    firstBaseline?: FirstBaselineDependencies | undefined;
   },
   dependencies: UpgradeDependencies = {},
 ): Promise<UpgradeReport> {
@@ -37,7 +54,37 @@ export async function upgradeCommand(
     },
     { formats: dependencies.projectFileFormats },
   );
-  const autobuild = await setupAutobuild({ ...options, projectDirectory });
+  let firstBaseline: FirstBaselineOutcome | undefined;
+  const autobuild = await setupAutobuild({
+    ...options,
+    projectDirectory,
+    skip: options.skipWiring?.includes("autobuild-gate"),
+    // Recorded before the wiring writes, while HEAD may still be clean.
+    beforeApply: async () => {
+      firstBaseline = await recordFirstBaselines(
+        projectDirectory,
+        options.firstBaseline,
+      );
+    },
+  });
+  // Offered only when the gate is (or would be) wired: the fix step swaps
+  // the gate's skill and never wires a gate behind a declined or manual one.
+  // It stays an explicit choice: --yes does not apply it.
+  const fixStep =
+    autobuild.kind === "applied" ||
+    autobuild.kind === "already-wired" ||
+    autobuild.kind === "available-noninteractive"
+      ? await setupFixStep({
+          ...options,
+          projectDirectory,
+          skip: options.skipWiring?.includes("autobuild-fix"),
+        })
+      : undefined;
+  const baselineAdvance = await setupBaselineAdvance({
+    ...options,
+    projectDirectory,
+    skip: options.skipWiring?.includes("autobuild-baseline"),
+  });
   // A declined/conflicting migration must not modify either verifier copy.
   // Other skills still upgrade independently.
   let legacyRemains = true;
@@ -57,7 +104,14 @@ export async function upgradeCommand(
     },
     dependencies,
   );
-  return { ...report, autobuild, projectFiles };
+  return {
+    ...report,
+    autobuild,
+    ...(fixStep === undefined ? {} : { fixStep }),
+    baselineAdvance,
+    ...(firstBaseline === undefined ? {} : { firstBaseline }),
+    projectFiles,
+  };
 }
 function renderVersion(value: UpgradeReport["previous"]): string {
   if (value.kind === "known") return value.version;
@@ -96,6 +150,25 @@ export function renderSkillSections(report: UpgradeReport): string[] {
   }
   return lines;
 }
+/** The final line of a noninteractive run that left offered wiring unapplied. */
+export const UPGRADE_HINT_LINE =
+  "Apply the offered wiring without a prompt: idiom upgrade --yes";
+export function upgradeHintLine(
+  report: UpgradeReport,
+  briefInstruction: readonly { kind: string }[],
+  options: {
+    dryRun?: boolean | undefined;
+    yes?: boolean | undefined;
+    json?: boolean | undefined;
+  },
+): string | undefined {
+  if (options.dryRun || options.yes || options.json) return undefined;
+  const offered =
+    report.autobuild?.kind === "available-noninteractive" ||
+    report.baselineAdvance?.kind === "available-noninteractive" ||
+    briefInstruction.some((outcome) => outcome.kind === "available");
+  return offered ? UPGRADE_HINT_LINE : undefined;
+}
 export function renderUpgrade(report: UpgradeReport): string {
   const lines = [
     `Idiom skills ${report.dryRun ? "dry run " : ""}${renderVersion(report.previous)} → ${report.installedVersion}`,
@@ -103,10 +176,29 @@ export function renderUpgrade(report: UpgradeReport): string {
   ];
   if (report.autobuild) {
     lines.push(`Autobuild: ${report.autobuild.kind}`);
-    if ("diff" in report.autobuild && report.autobuild.kind !== "applied")
+    if (
+      "diff" in report.autobuild &&
+      report.autobuild.kind !== "applied" &&
+      report.autobuild.kind !== "skipped"
+    )
       lines.push(report.autobuild.diff ?? "", report.autobuild.migration ?? "");
     if (report.autobuild.kind === "manual")
       lines.push(report.autobuild.reason, report.autobuild.addition);
+  }
+  lines.push(...firstBaselineLines(report.firstBaseline));
+  const fix = report.fixStep;
+  if (fix !== undefined && fix.kind !== "not-detected") {
+    lines.push(`Autobuild fix step: ${fix.kind}`);
+    if ("diff" in fix && fix.kind !== "applied" && fix.diff)
+      lines.push(fix.diff);
+    if (fix.kind === "manual") lines.push(fix.reason, fix.addition);
+  }
+  const advance = report.baselineAdvance;
+  if (advance !== undefined && advance.kind !== "not-detected") {
+    lines.push(`Autobuild baseline advance: ${advance.kind}`);
+    if ("diff" in advance && advance.kind !== "applied" && advance.diff)
+      lines.push(advance.diff);
+    if (advance.kind === "manual") lines.push(advance.reason, advance.addition);
   }
   for (const conflict of report.discoveryConflicts)
     lines.push(`protected: ${conflict.path} — ${conflict.reason}`);

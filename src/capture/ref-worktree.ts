@@ -153,7 +153,8 @@ export async function dependencyInstall(
 export async function withRefWorktree<T>(
   options: {
     ref: string;
-    flow: string;
+    /** Undefined validates every flow at the ref. */
+    flow?: string | undefined;
     project?: string | undefined;
     cwd?: string | undefined;
     dependencies?: CaptureDependencies | undefined;

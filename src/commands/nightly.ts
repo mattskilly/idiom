@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { basename, relative, resolve } from "node:path";
 import { type DigestFlow, digestFlows } from "../digest/build.js";
 import { renderDigest } from "../digest/render.js";
 import { IdiomError, RunFailure, type RunFailureJson } from "../errors.js";
@@ -15,6 +15,18 @@ import { ledgerPath } from "../nightly/ledger.js";
 import type { ReviewDependencies } from "../review/run.js";
 import { findingSchema } from "../schemas/finding.js";
 import { findAutobuildRoot } from "../tickets/target.js";
+import {
+  appStartKey,
+  type ClearedScope,
+  type Condition,
+  clearedScopes,
+  conditionLine,
+  fromBaseline,
+  fromBrokenCoverage,
+  fromRunFailure,
+  mergeAppStart,
+} from "../unattended/condition.js";
+import { type ConditionOutcome, reportConditions } from "../unattended/file.js";
 import { validateProject } from "../validation.js";
 import { executableOnPath } from "../wiring/detect.js";
 import {
@@ -71,6 +83,12 @@ export type NightlyResult = {
   belowSeverity: number;
   outcomes: NightlyOutcome[];
   digest: DigestFlow[];
+  /** Setup breaks this run hit: the app, a baseline, a broken expectation. */
+  conditions: Array<{ key: string; cause: string; line: string }>;
+  /** What filing did with each condition. */
+  conditionOutcomes: ConditionOutcome[];
+  /** stderr notes from recording or filing conditions. */
+  conditionMessages: string[];
 };
 
 /**
@@ -104,35 +122,23 @@ export async function nightlyCommand(
     requested.length === 0 ? [...ids].sort() : [...new Set(requested)];
   if (flows.length === 0)
     throw new IdiomError("no flows to check; add one under .idiom/flows/");
-  const config = validated.project.nightly;
-  const severity =
-    options.severity ?? config?.severity ?? NIGHTLY_DEFAULT_SEVERITY;
-  const labels = [
-    ...new Set(
-      options.labels !== undefined && options.labels.length > 0
-        ? options.labels
-        : (config?.labels ?? NIGHTLY_DEFAULT_LABELS),
-    ),
-  ];
-  for (const label of labels)
-    if (!/^[A-Za-z0-9][A-Za-z0-9:._-]*$/.test(label))
-      throw new IdiomError(
-        `invalid label ${JSON.stringify(label)}: start with a letter or digit and use only letters, digits, :, ., _ or -`,
-      );
-  const outDirectory =
-    options.out !== undefined
-      ? resolve(options.cwd ?? process.cwd(), options.out)
-      : resolve(projectDirectory, config?.out ?? NIGHTLY_DEFAULT_OUT);
   // Every refusal happens here, before any capture.
-  const sink = await resolveSink({
-    tracker: options.tracker ?? "auto",
-    projectDirectory,
-    outDirectory,
+  const filing = await resolveFiling({
+    validated,
+    options,
     environment: options.dependencies?.environment ?? process.env,
   });
+  const { severity, labels, outDirectory, sink } = filing;
   const check = options.dependencies?.check ?? checkWithReview;
   const results: NightlyFlowResult[] = [];
   const inputs: ClusterInputs[] = [];
+  const observed: Condition[] = [];
+  const cleared: ClearedScope[] = [];
+  let appStarted = false;
+  const flowFile = (id: string) => {
+    const file = validated.flows.find((entry) => entry.flow.id === id)?.file;
+    return file === undefined ? undefined : relative(projectDirectory, file);
+  };
   for (const flow of flows) {
     try {
       const { summary, review } = await check({
@@ -149,6 +155,30 @@ export async function nightlyCommand(
         .array()
         .parse(JSON.parse(await readFile(review.findingsPath, "utf8")));
       inputs.push(clusterInputsFromCheck(summary, review, findings));
+      appStarted = true;
+      const baseline = fromBaseline({
+        mode: "nightly",
+        flow,
+        baseline: summary.baseline,
+      });
+      if (baseline !== undefined) observed.push(baseline);
+      observed.push(
+        ...fromBrokenCoverage({
+          mode: "nightly",
+          flow,
+          broken: summary.brokenCoverage,
+          flowFile: flowFile(flow),
+        }),
+      );
+      cleared.push(
+        ...clearedScopes({
+          flow,
+          summary,
+          legacyColorScheme: validated.project.capture.colorScheme,
+          baselineUsable:
+            summary.baseline !== undefined && baseline === undefined,
+        }),
+      );
       results.push({
         flow,
         status: "checked",
@@ -158,6 +188,8 @@ export async function nightlyCommand(
     } catch (error) {
       // One flow that cannot run never stops the others from filing.
       if (!(error instanceof RunFailure)) throw error;
+      const condition = fromRunFailure(error, { mode: "nightly", flow });
+      if (condition !== undefined) observed.push(condition);
       results.push({
         flow,
         status: "failed",
@@ -170,7 +202,7 @@ export async function nightlyCommand(
     project: projectDirectory,
     cwd: options.cwd,
     isolatedRegistry: options.isolatedRegistry,
-    ledgerPath: ledgerPath(validated.stateProjectDirectory ?? projectDirectory),
+    ledgerPath: filing.ledgerPath,
     inputs,
     severity,
     labels,
@@ -178,6 +210,32 @@ export async function nightlyCommand(
     dryRun: options.dryRun,
     now: options.dependencies?.now,
   });
+  if (appStarted) cleared.push({ key: appStartKey() });
+  const conditions =
+    options.dryRun === true
+      ? {
+          conditions: mergeAppStart(observed).map((condition) => ({
+            key: condition.key,
+            cause: condition.cause,
+            line: conditionLine(condition),
+          })),
+          outcomes: [],
+          messages: [],
+        }
+      : await reportConditions({
+          mode: "nightly",
+          projectDirectory: validated.stateProjectDirectory ?? projectDirectory,
+          config: validated.project.unattended,
+          observed,
+          cleared,
+          environment: options.dependencies?.environment,
+          now: options.dependencies?.now?.(),
+          ...(sink.sink.kind === "autobuild"
+            ? { tracker: sink.sink.tracker }
+            : {}),
+          // A directory sink records for doctor but files nothing.
+          file: sink.sink.kind === "autobuild",
+        });
   const digest: DigestFlow[] = [];
   for (const result of results) {
     if (result.status !== "checked") continue;
@@ -206,10 +264,77 @@ export async function nightlyCommand(
     belowSeverity: filed.belowSeverity,
     outcomes: filed.outcomes,
     digest,
+    conditions: conditions.conditions,
+    conditionOutcomes: conditions.outcomes,
+    conditionMessages: conditions.messages,
   };
 }
 
-async function resolveSink(options: {
+export type ResolvedFiling = {
+  severity: NightlySeverity;
+  labels: string[];
+  outDirectory: string;
+  sink: { sink: NightlySink };
+  /** The shared filed-tickets ledger in the primary project. */
+  ledgerPath: string;
+};
+
+/**
+ * Nightly's filing configuration: severity, labels, proposal directory,
+ * sink and ledger. `idiom watch` files through the same resolution, so a
+ * finding either one filed is recognised by the other.
+ */
+export async function resolveFiling(input: {
+  validated: Pick<
+    Awaited<ReturnType<typeof validateProject>>,
+    "projectDirectory" | "stateProjectDirectory" | "project"
+  >;
+  options: {
+    severity?: NightlySeverity | undefined;
+    labels?: string[] | undefined;
+    tracker?: NightlyTracker | undefined;
+    out?: string | undefined;
+    cwd?: string | undefined;
+  };
+  environment: NodeJS.ProcessEnv;
+}): Promise<ResolvedFiling> {
+  const { validated, options } = input;
+  const { projectDirectory } = validated;
+  const config = validated.project.nightly;
+  const severity =
+    options.severity ?? config?.severity ?? NIGHTLY_DEFAULT_SEVERITY;
+  const labels = [
+    ...new Set(
+      options.labels !== undefined && options.labels.length > 0
+        ? options.labels
+        : (config?.labels ?? NIGHTLY_DEFAULT_LABELS),
+    ),
+  ];
+  for (const label of labels)
+    if (!/^[A-Za-z0-9][A-Za-z0-9:._-]*$/.test(label))
+      throw new IdiomError(
+        `invalid label ${JSON.stringify(label)}: start with a letter or digit and use only letters, digits, :, ., _ or -`,
+      );
+  const outDirectory =
+    options.out !== undefined
+      ? resolve(options.cwd ?? process.cwd(), options.out)
+      : resolve(projectDirectory, config?.out ?? NIGHTLY_DEFAULT_OUT);
+  const sink = await resolveSink({
+    tracker: options.tracker ?? "auto",
+    projectDirectory,
+    outDirectory,
+    environment: input.environment,
+  });
+  return {
+    severity,
+    labels,
+    outDirectory,
+    sink,
+    ledgerPath: ledgerPath(validated.stateProjectDirectory ?? projectDirectory),
+  };
+}
+
+export async function resolveSink(options: {
   tracker: NightlyTracker;
   projectDirectory: string;
   outDirectory: string;
@@ -295,7 +420,25 @@ export function renderNightly(result: NightlyResult): string {
     ),
     `${result.dryRun ? "Dry run — " : ""}Filing at ${result.severity} and above to ${target}: ${count("created") + count("reopened-as-new") + count("refiled-missing")} filed, ${count("updated")} updated, ${count("unchanged")} unchanged, ${count("in-progress")} in progress, ${count("skipped")} skipped, ${count("conflict")} conflict(s), ${count("error")} error(s)${result.belowSeverity > 0 ? `; ${result.belowSeverity} below ${result.severity}` : ""}`,
     ...result.outcomes.map((outcome) => outcomeLine(outcome, result.dryRun)),
+    ...result.conditionOutcomes.map(conditionOutcomeLine),
     ...(result.dryRun ? [] : [`Ledger: ${result.ledgerPath} (commit it)`]),
     ...(result.digest.length === 0 ? [] : ["", ...renderDigest(result.digest)]),
   ].join("\n");
+}
+
+function conditionOutcomeLine(outcome: ConditionOutcome): string {
+  switch (outcome.kind) {
+    case "created":
+      return `condition ${outcome.key}: filed ${outcome.ticket}`;
+    case "updated":
+      return `condition ${outcome.key}: updated ${outcome.ticket}`;
+    case "unchanged":
+      return `condition ${outcome.key}: unchanged ${outcome.ticket}`;
+    case "cleared":
+      return `condition ${outcome.key}: cleared; noted on ${outcome.ticket}`;
+    case "skipped":
+      return `condition ${outcome.key}: not filed${outcome.message === undefined ? "" : ` (${outcome.message})`}`;
+    case "error":
+      return `condition ${outcome.key}: error — ${outcome.message}`;
+  }
 }

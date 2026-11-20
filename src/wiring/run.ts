@@ -33,9 +33,12 @@ export const defaultWiringSelection: SelectWiring = async ({
     stdout.write(
       "  [ ] nightly: a scheduled idiom nightly in the GitHub workflow at 03:17 UTC, filing new findings as proposals (off unless already managed or selected); a cron/launchd line is printed below the plan\n",
     );
+    stdout.write(
+      "  [ ] advance: a GitHub job that advances the committed baseline on every push to the default branch (needs contents: write; off unless already managed or selected)\n",
+    );
     const answer = (
       await readline.question(
-        `Comma-separated surface IDs, plus nightly if wanted (Enter keeps ${defaults.selected.join(", ")}${defaults.nightly ? ", nightly" : ""}; 'none' clears): `,
+        `Comma-separated surface IDs, plus nightly or advance if wanted (Enter keeps ${defaults.selected.join(", ")}${defaults.nightly ? ", nightly" : ""}${defaults.advanceBaseline ? ", advance" : ""}; 'none' clears): `,
       )
     ).trim();
     if (!answer) return defaults;
@@ -44,14 +47,16 @@ export const defaultWiringSelection: SelectWiring = async ({
     for (const id of ids)
       if (
         id !== "nightly" &&
+        id !== "advance" &&
         !(WIRING_SURFACES as readonly string[]).includes(id)
       )
         throw new Error(`Unknown wiring selection: ${id}`);
     return {
       selected: ids.filter(
-        (id) => id !== "nightly",
+        (id) => id !== "nightly" && id !== "advance",
       ) as WiringSelection["selected"],
       nightly: ids.includes("nightly"),
+      advanceBaseline: ids.includes("advance"),
     };
   } finally {
     readline.close();
@@ -110,6 +115,10 @@ export async function runWiring(
   options: WiringOptions & {
     yes?: boolean | undefined;
     application?: "allow" | "report-only" | undefined;
+    /** Offer Autobuild rows without a prompt (init --wire / --dry-run). */
+    offerAutobuild?: boolean | undefined;
+    /** Runs under --yes just before the writes, while the tree is still as it was. */
+    beforeApply?: ((plan: WiringPlan) => Promise<void>) | undefined;
   },
   dependencies: WiringDependencies = {},
   write: (message: string) => void = (message) => stdout.write(message),
@@ -122,10 +131,15 @@ export async function runWiring(
     interactive &&
     options.yes !== true &&
     options.application !== "report-only";
+  // A wiring-only or dry run offers Autobuild rows to --yes and to a preview
+  // too; a scaffold run offers them only to a person at a prompt.
+  const offer =
+    consenting ||
+    (options.offerAutobuild === true && options.application !== "report-only");
   options = {
     ...options,
-    offerGate: consenting,
-    offerAutobuildSkills: consenting,
+    offerGate: offer,
+    offerAutobuildSkills: offer,
   };
   dependencies = { ...dependencies, interactive: consenting };
   const select =
@@ -141,6 +155,10 @@ export async function runWiring(
     });
     if (choices.nightly && !choices.selected.includes("github"))
       throw new Error("Nightly requires GitHub wiring selection");
+    if (choices.advanceBaseline && !choices.selected.includes("github"))
+      throw new Error(
+        "The baseline advance job requires GitHub wiring selection",
+      );
     if (
       options.gitHook &&
       plan.detection.signals[".husky"]?.detected &&
@@ -173,6 +191,7 @@ export async function runWiring(
     }))
   )
     return report("declined");
+  if (options.yes) await options.beforeApply?.(plan);
   try {
     await unchanged(root, plan.snapshots);
     if (plan.apply) await plan.apply(plan.writes, dependencies.apply);

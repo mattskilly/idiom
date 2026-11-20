@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { IdiomError } from "../errors.js";
+import { GUIDANCE_MARKER } from "../escalations/guidance.js";
+import { answerKey, readEscalationAnswers } from "../escalations/log.js";
 import {
   type HarvestState,
   harvestStateSchema,
@@ -179,6 +181,13 @@ export async function harvestCorrections(options: {
       .map((entry) => entry.harvest?.key)
       .filter((key): key is string => key !== undefined),
   );
+  // Idiom's own precedent answers are recorded by `ab` as a human's; they
+  // quote existing law, so they are never a new correction.
+  const ownAnswers = new Set(
+    (await readEscalationAnswers(projectDirectory)).map((record) =>
+      answerKey(record.build, record.escalation),
+    ),
+  );
   const tally = {
     autobuild: { recorded: 0, ignored: 0, duplicates: 0 },
     pullRequests: { recorded: 0, ignored: 0, duplicates: 0 },
@@ -218,6 +227,13 @@ export async function harvestCorrections(options: {
       continue;
     }
     seen.add(item.key);
+    if (
+      ownAnswers.has(item.key) ||
+      item.text.trimStart().startsWith(GUIDANCE_MARKER)
+    ) {
+      tally[from].ignored += 1;
+      continue;
+    }
     const classification = classifyCorrection(item.text);
     const [firstCategory] = classification.categories;
     if (!classification.ui || firstCategory === undefined) {
@@ -233,6 +249,11 @@ export async function harvestCorrections(options: {
       observation,
       learnedId: id,
     });
+    if (placed.ambiguous !== undefined) {
+      // The flow is in doubt; never place it on a guessed flow.
+      tally[from].ignored += 1;
+      continue;
+    }
     const interpretation = interpretSentences(classification.sentences);
     const proposed = placed.proposed;
     const matched = placed.matched;

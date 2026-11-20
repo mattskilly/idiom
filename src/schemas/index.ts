@@ -22,6 +22,7 @@ export {
   isAcknowledgement,
 } from "./decision.js";
 export * from "./design.js";
+export * from "./escalation-answer.js";
 export {
   type ExplorationCandidate,
   type ExplorationEdit,

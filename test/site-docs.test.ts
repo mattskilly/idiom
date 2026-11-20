@@ -202,6 +202,25 @@ test("troubleshooting, upgrading and glossary are Reference pages in the sitemap
   }
 });
 
+test("the 1.0 migration guide is a Reference page next to Stability", async () => {
+  const pages = docsGroups.find((group) => group.label === "Reference")?.pages;
+  expect(pages).toContainEqual(
+    expect.objectContaining({
+      slug: "migrating-to-1",
+      source: "docs/migrating-to-1.md",
+    }),
+  );
+  const slugs = (pages ?? []).map((page) => page.slug);
+  expect(slugs.indexOf("migrating-to-1")).toBe(slugs.indexOf("stability") + 1);
+  const sitemap = await readFile(join(dist, "sitemap.xml"), "utf8");
+  expect(sitemap).toContain(
+    "<loc>https://idiom.build/docs/migrating-to-1</loc>",
+  );
+  const llms = await readFile(join(dist, "llms.txt"), "utf8");
+  expect(llms).toContain("](https://idiom.build/docs/migrating-to-1.md)");
+  await access(markdownFile("migrating-to-1"));
+});
+
 test("update and rollback workflow is under Start and describes upgrade safety and legacy binaries", async () => {
   expect(
     docsGroups.find((group) => group.label === "Start")?.pages,

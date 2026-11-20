@@ -6,7 +6,7 @@ export {
   relativeAge,
 } from "./misses-summary.js";
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { readDigestRecord } from "../digest/record.js";
 import { IdiomError } from "../errors.js";
@@ -118,6 +118,13 @@ const LAW_RULES: Record<string, LearnedRule> = {
     matches: (rule: string) => rule === "idiom:label-off-centre",
   },
   "layout-invariants": LEARNED_RULES.invariant,
+  "toolbar-layout": {
+    check: "toolbar-layout",
+    matches: (rule: string) =>
+      rule === "idiom:toolbar-wrap" ||
+      rule === "idiom:toolbar-off-centre" ||
+      rule === "idiom:toolbar-odd-control",
+  },
 };
 
 /**
@@ -291,18 +298,28 @@ export function missStatuses(
 
 /**
  * The evidence one stored run carries: its `findings.json` items and its
- * digest occurrences, each with its rule and category.
+ * digest occurrences, each with its rule and category. Undefined when the run
+ * is not reviewable: its directory is gone, or it has neither a
+ * `findings.json` array nor a digest record (a capture-only run). A reviewed
+ * run with no findings gives an empty array.
  */
-export async function runEvidence(
+export async function readRunEvidence(
   runDirectory: string,
   runId: string,
-): Promise<MissEvidence[]> {
+): Promise<MissEvidence[] | undefined> {
+  try {
+    if (!(await stat(runDirectory)).isDirectory()) return undefined;
+  } catch {
+    return undefined;
+  }
   const evidence: MissEvidence[] = [];
+  let reviewed = false;
   try {
     const items: unknown = JSON.parse(
       await readFile(join(runDirectory, "findings.json"), "utf8"),
     );
-    if (Array.isArray(items))
+    if (Array.isArray(items)) {
+      reviewed = true;
       for (const item of items) {
         const rule = typeof item?.rule === "string" ? item.rule : undefined;
         const category =
@@ -324,11 +341,13 @@ export async function runEvidence(
             runId,
           });
       }
+    }
   } catch {
     /* Unreadable historical findings never break a current check. */
   }
   const record = await readDigestRecord(runDirectory);
-  if (record)
+  if (record) {
+    reviewed = true;
     for (const item of record.occurrences) {
       if (item.rule || item.category)
         evidence.push({
@@ -340,7 +359,19 @@ export async function runEvidence(
           runId,
         });
     }
-  return evidence;
+  }
+  return reviewed ? evidence : undefined;
+}
+
+/**
+ * The evidence one stored run carries, empty when the run has none or is
+ * not reviewable.
+ */
+export async function runEvidence(
+  runDirectory: string,
+  runId: string,
+): Promise<MissEvidence[]> {
+  return (await readRunEvidence(runDirectory, runId)) ?? [];
 }
 
 export async function collectMissEvidence(

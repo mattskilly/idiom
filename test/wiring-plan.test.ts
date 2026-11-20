@@ -90,6 +90,8 @@ test("the plan lists every surface with its default and reason", async () => {
     ["husky", false, "skipped"],
     ["lefthook", false, "unavailable"],
     ["autobuild-gate", false, "skipped"],
+    ["autobuild-fix", false, "skipped"],
+    ["autobuild-baseline", false, "skipped"],
     ["autobuild-verifier", false, "skipped"],
     ["autobuild-landing", false, "skipped"],
     ["autobuild-plan", false, "unavailable"],

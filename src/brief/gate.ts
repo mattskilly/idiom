@@ -59,7 +59,7 @@ const SUPERSEDED_BY = /· superseded by ([a-z0-9]+(?:-[a-z0-9]+)*)/;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 
 /** Line indexes outside fenced code blocks. */
-function unfenced(lines: string[]): number[] {
+export function unfenced(lines: string[]): number[] {
   const open: { char: string; length: number }[] = [];
   const kept: number[] = [];
   lines.forEach((line, index) => {

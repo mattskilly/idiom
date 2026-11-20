@@ -357,7 +357,7 @@ test("noninteractive init reports Autobuild availability without writing", async
 
   expect(code).toBe(0);
   expect(stdout.join("")).toContain(
-    "rerun `idiom init` interactively to review and approve wiring",
+    "Autobuild verification is available; apply it with idiom init --wire --yes, or rerun idiom init in a terminal to review it.",
   );
   expect(confirm).not.toHaveBeenCalled();
   expect(await readFile(config, "utf8")).toBe("[project]\nname = 'x'\n");

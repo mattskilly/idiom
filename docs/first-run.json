@@ -62,6 +62,68 @@
       },
       "passed": true,
       "failure": null
+    },
+    {
+      "measuredAt": "2026-11-15T21:32:55.700Z",
+      "idiomVersion": "0.23.0",
+      "source": {
+        "kind": "npm",
+        "spec": "@mattskilly/idiom@0.23.0"
+      },
+      "docsCommit": "ab8665e6fc7ff60ba12d063069be08bd082b4be3",
+      "machine": {
+        "platform": "darwin",
+        "release": "25.5.0",
+        "arch": "arm64",
+        "cpuModel": "Apple M3 Pro",
+        "cpuCount": 11,
+        "memoryGb": 36,
+        "node": "v24.4.0",
+        "npm": "11.4.2"
+      },
+      "docsCommands": [
+        "npm install -g @mattskilly/idiom",
+        "npx playwright@1.62.1 install chromium",
+        "idiom quick http://localhost:3000"
+      ],
+      "steps": [
+        {
+          "id": "install",
+          "docLine": "npm install -g @mattskilly/idiom",
+          "command": "npm install -g @mattskilly/idiom@0.23.0",
+          "ms": 6797,
+          "ok": true
+        },
+        {
+          "id": "browser",
+          "docLine": "npx playwright@1.62.1 install chromium",
+          "command": "npx playwright@1.62.1 install chromium",
+          "ms": 27140,
+          "ok": true
+        },
+        {
+          "id": "first-finding",
+          "docLine": "idiom quick http://localhost:3000",
+          "command": "idiom quick http://localhost:3000 → idiom quick http://127.0.0.1:57155/",
+          "ms": 27771,
+          "ok": true
+        }
+      ],
+      "totalMs": 61708,
+      "budgetMs": 300000,
+      "notCounted": [
+        "sample server start"
+      ],
+      "firstFinding": {
+        "count": 5,
+        "ruleId": "idiom:missing-color-scheme",
+        "title": "The declared dark color scheme rendered identically to light across every captured state and viewport."
+      },
+      "isolation": {
+        "browserCacheInsideHome": true
+      },
+      "passed": true,
+      "failure": null
     }
   ]
 }

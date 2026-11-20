@@ -1430,3 +1430,40 @@ test("compiled laws appear in the craft brief", async () => {
     false,
   );
 });
+
+test("toolbar-layout states its law and each learned toolbar law in the craft brief", async () => {
+  const { craftCheckEntries } = await import("../src/context/brief.js");
+  const { checksConfigSchema } = await import("../src/schemas/project.js");
+  const entries = craftCheckEntries(
+    checksConfigSchema.parse({
+      toolbarLayout: {
+        scopes: [
+          {
+            name: "The toolbar is always exactly one row.",
+            selector: '[role="toolbar"]',
+            law: "one-row",
+          },
+          {
+            name: "Every toolbar control is vertically centred.",
+            selector: '[role="toolbar"]',
+            law: "centred",
+            tolerance: 1,
+          },
+        ],
+      },
+    }),
+  ).flat();
+  expect(entries).toEqual(
+    expect.arrayContaining([
+      "- Toolbars stay on one row; their controls share a vertical centre within 1px and match each other's border, radius and height (toolbar-layout).",
+      '- The toolbar is always exactly one row: [role="toolbar"] stays on one row at every width (toolbar-layout).',
+      '- Every toolbar control is vertically centred: inside [role="toolbar"], controls\' vertical centres sit within 1px of each other (toolbar-layout).',
+    ]),
+  );
+  const disabled = craftCheckEntries(
+    checksConfigSchema.parse({ toolbarLayout: { enabled: false } }),
+  ).flat();
+  expect(disabled.some((line) => line.includes("(toolbar-layout)"))).toBe(
+    false,
+  );
+});

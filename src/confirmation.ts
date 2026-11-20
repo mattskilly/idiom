@@ -16,6 +16,16 @@ export type InitConfirmationRequest =
       path: string;
     }
   | {
+      kind: "offer-fix-step";
+      prompt: string;
+      path: string;
+    }
+  | {
+      kind: "offer-baseline-advance";
+      prompt: string;
+      path: string;
+    }
+  | {
       kind: "offer-autobuild-wiring";
       prompt: string;
       path: string;

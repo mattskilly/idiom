@@ -270,6 +270,11 @@ export async function loadReviewCatalog(options: {
   additionalTrackerRoots?: readonly string[] | undefined;
   /** Ignore the primary checkout's finding names; defaults to the config. */
   isolatedRegistry?: boolean | undefined;
+  /**
+   * The run under review: its names stay strict, while other own run folders
+   * that conflict with the local registry are left out of the catalog.
+   */
+  currentRunDirectory?: string | undefined;
 }): Promise<ReviewCatalog> {
   const projectDirectory = await findProjectDirectory(
     resolveProjectArgument(options.project, options.cwd),
@@ -305,12 +310,17 @@ export async function loadReviewCatalog(options: {
     additionalReportRoots: options.additionalReportRoots,
     additionalTrackerRoots: options.additionalTrackerRoots,
     isolatedRegistry: options.isolatedRegistry,
+    currentRunDirectory: options.currentRunDirectory,
   });
+  const stale = new Set(
+    (names.staleReports ?? []).map((item) => resolve(item.runDirectory)),
+  );
   const runs: ReviewCatalog["runs"] = [];
   const all: CatalogFinding[] = [];
   for (const [runId, { runDirectory }] of [...merged.entries()].sort(
     ([left], [right]) => left.localeCompare(right),
   )) {
+    if (stale.has(resolve(runDirectory))) continue;
     const findingsPath = join(runDirectory, "findings.json");
     const findings = await readFindings(findingsPath);
     if (findings === undefined) continue;

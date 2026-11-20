@@ -103,7 +103,102 @@ function serverOnly(file: FileMapping, htmlDirectories: string[]): boolean {
   );
 }
 
-export type StyleScope = { responsive: string[]; theme: string[] };
+export type StyleScope = {
+  responsive: string[];
+  theme: string[];
+  /** Media-query and Tailwind breakpoints in the changed lines. */
+  breakpoints?: Breakpoint[] | undefined;
+  /** The change styles the dark (or light) scheme specifically. */
+  prefersDark?: boolean | undefined;
+  prefersLight?: boolean | undefined;
+};
+
+export type Breakpoint = { feature: "min-width" | "max-width"; px: number };
+
+const tailwindBreakpoints: Record<string, number> = {
+  sm: 640,
+  md: 768,
+  lg: 1024,
+  xl: 1280,
+  "2xl": 1536,
+};
+
+/** Width breakpoints a changed line names: `@media (max-width: 640px)`, `md:`. */
+export function lineBreakpoints(line: string): Breakpoint[] {
+  const found: Breakpoint[] = [];
+  for (const match of line.matchAll(
+    /\b(min|max)-width\s*:\s*(\d+(?:\.\d+)?)(px|em|rem)?/g,
+  )) {
+    const unit = match[3] ?? "px";
+    const value = Number(match[2]) * (unit === "px" ? 1 : 16);
+    found.push({
+      feature: match[1] === "min" ? "min-width" : "max-width",
+      px: Math.round(value),
+    });
+  }
+  for (const match of line.matchAll(/(?:^|[\s"'`])(sm|md|lg|xl|2xl):/g))
+    found.push({
+      feature: "min-width",
+      px: tailwindBreakpoints[match[1] as string] as number,
+    });
+  return found;
+}
+
+/** Whether a viewport width satisfies any of the breakpoints. */
+export function satisfiesBreakpoint(
+  width: number,
+  breakpoints: Breakpoint[],
+): boolean {
+  return breakpoints.some((breakpoint) =>
+    breakpoint.feature === "min-width"
+      ? width >= breakpoint.px
+      : width <= breakpoint.px,
+  );
+}
+
+/**
+ * Widened viewports ordered by how likely they are to show the change: the
+ * first (default) stays first, then those a changed breakpoint selects in
+ * project order, then the rest in reverse project order. The gate trims from
+ * the end, so the least likely goes first.
+ */
+export function orderViewports(
+  viewports: Array<{ name: string; width: number }>,
+  breakpoints: Breakpoint[],
+): string[] {
+  const [first, ...rest] = viewports;
+  if (!first) return [];
+  const likely = rest.filter((viewport) =>
+    satisfiesBreakpoint(viewport.width, breakpoints),
+  );
+  const others = rest
+    .filter((viewport) => !likely.includes(viewport))
+    .reverse();
+  return [first, ...likely, ...others].map((viewport) => viewport.name);
+}
+
+/** Widened schemes: the default first, then the one the change styles. */
+export function orderSchemes<T extends string>(
+  schemes: T[],
+  defaultScheme: T | undefined,
+  scope: Pick<StyleScope, "prefersDark" | "prefersLight">,
+): T[] {
+  const ordered =
+    defaultScheme === undefined
+      ? [...schemes]
+      : [
+          defaultScheme,
+          ...schemes.filter((scheme) => scheme !== defaultScheme),
+        ];
+  const [head, ...tail] = ordered;
+  if (head === undefined) return [];
+  const weight = (scheme: string) =>
+    (scope.prefersDark && scheme === "dark") ||
+    (scope.prefersLight && scheme === "light")
+      ? 0
+      : 1;
+  return [head, ...tail.sort((a, b) => weight(a) - weight(b))];
+}
 
 const responsivePatterns = [
   /@media[^{]*\b(?:min-|max-)?(?:width|height|aspect-ratio|orientation)\b/,
@@ -135,7 +230,13 @@ export async function detectStyleScope(options: {
 }): Promise<StyleScope> {
   const git = options.git ?? readGit;
   const ui = options.files.filter((file) => file.ui).map((file) => file.path);
-  const scope: StyleScope = { responsive: [], theme: [] };
+  const scope: StyleScope = {
+    responsive: [],
+    theme: [],
+    breakpoints: [],
+    prefersDark: false,
+    prefersLight: false,
+  };
   if (!ui.length) return scope;
   const theme = [
     ...themePatterns,
@@ -197,6 +298,17 @@ export async function detectStyleScope(options: {
       scope.responsive.push(path);
     if (lines.some((line) => theme.some((re) => re.test(line))))
       scope.theme.push(path);
+    for (const line of lines) {
+      scope.breakpoints?.push(...lineBreakpoints(line));
+      if (
+        /prefers-color-scheme\s*:\s*dark/.test(line) ||
+        /(?:^|[\s"'`])dark:/.test(line) ||
+        /\.dark(?:\s|\{|,)/.test(line)
+      )
+        scope.prefersDark = true;
+      if (/prefers-color-scheme\s*:\s*light/.test(line))
+        scope.prefersLight = true;
+    }
   }
   for (const path of options.globalFiles ?? [])
     if (!scope.theme.includes(path) && ui.includes(path))

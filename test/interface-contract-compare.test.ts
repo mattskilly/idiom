@@ -349,6 +349,45 @@ describe("CLI compatibility", () => {
       'command "review": argument <flow> became required',
     ]);
   });
+
+  it("allows changing or removing an experimental option on a stable command", () => {
+    const withAdvance = (options: OptionSnapshot[]) =>
+      snapshot({ commands: [command("baseline advance", { options })] });
+    const recorded = withAdvance([
+      option("--fetch", { experimental: true }),
+      option("--target", { takesValue: true }),
+    ]);
+    expect(
+      compareInterface(
+        recorded,
+        withAdvance([option("--target", { takesValue: true })]),
+      ),
+    ).toEqual([]);
+    expect(
+      compareInterface(
+        recorded,
+        withAdvance([
+          option("--fetch", { experimental: true, takesValue: true }),
+          option("--target", { takesValue: true }),
+        ]),
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects a promised option that becomes experimental", () => {
+    const withAdvance = (options: OptionSnapshot[]) =>
+      snapshot({ commands: [command("baseline advance", { options })] });
+    expect(
+      compareInterface(
+        withAdvance([option("--target", { takesValue: true })]),
+        withAdvance([
+          option("--target", { takesValue: true, experimental: true }),
+        ]),
+      ),
+    ).toEqual([
+      'command "baseline advance": option --target demoted to experimental',
+    ]);
+  });
 });
 
 describe("exit codes", () => {

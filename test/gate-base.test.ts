@@ -1,127 +1,20 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "vitest";
-import { reservePort } from "../src/capture/port.js";
-import { run } from "../src/cli.js";
-import { initProject } from "../src/commands/init.js";
-import { fixtureCommand } from "./support/fixture-server.js";
+import { baselineMissing } from "../src/unattended/condition.js";
+import {
+  conditionStorePath,
+  openConditions,
+  recordConditions,
+} from "../src/unattended/store.js";
+import { baseFixture, cli, page } from "./support/base-gate-fixture.js";
 
 const exec = promisify(execFile);
 
-const page = (html: string) =>
-  `// html: ${html}\nexport default function Page() { return null; }\n`;
-
-/**
- * A repository whose server renders each route from the checked-out source,
- * so a capture of the base (its own worktree) sees the base's markup. State
- * s1 expects #a and #b; removing either is a blocker finding.
- */
-async function baseFixture() {
-  const directory = await mkdtemp(join(tmpdir(), "idiom-gate-base-"));
-  const git = async (...args: string[]) =>
-    (await exec("git", args, { cwd: directory })).stdout.trim();
-  const write = async (path: string, content: string) => {
-    await mkdir(dirname(join(directory, path)), { recursive: true });
-    await writeFile(join(directory, path), content);
-  };
-  const commit = async (message: string) => {
-    await git("add", "-A");
-    await git(
-      "-c",
-      "user.name=Test",
-      "-c",
-      "user.email=test@example.com",
-      "-c",
-      "commit.gpgsign=false",
-      "commit",
-      "--quiet",
-      "--allow-empty",
-      "-m",
-      message,
-    );
-    return git("rev-parse", "HEAD");
-  };
-  await initProject({ project: directory, yes: true });
-  const reservation = await reservePort(0);
-  const port = reservation.port;
-  await reservation.release();
-  await write(
-    ".gitignore",
-    ".idiom/reports/\n.idiom/cache/\n.idiom/agent-state.json\n",
-  );
-  await write(
-    ".idiom/project.json",
-    JSON.stringify({
-      version: 1,
-      app: { name: "Base fixture", framework: "nextjs" },
-      server: {
-        build: "node -e 0",
-        start: fixtureCommand(
-          join(import.meta.dirname, "fixtures/base-gate/server.mjs"),
-        ),
-        port,
-        readyUrl: `http://127.0.0.1:${port}/ready`,
-        env: { PORT: String(port) },
-      },
-      viewports: [{ name: "wide", width: 800, height: 600 }],
-      colorSchemes: ["light"],
-      checks: { probe: { enabled: false } },
-      capture: { settleMs: 0 },
-      design: {},
-      model: { provider: "anthropic", model: "unused" },
-    }),
-  );
-  await write(
-    ".idiom/flows/site.json",
-    JSON.stringify({
-      id: "site",
-      title: "Site",
-      setup: [],
-      intent: [],
-      states: [
-        { id: "s0", description: "Home", url: "/r0", expect: {} },
-        {
-          id: "s1",
-          description: "Detail",
-          url: "/r1",
-          expect: { selectorPresent: ["#a", "#b"] },
-        },
-      ],
-    }),
-  );
-  await write("app/r0/page.tsx", page("<h1>Home</h1>"));
-  await write(
-    "app/r1/page.tsx",
-    page('<h1>Detail</h1><p id="a">A</p><p id="b">B</p>'),
-  );
-  await git("init", "--quiet", "--initial-branch=main");
-  await commit("initial");
-  return {
-    directory,
-    git,
-    write,
-    commit,
-    cleanup: () => rm(directory, { recursive: true, force: true }),
-  };
-}
-
-async function cli(directory: string, args: string[]) {
-  const out: string[] = [];
-  const err: string[] = [];
-  const status = await run(["node", "idiom", "--project", directory, ...args], {
-    stdout: (value) => out.push(value),
-    stderr: (value) => err.push(value),
-  });
-  // As a verify step does: a check rewrites the tracked finding-name
-  // registry, which the next gate would otherwise read as a UI change.
-  await exec("git", ["checkout", "--", ".idiom/finding-names.json"], {
-    cwd: directory,
-  }).catch(() => undefined);
-  return { status, out: out.join("\n"), err: err.join("\n") };
-}
+const EXPECTATION_A =
+  /^idiom gate: expectation: site\/s1: expect no longer matches at wide\/light: selector-present "#a"(; selector-present "#b")? — fix: /m;
 
 type Finding = { rule?: string; selector?: string; problem: string };
 const missing = (findings: Finding[], selector: string) =>
@@ -148,6 +41,21 @@ test("the gate judges findings against the build's base, not a baseline main has
       page('<h1>Detail</h1><p id="b">B</p><p>New copy</p>'),
     );
     await f.commit("feature: new copy");
+    // Nightly saw site's recorded baseline as unusable and left it open.
+    const store = await conditionStorePath({ projectDirectory: f.directory });
+    await recordConditions({
+      path: store,
+      mode: "nightly",
+      observed: [
+        baselineMissing({ mode: "nightly", flow: "site", what: "expired" }),
+      ],
+      cleared: [],
+      now: new Date(),
+    });
+    const baselineOpen = async () =>
+      (await openConditions(store)).some(
+        (entry) => entry.key === "baseline:site",
+      );
 
     const first = await cli(f.directory, [
       "check",
@@ -156,7 +64,13 @@ test("the gate judges findings against the build's base, not a baseline main has
       "major",
       "--json",
     ]);
-    expect(first.status, first.err).toBe(0);
+    // A base capture compares fine but is not the recorded baseline: the
+    // open baseline condition stays open.
+    expect(await baselineOpen()).toBe(true);
+    // #a's expectation broke at the base, so the comparison holds it as
+    // pre-existing; it is still broken coverage, never a pass.
+    expect(first.status, first.err).toBe(2);
+    expect(first.err).toMatch(EXPECTATION_A);
     const output = JSON.parse(first.out);
     expect(output.gate.comparisons.site).toMatchObject({
       mode: "base-capture",
@@ -187,9 +101,11 @@ test("the gate judges findings against the build's base, not a baseline main has
 
     // Again: the cached base capture, no worktree, same verdict.
     const second = await cli(f.directory, ["check", "--gate", "--json"]);
-    expect(second.status, second.err).toBe(0);
+    expect(second.status, second.err).toBe(2);
+    expect(second.err).toMatch(EXPECTATION_A);
     const again = JSON.parse(second.out);
     expect(again.gate.comparisons.site.mode).toBe("base-cache");
+    expect(await baselineOpen()).toBe(true);
     expect(again.gate.comparisons.site.baseCaptureMs).toBeUndefined();
     expect(second.err).toContain("(cached base capture)");
     expect(missing(again.checks[0].summary.preExistingFindings, "#a")).toBe(
@@ -223,7 +139,7 @@ test("the gate judges findings against the build's base, not a baseline main has
       "major",
       "--json",
     ]);
-    expect(tight.status, tight.err).toBe(1);
+    expect(tight.status, tight.err).toBe(2);
     expect(tight.err).toContain(
       `comparing with baseline ${baselineCommit.slice(0, 12)}, 2 commit(s) behind base ${base.slice(0, 12)}`,
     );
@@ -241,7 +157,9 @@ test("the gate judges findings against the build's base, not a baseline main has
       "major",
       "--json",
     ]);
-    expect(introduced.status, introduced.err).toBe(1);
+    // Broken coverage outranks findings: exit 2 names both expectations.
+    expect(introduced.status, introduced.err).toBe(2);
+    expect(introduced.err).toMatch(EXPECTATION_A);
     const failing = JSON.parse(introduced.out).checks[0].summary;
     expect(missing(failing.findings, "#b")).toBe(true);
     expect(missing(failing.findings, "#a")).toBe(false);
@@ -257,11 +175,11 @@ test("the gate judges findings against the build's base, not a baseline main has
     ]);
     expect(advanced.status, advanced.err).toBe(0);
     expect(JSON.parse(advanced.out)).toMatchObject({
-      flow: "site",
       target: "refs/heads/main",
       commit: base,
-      tupleCount: 2,
-      failedTuples: [],
+      flows: [
+        { flow: "site", status: "advanced", tupleCount: 2, failedTuples: [] },
+      ],
     });
     const file = JSON.parse(
       await readFile(join(f.directory, ".idiom/baselines/site.json"), "utf8"),

@@ -5,6 +5,12 @@ import { join, relative } from "node:path";
 import { promisify } from "node:util";
 import { type BriefAsk, briefAsk } from "../brief/ask.js";
 import {
+  type ComparableCapture,
+  type ComparableResearch,
+  runComparableResearch,
+} from "../brief/comparable-research.js";
+import { formatNumber } from "../brief/comparables.js";
+import {
   type DesignAssetExport,
   exportDesignAsset,
 } from "../brief/design-asset-export.js";
@@ -18,6 +24,17 @@ import {
   type TicketBriefRef,
   triageFailed,
 } from "../brief/gate.js";
+import {
+  type CriterionWarning,
+  DEFAULT_LINT_CONTEXT,
+  type LintContext,
+  type LintFile,
+  type LintResult,
+  lintCriteria,
+  lintMarkdown,
+  lintResult,
+  renderWarning,
+} from "../brief/lint.js";
 import {
   createTriageInvoker,
   type TriageFallback,
@@ -60,12 +77,12 @@ import {
 } from "../brief/triage.js";
 import type { CaptureDependencies } from "../capture/run.js";
 import { IdiomError } from "../errors.js";
-import type { Deprecation } from "../interface/deprecation.js";
 import { jsonPayload } from "../interface/version.js";
 import {
   findOptionalProjectDirectory,
   resolveProjectArgument,
 } from "../project.js";
+import { readEffectiveLaw } from "../rulings/effective.js";
 import {
   BRIEF_TRIAGE_ID_PATTERN,
   BRIEF_TRIAGE_MAX_QUESTIONS,
@@ -75,7 +92,7 @@ import {
   type StoredTriage,
   ticketIdSchema,
 } from "../schemas/brief.js";
-import { briefSettings } from "../schemas/project.js";
+import { briefSettings, type Project } from "../schemas/project.js";
 import { findAutobuildRoot } from "../tickets/target.js";
 import {
   validateProject,
@@ -95,6 +112,8 @@ export type BriefDependencies = {
   clock?: () => number;
   /** For `export --capture` and `attach --capture`. */
   capture?: CaptureDependencies | undefined;
+  /** For `brief research`: captures and measures one comparable page. */
+  captureComparable?: ComparableCapture | undefined;
 };
 
 type ProjectOptions = {
@@ -342,6 +361,96 @@ export async function briefGateCommand(
   };
 }
 
+/** The lint's numbers from a project's config and rulings. */
+export async function projectLintContext(
+  projectDirectory: string,
+  project: Pick<Project, "checks" | "viewports" | "design">,
+  onWarning?: ((message: string) => void) | undefined,
+): Promise<LintContext> {
+  const wide = project.viewports
+    .map((viewport) => viewport.width)
+    .filter((width) => width >= 768);
+  let rulings: LintContext["rulings"] = [];
+  try {
+    const law = await readEffectiveLaw(
+      join(projectDirectory, project.design.designFile),
+      projectDirectory,
+    );
+    rulings = law.resolutions.flatMap((resolution) =>
+      resolution.outcome === "rule" && resolution.wording !== undefined
+        ? [{ id: resolution.id, wording: resolution.wording }]
+        : [],
+    );
+  } catch (error) {
+    onWarning?.(
+      `Warning: could not read rulings: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return {
+    controlGapMin: project.checks.controlGap.min,
+    targetSize: project.checks.targetSize ?? DEFAULT_LINT_CONTEXT.targetSize,
+    rowWidth:
+      wide.length === 0 ? DEFAULT_LINT_CONTEXT.rowWidth : Math.min(...wide),
+    rowWidthSource: wide.length === 0 ? "default" : "viewports",
+    rulings,
+  };
+}
+
+/** A project's lint context when there is one; Idiom's defaults otherwise. */
+async function optionalLintContext(
+  options: ProjectOptions & {
+    onWarning?: ((message: string) => void) | undefined;
+  },
+): Promise<LintContext> {
+  const projectDirectory = await findOptionalProjectDirectory(
+    resolveProjectArgument(options.project, options.cwd),
+  );
+  if (projectDirectory === undefined) return DEFAULT_LINT_CONTEXT;
+  const { project } = await validateProjectConfiguration({
+    project: projectDirectory,
+  });
+  return projectLintContext(projectDirectory, project, options.onWarning);
+}
+
+/**
+ * `idiom brief lint`: acceptance criteria that cap a size, time, count or
+ * length with no floor or outcome. Deterministic, no model, no project
+ * required. Warn-first: the caller decides whether warnings fail.
+ */
+export async function briefLintCommand(
+  options: ProjectOptions & {
+    files: string[];
+    strict?: boolean | undefined;
+    onWarning?: ((message: string) => void) | undefined;
+  },
+): Promise<LintResult> {
+  if (options.files.length === 0)
+    throw new IdiomError("pass at least one ticket or spec file");
+  const cwd = options.cwd ?? process.cwd();
+  // Read every file first so a usage error fails before any output.
+  const texts: { path: string; text: string }[] = [];
+  for (const path of options.files)
+    texts.push({ path, text: await readTicket(path, cwd) });
+  const context = await optionalLintContext(options);
+  const files: LintFile[] = texts.map(({ path, text }) =>
+    lintMarkdown(path, text, context),
+  );
+  return lintResult(files, options.strict === true);
+}
+
+/** Lint a brief's criterion statements; `line` is the 1-based index. */
+export async function lintBriefCriteria(
+  projectDirectory: string,
+  project: Pick<Project, "checks" | "viewports" | "design">,
+  statements: string[],
+  onWarning?: ((message: string) => void) | undefined,
+): Promise<CriterionWarning[]> {
+  return lintCriteria(
+    statements.map((text, index) => ({ text, line: index + 1 })),
+    await projectLintContext(projectDirectory, project, onWarning),
+  );
+}
+
 function now(dependencies: BriefDependencies | undefined): Date {
   return (dependencies?.now ?? (() => new Date()))();
 }
@@ -394,6 +503,8 @@ function projectFlows(projectDirectory: string) {
 export type BriefRecordResult = RecordedBrief & {
   markdownRelative: string;
   ask: BriefAsk | undefined;
+  /** Criteria that cap with no floor or outcome; `line` is the 1-based index. */
+  lint: CriterionWarning[];
 };
 
 /** Validates and stores already-parsed input; the CLI and MCP share it. */
@@ -401,9 +512,12 @@ export async function recordBriefInput(
   options: ProjectOptions & {
     input: unknown;
     dependencies?: BriefDependencies | undefined;
+    onWarning?: ((message: string) => void) | undefined;
   },
 ): Promise<BriefRecordResult> {
-  const { projectDirectory, settings } = await projectSettings(options);
+  const { projectDirectory, project } =
+    await validateProjectConfiguration(options);
+  const settings = briefSettings(project);
   const rubric = await readBriefRubric();
   const recorded = await recordBrief({
     projectDirectory,
@@ -417,6 +531,14 @@ export async function recordBriefInput(
     ...recorded,
     markdownRelative: relative(projectDirectory, recorded.markdownPath),
     ask: briefAsk(recorded.brief),
+    lint: await lintBriefCriteria(
+      projectDirectory,
+      project,
+      (recorded.brief.acceptanceCriteria ?? []).map(
+        (criterion) => criterion.statement,
+      ),
+      options.onWarning,
+    ),
   };
 }
 
@@ -424,6 +546,7 @@ export async function briefRecordCommand(
   options: ProjectOptions & {
     file?: string | undefined;
     dependencies?: BriefDependencies | undefined;
+    onWarning?: ((message: string) => void) | undefined;
   },
 ): Promise<BriefRecordResult> {
   // Fail on a missing project before waiting on stdin.
@@ -451,6 +574,7 @@ export function briefRecordJson(recorded: BriefRecordResult) {
     status: recorded.brief.status,
     markdownPath: recorded.markdownRelative,
     ask: recorded.ask ?? null,
+    ...(recorded.lint.length === 0 ? {} : { lint: recorded.lint }),
   };
 }
 
@@ -618,16 +742,9 @@ export function renderBriefDecide(decided: BriefDecideResult): string {
   ].join("\n");
 }
 
-/**
- * The old bare-array shape of `brief list --json`, kept for one release
- * behind `--json --array` (docs/stability.md, "Deprecation policy").
- */
-export const BRIEF_LIST_ARRAY_DEPRECATION: Deprecation = {
-  surface: "idiom brief list --json --array",
-  replacement:
-    "idiom brief list --json, which prints { interfaceVersion, briefs }",
-  removedIn: "0.24.0",
-};
+/** `brief list --json --array` was deprecated in 0.23.0 and removed in 0.24.0. */
+export const BRIEF_LIST_ARRAY_REMOVED =
+  "--array was removed in 0.24.0; use idiom brief list --json and read .briefs from { interfaceVersion, briefs }";
 
 export async function briefListCommand(
   options: ProjectOptions,
@@ -664,6 +781,8 @@ export type BriefResearchOutcome =
       recorded: RecordedBrief & { markdownRelative: string };
       researchRun: ResearchRun;
       incomplete: boolean;
+      /** Criteria that cap with no floor or outcome; `line` is the 1-based index. */
+      lint: CriterionWarning[];
     };
 
 /** `idiom brief "<request>" --research`: research and options without an agent. */
@@ -672,6 +791,7 @@ export async function briefResearchCommand(
     request: string;
     onFallback?: ((fallback: TriageFallback) => void) | undefined;
     onProgress?: ((message: string) => void) | undefined;
+    onWarning?: ((message: string) => void) | undefined;
     dependencies?: BriefDependencies | undefined;
   },
 ): Promise<BriefResearchOutcome> {
@@ -745,7 +865,22 @@ export async function briefResearchCommand(
     },
     researchRun: result.researchRun,
     incomplete: result.kind === "incomplete",
+    lint: await lintBriefCriteria(
+      projectDirectory,
+      project,
+      (recorded.brief.acceptanceCriteria ?? []).map(
+        (criterion) => criterion.statement,
+      ),
+      options.onWarning,
+    ),
   };
+}
+
+/** A stored brief's lint warnings, for human output. */
+export function renderBriefLint(lint: CriterionWarning[]): string[] {
+  return lint.flatMap((warning) =>
+    renderWarning(`criterion ${warning.line}`, warning),
+  );
 }
 
 export function renderBriefResearch(
@@ -763,6 +898,7 @@ export function renderBriefResearch(
             markdown: result.recorded.markdownRelative,
             status: result.recorded.brief.status,
             researchRun: result.researchRun,
+            ...(result.lint.length === 0 ? {} : { lint: result.lint }),
           },
     );
   if (result.outcome === "no-decision")
@@ -774,7 +910,99 @@ export function renderBriefResearch(
     ...(researchRun.incomplete === undefined
       ? []
       : [researchRun.incomplete.note]),
+    ...renderBriefLint(result.lint),
   ].join("\n");
+}
+
+/** `idiom brief research "<request>"`: comparables, references and criteria. */
+export async function briefComparablesCommand(
+  options: ProjectOptions & {
+    request: string;
+    viewport?: string | undefined;
+    dependencies?: BriefDependencies | undefined;
+  },
+): Promise<ComparableResearch> {
+  const { projectDirectory, project } =
+    await validateProjectConfiguration(options);
+  return runComparableResearch({
+    projectDirectory,
+    project,
+    cwd: options.cwd ?? process.cwd(),
+    request: options.request,
+    viewport: options.viewport,
+    dependencies: {
+      now: options.dependencies?.now,
+      captureComparable: options.dependencies?.captureComparable,
+    },
+  });
+}
+
+export function renderComparableResearch(
+  result: ComparableResearch,
+  json: boolean,
+): string {
+  if (json) return jsonPayload(result);
+  const lines: string[] = [`Comparables for "${result.request}":`];
+  for (const comparable of result.comparables) {
+    lines.push(
+      `- ${comparable.name} (${comparable.tier}): ${comparable.reason}`,
+    );
+    if (comparable.page !== undefined)
+      lines.push(
+        `  page: ${comparable.page.url}${comparable.page.surface === undefined ? "" : ` (${comparable.page.surface})`}`,
+      );
+    lines.push(
+      `  status: ${comparable.status === "not-reachable" ? `not reachable — ${comparable.notReachable}` : comparable.status}`,
+    );
+  }
+  const captured = result.comparables.filter(
+    (comparable) => comparable.reference !== undefined,
+  );
+  if (captured.length > 0) {
+    lines.push("", "Measurements:");
+    for (const comparable of captured) {
+      const reference = comparable.reference;
+      if (reference === undefined) continue;
+      lines.push(
+        `- ${comparable.name} — ${reference.label}, ${reference.source} (${reference.viewport.name} ${reference.viewport.width}×${reference.viewport.height}, captured ${reference.capturedAt})`,
+      );
+      for (const measurement of comparable.measurements)
+        lines.push(
+          `  ${measurement.subject} ${measurement.property}: ${formatNumber(measurement.value)}${measurement.unit} — ${measurement.selector} at ${measurement.url}`,
+        );
+      if (comparable.measurements.length === 0)
+        lines.push(
+          "  nothing measured: no element carried the request's words",
+        );
+      if (comparable.unmatched.length > 0)
+        lines.push(
+          `  not found on the page: ${comparable.unmatched.join(", ")}`,
+        );
+    }
+  }
+  const unreachable = result.comparables.filter(
+    (comparable) => comparable.status !== "captured",
+  );
+  if (unreachable.length > 0) {
+    lines.push("", "Not reachable:");
+    for (const comparable of unreachable)
+      lines.push(
+        comparable.status === "no-public-page"
+          ? `- ${comparable.name}: no public page listed (add a url or pages entry)`
+          : `- ${comparable.name}: ${comparable.page?.url} — ${comparable.notReachable}`,
+      );
+  }
+  lines.push("", "Proposed acceptance criteria:");
+  if (result.criteria.length === 0)
+    lines.push("(none: nothing was measured on a captured comparable)");
+  for (const criterion of result.criteria) lines.push(`- ${criterion.text}`);
+  if (captured.length > 0)
+    lines.push(
+      "",
+      `References stored: ${captured.map((comparable) => comparable.reference?.label).join(", ")}`,
+    );
+  for (const warning of result.warnings) lines.push(`Warning: ${warning}`);
+  return lines.join("\n");
 }
 
 type ExportOptions = ProjectOptions & {

@@ -466,6 +466,37 @@ test("--wording that states a law records the ruling and configures its check in
   await loadProjectContext({ project: directory });
 });
 
+test("--wording that a toolbar stays on one row configures toolbar-layout", async () => {
+  const directory = await project();
+  const projectPath = join(directory, ".idiom", "project.json");
+  const wording = "The toolbar is always exactly one row.";
+  let shown = "";
+  const recorded = await rulingCommand({
+    project: directory,
+    decision: "ruling-1",
+    wording,
+    dependencies: {
+      confirm: async (diff) => {
+        shown = diff;
+        return true;
+      },
+    },
+  });
+  expect(shown.split("\n")[0]).toBe(
+    'Compiles to toolbar-layout: every control sits on one row inside the toolbar ([role="toolbar"]).',
+  );
+  expect(recorded).toMatchObject({
+    recorded: true,
+    compiled: { check: "toolbar-layout", scope: '[role="toolbar"]' },
+  });
+  expect(
+    JSON.parse(await readFile(projectPath, "utf8")).checks.toolbarLayout,
+  ).toEqual({
+    scopes: [{ name: wording, selector: '[role="toolbar"]', law: "one-row" }],
+  });
+  await loadProjectContext({ project: directory });
+});
+
 test("--wording on a surface outside the vocabulary records the ruling alone", async () => {
   const directory = await project();
   const projectPath = join(directory, ".idiom", "project.json");

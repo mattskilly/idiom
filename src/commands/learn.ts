@@ -210,12 +210,16 @@ export async function learnCommand(options: {
       from: options.from,
       learnedId,
     });
+    if (placed.ambiguous !== undefined)
+      throw new IdiomError(placed.ambiguous.message);
     options.write?.((placed.matched ?? placed.proposed).message);
   }
   const placement: LearnedPlacement =
-    placed !== undefined
-      ? (placed.matched ?? placed.proposed).placement
-      : { via: options.state === undefined ? "brief" : "state" };
+    placed?.matched !== undefined
+      ? placed.matched.placement
+      : placed?.proposed !== undefined
+        ? placed.proposed.placement
+        : { via: options.state === undefined ? "brief" : "state" };
 
   // --ruling, then a measurable reading of the words, then the brief's own
   // size criteria, then a ruling that names the brief.

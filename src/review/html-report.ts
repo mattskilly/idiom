@@ -50,6 +50,7 @@ import {
   fallbackSentence,
   findingIntroduction,
   groupCrop,
+  INTERMEDIATE_WIDTH_LABEL,
   type PageReviewScope,
   pageFindingEvidence,
   type ReviewOutcome,
@@ -390,7 +391,7 @@ export function renderReviewHtmlReport(options: ReviewHtmlOptions): string {
               finding.colorScheme ===
                 (tuple.colorSchemeAxis ? tuple.colorScheme : undefined),
           );
-          return `<section class="panel"><h3>${escapeHtml(tuple.viewport)}${axisAware ? ` / ${escapeHtml(tuple.colorScheme ?? "light")}` : ""} (${tuple.width}×${tuple.height})${tuple.combination === undefined ? "" : ` [${escapeHtml(tuple.combination)}]`}</h3>
+          return `<section class="panel"><h3>${escapeHtml(tuple.viewport)}${axisAware ? ` / ${escapeHtml(tuple.colorScheme ?? "light")}` : ""} (${tuple.width}×${tuple.height})${tuple.combination === undefined ? "" : ` [${escapeHtml(tuple.combination)}]`}${tuple.intermediateWidth ? escapeHtml(INTERMEDIATE_WIDTH_LABEL) : ""}</h3>
           ${tuple.design ? designTupleHtml(tuple, screenshot, options.screenshots) : screenshot === undefined ? (tuple.screenshotPath === undefined ? "" : `<p>${evidenceLink(tuple.screenshotPath, "Open screenshot (too large to inline in this report)")}</p>`) : `<img class="screenshot" src="${escapeHtmlAttribute(screenshot)}" alt="${escapeHtmlAttribute(`${state} at ${tuple.viewport}${axisAware ? ` in ${tuple.colorScheme}` : ""}`)}">`}
           ${tuple.failure === undefined ? "" : `<p><strong>Capture failure:</strong> ${escapeHtml(tuple.failure.message)} (${evidenceLink(tuple.metadataPath, "metadata")})</p>`}
           ${findings.length === 0 ? (tuple.failure?.hostDeferred ? "<p>Review deferred for this coordinate.</p>" : "<p>No findings.</p>") : findings.map((finding) => findingCard(finding, options.severityOverrides, options.page, options.screenshots, options.introductions)).join("")}

@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { learnHarvestCommand } from "../src/commands/learn-harvest.js";
 import { IdiomError } from "../src/errors.js";
+import { GUIDANCE_MARKER } from "../src/escalations/guidance.js";
+import { appendEscalationAnswer } from "../src/escalations/log.js";
 import {
   AMBIENT_AB_IDENTITY,
   harvestEnvironment,
@@ -343,3 +345,49 @@ test("an invalid cursor and an invalid --since are named", async () => {
     ".idiom/harvest.json is not a harvest cursor",
   );
 }, 60_000);
+
+test("Idiom's own precedent answers are never harvested as director corrections", async () => {
+  const { project, harvest, serve } = await setup();
+  // The answer on booking-times was Idiom's (recorded in its answer log), and
+  // a lost log line is still caught by the guidance marker.
+  await appendEscalationAnswer(project, {
+    version: 1,
+    at: "2026-11-09T09:00:00.000Z",
+    build: "booking-times",
+    escalation: "esc_a1",
+    phase: "implement",
+    question: "Which spacing token should the time chips use?",
+    guidance: `${GUIDANCE_MARKER}\nRecorded ruling ruling-1 in DESIGN.md says: "x"`,
+    precedent: {
+      kind: "ruling",
+      id: "ruling-1",
+      where: "DESIGN.md (recorded ruling ruling-1)",
+      text: "x",
+      score: 0.6,
+      sharedTerms: ["spacing", "chip"],
+    },
+    actor: "idiom",
+  });
+  const fixture = harvestFixture({ newAnswer: true });
+  const status = "ab build status booking-times --events 100000 --json";
+  serve({
+    ...fixture,
+    [status]: {
+      stdout: (fixture[status]?.stdout ?? "").replace(
+        JSON.stringify(NEW_ANSWER).slice(1, -1),
+        `${GUIDANCE_MARKER} The button should say Reserve, not Book.`,
+      ),
+    },
+  });
+  const result = await harvest();
+  expect(result.sources.autobuild).toMatchObject({
+    status: "read",
+    recorded: 0,
+    ignored: 3,
+  });
+  expect(
+    (await records(project)).filter(
+      (entry) => entry.harvest?.source === "escalation",
+    ),
+  ).toEqual([]);
+});

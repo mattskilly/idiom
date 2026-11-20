@@ -44,6 +44,10 @@ import { describeSpread, type FindingGroup, isRepeated } from "./groups.js";
 import { orderFindings } from "./presentation-order.js";
 import { buildIssueRankingContext } from "./ranking.js";
 
+/** Heading suffix for a tuple captured at a synthetic intermediate width. */
+export const INTERMEDIATE_WIDTH_LABEL =
+  " — intermediate width (layout checks only)";
+
 /** The fallback provider that completed the model layer, when one did. */
 export type OutcomeFallback = { from: string; to: string; reason: string };
 
@@ -535,7 +539,7 @@ export function renderReport(options: {
       (entry) => entry.state === state,
     )) {
       lines.push(
-        `### ${tuple.viewport}${axisAware ? ` / ${tuple.colorScheme}` : ""} (${tuple.width}×${tuple.height})${tuple.combination === undefined ? "" : ` [${text(tuple.combination)}]`}`,
+        `### ${tuple.viewport}${axisAware ? ` / ${tuple.colorScheme}` : ""} (${tuple.width}×${tuple.height})${tuple.combination === undefined ? "" : ` [${text(tuple.combination)}]`}${tuple.intermediateWidth ? INTERMEDIATE_WIDTH_LABEL : ""}`,
         "",
       );
       const designs = tupleDesigns(tuple);

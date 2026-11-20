@@ -11,6 +11,13 @@
 // in-tree build cannot delete it mid-gate. Refuse pre-existing tracked .idiom/ edits before building,
 // then restore only the finding-name registry the gate can rewrite: a dirty
 // tracked tree blocks reconcile, but existing decisions/config must survive.
+//
+// --advance (the idiom-advance finalize step): with the same out-of-tree CLI,
+// advance the shared base cache to the fetched default-branch tip and then to
+// this build's head, so the next build's gate finds a record at its base
+// whether or not this merge changed the site. Records are keyed by the
+// check+capture fingerprint, so the next build reuses them when its check and
+// capture code is identical. Advance writes only the untracked cache.
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
@@ -64,7 +71,7 @@ export async function runSiteGate({
   let status = 2;
   try {
     log(
-      `idiom-check: idiom check --gate --fail-on major (this checkout's CLI, built out of tree: ${built.cli})`,
+      `idiom-check: idiom check --gate --fail-on major (this checkout's CLI, built out of tree: ${built.cli}${built.engine ? `, engine ${built.engine}` : ""})`,
     );
     const gate = () => run(process.execPath, [built.cli, ...gateArguments]);
     status = (await gate()).status;
@@ -97,9 +104,53 @@ export async function runSiteGate({
   return status;
 }
 
+// Order matters: advancing the main tip after this build's head would see the
+// head (a descendant) as a newer record and report the tip superseded.
+export const advanceRuns = [
+  ["baseline", "advance", "--fetch"],
+  ["baseline", "advance", "--target", "HEAD"],
+];
+
+export async function runSiteAdvance({
+  build = buildLocalCli,
+  run = spawnStatus,
+  log = (line) => console.error(line),
+} = {}) {
+  let built;
+  try {
+    built = await build();
+  } catch (error) {
+    log(`idiom-advance: could not build the CLI (${error?.message ?? error})`);
+    return 2;
+  }
+  let status = 0;
+  try {
+    for (const args of advanceRuns) {
+      log(
+        `idiom-advance: idiom ${args.join(" ")} (this checkout's CLI${built.engine ? `, engine ${built.engine}` : ""})`,
+      );
+      const result = await run(process.execPath, [built.cli, ...args]).catch(
+        () => ({ status: 1 }),
+      );
+      if (result.status !== 0 && status === 0) status = result.status;
+    }
+  } finally {
+    try {
+      await built.cleanup();
+    } catch {
+      // A leftover temp directory is harmless.
+    }
+  }
+  return status;
+}
+
 if (
   process.argv[1] &&
   realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url)
 ) {
-  process.exit(await runSiteGate());
+  process.exit(
+    await (process.argv.includes("--advance")
+      ? runSiteAdvance()
+      : runSiteGate()),
+  );
 }

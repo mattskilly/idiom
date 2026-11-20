@@ -2,13 +2,14 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   idiomSkillFileNames,
+  readAutobuildFixSkillTemplate,
   readAutobuildVerifierSkillTemplate,
   readIdiomSkillFile,
   templatesDirectory,
 } from "../templates.js";
 import { IDIOM_VERSION } from "../version.js";
 import type { Distribution, SkillName } from "./types.js";
-export const skillNames: SkillName[] = ["idiom", "idiom-verify"];
+export const skillNames: SkillName[] = ["idiom", "idiom-verify", "idiom-fix"];
 export const canonicalPath = (skill: SkillName) => `.agents/skills/${skill}`;
 export const discoveryPath = (skill: SkillName) => `.claude/skills/${skill}`;
 export const discoveryTarget = (skill: SkillName) =>
@@ -28,6 +29,12 @@ export async function readDistribution(): Promise<Distribution> {
         "SKILL.md": {
           content: await readAutobuildVerifierSkillTemplate(),
           incomingPath: join(templatesDirectory(), "idiom-verify/SKILL.md"),
+        },
+      },
+      "idiom-fix": {
+        "SKILL.md": {
+          content: await readAutobuildFixSkillTemplate(),
+          incomingPath: join(templatesDirectory(), "idiom-fix/SKILL.md"),
         },
       },
     },

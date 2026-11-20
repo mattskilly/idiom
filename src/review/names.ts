@@ -1,6 +1,6 @@
 import type { Dirent } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { isCompleteRun } from "../capture/run-lifecycle.js";
 import { readDecisionLog } from "../decisions/log.js";
@@ -128,7 +128,56 @@ export type FindingNamesState = {
    * different name.
    */
   provisional?: string[] | undefined;
+  /**
+   * This checkout's older run folders (not the run under review) whose names
+   * conflict with the local `.idiom/finding-names.json`. The tracked registry
+   * wins: each folder sits out whole, and catalog readers skip it too.
+   */
+  staleReports?: StaleFindingReport[] | undefined;
 };
+
+export type StaleFindingReport = {
+  /** The run folder, resolved. */
+  runDirectory: string;
+  /** The first record that refused. */
+  source: string;
+  reason: string;
+};
+
+/**
+ * A conflict in this checkout's own evidence that cannot be resolved. `file`
+ * is the file a human acts on and `fix` the one-line remedy; the message is
+ * the bare conflict so callers can headline it without repeating the fix.
+ */
+export class FindingNameConflict extends IdiomError {
+  readonly file: string;
+  readonly conflict: string;
+  readonly fix: string;
+
+  constructor(options: { file: string; conflict: string; fix: string }) {
+    super(options.conflict);
+    this.name = "FindingNameConflict";
+    this.file = options.file;
+    this.conflict = options.conflict;
+    this.fix = options.fix;
+  }
+}
+
+/**
+ * The run failure a user sees for an unresolvable own-evidence conflict: the
+ * conflict as the headline, its fix as the hint, and the conflicting file.
+ */
+export function findingNameConflictFailure(
+  error: FindingNameConflict,
+): RunFailure {
+  return new RunFailure({
+    stage: "preflight",
+    cause: "finding-name-registry",
+    headline: `finding-name registry refused: ${error.conflict}`,
+    hint: error.fix,
+    paths: [error.file],
+  });
+}
 
 type Observation = {
   id: string;
@@ -137,6 +186,19 @@ type Observation = {
   finding?: Finding | undefined;
   source: string;
 };
+
+type RunObservations = { runDirectory: string; observations: Observation[] };
+
+/** The file a human acts on for an observation's source. */
+function evidenceFile(source: string): string {
+  const report = /^(.*)[\\/]findings\.json\[\d+\]$/.exec(source);
+  if (report?.[1] !== undefined) return report[1];
+  const decision = /^(.*decisions\.jsonl):\d+$/.exec(source);
+  if (decision?.[1] !== undefined) return decision[1];
+  const ticket = /^(.*\.md)#\d+$/.exec(source);
+  if (ticket?.[1] !== undefined) return ticket[1];
+  return source;
+}
 
 type BootstrapLineage = {
   name?: string | undefined;
@@ -314,6 +376,11 @@ function mergeRegistries(registries: RegistryInput[]): {
 }
 
 async function reportObservations(root: string): Promise<Observation[]> {
+  return (await reportRunObservations(root)).flatMap((run) => run.observations);
+}
+
+/** Each complete run folder's records, in run-name order. */
+async function reportRunObservations(root: string): Promise<RunObservations[]> {
   let runs: Dirent[];
   try {
     runs = await readdir(root, { withFileTypes: true });
@@ -321,7 +388,7 @@ async function reportObservations(root: string): Promise<Observation[]> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw new IdiomError(`cannot enumerate finding-name evidence ${root}`);
   }
-  const observations: Observation[] = [];
+  const grouped: RunObservations[] = [];
   for (const run of runs
     .filter((entry) => entry.isDirectory())
     .sort((left, right) => left.name.localeCompare(right.name))) {
@@ -350,6 +417,8 @@ async function reportObservations(root: string): Promise<Observation[]> {
       throw new IdiomError(
         `invalid finding-name evidence ${path}: expected an array`,
       );
+    const observations: Observation[] = [];
+    grouped.push({ runDirectory: join(root, run.name), observations });
     for (const [index, item] of value.entries()) {
       const parsed = findingSchema.safeParse(item);
       if (!parsed.success)
@@ -365,7 +434,7 @@ async function reportObservations(root: string): Promise<Observation[]> {
       });
     }
   }
-  return observations;
+  return grouped;
 }
 
 const TICKET_STATES = ["triage", "ready", "doing", "done"] as const;
@@ -578,6 +647,8 @@ export async function preflightFindingNameRegistry(options: {
   } catch (error) {
     if (!(error instanceof IdiomError) || error instanceof RunFailure)
       throw error;
+    if (error instanceof FindingNameConflict)
+      throw findingNameConflictFailure(error);
     const primary = (await resolveIsolation(
       projectDirectory,
       options.isolatedRegistry,
@@ -605,6 +676,34 @@ export function findingNameDivergenceWarning(
   if (divergence === undefined || divergence.skipped === 0) return undefined;
   const entries = divergence.skipped === 1 ? "entry" : "entries";
   return `Warning: finding-name registry diverges from the primary checkout: skipped ${divergence.skipped} conflicting ${entries} from ${divergence.path}; this checkout's names win (pass --isolated-registry to ignore the primary's names)`;
+}
+
+/** The one warning line for stale own run folders the registry outvoted, if any. */
+export function findingNameStaleReportWarning(
+  state: Pick<FindingNamesState, "staleReports" | "projectDirectory">,
+): string | undefined {
+  const stale = state.staleReports ?? [];
+  if (stale.length === 0) return undefined;
+  const folders = stale.length === 1 ? "folder" : "folders";
+  const those = stale.length === 1 ? "that folder" : "those folders";
+  const list = stale
+    .map((item) => relative(state.projectDirectory, item.runDirectory))
+    .join(", ");
+  return `Warning: ignored ${stale.length} stale run ${folders} whose finding names conflict with .idiom/finding-names.json: ${list}; the tracked registry wins. Fix: remove ${those} (local reports, not tracked) to silence this`;
+}
+
+/** Every finding-name warning for a state, one per line, if any. */
+export function findingNameWarnings(
+  state: Pick<
+    FindingNamesState,
+    "divergence" | "staleReports" | "projectDirectory"
+  >,
+): string | undefined {
+  const lines = [
+    findingNameDivergenceWarning(state),
+    findingNameStaleReportWarning(state),
+  ].filter((line): line is string => line !== undefined);
+  return lines.length === 0 ? undefined : lines.join("\n");
 }
 
 function touches(observation: Observation, shadowed: Set<string>): boolean {
@@ -641,6 +740,11 @@ export async function loadFindingNames(options: {
   gitTopology?: GitTopology | undefined;
   /** Ignore the primary checkout's names; defaults to the project config. */
   isolatedRegistry?: boolean | undefined;
+  /**
+   * The run being reviewed; its records stay strict while other own runs
+   * yield to the local registry.
+   */
+  currentRunDirectory?: string | undefined;
 }): Promise<FindingNamesState> {
   const projectDirectory = resolve(options.projectDirectory);
   const path = join(projectDirectory, ".idiom", "finding-names.json");
@@ -654,12 +758,13 @@ export async function loadFindingNames(options: {
     path,
     primary,
   );
-  const lineages: BootstrapLineage[] = merged.entries.map((entry) => ({
-    name: entry.name,
-    fingerprints: [...entry.fingerprints],
-    legacyIds: [...entry.legacyIds],
-    sources: ["finding-name registry"],
-  }));
+  const registryLineages = (): BootstrapLineage[] =>
+    merged.entries.map((entry) => ({
+      name: entry.name,
+      fingerprints: [...entry.fingerprints],
+      legacyIds: [...entry.legacyIds],
+      sources: ["finding-name registry"],
+    }));
   const shadowed = new Set(
     skipped.flatMap((entry) => [
       entry.name,
@@ -680,16 +785,119 @@ export async function loadFindingNames(options: {
   const ownReports = join(projectDirectory, ".idiom", "reports");
   const ownTickets = join(projectDirectory, ".autobuild", "tickets");
 
+  const currentRun =
+    options.currentRunDirectory === undefined
+      ? undefined
+      : resolve(options.currentRunDirectory);
+  const hasLocalRegistry = present.some((item) => item.path === path);
+  const shown = (file: string) => relative(projectDirectory, file) || ".";
+  const strictly = (
+    lineages: BootstrapLineage[],
+    observations: readonly Observation[],
+    kind: "decision" | "current-run" | "report" | "ticket",
+  ) => {
+    for (const observation of observations) {
+      try {
+        observe(lineages, observation);
+      } catch (error) {
+        if (!(error instanceof IdiomError) || error instanceof RunFailure)
+          throw error;
+        const file = evidenceFile(observation.source);
+        const where = shown(file);
+        throw new FindingNameConflict({
+          file,
+          conflict: error.message,
+          fix:
+            kind === "current-run"
+              ? `this run was named against a different finding-name registry; capture a fresh run (drop --from/--latest), or remove ${where}, and rerun`
+              : kind === "report"
+                ? `remove ${where} (a local report, not tracked) and rerun`
+                : kind === "decision"
+                  ? "fix the conflicting line in .idiom/decisions.jsonl (git checkout -- .idiom/decisions.jsonl restores the tracked log) and rerun"
+                  : `fix the idiom:finding block in ${where} and rerun`,
+        });
+      }
+    }
+  };
+  /**
+   * Folds a stale run folder atomically: into a copy, so a refusal rolls back
+   * the whole folder, not just the refusing record.
+   */
+  const leniently = (
+    lineages: BootstrapLineage[],
+    run: RunObservations,
+    staleReports: StaleFindingReport[],
+  ) => {
+    const copy: BootstrapLineage[] = lineages.map((lineage) => ({
+      ...lineage,
+      fingerprints: [...lineage.fingerprints],
+      legacyIds: [...lineage.legacyIds],
+      sources: [...lineage.sources],
+    }));
+    for (const observation of run.observations) {
+      try {
+        observe(copy, observation);
+      } catch (error) {
+        if (!(error instanceof IdiomError) || error instanceof RunFailure)
+          throw error;
+        staleReports.push({
+          runDirectory: resolve(run.runDirectory),
+          source: observation.source,
+          reason: error.message,
+        });
+        return;
+      }
+    }
+    lineages.splice(0, lineages.length, ...copy);
+  };
+
   // This checkout's evidence first, and strictly: a conflict here cannot be
   // resolved. Inherited evidence follows so it never founds a lineage that a
-  // local record then collides with.
+  // local record then collides with. With a local registry, though, only the
+  // run under review is strict among own runs: older run folders were named
+  // against whatever registry existed then, so they yield to the tracked one.
   const ownTicketEvidence = await ticketObservations(ownTickets);
-  for (const observation of [
-    ...(await decisionObservations(projectDirectory)),
-    ...(await reportObservations(ownReports)),
-    ...ownTicketEvidence.observations,
-  ])
-    observe(lineages, observation);
+  const ownRuns = await reportRunObservations(ownReports);
+  const ownDecisions = await decisionObservations(projectDirectory);
+  const isCurrent = (run: RunObservations) =>
+    resolve(run.runDirectory) === currentRun;
+  // `staleLast` folds stale runs after tickets, so a stale run can never make
+  // a ticket or the run under review refuse; the default keeps today's order
+  // (and so today's minted numbers) whenever that order holds.
+  const foldOwn = (staleLast: boolean) => {
+    const lineages = registryLineages();
+    const staleReports: StaleFindingReport[] = [];
+    strictly(lineages, ownDecisions, "decision");
+    if (!hasLocalRegistry) {
+      for (const run of ownRuns)
+        strictly(
+          lineages,
+          run.observations,
+          isCurrent(run) ? "current-run" : "report",
+        );
+    } else if (staleLast) {
+      for (const run of ownRuns.filter(isCurrent))
+        strictly(lineages, run.observations, "current-run");
+    } else {
+      for (const run of ownRuns)
+        if (isCurrent(run)) strictly(lineages, run.observations, "current-run");
+        else leniently(lineages, run, staleReports);
+    }
+    strictly(lineages, ownTicketEvidence.observations, "ticket");
+    if (hasLocalRegistry && staleLast)
+      for (const run of ownRuns)
+        if (!isCurrent(run)) leniently(lineages, run, staleReports);
+    return { lineages, staleReports };
+  };
+  let own: ReturnType<typeof foldOwn>;
+  try {
+    own = foldOwn(false);
+  } catch (error) {
+    if (!hasLocalRegistry || !(error instanceof FindingNameConflict))
+      throw error;
+    own = foldOwn(true);
+  }
+  const { lineages, staleReports } = own;
 
   const inheritedReports = unique([
     ...(primary === undefined ? [] : [join(primary, ".idiom", "reports")]),
@@ -776,6 +984,7 @@ export async function loadFindingNames(options: {
       error,
     })),
     ...(provisional.size === 0 ? {} : { provisional: [...provisional] }),
+    ...(staleReports.length === 0 ? {} : { staleReports }),
     ...(divergent === 0
       ? {}
       : {

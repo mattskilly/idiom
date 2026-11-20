@@ -151,6 +151,8 @@ export async function offerBriefInstruction(options: {
   projectDirectory: string;
   interactive: boolean;
   confirm: BriefInstructionConfirmation;
+  /** Targets left alone (--skip-wiring agents/claude): not offered at all. */
+  skip?: ((path: string) => boolean) | undefined;
 }): Promise<BriefInstructionOutcome[]> {
   const plan = await planBriefInstruction(options.projectDirectory);
   const lines = [...BRIEF_INSTRUCTION_LINES];
@@ -158,6 +160,7 @@ export async function offerBriefInstruction(options: {
   if (plan.kind === "no-agent-file") return [{ kind: "no-agent-file", lines }];
   const outcomes: BriefInstructionOutcome[] = [];
   for (const target of plan.targets) {
+    if (options.skip?.(target.path)) continue;
     if ("unsafe" in target) {
       outcomes.push({
         kind: "unsafe",

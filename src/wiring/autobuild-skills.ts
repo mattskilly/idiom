@@ -22,7 +22,8 @@ Name the applicable Idiom checks the implementation is expected to pass.`,
     body: `## Idiom
 
 For UI work, before finishing run \`idiom check --changed --fail-on major\`, inspect its evidence, and fix reported findings within the authorized change.
-If the check or repair cannot be completed, record why and what remains; do not claim a skipped check passed or suppress findings.`,
+If the check or repair cannot be completed, record why and what remains; do not claim a skipped check passed or suppress findings.
+If an idiom-fix verify report says it committed fixes, keep those commits (apply its patch if they are missing) and finish; do not revert them.`,
   },
   {
     surface: "autobuild-code-review",

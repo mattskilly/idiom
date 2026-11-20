@@ -59,7 +59,7 @@ p { text-wrap:pretty; }
 h1,h2,h3 { font-family:var(--display); color:var(--fg); }
 h1 { font-size:var(--step-3); line-height:.98; letter-spacing:-.045em; font-weight:700; margin:0 0 24px; text-wrap:balance; max-width:13ch; }
 h2 { font-size:var(--step-2); line-height:1.02; letter-spacing:-.035em; font-weight:700; margin:0 0 16px; text-wrap:balance; max-width:22ch; }
-h3 { font-size:var(--step-0); line-height:1.3; letter-spacing:-.01em; font-weight:650; margin:0; text-wrap:pretty; }
+h3 { font-size:var(--step-0); line-height:1.3; font-weight:650; margin:0; text-wrap:pretty; }
 .lede { font-size:var(--step-1); line-height:1.45; color:var(--muted); margin:0 0 32px; max-width:44ch; }
 
 /* Hero selection frame: the headline as a design tool would select it */
@@ -425,7 +425,7 @@ ol.cmds li { grid-template-columns:minmax(0,1fr) 14rem 28px; }
 <section id="agent">
   <p class="kicker">With your agent</p>
   <h2>Your agent checks its own work.</h2>
-  <ol class="cmds" aria-label="The agent loop"><li><code>idiom check checkout</code><span class="what">every finding in fix order, each with a crop</span></li><li><code>idiom check checkout --changed</code><span class="what">only the states this change touched</span></li><li><code>idiom check checkout --gate</code><span class="what">a build gate within a 3-minute budget</span></li><li><code>idiom fix checkout</code><span class="what">your agent repairs, Idiom verifies</span></li><li><code>idiom check checkout --fail-on major</code><span class="what">in CI: fail only on new problems</span></li></ol>
+  <ol class="cmds" aria-label="The agent loop"><li><code>idiom check checkout</code><span class="what">every finding in fix order, each with a crop</span></li><li><code>idiom check checkout --changed</code><span class="what">only the states this change touched</span></li><li><code>idiom check checkout --gate</code><span class="what">a build gate within a 3-minute budget</span></li><li><code>idiom fix checkout</code><span class="what">your agent repairs, Idiom verifies</span></li><li><code>idiom check checkout --fail-on major</code><span class="what">in CI: fail only on new problems</span></li><li><code>idiom watch</code><span class="what">gates and files each merge as it lands</span></li></ol>
   <div class="runs">
     <div class="reveal" style="--i:0"><span class="where">Your terminal</span><b>Run it yourself</b><p><code>idiom quick</code> on any URL, <code>idiom check</code> on a flow.</p></div>
     <div class="reveal" style="--i:1"><span class="where">Your agent</span><b>Tools over MCP</b><p>Claude Code, Codex and Cursor, with a skill and a Claude Code plugin.</p></div>
@@ -456,7 +456,7 @@ ol.cmds li { grid-template-columns:minmax(0,1fr) 14rem 28px; }
     <li class="session-command"><code>/plugin install idiom@idiom</code><span class="what">Claude Code session: MCP, skill and UI reminders</span></li>
     <li><code>codex plugin marketplace add mattskilly/idiom</code><span class="what">Codex shell: add marketplace</span></li>
     <li><code>codex plugin add idiom@idiom</code><span class="what">Codex shell: Idiom skill</span></li>
-    <li><code>codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.23.0/mattskilly-idiom-0.23.0.tgz idiom mcp</code><span class="what">Codex shell: MCP tools, started in your project</span></li>
+    <li><code>codex mcp add idiom -- npx -y --package=https://github.com/mattskilly/idiom/releases/download/v0.24.0/mattskilly-idiom-0.24.0.tgz idiom mcp</code><span class="what">Codex shell: MCP tools, started in your project</span></li>
     <li><code>npx playwright@1.62.1 install chromium</code><span class="what">Node 22.12+ and npm/npx required; browser once per machine</span></li>
     <li><code>npm install -g @mattskilly/idiom</code><span class="what">optional CLI: install the current release</span></li>
     <li><code>idiom quick http://localhost:3000</code><span class="what">no setup, findings in report.html</span></li>

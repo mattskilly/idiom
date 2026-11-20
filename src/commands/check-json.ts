@@ -7,6 +7,7 @@ import { mergePending } from "../decisions/pending.js";
 import { decisionQuestion } from "../decisions/question.js";
 import { gatePlanLine } from "../gate/render.js";
 import type { GateSkipResult } from "../gate/types.js";
+import { conditionLine } from "../unattended/condition.js";
 import type { CheckSummary } from "./check.js";
 import type { ChangedCheckResult } from "./check-changed.js";
 import type { GatePlanOnlyResult, GateRunResult } from "./check-gate.js";
@@ -106,5 +107,14 @@ export function gateRunJson(result: GateRunResult) {
     decisionNeeded,
     decisionQuestion: decisionQuestion(decisionNeeded),
     ...selectionJson(output),
+    ...(result.conditions.length === 0
+      ? {}
+      : {
+          conditions: result.conditions.map((condition) => ({
+            key: condition.key,
+            cause: condition.cause,
+            line: conditionLine(condition),
+          })),
+        }),
   };
 }

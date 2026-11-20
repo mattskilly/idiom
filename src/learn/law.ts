@@ -41,6 +41,17 @@ export type CompiledLaw =
       scope?: LawScope | undefined;
     }
   | {
+      family: "one-row";
+      check: "toolbar-layout";
+      scope?: LawScope | undefined;
+    }
+  | {
+      family: "toolbar-centring";
+      check: "toolbar-layout";
+      tolerance: number;
+      scope?: LawScope | undefined;
+    }
+  | {
       family: "share";
       check: "layout-invariants";
       share: "top" | "height" | "width";
@@ -148,8 +159,19 @@ function scopeOf(text: string): LawScope | undefined {
     String.raw`^(?:the\s+|all\s+|every\s+|each\s+)?(${surfaceAlternation})\s+(?:buttons?|items?|controls?|fields?|inputs?|labels?|tabs?|chips?|children|entries)\b`,
   ).exec(text);
   if (leading?.[1] !== undefined) return knownSurface(leading[1]);
+  // The surface as the sentence's subject: "the toolbar is…", "the selection toolbar never…".
+  const verb = String.raw`(?:is|are|stays?|remains?|keeps?|fits?|must|should|never|always|sits?|wraps?|does(?:n't|\s+not)?|do(?:n't|\s+not)?)\b`;
+  const subject = new RegExp(
+    String.raw`^(?:(?:the|a|an|any|every|each|all)\s+)?(?:([a-z][a-z-]*)\s+)?(${surfaceAlternation})\s+${verb}`,
+  ).exec(text);
+  if (subject?.[2] !== undefined) {
+    const modifier = subject[1];
+    if (modifier === undefined) return knownSurface(subject[2]);
+    const whole = `${modifier} ${subject[2]}`;
+    return knownSurface(whole) ?? { surface: whole };
+  }
   const unknown =
-    /\b(?:in|inside|within|on|across)\s+(?:a|an|the|any|every|each)\s+([a-z][a-z-]*(?:\s+(?:panel|bar|pane|area|sidebar|header|footer|card|list|section|drawer|popover|sheet|rail))?)\b/.exec(
+    /\b(?:in|inside|within|on|across)\s+(?:a|an|the|any|every|each)\s+([a-z][a-z-]*(?:\s+(?:panel|bar|pane|area|sidebar|header|footer|card|list|section|drawer|popover|sheet|rail|toolbars?))?)\b/.exec(
       text,
     );
   const noun = unknown?.[1];
@@ -213,6 +235,26 @@ function shareOf(text: string): "top" | "height" | "width" | undefined {
   return word.startsWith("height") ? "height" : "width";
 }
 
+/** "one row", "a single line", "never wraps", "doesn't wrap". */
+const ONE_ROW =
+  /\b(?:one|a single|single|1)\s+(?:row|line)\b|\bnever\s+wraps?\b|\b(?:does|do|must|should)\s*(?:n't|not)\s+wrap\b/;
+/** Words about text, whose wrapping and centring are not a toolbar's. */
+const TEXT_WORDS =
+  /\b(?:labels?|text|copy|titles?|headings?|words?|names?|captions?)\b/;
+const CENTRED = /\b(?:centred|centered|centre|center)\b/;
+const TOOLBAR_PARTS = /\b(?:controls?|buttons?|items?|icons?)\b/;
+
+/**
+ * A scope toolbar-layout can measure: the vocabulary's toolbar, or a surface
+ * outside it whose phrase ends in toolbar or bar ("selection toolbar",
+ * "format bar"). Anything else would be measured as a toolbar it is not.
+ */
+const toolbarScope = (scope: LawScope | undefined): boolean =>
+  scope !== undefined &&
+  (scope.surface === "toolbar" ||
+    (scope.selector === undefined &&
+      /(?:^|\s)(?:tool ?bars?|bars?)$/.test(scope.surface)));
+
 function subjectOf(text: string): ShareSubject {
   if (/\bmenu\s*items?\b/.test(text)) return "menu items";
   if (/\b(?:fields?|inputs?)\b/.test(text)) return "fields";
@@ -239,6 +281,27 @@ export function compileLaw(text: string): LawCompilation {
   const within = numberFrom(
     new RegExp(String.raw`\bwithin\s+${NUMBER}`).exec(words),
   );
+  // Controls (not labels) vertically centred in a toolbar: before
+  // text-centering, which keeps label sentences and every other surface.
+  if (
+    toolbarScope(scope) &&
+    CENTRED.test(words) &&
+    TOOLBAR_PARTS.test(words) &&
+    !TEXT_WORDS.test(words) &&
+    !/\bhorizontally\b/.test(words)
+  ) {
+    const tolerance = within ?? 1;
+    if (tolerance <= 0)
+      return { notCompiled: "a centring tolerance must be above 0px" };
+    return {
+      law: {
+        family: "toolbar-centring",
+        check: "toolbar-layout",
+        tolerance,
+        scope,
+      },
+    };
+  }
   if (
     /\b(?:centred|centered|centre|center)\b/.test(words) &&
     within !== undefined
@@ -257,6 +320,20 @@ export function compileLaw(text: string): LawCompilation {
   }
 
   const share = shareOf(words);
+  if (
+    ONE_ROW.test(words) &&
+    !TEXT_WORDS.test(words) &&
+    share === undefined &&
+    minGap(words) === undefined
+  ) {
+    if (scope === undefined)
+      return { notCompiled: "name the toolbar that stays on one row" };
+    if (!toolbarScope(scope))
+      return {
+        notCompiled: `toolbar-layout keeps toolbars on one row, and the ${scope.surface} is not one; name the toolbar`,
+      };
+    return { law: { family: "one-row", check: "toolbar-layout", scope } };
+  }
   if (share !== undefined) {
     const subject = subjectOf(words);
     const implied =
@@ -339,6 +416,10 @@ export function lawSummary(law: CompiledLaw, selector?: string): string {
     }
     case "centring":
       return `Compiles to text-centering: single-line labels sit within ${law.tolerance}px of their box's vertical centre${scoped}.${law.tolerance < CENTRING_FLOOR ? ` Measured at the ${CENTRING_FLOOR}px font-metric floor.` : ""}`;
+    case "one-row":
+      return `Compiles to toolbar-layout: every control sits on one row inside ${scope ?? "the toolbar"}.`;
+    case "toolbar-centring":
+      return `Compiles to toolbar-layout: controls' vertical centres sit within ${law.tolerance}px of each other inside ${scope ?? "the toolbar"}.`;
     case "share": {
       const what =
         law.share === "top"
@@ -547,6 +628,45 @@ function applyLaw(
           path: ["checks", "textCentering", "scopes"],
           item,
         },
+      };
+    }
+    case "one-row":
+    case "toolbar-centring": {
+      if (scoped === undefined)
+        throw new IdiomError(
+          "unreachable: a toolbar-layout law always has a scope",
+        );
+      const toolbarLayout = child(checks, "toolbarLayout");
+      const kind = law.family === "one-row" ? "one-row" : "centred";
+      const enable = toolbarLayout.enabled === false;
+      if (enable) toolbarLayout.enabled = true;
+      const scopes = list(toolbarLayout, "scopes");
+      const existing = scopes
+        .map(record)
+        .find((item) => item.selector === scoped && item.law === kind);
+      if (existing !== undefined)
+        throw new IdiomError(
+          `checks.toolbarLayout.scopes already has ${scoped} (${kind}, ${JSON.stringify(existing.name)}); edit it in .idiom/project.json`,
+        );
+      const item =
+        law.family === "one-row"
+          ? { name, selector: scoped, law: kind }
+          : { name, selector: scoped, law: kind, tolerance: law.tolerance };
+      scopes.push(item);
+      return {
+        ...base,
+        entry: item,
+        edit: enable
+          ? {
+              kind: "set",
+              path: ["checks", "toolbarLayout"],
+              value: toolbarLayout,
+            }
+          : {
+              kind: "append",
+              path: ["checks", "toolbarLayout", "scopes"],
+              item,
+            },
       };
     }
     case "share": {

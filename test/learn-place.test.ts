@@ -1,10 +1,11 @@
-import { access, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { PNG } from "pngjs";
 import { afterEach, expect, test } from "vitest";
 import { run } from "../src/cli.js";
 import { learnCommand } from "../src/commands/learn.js";
+import { placeObservation } from "../src/learn/place.js";
 import { webStateSchema } from "../src/schemas/flow.js";
 import { learnedEntrySchema } from "../src/schemas/learned.js";
 import { validateProject } from "../src/validation.js";
@@ -407,3 +408,335 @@ test("--state placements are recorded as such; the CLI says when a state is prop
     "Recorded learned-2 (ruling), open, with a draft flow state proposal — .idiom/proposals/states/learned-2.json,",
   );
 }, 60_000);
+
+/** A schema-valid run record of a capture that never finished. */
+function interruptedRecord(id: string, commit: string) {
+  const tuple = { state: "editor", viewport: "desktop", colorScheme: "light" };
+  const phase = { status: "measured", ms: 1 };
+  return {
+    version: 1,
+    status: "interrupted",
+    runId: id,
+    owner: { pid: 1 },
+    startedAt: "2026-10-23T12:00:00.000Z",
+    updatedAt: "2026-10-23T12:00:01.000Z",
+    completedTuples: [],
+    interruption: { reason: "signal", signal: "SIGINT" },
+    flow: "studio-lab",
+    source: { commit, dirty: false },
+    declared: [tuple],
+    selected: [tuple],
+    viewports: [{ name: "desktop", width: 1440, height: 900 }],
+    probe: {
+      policy: "once-per-state",
+      fallback: false,
+      intended: [],
+      executed: [],
+    },
+    timings: {
+      build: phase,
+      start: phase,
+      tuples: [{ ...tuple, total: phase, probe: phase }],
+      probe: phase,
+      checks: phase,
+    },
+  };
+}
+
+/** Folders under .idiom/reports/ that are not complete runs with simple IDs. */
+const incompleteRun = "2026-10-23T12-00-00-000Z";
+async function pollute(project: string, commit: string) {
+  const reports = join(project, ".idiom", "reports");
+  await mkdir(join(reports, ".cache"), { recursive: true });
+  const notes = join(reports, "my notes", "editor", "desktop");
+  await mkdir(notes, { recursive: true });
+  await writeFile(join(notes, "dom.html"), "<main>stray</main>");
+  // A newer run that never finished: its editor capture must not be used.
+  await storedRun(project, incompleteRun, commit, [
+    { state: "editor", html: "before.html" },
+  ]);
+  await writeFile(
+    join(reports, incompleteRun, "run.json"),
+    JSON.stringify(interruptedRecord(incompleteRun, commit)),
+  );
+}
+
+async function pollutedProject() {
+  const { project, commit } = await studioProject(directories, [
+    "editor",
+    "settings",
+  ]);
+  await storedRun(project, runId, commit, [
+    { state: "editor", html: "before.html" },
+    { state: "settings", html: "copy-before.html" },
+  ]);
+  await pollute(project, commit);
+  return project;
+}
+
+test("learn skips stored folders that are not complete runs: screenshot and --flow --state both use the newest complete run", async () => {
+  const project = await pollutedProject();
+  const stored = join(
+    project,
+    ".idiom",
+    "reports",
+    runId,
+    "editor",
+    "desktop",
+    "screenshot.png",
+  );
+  const screenshot = join(project, "annotated.png");
+  await writeFile(screenshot, annotate(await readFile(stored)));
+  const fromScreenshot = await learnCommand({
+    project,
+    observation: "the override dots should be 8px",
+    screenshot,
+    yes: true,
+    dependencies: { gitTopology: noTopology },
+  });
+  expect(fromScreenshot).toMatchObject({
+    recorded: true,
+    placement: { via: "screenshot", runId },
+  });
+
+  await learnCommand({
+    project,
+    flow: "studio-lab",
+    state: "editor",
+    observation: "the status pills should be 32×24px",
+    selectors: [".pill"],
+    yes: true,
+    dependencies: { gitTopology: noTopology },
+  });
+  const [first, second] = await records(project);
+  expect(first).toMatchObject({
+    flow: "studio-lab",
+    state: "editor",
+    capture: { runId },
+  });
+  expect(second).toMatchObject({
+    flow: "studio-lab",
+    state: "editor",
+    capture: { runId },
+  });
+}, 60_000);
+
+test("an explicit --from is still validated: a folder name or an unfinished run is refused", async () => {
+  const project = await pollutedProject();
+  await expect(
+    learnCommand({
+      project,
+      state: "editor",
+      from: "my notes",
+      observation: "the status pills should be 32×24px",
+      selectors: [".pill"],
+      yes: true,
+      dependencies: { gitTopology: noTopology },
+    }),
+  ).rejects.toThrow("--from must be a simple run ID beneath .idiom/reports");
+  await expect(
+    learnCommand({
+      project,
+      state: "editor",
+      from: incompleteRun,
+      observation: "the status pills should be 32×24px",
+      selectors: [".pill"],
+      yes: true,
+      dependencies: { gitTopology: noTopology },
+    }),
+  ).rejects.toThrow(`Run ${incompleteRun} is interrupted`);
+  await expect(
+    access(join(project, ".idiom", "learned.jsonl")),
+  ).rejects.toThrow();
+}, 60_000);
+
+const guideRun = "2026-10-21T12-00-00-000Z";
+
+/**
+ * Two flows: studio-lab (editor, settings) and tablet-guide (guide, editor,
+ * options). Both declare `editor`, captured from the same page, and
+ * tablet-guide/options is the same page as studio-lab/settings.
+ */
+async function multiFlowProject() {
+  const { project, commit } = await studioProject(directories, [
+    "editor",
+    "settings",
+  ]);
+  await writeFile(
+    join(project, ".idiom", "flows", "tablet-guide.json"),
+    JSON.stringify({
+      id: "tablet-guide",
+      title: "Guide",
+      intent: ["Tablet style guide"],
+      setup: [],
+      viewports: ["desktop"],
+      states: ["guide", "editor", "options"].map((state) => ({
+        id: state,
+        description: state,
+        url: `/guide/${state}`,
+        expect: { status: 200 },
+      })),
+    }),
+  );
+  await storedRun(project, runId, commit, [
+    { state: "editor", html: "before.html" },
+    { state: "settings", html: "copy-before.html" },
+  ]);
+  const guideFlow = { flow: { id: "tablet-guide", title: "Guide" } };
+  await storedRun(project, guideRun, commit, [
+    { state: "guide", html: "empty-state-before.html", metadata: guideFlow },
+    { state: "editor", html: "before.html", metadata: guideFlow },
+    { state: "options", html: "copy-before.html", metadata: guideFlow },
+  ]);
+  await pollute(project, commit);
+  return project;
+}
+
+const storedScreenshot = (project: string, run: string, state: string) =>
+  join(project, ".idiom", "reports", run, state, "desktop", "screenshot.png");
+
+test("with several flows, learn places on the flow the screenshot or words matched, and names the candidates when it cannot tell", async () => {
+  const project = await multiFlowProject();
+
+  // A screenshot of a state only the second flow declares lands there.
+  const guide = join(project, "guide.png");
+  await writeFile(
+    guide,
+    annotate(await readFile(storedScreenshot(project, guideRun, "guide"))),
+  );
+  const fromGuide = await learnCommand({
+    project,
+    observation: "the empty state heading feels cramped",
+    screenshot: guide,
+    ruling: true,
+    yes: true,
+    dependencies: { gitTopology: noTopology },
+  });
+  expect(fromGuide).toMatchObject({
+    recorded: true,
+    kind: "ruling",
+    placement: { via: "screenshot", runId: guideRun },
+  });
+
+  // A ruling whose words name a state of the first flow lands there.
+  const ruling = await learnCommand({
+    project,
+    observation: "the settings toggle labels feel cramped",
+    ruling: true,
+    yes: true,
+    dependencies: { gitTopology: noTopology },
+  });
+  expect(ruling).toMatchObject({
+    recorded: true,
+    kind: "ruling",
+    placement: { via: "words", tokens: ["setting"] },
+  });
+  const [first, second] = await records(project);
+  expect(first).toMatchObject({ flow: "tablet-guide", state: "guide" });
+  expect(second).toMatchObject({ flow: "studio-lab", state: "settings" });
+
+  // Words naming a state both flows declare: ambiguous, nothing written.
+  await expect(
+    learnCommand({
+      project,
+      observation: "the editor header feels heavy",
+      yes: true,
+      dependencies: { gitTopology: noTopology },
+    }),
+  ).rejects.toThrow(
+    "The words name states in several flows: studio-lab/editor, tablet-guide/editor; pass --flow <id> to choose.",
+  );
+  // Words that name nothing: ambiguous between every flow.
+  await expect(
+    learnCommand({
+      project,
+      observation: "the toolbar labels feel cramped",
+      ruling: true,
+      yes: true,
+      dependencies: { gitTopology: noTopology },
+    }),
+  ).rejects.toThrow(
+    "The words do not say which flow this is about (studio-lab, tablet-guide); pass --flow <id> or --state <id>.",
+  );
+  expect(await records(project)).toHaveLength(2);
+  await expect(access(join(project, ".idiom", "proposals"))).rejects.toThrow();
+
+  // --flow settles it: the draft state goes on that flow.
+  const chosen = await learnCommand({
+    project,
+    flow: "tablet-guide",
+    observation: "the toolbar labels feel cramped",
+    ruling: true,
+    yes: true,
+    dependencies: { gitTopology: noTopology },
+  });
+  expect(chosen).toMatchObject({
+    recorded: true,
+    kind: "ruling",
+    placement: { via: "proposed" },
+  });
+  expect((await records(project))[2]).toMatchObject({
+    flow: "tablet-guide",
+    state: "toolbar-label-feel-cramped",
+  });
+  const design = await readFile(join(project, "DESIGN.md"), "utf8");
+  expect(design).toContain(
+    "Learned from human review (state proposed: tablet-guide/toolbar-label-feel-cramped)",
+  );
+}, 90_000);
+
+test("a screenshot too close to call between flows is reported, unless the words name one of the contenders", async () => {
+  const project = await multiFlowProject();
+  const flows = (await validateProject({ project })).flows;
+
+  // The editor page is captured identically in both flows.
+  const editor = join(project, "editor.png");
+  await writeFile(
+    editor,
+    annotate(await readFile(storedScreenshot(project, runId, "editor"))),
+  );
+  const tied = await placeObservation({
+    projectDirectory: project,
+    flows,
+    observation: "the override dots should be 8px",
+    screenshot: editor,
+    learnedId: "learned-1",
+  });
+  expect(tied.ambiguous?.candidates.sort()).toEqual([
+    "studio-lab/editor",
+    "tablet-guide/editor",
+  ]);
+  expect(tied.ambiguous?.message).toMatch(
+    /^The screenshot matches states in several flows: (studio-lab|tablet-guide)\/editor \(\d+%\), (studio-lab|tablet-guide)\/editor \(\d+%\); pass --flow <id> to choose\.$/,
+  );
+
+  // The settings page ties with tablet-guide/options; the words settle it.
+  const settings = join(project, "settings.png");
+  await writeFile(
+    settings,
+    annotate(await readFile(storedScreenshot(project, runId, "settings"))),
+  );
+  const named = await placeObservation({
+    projectDirectory: project,
+    flows,
+    observation: "the settings toggle labels feel cramped",
+    screenshot: settings,
+    learnedId: "learned-1",
+  });
+  expect(named.matched).toMatchObject({
+    flow: { flow: { id: "studio-lab" } },
+    state: "settings",
+    placement: { via: "screenshot", confidence: "low", runId },
+  });
+  const unnamed = await placeObservation({
+    projectDirectory: project,
+    flows,
+    observation: "the toggle labels feel cramped",
+    screenshot: settings,
+    learnedId: "learned-1",
+  });
+  expect(unnamed.ambiguous?.candidates.sort()).toEqual([
+    "studio-lab/settings",
+    "tablet-guide/options",
+  ]);
+}, 90_000);

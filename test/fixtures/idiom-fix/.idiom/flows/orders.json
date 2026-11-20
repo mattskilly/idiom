@@ -1,0 +1,14 @@
+{
+  "id": "orders",
+  "title": "Orders",
+  "setup": [],
+  "intent": [],
+  "states": [
+    {
+      "id": "list",
+      "description": "Orders list with its toolbar",
+      "url": "/orders",
+      "expect": { "textPresent": ["Orders"] }
+    }
+  ]
+}

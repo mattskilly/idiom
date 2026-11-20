@@ -1,0 +1,9 @@
+{
+  "name": "idiom-pipelines-sample",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sample app for the Idiom build-setup check.",
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

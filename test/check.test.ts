@@ -18,6 +18,7 @@ import {
 } from "../src/decisions/log.js";
 import { digestFlows } from "../src/digest/build.js";
 import { type DigestRecord, digestRecordSchema } from "../src/digest/record.js";
+import { RUN_FAILURE_EXIT_CODE, RunFailure } from "../src/errors.js";
 import { comparePriority } from "../src/review/ranking.js";
 import type { Finding } from "../src/schemas/finding.js";
 import { parseFindingBlocks } from "../src/verify/spec.js";
@@ -863,6 +864,130 @@ test("a linked worktree whose registry diverged from the primary still checks, w
   expect(isolated.findings.map((finding) => finding.id).sort()).toEqual(
     firstIds,
   );
+}, 90_000);
+
+test("a stale local run folder yields to the tracked registry; the run under review stays strict", async () => {
+  const { project, commit } = await studioProject();
+  const from = "2026-10-22T12-00-00-000Z";
+  await storedRun(project, from, commit);
+  const first = await checkCommand({
+    all: true,
+    project,
+    flow: "studio-lab",
+    from,
+  });
+  expect(first.findingNameWarning).toBeUndefined();
+  const firstIds = first.findings.map((finding) => finding.id).sort();
+  expect(firstIds.length).toBeGreaterThan(1);
+  const registry = JSON.parse(
+    await readFile(join(project, ".idiom", "finding-names.json"), "utf8"),
+  ) as { next: number };
+
+  // An older, untracked run named one lineage differently, against a
+  // registry that has since moved on.
+  const staleId = "2026-10-01T00-00-00-000Z";
+  const stale = join(project, ".idiom", "reports", staleId);
+  await cp(join(project, ".idiom", "reports", from), stale, {
+    recursive: true,
+  });
+  const recorded = JSON.parse(
+    await readFile(join(stale, "findings.json"), "utf8"),
+  ) as Array<{ id: string }>;
+  const [renamed] = recorded;
+  if (renamed === undefined) throw new Error("expected a recorded finding");
+  renamed.id = `finding-${registry.next + 50}`;
+  await writeFile(join(stale, "findings.json"), JSON.stringify(recorded));
+
+  const second = await checkCommand({
+    all: true,
+    project,
+    flow: "studio-lab",
+    from,
+  });
+  await expect(readFile(second.reportPath, "utf8")).resolves.toBeTruthy();
+  expect(second.findings.map((finding) => finding.id).sort()).toEqual(firstIds);
+  expect(second.findingNameWarning).toMatch(
+    /stale run folder .*\.idiom\/reports\/2026-10-01T00-00-00-000Z/,
+  );
+  expect(second.findingNameWarning).not.toContain("git checkout");
+
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const code = await runCli(
+    [
+      "node",
+      "idiom",
+      "check",
+      "studio-lab",
+      "--all",
+      "--project",
+      project,
+      "--from",
+      from,
+      "--json",
+      "--fail-on",
+      "never",
+    ],
+    {
+      stdout: (message) => stdout.push(message),
+      stderr: (message) => stderr.push(message),
+    },
+  );
+  expect(code).toBe(0);
+  expect(
+    stderr
+      .join("\n")
+      .split("\n")
+      .filter((line) => line.includes("stale run folder")),
+  ).toHaveLength(1);
+
+  // The run under review claiming another lineage's name is a real conflict.
+  const current = join(project, ".idiom", "reports", from);
+  const own = JSON.parse(
+    await readFile(join(current, "findings.json"), "utf8"),
+  ) as Array<{ id: string }>;
+  const [claimant, owner] = own;
+  if (claimant === undefined || owner === undefined)
+    throw new Error("expected two recorded findings");
+  claimant.id = owner.id;
+  await writeFile(join(current, "findings.json"), JSON.stringify(own));
+  const refusal = await checkCommand({
+    all: true,
+    project,
+    flow: "studio-lab",
+    from,
+  }).catch((error: unknown) => error);
+  expect(refusal).toBeInstanceOf(RunFailure);
+  const failure = refusal as RunFailure;
+  expect(failure.message).toContain(join(current, "findings.json"));
+  expect(failure.paths).toEqual([current]);
+  expect(failure.hint).toContain(`.idiom/reports/${from}`);
+  expect(failure.hint).not.toContain("finding-names.json");
+
+  // The user sees the conflict and its fix, not a bare error line.
+  const refusedErr: string[] = [];
+  const refusedCode = await runCli(
+    [
+      "node",
+      "idiom",
+      "check",
+      "studio-lab",
+      "--all",
+      "--project",
+      project,
+      "--from",
+      from,
+    ],
+    {
+      stdout: () => undefined,
+      stderr: (message) => refusedErr.push(message),
+    },
+  );
+  expect(refusedCode).toBe(RUN_FAILURE_EXIT_CODE);
+  const printed = refusedErr.join("\n");
+  expect(printed).toContain("finding-name registry refused");
+  expect(printed).toMatch(new RegExp(`^Fix: .*\\.idiom/reports/${from}`, "m"));
+  expect(printed).not.toContain("git checkout -- .idiom/finding-names.json");
 }, 90_000);
 
 /** The stored desktop tuple again at mobile, so fingerprints span two coordinates. */

@@ -16,10 +16,26 @@ const rankValue: Record<GateRank, number> = {
   fallback: 0,
 };
 
-/** Lowest priority first: fallback before import before route, later states first. */
+type SurfaceStatus = NonNullable<GateStatePlan["surface"]>["status"];
+const surfaceValue: Record<SurfaceStatus, number> = {
+  absent: 0,
+  unknown: 1,
+  shows: 2,
+};
+const surfaceOf = (state: GateStatePlan): SurfaceStatus =>
+  state.surface?.status ?? "unknown";
+
+/**
+ * Lowest priority first: states whose last capture did not render the
+ * changed surface, then unknown, then those that show it; within each,
+ * fallback before import before route, later states first.
+ */
 export function lowestFirst(states: GateStatePlan[]): GateStatePlan[] {
   return [...states].sort(
-    (a, b) => rankValue[a.rank] - rankValue[b.rank] || b.order - a.order,
+    (a, b) =>
+      surfaceValue[surfaceOf(a)] - surfaceValue[surfaceOf(b)] ||
+      rankValue[a.rank] - rankValue[b.rank] ||
+      b.order - a.order,
   );
 }
 
@@ -33,8 +49,11 @@ export type TrimResult = {
 };
 
 /**
- * Fit the plan to the budget, cheapest coverage first: ordinary probe
- * controls, widened viewports, widened schemes, the probe, then whole states.
+ * Fit the plan to the budget. First, states whose last capture shows none of
+ * the changed surface; then the cheapest coverage of the rest: ordinary probe
+ * controls, widened viewports, widened schemes (least likely to show the
+ * change first), the probe, then whole states in `lowestFirst` order. A
+ * `shows` state is never dropped while an `unknown` or `absent` one remains.
  * Never below one tuple of the highest-ranked state; every cut is a skip.
  */
 export function trimToBudget(options: {
@@ -64,6 +83,22 @@ export function trimToBudget(options: {
     });
   let current = estimate();
   const over = () => current.totalMs > options.budgetMs;
+  // 0. States that do not render the changed surface, before any cut to
+  // states that do.
+  for (const state of lowestFirst(states)) {
+    if (!over() || states.length <= 1) break;
+    if (state.surface?.status !== "absent") break;
+    const before = current.totalMs;
+    states = states.filter((candidate) => candidate !== state);
+    current = estimate();
+    skippedWork.push({
+      kind: "state",
+      flow: state.flow,
+      state: state.state,
+      reason: `over budget: does not render the changed surface (last capture ${state.surface.runId ?? "unknown"})`,
+      estimatedMs: Math.max(0, before - current.totalMs),
+    });
+  }
   // 1. Ordinary controls of the changed region: shrink the probe allotment.
   if (over() && current.probeMs > 0) {
     const floor = estimateGate({
@@ -156,7 +191,7 @@ export function trimToBudget(options: {
       kind: "state",
       flow: state.flow,
       state: state.state,
-      reason: `over budget: lowest-ranked (${state.rank}) state`,
+      reason: `over budget: lowest-ranked (${state.rank}, surface ${surfaceOf(state)}) state`,
       estimatedMs: Math.max(0, before - current.totalMs),
     });
   }

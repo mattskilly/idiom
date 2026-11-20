@@ -35,6 +35,7 @@ export const HELP_GROUPS: readonly {
       "check",
       "digest",
       "nightly",
+      "watch",
       "review",
       "fix",
       "verify",
@@ -43,7 +44,10 @@ export const HELP_GROUPS: readonly {
       "compare",
     ],
   },
-  { title: "Judgment and decisions", commands: ["decide", "ruling", "learn"] },
+  {
+    title: "Judgment and decisions",
+    commands: ["decide", "ruling", "learn", "scorecard", "escalations"],
+  },
   { title: "Briefs", commands: ["brief"] },
   {
     title: "Explore and inspect",
@@ -96,7 +100,9 @@ export const COMMAND_EXAMPLES: Record<
     'idiom brief triage "<request>"',
     'idiom brief "<request>" --research',
     "idiom brief plan <id>",
+    'idiom brief research "<request>"',
     "idiom brief decide <slug> --option <id>",
+    "idiom brief lint <ticket.md>",
   ],
 };
 

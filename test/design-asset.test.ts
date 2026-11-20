@@ -689,6 +689,10 @@ describe("gate", () => {
       const plan = await planGate({
         project: f.directory,
         dependencies: {
+          readHost: () => ({
+            load: [0, 0, 0] as [number, number, number],
+            coreCount: 11,
+          }),
           select: async () => {
             throw new Error("no UI changed; the import graph is not needed");
           },
@@ -705,14 +709,32 @@ describe("gate", () => {
         { flow: "site", state: "s1" },
       ]);
 
-      const elsewhere = await planGate({ project: f.directory, flow: "other" });
+      const elsewhere = await planGate({
+        project: f.directory,
+        flow: "other",
+        dependencies: {
+          readHost: () => ({
+            load: [0, 0, 0] as [number, number, number],
+            coreCount: 11,
+          }),
+        },
+      });
       expect(elsewhere.skipped).toBe(true);
 
       await f.write(
         "app/r0/page.tsx",
         "export default function Page() { return <main><p /></main>; }\n",
       );
-      const both = await planGate({ project: f.directory, flow: "site" });
+      const both = await planGate({
+        project: f.directory,
+        flow: "site",
+        dependencies: {
+          readHost: () => ({
+            load: [0, 0, 0] as [number, number, number],
+            coreCount: 11,
+          }),
+        },
+      });
       if (both.skipped) throw new Error(both.line);
       expect(both.states.map((state) => state.state).sort()).toEqual([
         "s0",
@@ -724,7 +746,19 @@ describe("gate", () => {
         "app/r0/page.tsx",
         "export default function Page() { return <main />; }\n",
       );
-      expect((await planGate({ project: f.directory })).skipped).toBe(true);
+      expect(
+        (
+          await planGate({
+            project: f.directory,
+            dependencies: {
+              readHost: () => ({
+                load: [0, 0, 0] as [number, number, number],
+                coreCount: 11,
+              }),
+            },
+          })
+        ).skipped,
+      ).toBe(true);
     } finally {
       await f.cleanup();
     }

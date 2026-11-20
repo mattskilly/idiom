@@ -34,6 +34,7 @@ import { validateForRun } from "../preflight.js";
 import { preflightFindingNameRegistry } from "../review/names.js";
 import { isWebFlow } from "../schemas/flow.js";
 import type { Project } from "../schemas/project.js";
+import { conditionStorePath, openConditions } from "../unattended/store.js";
 import {
   inspectSurfaces,
   type SurfaceDependencies,
@@ -69,6 +70,23 @@ export type DoctorReport = {
   failure?: RunFailureJson | undefined;
   /** Where Idiom is wired; informational, never affects `ok`. */
   surfaces?: SurfacesReport | undefined;
+  /**
+   * Open conditions unattended runs (nightly, gate, verify) recorded: the app
+   * could not start, no usable baseline, a broken expectation. Informational,
+   * never affects `ok`; present only when any are open.
+   */
+  conditions?: DoctorCondition[] | undefined;
+};
+
+export type DoctorCondition = {
+  key: string;
+  cause: string;
+  line: string;
+  mode: string;
+  firstSeen: string;
+  lastSeen: string;
+  runs: number;
+  ticket?: string | undefined;
 };
 
 export type DoctorDependencies = {
@@ -120,6 +138,7 @@ export async function runDoctor(options: {
           dependencies: options.dependencies?.surfaces,
         });
   const steps: DoctorStep[] = [];
+  let conditions: DoctorCondition[] = [];
   let leftovers: LeftoverServer[] = [];
   let failure: RunFailure | undefined;
   const inherited = options.dependencies?.inheritedEnvironment ?? process.env;
@@ -159,6 +178,7 @@ export async function runDoctor(options: {
       ...(leftovers.length === 0 ? {} : { leftovers }),
       ...(failure === undefined ? {} : { failure: failure.failureJson() }),
       ...(surfaces === undefined ? {} : { surfaces }),
+      ...(conditions.length === 0 ? {} : { conditions }),
     };
   };
 
@@ -196,6 +216,9 @@ export async function runDoctor(options: {
     return report();
   }
   const validated = config.value;
+  conditions = await openDoctorConditions(
+    validated.stateProjectDirectory ?? validated.projectDirectory,
+  );
   steps.push({
     id: "config",
     status: "pass",
@@ -519,4 +542,26 @@ export async function runDoctor(options: {
 
 function elapsed(started: number): number {
   return Math.round(performance.now() - started);
+}
+
+async function openDoctorConditions(
+  projectDirectory: string,
+): Promise<DoctorCondition[]> {
+  try {
+    const entries = await openConditions(
+      await conditionStorePath({ projectDirectory }),
+    );
+    return entries.map((entry) => ({
+      key: entry.key,
+      cause: entry.cause,
+      line: entry.line,
+      mode: entry.mode,
+      firstSeen: entry.firstSeen,
+      lastSeen: entry.lastSeen,
+      runs: entry.runs,
+      ...(entry.ticket === undefined ? {} : { ticket: entry.ticket }),
+    }));
+  } catch {
+    return [];
+  }
 }

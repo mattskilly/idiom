@@ -10,7 +10,7 @@
 export const DEPRECATION_SILENCE_ENV = "IDIOM_NO_DEPRECATION_WARNINGS";
 
 export interface Deprecation {
-  /** Stable key and display name, e.g. `idiom brief list --json --array`. */
+  /** Stable key and display name, e.g. `idiom thing --old`. */
   surface: string;
   /** What to use instead. */
   replacement: string;

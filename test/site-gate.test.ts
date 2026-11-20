@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 // @ts-expect-error The site gate is a dependency-free Node module.
-import { runSiteGate } from "../scripts/site-gate.mjs";
+import { runSiteAdvance, runSiteGate } from "../scripts/site-gate.mjs";
 
 const cli = "/x/dist/cli.js";
 
@@ -201,5 +201,60 @@ describe("site gate", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("idiom-advance", () => {
+  const advance = (statuses: number[], build?: () => Promise<unknown>) => {
+    const h = harness(statuses);
+    return {
+      ...h,
+      result: runSiteAdvance({
+        ...h.options,
+        ...(build === undefined ? {} : { build }),
+      }),
+    };
+  };
+
+  test("advances the main tip, then this build's head, with this checkout's CLI", async () => {
+    const h = advance([0, 0]);
+    expect(await h.result).toBe(0);
+    expect(h.calls).toEqual([
+      {
+        command: process.execPath,
+        args: [cli, "baseline", "advance", "--fetch"],
+      },
+      {
+        command: process.execPath,
+        args: [cli, "baseline", "advance", "--target", "HEAD"],
+      },
+    ]);
+    expect(h.cleanup).toHaveBeenCalledOnce();
+  });
+
+  test("still advances the head when the main tip fails, and reports the first failure", async () => {
+    const h = advance([1, 2]);
+    expect(await h.result).toBe(1);
+    expect(h.gateCalls()).toHaveLength(2);
+    expect(h.cleanup).toHaveBeenCalledOnce();
+  });
+
+  test("reports a head failure after a main-tip success", async () => {
+    expect(await advance([0, 2]).result).toBe(2);
+  });
+
+  test("a CLI build failure runs nothing", async () => {
+    const h = advance([], async () => {
+      throw new Error("tsup exited with 1");
+    });
+    expect(await h.result).toBe(2);
+    expect(h.calls).toEqual([]);
+    expect(h.lines.join("\n")).toContain("could not build the CLI");
+  });
+
+  test("never touches the tracked tree", async () => {
+    const h = advance([0, 0]);
+    await h.result;
+    expect(h.calls.some((call) => call.command === "git")).toBe(false);
   });
 });

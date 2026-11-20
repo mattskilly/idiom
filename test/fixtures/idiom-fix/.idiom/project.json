@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "app": { "name": "Fix-step fixture", "framework": "nextjs" },
+  "server": {
+    "build": "node -e 0",
+    "start": "node server.mjs",
+    "readyUrl": "http://127.0.0.1:3171/ready",
+    "port": 3171,
+    "env": { "PORT": "3171" }
+  },
+  "viewports": [{ "name": "desktop", "width": 1024, "height": 700 }],
+  "colorSchemes": ["light"],
+  "checks": { "probe": { "enabled": false } },
+  "capture": { "settleMs": 0 },
+  "design": {},
+  "model": { "provider": "anthropic", "model": "unused" }
+}

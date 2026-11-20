@@ -189,6 +189,8 @@ test("project settings default, bound the minimum and emit the spacing marks", (
     scope: "interface",
     include: [],
     ignore: [],
+    displaySize: 20,
+    displayTracking: -0.03,
   });
   expect(() => checksConfigSchema.parse({ controlGap: { min: 13 } })).toThrow();
   expect(() => checksConfigSchema.parse({ controlGap: { min: -1 } })).toThrow();

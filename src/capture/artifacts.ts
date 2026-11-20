@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   access,
   mkdir,
@@ -87,7 +88,7 @@ function json(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function defaultRunName(now: Date): string {
+export function defaultRunName(now: Date): string {
   return now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
 }
 
@@ -518,22 +519,25 @@ function capSentence(cap: ToggleCap): string {
   return `Toggles ${cap.combined.join(", ")} combined; ${cap.held.join(", ")} held at ${cap.held.length === 1 ? "its" : "their"} first option (cap of three toggles).`;
 }
 
+/** The run-root `combinations.json` document for a combination summary. */
+export function combinationsReport(summary: CombinationSummary) {
+  return {
+    version: 1,
+    evidence: "per-combination",
+    captured: summary.captured,
+    collapsed: summary.collapsed,
+    ...(summary.cap === undefined ? {} : { cap: summary.cap }),
+    notes: summary.notes,
+  };
+}
+
 export async function writeCombinationsReport(options: {
   stagingDirectory: string;
   summary: CombinationSummary;
 }): Promise<void> {
   await writeFile(
     join(options.stagingDirectory, "combinations.json"),
-    json({
-      version: 1,
-      evidence: "per-combination",
-      captured: options.summary.captured,
-      collapsed: options.summary.collapsed,
-      ...(options.summary.cap === undefined
-        ? {}
-        : { cap: options.summary.cap }),
-      notes: options.summary.notes,
-    }),
+    json(combinationsReport(options.summary)),
   );
 }
 
@@ -637,10 +641,9 @@ async function filesBelow(directory: string): Promise<string[]> {
   return results;
 }
 
-export async function scanForSecrets(
-  stagingDirectory: string,
+function secretsOf(
   environments: NodeJS.ProcessEnv[],
-): Promise<void> {
+): Array<{ name: string; value: Buffer }> {
   const secrets: Array<{ name: string; value: Buffer }> = [];
   const seen = new Set<string>();
   for (const environment of environments) {
@@ -658,17 +661,82 @@ export async function scanForSecrets(
       }
     }
   }
-  if (secrets.length === 0) return;
-  for (const file of await filesBelow(stagingDirectory)) {
-    const contents = await readFile(file);
-    for (const { name, value } of secrets) {
-      if (contents.includes(value)) {
-        throw new IdiomError(
-          `secret scan found ${name} in ${relative(stagingDirectory, file)}; no capture was published`,
-        );
+  return secrets;
+}
+
+export type SecretScanStats = {
+  /** Files read. */
+  files: number;
+  /** Bytes read. */
+  bytes: number;
+  /** Files whose content was already scanned clean against the same secrets. */
+  skipped: number;
+  /** Wall time spent in scans. */
+  ms: number;
+};
+export type SecretScanner = {
+  scan(directory: string, environments: NodeJS.ProcessEnv[]): Promise<void>;
+  readonly stats: SecretScanStats;
+};
+
+/**
+ * A run's secret scanner. Every file is read, but bytes whose sha256 was
+ * already scanned clean against the identical secret set are not searched
+ * again: the same bytes against the same secrets cannot give another answer.
+ * A changed secret set (a server environment added mid-run) starts a fresh
+ * memo, so nothing scanned earlier escapes the new secrets.
+ */
+export function createSecretScanner(
+  clock: () => number = () => performance.now(),
+): SecretScanner {
+  const stats: SecretScanStats = { files: 0, bytes: 0, skipped: 0, ms: 0 };
+  let memoKey: string | undefined;
+  let clean = new Set<string>();
+  return {
+    stats,
+    async scan(directory, environments) {
+      const started = clock();
+      try {
+        const secrets = secretsOf(environments);
+        if (secrets.length === 0) return;
+        const identity = createHash("sha256");
+        for (const { name, value } of secrets)
+          identity.update(name).update("\0").update(value).update("\0");
+        const key = identity.digest("hex");
+        if (key !== memoKey) {
+          memoKey = key;
+          clean = new Set();
+        }
+        for (const file of await filesBelow(directory)) {
+          const contents = await readFile(file);
+          stats.files += 1;
+          stats.bytes += contents.length;
+          const digest = createHash("sha256").update(contents).digest("hex");
+          if (clean.has(digest)) {
+            stats.skipped += 1;
+            continue;
+          }
+          for (const { name, value } of secrets) {
+            if (contents.includes(value)) {
+              throw new IdiomError(
+                `secret scan found ${name} in ${relative(directory, file)}; no capture was published`,
+              );
+            }
+          }
+          clean.add(digest);
+        }
+      } finally {
+        stats.ms += Math.max(0, clock() - started);
       }
-    }
-  }
+    },
+  };
+}
+
+export async function scanForSecrets(
+  stagingDirectory: string,
+  environments: NodeJS.ProcessEnv[],
+): Promise<void> {
+  await createSecretScanner().scan(stagingDirectory, environments);
 }
 
 export async function publishArtifacts(

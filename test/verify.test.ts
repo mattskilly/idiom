@@ -53,7 +53,10 @@ import {
 import { renderVerificationReport } from "../src/verify/report.js";
 import { runVerify } from "../src/verify/run.js";
 import { parseFindingBlocks, selectFindingTuples } from "../src/verify/spec.js";
-import { fixtureCommand } from "./support/fixture-server.js";
+import {
+  fixtureCommand,
+  fixtureEvalCommand,
+} from "./support/fixture-server.js";
 import {
   artifactV2,
   freePort,
@@ -3437,3 +3440,112 @@ test("a pinned brief mismatch fails verification even when the embedded finding 
     'Brief "Card height" (card-height, design asset card-height), criterion',
   );
 });
+
+async function verifyCli(
+  projectDirectory: string,
+  spec: string,
+  against: string,
+  launcher: BrowserLauncher,
+) {
+  const err: string[] = [];
+  const code = await run(
+    [
+      "node",
+      "idiom",
+      "--project",
+      projectDirectory,
+      "verify",
+      "booking",
+      "--spec",
+      spec,
+      "--against",
+      against,
+      "--out",
+      join(projectDirectory, ".idiom", "reports", "verified"),
+    ],
+    {
+      cwd: projectDirectory,
+      stdout: () => undefined,
+      stderr: (message) => err.push(message.trim()),
+      verify: {
+        gitTopology: async () => undefined,
+        capture: {
+          browserLauncher: launcher,
+          inheritedEnvironment: { PATH: process.env.PATH },
+          snapshotSource: async () => ({ commit: "def456", dirty: false }),
+        },
+      },
+    },
+  );
+  return { code, lines: err.filter((line) => line.startsWith("idiom ")) };
+}
+
+test("the verify step reports an app that cannot start and a broken expectation as conditions, exit 2", async () => {
+  const { projectDirectory, baselineDirectory, spec } =
+    await verifyRunFixture();
+  const projectPath = join(projectDirectory, ".idiom", "project.json");
+  const project = JSON.parse(await readFile(projectPath, "utf8"));
+  await writeFile(
+    projectPath,
+    JSON.stringify({
+      ...project,
+      server: {
+        ...project.server,
+        start: fixtureEvalCommand("process.exit(3)"),
+      },
+    }),
+  );
+  const down = await verifyCli(
+    projectDirectory,
+    spec,
+    baselineDirectory,
+    browserWithText("After"),
+  );
+  expect(down.code).toBe(2);
+  expect(down.lines).toHaveLength(1);
+  expect(down.lines[0]).toMatch(
+    /^idiom verify: app-start: booking: server failed to start: .* — fix: .*idiom doctor booking\b/,
+  );
+
+  await writeFile(projectPath, JSON.stringify(project));
+  const flowPath = join(projectDirectory, ".idiom", "flows", "booking.json");
+  const flow = JSON.parse(await readFile(flowPath, "utf8"));
+  flow.states[0].expect = { textPresent: ["Before"] };
+  await writeFile(flowPath, JSON.stringify(flow));
+  // The page no longer shows the text the state declares.
+  const mismatching: BrowserLauncher = async (...args) => {
+    const browser = await browserWithText("After")(...args);
+    return {
+      ...browser,
+      async capture(...captureArgs) {
+        return {
+          ...(await browser.capture(...captureArgs)),
+          mismatches: [{ kind: "text-present", expected: "Before" }],
+        };
+      },
+    };
+  };
+  const broken = await verifyCli(
+    projectDirectory,
+    spec,
+    baselineDirectory,
+    mismatching,
+  );
+  expect(broken.code).toBe(2);
+  expect(broken.lines).toEqual([
+    `idiom verify: expectation: booking/confirmed: expect no longer matches at desktop/light: text-present "Before" — fix: fix the app, or update the state's steps/expect in .idiom/flows/booking.json; confirm with idiom capture booking --states confirmed`,
+  ]);
+
+  const missing = await verifyCli(
+    projectDirectory,
+    spec,
+    join(projectDirectory, "no-such-run"),
+    browserWithText("After"),
+  );
+  expect(missing.code).toBe(2);
+  expect(missing.lines).toEqual([
+    expect.stringMatching(
+      /^idiom verify: baseline: booking: no usable capture to verify against: .* — fix: pass the capture the findings came from with --against <run directory>/,
+    ),
+  ]);
+}, 60_000);

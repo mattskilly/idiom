@@ -52,10 +52,31 @@ function runtime(setup: NonNullable<WiringDetection["setup"]>): object[] {
     ? [{ name: "Set up npm", run: `npm install --global npm@${setup.version}` }]
     : [];
 }
+/**
+ * The baseline job's script: advance at the pushed commit, commit only the
+ * baseline files, and push; a push that lost a race rebases onto the new tip
+ * and advances again (cheap: the record is already in this runner's cache, and
+ * a newer committed record makes the advance superseded).
+ */
+export const ADVANCE_BASELINE_SCRIPT = `git config user.name "github-actions[bot]"
+git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+for attempt in 1 2 3; do
+  idiom baseline advance --target "$TARGET" --commit-file || exit $?
+  git add --all -- .idiom/baselines
+  if git diff --cached --quiet; then exit 0; fi
+  git commit --quiet -m "idiom: advance baseline to \${TARGET:0:12} [skip ci]"
+  if git push --quiet origin "HEAD:$BRANCH"; then exit 0; fi
+  git fetch --quiet origin "$BRANCH"
+  git reset --quiet --hard "origin/$BRANCH"
+done
+echo "idiom: baseline advance could not push to $BRANCH after 3 attempts" >&2
+exit 1`;
+
 export function githubWriter(
   source: string,
   detection: WiringDetection,
   nightly: boolean,
+  advanceBaseline = false,
 ): Writer {
   if (!detection.setup)
     throw new Error(detection.setupReason ?? "Dependency setup unavailable");
@@ -102,7 +123,10 @@ export function githubWriter(
     concurrency: {
       group:
         "idiom-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}",
-      "cancel-in-progress": true,
+      // Default-branch runs queue, so a running baseline advance finishes.
+      "cancel-in-progress": advanceBaseline
+        ? "${{ github.event_name == 'pull_request' }}"
+        : true,
     },
     jobs: {
       "pull-request": {
@@ -151,6 +175,38 @@ export function githubWriter(
           upload("idiom-full"),
         ],
       },
+      ...(advanceBaseline
+        ? {
+            baseline: {
+              if: pushed,
+              "runs-on": "ubuntu-latest",
+              // This job pushes the baseline commit.
+              permissions: { contents: "write" },
+              concurrency: {
+                group: "idiom-baseline-${{ github.ref }}",
+                "cancel-in-progress": false,
+              },
+              steps: [
+                {
+                  uses: "actions/checkout@v5",
+                  with: { ref: "${{ github.ref }}", "fetch-depth": 0 },
+                },
+                node,
+                ...runtime(setup),
+                install,
+                { name: "Install app dependencies", run: setup.command },
+                {
+                  name: "Advance the baseline to this merge",
+                  env: {
+                    TARGET: "${{ github.sha }}",
+                    BRANCH: "${{ github.ref_name }}",
+                  },
+                  run: ADVANCE_BASELINE_SCRIPT,
+                },
+              ],
+            },
+          }
+        : {}),
       ...(nightly
         ? {
             nightly: {
@@ -185,7 +241,7 @@ export function githubWriter(
         : {}),
     },
   };
-  const body = `# PR comparison uses the first flow; default-branch pushes check every flow.\n${nightly ? "# Nightly runs idiom nightly at 03:17 UTC: new findings since each baseline become\n# ticket proposals in the uploaded .idiom/reports/nightly; a cached ledger stops repeats.\n" : ""}# Commit app configuration and fixtures.\n${stringify(workflow, { lineWidth: 0 })}`;
+  const body = `# PR comparison uses the first flow; default-branch pushes check every flow.\n${advanceBaseline ? "# Each default-branch push advances the committed baseline (.idiom/baselines) to that\n# merge and pushes it; the workflow token needs permission to push to the branch.\n" : ""}${nightly ? "# Nightly runs idiom nightly at 03:17 UTC: new findings since each baseline become\n# ticket proposals in the uploaded .idiom/reports/nightly; a cached ledger stops repeats.\n" : ""}# Commit app configuration and fixtures.\n${stringify(workflow, { lineWidth: 0 })}`;
   const candidate = replaceSection(source, "github", body, { reserved: true });
   const parsed = parseDocument(candidate, { uniqueKeys: true });
   if (parsed.errors.length)

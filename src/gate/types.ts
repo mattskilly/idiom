@@ -32,6 +32,38 @@ export type GateStatePlan = {
   probeControls: number;
   /** The reference run whose fingerprints scope the probe, if any. */
   region?: { runId: string; controls: number } | undefined;
+  /**
+   * Whether the state's latest capture rendered the changed surface: `shows`
+   * states are trimmed last, `absent` ones first. Absent in older plans.
+   */
+  surface?: GateStateSurface | undefined;
+};
+
+export type GateStateSurface = {
+  status: "shows" | "absent" | "unknown";
+  /** Matched tokens (`.toolbar`, `<Toolbar>`, …) when `shows`. */
+  matched: string[];
+  /** The capture the status was read from. */
+  runId?: string | undefined;
+  /** The capture predates the rendered inventory; read from older fields. */
+  derived?: boolean | undefined;
+  reason?: string | undefined;
+  /** The probe is limited to controls in or next to this surface. */
+  probeScope?: string | undefined;
+};
+
+/** What the change touches on screen, per changed UI file. */
+export type GateSurface = {
+  identified: Array<{ path: string; tokens: string[] }>;
+  unidentified: Array<{ path: string; reason: string }>;
+};
+
+/** Identified changed surface no captured state renders. */
+export type GateCoverageGap = {
+  files: string[];
+  tokens: string[];
+  statesWithEvidence: number;
+  statesWithoutEvidence: string[];
 };
 
 export type GateServer =
@@ -63,6 +95,10 @@ export type GatePlan = {
   graph: { complete: boolean; reasons: string[] };
   files: GateFile[];
   styleScope: StyleScope;
+  /** The changed surface the states were ranked by; absent in older plans. */
+  surface?: GateSurface | undefined;
+  /** Set when no captured state renders the identified changed surface. */
+  coverageGap?: GateCoverageGap | undefined;
   states: GateStatePlan[];
   tuples: Array<{
     flow: string;
@@ -104,6 +140,8 @@ export type GateReportSection = {
   skippedWork: GateSkip[];
   estimateMs: number;
   budgetMs: number;
+  /** The coverage-gap warning, when the gate found one. */
+  coverageGap?: string | undefined;
 };
 
 /**

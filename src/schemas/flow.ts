@@ -378,6 +378,33 @@ function siblingIssue(
 export const dataStateSchema = z.enum(["empty", "one", "many", "error"]);
 export type DataState = z.infer<typeof dataStateSchema>;
 
+/**
+ * Extra widths a web state is captured at, between its declared viewports:
+ * `true` for the documented default (midpoints plus 900 and 768 inside the
+ * declared range), a list of widths, or `false` to opt out of a flow-level
+ * `true`. Captured in the default color scheme only, with layout checks.
+ */
+export const intermediateWidthsSchema = z.union([
+  z.boolean(),
+  z
+    .array(z.number().int().min(200).max(4096))
+    .min(1)
+    .max(8)
+    .superRefine((widths, context) => {
+      const seen = new Set<number>();
+      for (const [index, width] of widths.entries()) {
+        if (seen.has(width))
+          context.addIssue({
+            code: "custom",
+            path: [index],
+            message: `duplicate width ${width}`,
+          });
+        seen.add(width);
+      }
+    }),
+]);
+export type IntermediateWidths = z.infer<typeof intermediateWidthsSchema>;
+
 export const webStateSchema = z
   .object({
     design: designDeclarationSchema.optional(),
@@ -404,6 +431,7 @@ export const webStateSchema = z
     viewports: z.array(z.string()).min(1).optional(),
     focus: z.string().trim().min(1).optional(),
     probe: z.boolean().optional(),
+    intermediateWidths: intermediateWidthsSchema.optional(),
     fresh: z.boolean().optional(),
     // Boxes this state shows empty on purpose (a drop zone before a drop);
     // the empty-frame check skips them and their descendants.
@@ -955,6 +983,8 @@ const webFlowSchema = z
     viewports: z
       .array(z.union([z.string(), z.number().int().positive()]))
       .optional(),
+    // Default for states that do not set intermediateWidths themselves.
+    intermediateWidths: intermediateWidthsSchema.optional(),
     // "published" marks rendered pages held to a hard budget.
     kind: z.enum(["app", "published"]).optional(),
     pages: z.array(routeSchema).min(1).optional(),
@@ -1108,6 +1138,9 @@ const webFlowSchema = z
           // The base state is already probed; probing every combination is
           // the expensive path, so it is opt-in through the base's `probe`.
           probe: base.probe ?? false,
+          // Same reasoning: a flow-level default would multiply capture cost
+          // by the combination count, so only the base's own value carries.
+          intermediateWidths: base.intermediateWidths ?? false,
           combination: { base: base.id, label, options },
         };
       }),
@@ -1224,4 +1257,19 @@ export function isPublishedFlow(
 
 export function isElectronFlow(flow: Flow): flow is ElectronFlow {
   return flow.target.kind === "electron";
+}
+
+/**
+ * The intermediate-widths setting in force for a state: its own value, else
+ * its flow's. Undefined when off (unset, or `false`).
+ */
+export function effectiveIntermediateWidths(
+  flow: Flow,
+  state: { id: string },
+): true | number[] | undefined {
+  if (!isWebFlow(flow)) return undefined;
+  const declared = flow.states.find((candidate) => candidate.id === state.id);
+  const setting = declared?.intermediateWidths ?? flow.intermediateWidths;
+  if (setting === undefined || setting === false) return undefined;
+  return setting;
 }

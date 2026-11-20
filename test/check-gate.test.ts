@@ -9,9 +9,11 @@ import { checkGateJsonContract } from "../src/interface/surfaces.js";
 const [gateSkipForm, gatePlanOnlyForm, gateRanForm] =
   checkGateJsonContract.options;
 
+import { conditionStorePath, openConditions } from "../src/unattended/store.js";
 import { changedFixture } from "./changed-support.js";
 import {
   fixtureCommand,
+  fixtureEvalCommand,
   spawnFixtureServer,
 } from "./support/fixture-server.js";
 
@@ -92,7 +94,15 @@ test("a CSS-only change to one component gates only the state that renders it, a
       "components/Card.module.css",
       ".card { color: rgb(200, 10, 10); }\n",
     );
-    const plan = await planGate({ project: f.directory });
+    const plan = await planGate({
+      project: f.directory,
+      dependencies: {
+        readHost: () => ({
+          load: [0, 0, 0] as [number, number, number],
+          coreCount: 11,
+        }),
+      },
+    });
     if (plan.skipped) throw new Error(plan.line);
     expect(plan.graph.complete).toBe(true);
     expect(
@@ -106,6 +116,10 @@ test("a CSS-only change to one component gates only the state that renders it, a
       "--json",
       "--fail-on",
       "never",
+      // The CLI reads the real host load; a generous budget keeps a busy
+      // machine from scaling estimates past it and skipping base capture.
+      "--budget",
+      "30m",
     ]);
     expect(response.status, response.err).toBe(0);
     const output = JSON.parse(response.out);
@@ -130,7 +144,7 @@ test("a CSS-only change to one component gates only the state that renders it, a
   } finally {
     await f.cleanup();
   }
-}, 60_000);
+}, 120_000);
 
 test("a responsive change widens to every viewport; the over-budget plan trims and reports it", async () => {
   const f = await changedFixture(cardFiles);
@@ -140,7 +154,16 @@ test("a responsive change widens to every viewport; the over-budget plan trims a
       "components/Card.module.css",
       ".card { color: red; }\n@media (max-width: 500px) { .card { color: blue; } }\n",
     );
-    const wide = await planGate({ project: f.directory, budgetMs: 3_600_000 });
+    const wide = await planGate({
+      project: f.directory,
+      budgetMs: 3_600_000,
+      dependencies: {
+        readHost: () => ({
+          load: [0, 0, 0] as [number, number, number],
+          coreCount: 11,
+        }),
+      },
+    });
     if (wide.skipped) throw new Error(wide.line);
     expect(wide.tuples.map((tuple) => tuple.viewport)).toEqual([
       "wide",
@@ -154,7 +177,11 @@ test("a responsive change widens to every viewport; the over-budget plan trims a
       "--fail-on",
       "never",
     ]);
-    expect(response.status, response.err).toBe(0);
+    // No baseline and no time to capture the base: nothing to compare with.
+    expect(response.status, response.err).toBe(2);
+    expect(response.err).toMatch(
+      /^idiom gate: baseline: site: no baseline reachable from base [0-9a-f]{12} and no base capture — fix: idiom baseline record site on a clean main and commit \.idiom\/baselines$/m,
+    );
     const output = JSON.parse(response.out);
     expect(output.gate.budgetMs).toBe(10_000);
     expect(
@@ -170,6 +197,13 @@ test("a responsive change widens to every viewport; the over-budget plan trims a
 
 test("reuse-server captures a running server and never starts one", async () => {
   const f = await changedFixture(cardFiles);
+  // A committed baseline: the unstartable base worktree is never captured.
+  const recorded = await run(
+    ["node", "idiom", "--project", f.directory, "baseline", "record", "site"],
+    { stdout: () => undefined, stderr: () => undefined },
+  );
+  expect(recorded).toBe(0);
+  await f.commit("record baseline");
   const project = JSON.parse(
     await readFile(join(f.directory, ".idiom/project.json"), "utf8"),
   );
@@ -313,7 +347,15 @@ test("--plan-only prints the plan or the skip and never starts a server or captu
       "components/Card.module.css",
       ".card { color: rgb(200, 10, 10); }\n",
     );
-    const plan = await planGate({ project: f.directory });
+    const plan = await planGate({
+      project: f.directory,
+      dependencies: {
+        readHost: () => ({
+          load: [0, 0, 0] as [number, number, number],
+          coreCount: 11,
+        }),
+      },
+    });
     if (plan.skipped) throw new Error(plan.line);
     expect(plan.flows).toEqual(["site"]);
     expect(plan.allFlows).toEqual(["site"]);
@@ -359,3 +401,116 @@ test("--plan-only prints the plan or the skip and never starts a server or captu
     await f.cleanup();
   }
 }, 60_000);
+
+test("a gate whose app cannot start exits 2 with one app-start line, and doctor's store lists it", async () => {
+  const f = await changedFixture(cardFiles);
+  try {
+    const path = join(f.directory, ".idiom/project.json");
+    const project = JSON.parse(await readFile(path, "utf8"));
+    project.server.start = fixtureEvalCommand("process.exit(3)");
+    project.server.build = "node -e 0";
+    await writeFile(path, JSON.stringify(project));
+    await f.commit("a server that exits at once");
+    await f.write(
+      "components/Card.module.css",
+      ".card { color: rgb(4, 5, 6); }\n",
+    );
+    const response = await cli(f.directory, ["--gate", "--fail-on", "major"]);
+    expect(response.status, response.err).toBe(2);
+    const lines = response.errLines
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("idiom gate: "));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(
+      /^idiom gate: app-start: site: server failed to start: .* — fix: .*idiom doctor site\b/,
+    );
+    expect(response.err).not.toMatch(/^Fix: /m);
+    const open = await openConditions(
+      await conditionStorePath({ projectDirectory: f.directory }),
+    );
+    expect(open).toEqual([
+      expect.objectContaining({ key: "app-start", mode: "gate", runs: 1 }),
+    ]);
+  } finally {
+    await f.cleanup();
+  }
+}, 60_000);
+
+test("a change no captured state renders is a loud coverage gap, not a silent pass", async () => {
+  const f = await changedFixture({
+    ...cardFiles,
+    "components/Unused.tsx":
+      'export function Unused() { return <aside className="unused-panel">a</aside>; }\n',
+  });
+  try {
+    const seed = await cli(f.directory, ["site", "--fail-on", "never"]);
+    expect(seed.status, seed.err).toBe(0);
+    await f.commit("seed");
+    await f.write(
+      "components/Unused.tsx",
+      'export function Unused() { return <aside className="unused-panel">b</aside>; }\n',
+    );
+    const response = await cli(f.directory, ["--gate", "--plan-only"]);
+    expect(response.status, response.err).toBe(0);
+    expect(response.out).toContain(
+      "surface: components/Unused.tsx: <Unused> .unused-panel",
+    );
+    expect(response.out).toMatch(
+      /warning: coverage gap: no captured state renders the changed surface of components\/Unused\.tsx \(<Unused> \.unused-panel\); 2 state\(s\) had captures/,
+    );
+    expect(response.out).toMatch(/site\/s0 \(fallback\): .*surface absent/);
+    const json = await cli(f.directory, ["--gate", "--plan-only", "--json"]);
+    const plan = JSON.parse(json.out).gate.plan;
+    expect(plan.coverageGap).toEqual({
+      files: ["components/Unused.tsx"],
+      tokens: ["<Unused>", ".unused-panel"],
+      statesWithEvidence: 2,
+      statesWithoutEvidence: [],
+    });
+    expect(
+      plan.states.map((state: { surface: unknown }) => state.surface),
+    ).toEqual([
+      expect.objectContaining({ status: "absent" }),
+      expect.objectContaining({ status: "absent" }),
+    ]);
+  } finally {
+    await f.cleanup();
+  }
+}, 120_000);
+
+test("a component-only change the captures cannot name is unconfirmed, not a coverage gap", async () => {
+  const card = (text: string) =>
+    `import { cn } from '../lib/cn';\nexport function Card({ className }: { className?: string }) {\n  return <div className={cn('card', className)}>${text}</div>;\n}\n`;
+  const f = await changedFixture({
+    "lib/cn.ts":
+      "export const cn = (...names: unknown[]) => names.filter(Boolean).join(' ');\n",
+    "components/Card.tsx": card("a"),
+    "app/r1/page.tsx":
+      "import { Card } from '../../components/Card';\nexport default function Page() { return <main><Card /></main>; }\n",
+  });
+  try {
+    const seed = await cli(f.directory, ["site", "--fail-on", "never"]);
+    expect(seed.status, seed.err).toBe(0);
+    await f.commit("seed");
+    await f.write("components/Card.tsx", card("b"));
+    const response = await cli(f.directory, ["--gate", "--plan-only"]);
+    expect(response.status, response.err).toBe(0);
+    expect(response.out).toContain("surface: components/Card.tsx: <Card>");
+    expect(response.out).toMatch(
+      /site\/s1 \(import\): .*surface unknown \(the capture's inventory carries no component names\)/,
+    );
+    expect(response.out).toContain(
+      "surface unconfirmed for components/Card.tsx (<Card>): the capture's inventory carries no component names",
+    );
+    expect(response.out).not.toContain("coverage gap");
+    const json = await cli(f.directory, ["--gate", "--plan-only", "--json"]);
+    const plan = JSON.parse(json.out).gate.plan;
+    expect(plan.coverageGap).toBeUndefined();
+    expect(
+      plan.states.find((state: { state: string }) => state.state === "s1")
+        .surface,
+    ).toMatchObject({ status: "unknown" });
+  } finally {
+    await f.cleanup();
+  }
+}, 120_000);

@@ -264,6 +264,10 @@ async function artifactTree(
           for (const tuple of artifact.timings.tuples) {
             tuple.total.ms = 0;
             tuple.probe.ms = 0;
+            // Per-step durations vary run to run, like total and probe.
+            if (tuple.steps)
+              for (const step of Object.keys(tuple.steps))
+                tuple.steps[step] = 0;
           }
           tree[key] = JSON.stringify(artifact);
         } else if (entry.name === "observations.json") {

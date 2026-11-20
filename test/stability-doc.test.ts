@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { beforeAll, expect, test } from "vitest";
 import {
   commandStatus,
+  experimentalOptions,
   fileFormats,
   jsonOutputs,
   mcpOutputs,
@@ -46,6 +47,26 @@ test("the command table matches the status registry", () => {
   expect(table("| Command | Status |")).toHaveLength(
     Object.keys(commandStatus).length,
   );
+});
+
+test("every experimental command has a reason", () => {
+  for (const [command, status, notes] of table("| Command | Status |"))
+    if (status === "experimental")
+      expect(notes, `${command} reason`).toMatch(/^(?!—$)\S/);
+});
+
+test("the command table names exactly the experimental options", () => {
+  for (const [command, status, notes] of table("| Command | Status |")) {
+    if (status !== "stable") continue;
+    const named = [...(notes ?? "").matchAll(/`(--[a-z-]+)`/g)].map(
+      (match) => match[1],
+    );
+    expect(new Set(named), `${command} experimental options`).toEqual(
+      new Set(experimentalOptions[command as string] ?? []),
+    );
+  }
+  for (const command of Object.keys(experimentalOptions))
+    expect(commandStatus[command], command).toBe("stable");
 });
 
 test("the --json table matches the payload registry", () => {

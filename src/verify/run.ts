@@ -1,6 +1,13 @@
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 import { readDesignAssets } from "../brief/design-asset.js";
 import {
   captureTupleKey,
@@ -17,6 +24,15 @@ import { annotateDeclaredExpectations } from "../findings/settings.js";
 import { buildVerificationCoverage } from "../report/coverage.js";
 import { pngDataUri, writeHtmlReport } from "../report/html.js";
 import { loadCaptureRun } from "../review/artifacts.js";
+import {
+  appStartKey,
+  baselineKey,
+  type ClearedScope,
+  type Condition,
+  ConditionsRaised,
+  fromBrokenCoverage,
+  fromRunFailure,
+} from "../unattended/condition.js";
 import { validateProject } from "../validation.js";
 import { unavailableAcceptance } from "./acceptance.js";
 import {
@@ -71,6 +87,74 @@ export type VerifyRunResult = {
   designAssets?: DesignAssetVerification | undefined;
 };
 
+type VerifyTuple = {
+  state: string;
+  viewport: string;
+  colorScheme?: string | undefined;
+  failure?: unknown;
+  mismatches: import("../capture/types.js").ExpectationMismatch[];
+};
+
+/**
+ * Both recaptures' broken expectations as conditions, and what they cleared:
+ * the app started, and each state captured cleanly at every coordinate.
+ */
+function verifyConditions(options: {
+  flow: string;
+  flowFile: string;
+  legacyColorScheme: string;
+  runs: ReadonlyArray<readonly VerifyTuple[]>;
+}): { conditions: Condition[]; cleared: ClearedScope[] } {
+  const broken = new Map<
+    string,
+    {
+      state: string;
+      viewport: string;
+      colorScheme: string;
+      mismatches: VerifyTuple["mismatches"];
+    }
+  >();
+  const clean = new Map<string, Set<string>>();
+  const dirty = new Set<string>();
+  for (const tuples of options.runs)
+    for (const tuple of tuples) {
+      const colorScheme = tuple.colorScheme ?? options.legacyColorScheme;
+      const coordinate = `${tuple.viewport}/${colorScheme}`;
+      if (tuple.failure === undefined && tuple.mismatches.length > 0) {
+        broken.set(`${tuple.state}\0${coordinate}`, {
+          state: tuple.state,
+          viewport: tuple.viewport,
+          colorScheme,
+          mismatches: tuple.mismatches,
+        });
+        dirty.add(tuple.state);
+      } else if (tuple.failure !== undefined) dirty.add(tuple.state);
+      else
+        clean.set(
+          tuple.state,
+          (clean.get(tuple.state) ?? new Set()).add(coordinate),
+        );
+    }
+  const conditions = fromBrokenCoverage({
+    mode: "verify",
+    flow: options.flow,
+    broken: [...broken.values()],
+    flowFile: options.flowFile,
+  });
+  return {
+    conditions,
+    cleared: [
+      { key: appStartKey() },
+      ...[...clean]
+        .filter(([state]) => !dirty.has(state))
+        .map(([state, coordinates]) => ({
+          key: `expectation:${options.flow}/${state}`,
+          coordinates: [...coordinates],
+        })),
+    ],
+  };
+}
+
 function designAssetCauses(
   result: DesignAssetVerification | undefined,
 ): string[] {
@@ -97,6 +181,8 @@ export async function runVerify(options: {
   out?: string | undefined;
   fullFlow?: boolean | undefined;
   dependencies?: VerifyDependencies | undefined;
+  /** Receives the scopes the recaptures exercised cleanly (unattended conditions). */
+  onCleared?: ((cleared: ClearedScope[]) => void) | undefined;
 }): Promise<VerifyRunResult> {
   const checkCancelled = () =>
     options.dependencies?.capture?.signal?.throwIfAborted();
@@ -233,7 +319,31 @@ export async function runVerify(options: {
       findings,
       against: options.against,
       gitTopology: options.dependencies?.gitTopology,
+    }).catch((error: unknown) => {
+      if (!(error instanceof IdiomError)) throw error;
+      throw new ConditionsRaised([
+        {
+          key: baselineKey(flow.id),
+          cause: "baseline",
+          mode: "verify",
+          flows: [flow.id],
+          subcause: "baseline-missing",
+          what: `no usable capture to verify against: ${error.message}`,
+          fix: `pass the capture the findings came from with --against <run directory>, or rerun idiom check ${flow.id} and re-embed its findings`,
+        },
+      ]);
     });
+    // A server that cannot start is a condition, not a verdict.
+    const recapture = <T>(work: () => Promise<T>) =>
+      work().catch((error: unknown) => {
+        const condition = fromRunFailure(error, {
+          mode: "verify",
+          flow: flow.id,
+        });
+        throw condition === undefined
+          ? error
+          : new ConditionsRaised([condition]);
+      });
     const statuses = expectedStatusByState(flow);
     const historicalPixels = await loadCaptureRun({
       runDirectory: baseline.runDirectory,
@@ -246,28 +356,33 @@ export async function runVerify(options: {
     );
     capturesRoot = await mkdtemp(join(tmpdir(), "idiom-verify-captures-"));
     checkCancelled();
-    const runA = await runCapture({
-      projectDirectory: validated.projectDirectory,
-      project: validated.project,
-      filmstripRequests,
-      flow,
-      out: join(capturesRoot, "current-a"),
-      deduplicateCombinations: false,
-      refreshDesign: options.refreshDesign,
-      tuples,
-      dependencies: options.dependencies?.capture,
-    });
+    const root = capturesRoot;
+    const runA = await recapture(() =>
+      runCapture({
+        projectDirectory: validated.projectDirectory,
+        project: validated.project,
+        filmstripRequests,
+        flow,
+        out: join(root, "current-a"),
+        deduplicateCombinations: false,
+        refreshDesign: options.refreshDesign,
+        tuples,
+        dependencies: options.dependencies?.capture,
+      }),
+    );
     checkCancelled();
-    const runB = await runCapture({
-      projectDirectory: validated.projectDirectory,
-      project: validated.project,
-      filmstripRequests,
-      flow,
-      out: join(capturesRoot, "current-b"),
-      deduplicateCombinations: false,
-      tuples,
-      dependencies: options.dependencies?.capture,
-    });
+    const runB = await recapture(() =>
+      runCapture({
+        projectDirectory: validated.projectDirectory,
+        project: validated.project,
+        filmstripRequests,
+        flow,
+        out: join(root, "current-b"),
+        deduplicateCombinations: false,
+        tuples,
+        dependencies: options.dependencies?.capture,
+      }),
+    );
     checkCancelled();
     const stateOrder = flow.states.map(({ id }) => id);
     const viewportOrder =
@@ -304,6 +419,17 @@ export async function runVerify(options: {
     ]);
     annotateDeclaredExpectations(loadedA.tuples, flow);
     annotateDeclaredExpectations(loadedB.tuples, flow);
+    const { conditions, cleared } = verifyConditions({
+      flow: flow.id,
+      flowFile: relative(
+        validated.projectDirectory,
+        validated.flows[0]?.file ?? "",
+      ),
+      legacyColorScheme: validated.project.capture.colorScheme,
+      runs: [loadedA.tuples, loadedB.tuples],
+    });
+    if (conditions.length > 0) throw new ConditionsRaised(conditions, cleared);
+    options.onCleared?.(cleared);
     if (runA.counts.failed > 0 || runB.counts.failed > 0) {
       const coordinate = (tuple: (typeof loadedA.tuples)[number]) =>
         `${tuple.state}/${tuple.viewport}${tuple.colorSchemeAxis ? `/${tuple.colorScheme ?? validated.project.capture.colorScheme}` : ""}`;

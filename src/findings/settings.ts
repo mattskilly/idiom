@@ -23,6 +23,7 @@ export function capturePredicateIdentity(project: Project, flow: Flow): string {
   const {
     concurrency: _lanes,
     maxMinutes: _deadline,
+    stateMaxMinutes: _stateDeadline,
     hostPressureThreshold: _pressure,
     ...capture
   } = project.capture;

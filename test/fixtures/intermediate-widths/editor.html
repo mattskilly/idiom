@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Editor</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 0 16px; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+      @media (prefers-color-scheme: dark) { body { color: #f2f2f2; background: #161616; } button { color: #f2f2f2; background: #2a2a2a; border-color: #555; } }
+      header { padding: 16px 0; }
+      h1 { margin: 0 0 12px; font-size: 20px; }
+      /* Twelve fixed 72px buttons and eleven 8px gaps: 952px on one row. */
+      .tools { display: flex; flex-wrap: wrap; gap: 8px; }
+      .tools button { width: 72px; height: 32px; padding: 0; border: 1px solid #888; border-radius: 4px; background: #f4f4f4; color: #1a1a1a; font: 12px system-ui, sans-serif; }
+      .more { display: none; }
+      /* Below 800px the toolbar collapses to one More button. */
+      @media (max-width: 800px) {
+        .tools button { display: none; }
+        .tools .more { display: block; }
+      }
+      main p { max-width: 60ch; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Draft</h1>
+      <div class="tools" role="toolbar" aria-label="Formatting">
+        <button type="button">Bold</button>
+        <button type="button">Italic</button>
+        <button type="button">Under</button>
+        <button type="button">Strike</button>
+        <button type="button">Code</button>
+        <button type="button">Link</button>
+        <button type="button">Quote</button>
+        <button type="button">List</button>
+        <button type="button">Steps</button>
+        <button type="button">Table</button>
+        <button type="button">Image</button>
+        <button type="button">Clear</button>
+        <button type="button" class="more">More</button>
+      </div>
+    </header>
+    <main>
+      <p>Write the first paragraph of the draft here.</p>
+    </main>
+  </body>
+</html>

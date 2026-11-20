@@ -174,6 +174,7 @@ async function normalizedArtifactTree(
           for (const tuple of record.timings.tuples) {
             tuple.total.ms = 0;
             tuple.probe.ms = 0;
+            delete tuple.steps;
           }
           tree[key] = JSON.stringify(record);
         } else if (entry.name === "metadata.json") {

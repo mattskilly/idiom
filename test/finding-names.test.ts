@@ -11,9 +11,12 @@ import {
 } from "../src/review/catalog.js";
 import {
   compareFindingNames,
+  FindingNameConflict,
   FindingNamingSession,
   findingNameDivergenceWarning,
   findingNameRegistrySchema,
+  findingNameStaleReportWarning,
+  findingNameWarnings,
   loadFindingNames,
   persistFindingNames,
   preflightFindingNameRegistry,
@@ -418,22 +421,164 @@ describe("finding-name registry", () => {
     expect(overridden.divergence?.skipped).toBe(1);
   });
 
-  test("a conflict in this checkout's own evidence still refuses", async () => {
+  test("a stale own run folder yields to the local registry with a warning", async () => {
     const local = await project("idiom-finding-names-local-");
     await writeRegistry(local, [
       { name: "finding-1", fingerprints: ["one"], legacyIds: [] },
       { name: "finding-2", fingerprints: ["two"], legacyIds: [] },
     ]);
     await writeReport(local, "run-local", [finding("finding-1", "two")]);
-    await expect(loadFindingNames({ projectDirectory: local })).rejects.toThrow(
-      /conflicting finding/,
-    );
+
+    const state = await loadFindingNames({ projectDirectory: local });
+    expect(
+      state.registry.entries.map(({ name, fingerprints }) => [
+        name,
+        fingerprints,
+      ]),
+    ).toEqual([
+      ["finding-1", ["one"]],
+      ["finding-2", ["two"]],
+    ]);
+    expect(state.changed).toBe(false);
+    expect(state.staleReports).toEqual([
+      expect.objectContaining({
+        runDirectory: join(local, ".idiom", "reports", "run-local"),
+        reason: expect.stringMatching(/conflicting finding/),
+      }),
+    ]);
+    const warning = findingNameStaleReportWarning(state);
+    expect(warning).toContain(".idiom/reports/run-local");
+    expect(warning).toContain("1 stale run folder ");
+    expect(warning).not.toContain("git checkout");
+    expect(findingNameWarnings(state)).toBe(warning);
+    expect(state.divergence).toBeUndefined();
     await expect(
       preflightFindingNameRegistry({ projectDirectory: local }),
-    ).rejects.toMatchObject({
+    ).resolves.toBeUndefined();
+
+    const catalog = await loadReviewCatalog({ project: local });
+    expect(catalog.runs).toEqual([]);
+  });
+
+  test("the run under review stays strict against the local registry", async () => {
+    const local = await project("idiom-finding-names-local-");
+    await writeRegistry(local, [
+      { name: "finding-1", fingerprints: ["one"], legacyIds: [] },
+      { name: "finding-2", fingerprints: ["two"], legacyIds: [] },
+    ]);
+    await writeReport(local, "run-local", [finding("finding-1", "two")]);
+    const run = join(local, ".idiom", "reports", "run-local");
+
+    const refusal = await loadFindingNames({
+      projectDirectory: local,
+      currentRunDirectory: run,
+    }).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(FindingNameConflict);
+    const conflict = refusal as FindingNameConflict;
+    expect(conflict.file).toBe(run);
+    expect(conflict.message).toMatch(/conflicting finding/);
+    expect(conflict.message).toContain(join(run, "findings.json"));
+    expect(conflict.fix).toContain(".idiom/reports/run-local");
+    expect(conflict.fix).not.toContain("finding-names.json");
+  });
+
+  test("a stale run folder sits out whole, clean records included", async () => {
+    const local = await project("idiom-finding-names-local-");
+    await writeRegistry(local, [
+      { name: "finding-1", fingerprints: ["one"], legacyIds: [] },
+      { name: "finding-2", fingerprints: ["two"], legacyIds: [] },
+    ]);
+    await writeReport(local, "run-old", [
+      finding("finding-7", "brand-new"),
+      finding("finding-1", "two"),
+    ]);
+
+    const state = await loadFindingNames({ projectDirectory: local });
+    expect(state.staleReports?.map(({ source }) => source)).toEqual([
+      `${join(local, ".idiom", "reports", "run-old", "findings.json")}[1]`,
+    ]);
+    expect(
+      state.registry.entries.some(({ fingerprints }) =>
+        fingerprints.includes("brand-new"),
+      ),
+    ).toBe(false);
+    expect(state.changed).toBe(false);
+  });
+
+  test("an own ticket's name outranks a stale run folder", async () => {
+    const local = await project("idiom-finding-names-local-");
+    await writeRegistry(local, [
+      { name: "finding-1", fingerprints: ["one"], legacyIds: [] },
+    ]);
+    const done = join(local, ".autobuild", "tickets", "done");
+    await mkdir(done, { recursive: true });
+    await writeFile(
+      join(done, "ticketed.md"),
+      `\`\`\`idiom:finding\n${JSON.stringify(finding("finding-5", "ticketed"))}\n\`\`\`\n`,
+    );
+    await writeReport(local, "run-old", [finding("finding-6", "ticketed")]);
+
+    const state = await loadFindingNames({ projectDirectory: local });
+    expect(
+      state.registry.entries.find(({ fingerprints }) =>
+        fingerprints.includes("ticketed"),
+      )?.name,
+    ).toBe("finding-5");
+    expect(state.staleReports?.map(({ runDirectory }) => runDirectory)).toEqual(
+      [join(local, ".idiom", "reports", "run-old")],
+    );
+  });
+
+  test("without a local registry, disagreeing run folders still refuse", async () => {
+    const local = await project("idiom-finding-names-local-");
+    await rm(join(local, ".idiom", "finding-names.json"), { force: true });
+    await writeReport(local, "run-a", [finding("finding-1", "one")]);
+    await writeReport(local, "run-b", [finding("finding-2", "one")]);
+
+    await expect(loadFindingNames({ projectDirectory: local })).rejects.toThrow(
+      /conflicting finding names/,
+    );
+    const refusal = await preflightFindingNameRegistry({
+      projectDirectory: local,
+    }).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(RunFailure);
+    const failure = refusal as RunFailure;
+    expect(failure).toMatchObject({
       stage: "preflight",
       cause: "finding-name-registry",
     });
+    expect(failure.headline).toMatch(
+      /^finding-name registry refused: conflicting finding names/,
+    );
+    expect(failure.hint).toContain(".idiom/reports/run-b");
+    expect(failure.hint).not.toContain("git checkout");
+    expect(failure.paths).toEqual([join(local, ".idiom", "reports", "run-b")]);
+  });
+
+  test("a decisions line conflicting with the registry refuses and names the log", async () => {
+    const local = await project("idiom-finding-names-local-");
+    await writeRegistry(local, [
+      { name: "finding-1", fingerprints: ["one"], legacyIds: [] },
+    ]);
+    await writeFile(
+      join(local, ".idiom", "decisions.jsonl"),
+      `${JSON.stringify({
+        at: "2026-08-20T10:00:00.000Z",
+        commit: "one",
+        findingId: "finding-4",
+        fingerprint: "one",
+        decision: "accept",
+        scope: "instance",
+        actor: "human",
+      })}\n`,
+    );
+    const refusal = await preflightFindingNameRegistry({
+      projectDirectory: local,
+    }).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(RunFailure);
+    const failure = refusal as RunFailure;
+    expect(failure.paths).toEqual([join(local, ".idiom", "decisions.jsonl")]);
+    expect(failure.hint).toContain(".idiom/decisions.jsonl");
   });
 
   test("preflight passes divergence and refuses a corrupt primary registry", async () => {

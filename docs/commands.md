@@ -21,21 +21,23 @@ idiom check <flow>           # every deterministic finding, in fix order
 idiom check --gate           # build gate: only what the change affects, within a budget
 idiom digest [flow]          # short summary of the latest run against the previous one
 idiom nightly [flow...]      # scheduled full check that files new findings as triage tickets
+idiom watch                  # run the gate on every merge to the base branch; file regressions into triage
 idiom bisect <finding>       # find the commit that introduced a finding
 idiom baseline record|accept [flow]  # record or accept the regression baseline
-idiom baseline advance [flow]        # record the target branch's tip as the gate's base
+idiom baseline advance [flow]        # advance the gate's base to the target tip, every flow that needs it
 idiom fix <flow>             # bounded local agent repairs with calibrated proof
 idiom sweep [flow] --all     # whole-product polish (choose a flow or --all)
 idiom learn <observation>    # turn a human-found miss into a check or ruling
 idiom learn --harvest        # collect UI corrections from build answers and PR reviews
 idiom learn --import <file.md>  # import a Markdown table of misses; --replay counts what checks catch
+idiom escalations [--answer]  # answer Autobuild design escalations that precedent already settles
 idiom compare <flow>         # before/after composites between two stored captures
 idiom coverage               # routes no flow captures
 idiom review <flow>          # bounded deterministic + model critique
 idiom report [runId]         # open the newest or named HTML report
 idiom system [--learn]       # render or learn the project design system
 idiom decide [--list]        # persist decisions or list lifecycle
-idiom brief triage|plan|gate|record|decide|list|show  # before a UI ticket: triage, research, ask, decide and gate
+idiom brief triage|plan|research|gate|lint|record|decide|list|show  # before a UI ticket: triage, research, measure comparables, ask, decide, gate and lint
 idiom explore [flow]         # render three candidate directions for one state
 idiom explore resolve <run-id>  # record the judgment on an exploration
 idiom ruling --decision <id> # resolve a reviewed design-law question
@@ -208,6 +210,7 @@ idiom init --wire                      # wiring only, on an initialized project
 idiom init --dry-run                   # print the plan; change nothing
 idiom init --wire --yes                # apply the default plan without a prompt
 idiom init --wire --git-hook --nightly --design-review
+idiom init --wire --advance-baseline   # GitHub job: advance the baseline on every merge
 idiom init --wire --skip-wiring github --skip-wiring claude
 ```
 
@@ -219,8 +222,12 @@ are on `PATH` (found on `PATH` only; neither is run). The plan lists every
 surface it will wire with the exact diff, and every surface it found but will
 leave, with the reason. In a terminal you can change the selection first; then
 one question, `Apply all selected wiring shown above? [y/N]`, applies all of it
-or none of it. `--yes` applies the displayed default plan without asking. A
-noninteractive run without `--yes` prints the plan and changes nothing.
+or none of it. `--yes` applies the displayed default plan without asking; with
+`--wire` (or `--dry-run`) that plan includes the Autobuild rows a prompt would
+offer, so `idiom init --wire --yes` wires Autobuild with no terminal. A plain
+scaffold `idiom init --yes` leaves the Autobuild rows unselected. A
+noninteractive `--wire` run without `--yes` prints the plan, changes nothing and
+ends with `Apply the offered wiring without a prompt: idiom init --wire --yes`.
 `--dry-run` prints the same plan and creates nothing at all, not even the
 scaffold; it wins over `--yes`.
 
@@ -238,11 +245,12 @@ none of the wiring flags combine with `--validate` or `--print-setup-prompt`.
 | `github` | on when `.github/workflows/` exists | `.github/workflows/idiom.yml` (below) |
 | `husky` | off; `--git-hook` | A marked `idiom check --gate --fail-on blocker` step at the top of `.husky/pre-push` |
 | `lefthook` | off; `--git-hook` | A marked `pre-push` command (or job) running the same check in `lefthook.yml` |
-| `autobuild-gate` | offered at a prompt | The UI gate described below |
+| `autobuild-gate` | offered at a prompt; applied by `--wire --yes` | The UI gate described below |
+| `autobuild-baseline` | offered at a prompt; applied by `--wire --yes`; an existing step stays selected | A finalize check step running `idiom baseline advance --fetch`, so the gate's baseline advances as builds land ([configuration](configuration.md#autobuild)) |
 | `autobuild-verifier` | off; choose it at the prompt | The optional finding verifier described below |
-| `autobuild-plan` | offered interactively when installed; managed sections refresh | UI context, Idiom design exports and expected checks in `ab-plan` |
-| `autobuild-implement` | offered interactively when installed; managed sections refresh | UI checks and authorized repairs before finishing `ab-implement` |
-| `autobuild-code-review` | offered interactively when installed; managed sections refresh | Compare changes against Idiom design asset criteria in `ab-code-review` |
+| `autobuild-plan` | offered at a prompt when installed; applied by `--wire --yes`; managed sections refresh | UI context, Idiom design exports and expected checks in `ab-plan` |
+| `autobuild-implement` | offered at a prompt when installed; applied by `--wire --yes`; managed sections refresh | UI checks and authorized repairs before finishing `ab-implement` |
+| `autobuild-code-review` | offered at a prompt when installed; applied by `--wire --yes`; managed sections refresh | Compare changes against Idiom design asset criteria in `ab-code-review` |
 | `autobuild-landing` | off; `--design-review` | A `[[landing]]` rule `label = "design-review"`, `mode = "consent"` before your other landing rules: tickets labeled design-review wait for a person before merging |
 
 The Design QA section tells every agent to run `idiom brief triage
@@ -264,7 +272,11 @@ baseline become ticket proposals in the uploaded reports, and
 `.idiom/filed-tickets.json` is restored and saved with `actions/cache` so each
 night proposes only what is new. A runner has no tracker CLI or credentials;
 to file into a tracker from CI, install `ab`, give the job its token, and drop
-`--tracker directory`. The default
+`--tracker directory`. With `--advance-baseline` (or `advance` at the prompt) a
+`baseline` job runs on each default-branch push: `idiom baseline advance
+--target <pushed sha> --commit-file`, then it commits `.idiom/baselines/` and
+pushes. It needs `contents: write` and a branch that lets
+`github-actions[bot]` push ([configuration](configuration.md#github-action)). The default
 branch comes from the local `refs/remotes/*/HEAD`; when none exists, pushes to
 any branch start a run that skips unless it is the repository's default branch.
 The dependency install command follows your lockfile and `packageManager`
@@ -277,7 +289,7 @@ Hooks are never installed without `--git-hook` or a selection at the prompt;
 init does not install husky or lefthook, run `lefthook install`, or touch
 `core.hooksPath`. With both managers present, `--git-hook` needs a choice: pick
 one at the prompt, or exclude the other (`--git-hook --skip-wiring lefthook`).
-The nightly schedule, the landing rule and hooks stay off under bare `--yes`.
+The nightly schedule, the baseline job, the landing rule and hooks stay off under bare `--yes`.
 Every plan also ends with a crontab line and the `idiom nightly --print-schedule
 launchd` command, for running the nightly check on a machine instead of in CI;
 nothing is written for them (see [nightly](#nightly)).
@@ -399,7 +411,7 @@ restart the session so `/idiom` is discovered.
 ## upgrade
 
 ```sh
-idiom upgrade [--project <dir>] [--no-agent] [--no-self-update] [--dry-run] [--json]
+idiom upgrade [--project <dir>] [--no-agent] [--no-self-update] [--dry-run] [--json] [--yes] [--skip-wiring <surface>]
 ```
 
 Update the Idiom CLI, then merge its skill templates into a project (the skill
@@ -420,10 +432,18 @@ upgrades follow the move. Collisions/protected entries require manual recovery.
 Declining migration leaves the legacy copy outside automatic skill upgrades.
 
 `--dry-run` reports proposed wiring/moves with no writes, link changes or model
-calls. `--json` and noninteractive runs never prompt or apply config/migration
-changes. Their report adds optional `autobuild` with `kind` and proposed `diff`
-and `migration` previews when available; manual outcomes name the reason and
-complete addition. Existing skill reports and conflict exits still apply.
+calls. `--yes` applies every offered change without prompting (the gate and its
+skill, the baseline finalize step and the brief instruction), printing the same
+exact diffs a prompt would show; `--dry-run` wins over `--yes`. `--skip-wiring
+<surface>` takes init's surface ids and leaves `autobuild-gate`,
+`autobuild-baseline`, `agents` or `claude` alone; the other ids are accepted
+and change nothing here. Without `--yes`, `--json` and noninteractive runs never
+prompt or apply config/migration changes, and a human-readable run that left
+wiring unapplied ends with `Apply the offered wiring without a prompt: idiom upgrade --yes`.
+The report adds optional `autobuild` and `baselineAdvance` with `kind` (a
+skipped surface reads `skipped`) and the `diff` and `migration` previews when
+available; manual outcomes name the reason and complete addition. Existing skill
+reports and conflict exits still apply.
 
 **First, the CLI.** For a global `npm install -g` or `bun add -g` install,
 `idiom upgrade` reads the registry's `latest` (a fresh read, up to 10 seconds,
@@ -562,6 +582,8 @@ idiom doctor booking --port 4100 --json
 
 Electron flows launch the app directly, so every server step is skipped for them. The first line is `idiom doctor <flow>: ok` or `idiom doctor <flow>: <failure>`; each failing or warning step adds a `fix:` line. The fixes cover the known causes: a start command that pins its port without `server.fixedPort`, a missing environment variable (add it to `server.env`), a port already in use, and a readiness URL that never returns `200`. `--json` prints `{ flow, ok, steps: [{ id, status, ms, detail, hint }], failure, surfaces }` (see [Where Idiom runs](#where-idiom-runs)).
 
+After the steps, doctor lists every open [unattended condition](#unattended-runs-never-fail-quietly) that nightly, the gate or the verify step recorded: `Open conditions (N):`, each with its one line, its ticket, and `seen <runs>× since <first>, last <last> by <mode>`, or `No open conditions from unattended runs.` The headline then reads `ok; N open condition(s)`. Conditions are informational here: they never change `ok` or doctor's exit code, and `--json` adds them as `conditions: [{ key, cause, line, mode, firstSeen, lastSeen, runs, ticket? }]` only when any are open.
+
 Doctor exits `0` when every step passes or warns, and `2` with the failing step's one-line cause when one fails. It captures nothing and writes nothing to the project. The MCP tool is `idiom_doctor`. [Troubleshooting](troubleshooting.md) covers each failure with its cause and fix.
 
 ### Where Idiom runs
@@ -591,6 +613,32 @@ Where Idiom runs:
 The Claude Code plugin is read from `~/.claude` (or `CLAUDE_CONFIG_DIR`): `plugins/installed_plugins.json`, then `enabledPlugins` in the user, project and local `settings.json`. Without `.idiom/project.json`, the section opens with `No .idiom/project.json: Claude Code hooks and the Autobuild gate are inactive until you run idiom init.`
 
 The section is read-only and fast: it reads a bounded set of files, starts no process (not even Git), uses no network and takes well under a second. It is informational and never changes doctor's exit code. `--json` adds `surfaces: { root, initialized, notice?, ms, entries: [{ id, label, status, path?, detail, fix? }] }`, where `id` is one of `autobuild-gate`, `autobuild-verifier`, `autobuild-plan`, `autobuild-implement`, `autobuild-code-review`, `github`, `agents`, `claude`, `cursor`, `claude-plugin`, `codex-mcp`, `git-hook` and `status` one of `wired`, `missing`, `stale`, `not-applicable`.
+
+## Unattended runs never fail quietly
+
+`idiom nightly`, `idiom check --gate` and `idiom verify` run where nobody watches: on a schedule, in CI, in a pre-push hook and as Autobuild verify steps. Three setup breaks used to make them exit quietly or pass, and now always exit `2` with one line on stderr per cause:
+
+```
+idiom <mode>: <cause>: <subject>: <what happened> — fix: <how>
+```
+
+| Cause | When | Key | Fix the line names |
+| --- | --- | --- | --- |
+| `app-start` | the server exited, timed out, could not spawn, pinned its port, or found the port in use | `app-start` (one for the project; the ticket lists the flows) | the server failure's own fix, then `idiom doctor <flow>` |
+| `baseline` | no recorded baseline is reachable (`baseline-missing`); the checks configuration changed since it was recorded (`baseline-stale`); nightly's baseline covers none of the checked states (`baseline-uncovered`); the gate has neither a baseline nor a base capture (comparison mode `none`); `idiom verify` cannot resolve the capture it verifies against | `baseline:<flow>` | `idiom baseline record <flow>` or `idiom baseline advance <flow>` on main, committed; for verify, `--against <run directory>` |
+| `expectation` | a captured state's `expect` no longer matches (text, selector or status), even when the baseline already held the mismatch | `expectation:<flow>/<state>` | fix the app, or the state's `steps`/`expect` in its flow file; confirm with `idiom capture <flow> --states <state>` |
+
+A state whose expectation stopped matching is **broken coverage**: `check` prints `broken coverage: <state> (<coordinates>) — expect no longer matches; not counted as reviewed`, `--json` adds `brokenCoverage: [{ state, viewport, colorScheme, mismatches }]`, and neither `--changed`/`--gate` nor the digest count the state as reviewed. The `missing-state` finding is unchanged, so an interactive `check` behaves as before.
+
+Conditions outrank findings: a gate with a broken state and new findings prints its normal report, then the condition lines, and exits `2`, not `1`. The lines replace the usual `Fix:` line. `--json` output is unchanged except for an additive `conditions: [{ key, cause, line }]` (gate and nightly), and nightly's `conditionOutcomes`.
+
+**One ticket per cause.** With a tracker (below), each distinct key files one triage ticket, titled `Idiom cannot <run|compare|review> <subject>: …`, and later runs update that same ticket's body (last seen, run count) instead of filing again. The body ends with `<!-- idiom-condition: <key> -->`, so the ticket is found again from `ab ticket list --labels <first label>` even when the local record is gone, as in a fresh build worktree. When a run that covers the cause passes (the app started; the flow compared against a usable baseline; the state captured cleanly at every coordinate that broke), the ticket gets one `Cleared: <date> by <mode>` line and stays where it is: Idiom never moves a ticket. A run that skipped the state clears nothing. Filing problems are one extra stderr line each and never change the exit.
+
+**Where they go.** Nightly files through its own sink (autobuild triage; a directory sink records only). The gate and verify step file when `unattended.tracker` resolves to autobuild: `auto` (the default) means `autobuild.toml` above the project and `ab` on `PATH`; `off` never files; `IDIOM_UNATTENDED_TRACKER=off|autobuild|auto` overrides the config, for CI and tests. `ab` runs without the build session's `AB_BUILD`, `AB_PHASE` and `AB_SESSION`, and files into the first state whose roles include `triage`; labels are `unattended.labels` (default `idiom`, `idiom-condition`).
+
+**Where they are remembered.** Every condition is recorded in the gitignored `.idiom/reports/conditions.json` of the **primary checkout** (from a linked worktree, the main one), under a lock, so `idiom doctor` in the main checkout lists what gate and verify runs raised inside build worktrees. The exit and the line never depend on that record.
+
+**Watch.** A future watch mode must report each run through the same entry point (`reportConditions({ mode: "watch", … })` in `src/unattended/file.ts`).
 
 ## Exit codes and setup failures
 
@@ -745,7 +793,7 @@ Every new capture writes a versioned `run.json` alongside the tuple artifacts, r
 
 Live probe progress goes to stderr before initialization and as each attempt starts/finishes, including state, completed count, selector and phase. Library callers can supply `onProbeProgress`; otherwise they remain silent. Timings also retain the five slowest attempted controls across the run, including selector, elapsed milliseconds and timeout outcome. JSON stdout remains a single result; stored-run replay preserves these historical control timings.
 
-Completed `capture` and `check` commands print phase timings to stderr in milliseconds: build, server readiness, each tuple capture, probe, and deterministic checks. Tuple totals include probe time, which is displayed as an included submeasurement. Statuses distinguish measured, reused, skipped, unsupported and unavailable work. Capture-only runs skip checks. Rechecking a stored run preserves `run.json` and labels its capture phases as historical evidence; current checks are timed separately in versioned `checks-timings.json`. Legacy historical timings are unavailable. Timing values are excluded from deterministic findings.
+Completed `capture` and `check` commands print phase timings to stderr in milliseconds: build, server readiness, each tuple capture, probe, and deterministic checks. Tuple totals include probe time, which is displayed as an included submeasurement. Statuses distinguish measured, reused, skipped, unsupported and unavailable work. Capture-only runs skip checks. Rechecking a stored run preserves `run.json` and labels its capture phases as historical evidence; current checks are timed separately in versioned `checks-timings.json`, which also lists each tuple's check time (`tuples`). Legacy historical timings are unavailable. Timing values are excluded from deterministic findings.
 
 Capture runs setup steps sequentially to full process exit. Web targets perform the configured server build, own the application server through readiness and teardown, and use a fresh browser context for every tuple. Electron targets skip the server and launch a fresh application for every tuple. An expectation or tuple-capture failure is recorded in metadata and the completed report; remaining tuples still run, artifacts are published, and the command then exits `1`. Setup and fatal publication failures stop immediately with an actionable error. Owned servers and Electron applications are closed on success, failure, and interruption.
 
@@ -836,6 +884,10 @@ The same element failing the same rule in several states, viewports or color sch
 
 A recorded baseline is a small committable file at `.idiom/baselines/<flow>.json`: deterministic finding fingerprints and aliases per state, viewport, color scheme and combination, plus the captured commit, version and checks configuration hash. It contains no screenshots. `baseline record <flow>` and `baseline accept [flow]` require a clean captured tree and accept `--from <runId>`, `--latest`, `--prod`, `--port`, `--json`, `--isolated-registry` and `--out <directory>` (overrides both JSON and pixel destinations). Accept infers the flow only when exactly one is configured; otherwise it lists the choices. It stores the capture's commit, even when replayed later, and replaces an existing record for that commit. Each file retains up to twenty records.
 
+`baseline record <flow> --resume` continues the newest capture of the flow when it was interrupted: by `capture.maxMinutes`, a crash or a signal. It keeps every tuple whose evidence was final (after its probe and design reference), captures only the rest, and records one baseline over all of them, the same one an uninterrupted capture records when the probe is not time-bound (finished states keep their evidence; remaining states are probed within the run's budget). It needs the same commit and a clean tree, the same capture configuration, selected tuples, toggle declarations, Idiom version and production mode as the interrupted run, and refuses otherwise with the reason, for example `cannot resume run <id>: it captured <commit> but HEAD is <commit>`. It cannot be combined with `--from` or `--latest`. With toggles, a base state's combinations at one viewport and scheme are kept or recaptured together; a state that ran out of `capture.stateMaxMinutes` is always recaptured. The kept and new tuples become one ordinary complete run under `.idiom/reports`, which `--from` and later gates read like any other; the interrupted run is left as it was. A fresh baseline capture that stops says how many tuples it kept and prints the `--resume` command.
+
+In text mode, `baseline record` prints the slowest tuples on stderr with their capture, probe, artifact, secret-scan and check times (`timing.slowTuples` in `--json`). Tuples of a state over `capture.stateMaxMinutes` are left out of the baseline, and a line names the state, the limit and the step; `--json` lists them in `stateBudgetFailures`.
+
 `baseline advance [flow]` records the target branch's tip for the build gate instead; see [Gate a build](#gate-a-build).
 
 Default checks and `--since-baseline` select the recorded ancestor nearest HEAD by Git commit distance, with recording time breaking ties. Demonstrably unrelated branch records are skipped and retained. Missing Git objects or shallow-history uncertainty require fetching more history; they never authorize replacement. `--since-baseline` requires an existing reachable record. `--baseline-file <path>` selects only that compact file (relative to the invocation directory), also strictly: missing, malformed, wrong-flow or unreachable files fail without initialization. `--all` cannot accompany any baseline selector, and the three explicit selectors cannot be combined. Text and JSON separate **new**, **fixed** and **pre-existing** findings. The exit status and `--fail-on` apply only to new live deterministic occurrences, with rules, severity overrides and review lifecycle status applied. Each viewport participates independently, including findings beyond the report's attention cap. Fixed rows use the baseline's stored severity; a missing or failed tuple is listed as uncovered and cannot establish a fix. Suppressed findings still count as present evidence when deciding whether a defect was fixed.
@@ -908,8 +960,8 @@ idiom check --gate --plan-only --json   # the plan or skip only: no server, brow
   2. otherwise a **cached capture of the base** in the shared base cache (below), reused across builds and worktrees, capturing only the tuples it lacks;
   3. otherwise a **capture of the base**: the same states, viewports, schemes and probe settings as the head, in a detached worktree of the base with its committed configuration and an owned server (as [`--ref`](#capture-a-fixed-commit) does), deterministic checks only, written to the cache. It writes no committed baseline, decision, digest or attribution.
 
-  Base capture is priced like the head (same history, plus 30s for the worktree and dependency install, a default) and runs only when head and base together fit the budget; head coverage is trimmed first and never for the base. When it does not fit, or the capture fails, the gate does not hide it: `warning: base capture skipped (~40s over the 3m budget); comparing with baseline <sha>, N commit(s) behind base <sha> — findings already at the base may be counted as new; run idiom baseline advance <flow>` (or `no baseline reachable from base <sha>; gating open findings`), and it compares with the nearest recorded baseline behind the base. Records are considered only when they are ancestors of the base: a baseline recorded on a branch that was **squash-merged** is not reachable from the target branch and is ignored, so record on the target branch or use `baseline advance`.
-- **Keep the base fresh cheaply.** `idiom baseline advance [flow]` captures the target branch's tip (the remote HEAD, else `main` or `master`; `--target <ref>` overrides) in its own worktree, from any checkout, and writes it to the shared base cache, so the next gates are case 1 with no capture. Run it after merges (an Autobuild finalize step) or nightly. `--commit-file` also writes the committed `.idiom/baselines/<flow>.json` (refused if any tuple failed) for a job that commits it on the target branch; `--prod` and `--json` work as for `record`. The cache lives in the Git common directory (`<git-common-dir>/idiom/base-cache/`), is untracked, shared by every worktree of the checkout, keyed by commit, checks configuration and Idiom build, and safe to delete.
+  Base capture is priced like the head (same history, plus 30s for the worktree and dependency install, a default) and runs only when head and base together fit the budget; head coverage is trimmed first and never for the base. When it does not fit, or the capture fails, the gate does not hide it: `warning: base capture skipped (~40s over the 3m budget); comparing with baseline <sha>, N commit(s) behind base <sha> — findings already at the base may be counted as new; run idiom baseline advance <flow>` and it compares with the nearest recorded baseline behind the base. With no baseline reachable either (`no baseline reachable from base <sha>; gating open findings`), the gate has nothing to judge against: it prints its report, then exits `2` with one `baseline` condition line for the flow (see [Unattended runs never fail quietly](#unattended-runs-never-fail-quietly)). A recorded baseline whose checks configuration has changed since is the same `baseline` condition. Records are considered only when they are ancestors of the base: a baseline recorded on a branch that was **squash-merged** is not reachable from the target branch and is ignored, so record on the target branch or use `baseline advance`.
+- **Keep the base fresh cheaply.** `idiom baseline advance [flow]` captures the target branch's tip (the remote HEAD, else `main` or `master`; `--target <ref>` overrides) in its own worktree, from any checkout, and writes it to the shared base cache, so the next gates are case 1 with no capture. With no flow it advances every flow that needs it: a flow a stored record already covers by the rule above is `current` and captures nothing, a flow whose stored record is newer than the target is `superseded`, and a flow not on the target yet is `absent`. Only tuples the target commit declares are captured. If any capture fails, that flow writes nothing, the previous baseline stays, and the command prints `idiom: baseline advance failed for <flow> at <sha>: <reason>; the previous baseline is unchanged` on stderr and exits 2. Advances are serialised per project; `--wait <duration>` bounds the wait for another one (default `30m`). `--fetch` fetches the target's remote-tracking branch first, for a post-merge or finalize step. Run it after merges: init and upgrade wire it as an Autobuild finalize step, or as a GitHub job with `--advance-baseline` ([wiring](#wire-agents-ci-hooks-and-autobuild)). `--commit-file` also writes the committed `.idiom/baselines/<flow>.json` for a job that commits it on the target branch; `--prod` and `--json` work as for `record`. The cache lives in the Git common directory (`<git-common-dir>/idiom/base-cache/`), is untracked, shared by every worktree of the checkout, keyed by commit, checks configuration and Idiom build, and safe to delete. See [Advancing on every merge](configuration.md#baselines).
 
 Before any server starts, the gate prints its plan and estimate to stderr:
 
@@ -925,6 +977,8 @@ The estimate uses the medians of up to five stored runs of the flow (capture per
 
 `--plan-only` (with `--gate`) stops after planning. It prints the skip line, or the plan to stdout, and exits 0 without starting a server, a browser or a capture. With `--json` it prints `{"gate":{"planOnly":true,"line":…,"plan":…}}`, or the skip object above. The [GitHub Action](configuration.md#github-action) runs it first so a change with no UI costs no browser install or app setup. `--plan-only` requires `--gate`.
 
+`--handoff <dir>` (with `--gate`) also writes the [fix step's](#fix-findings-inside-the-build) handoff under `<dir>`: `round-N/handoff.json` and `handoff.md` with the top three blocking new findings in rank order (each with selector, state, viewport, measured value, the rule in the director's words with its labelled source, a suggested fix, done-when criteria and copied crops), `progress` against the last kept round (`fixed`, `persisting`, `introduced`, compared by coordinate and fingerprint), `outcome` on re-verify rounds (`commit` when the edits fixed a target and introduced nothing, else `revert`; a reverted round never becomes the baseline), `repairFrom` (the round the next repair works from: this one, or the last kept round after a revert), and `next` (`pass`, `repair`, `stop` after three repair rounds, or `skip`); plus `summary.md` (at most 15 lines) and `transcript.md` rewritten from every round. Exit codes and output are unchanged; `--json` adds `handoff: { dir, round, next, targets, outcome?, repairFrom?, summaryPath }`. It is rejected with `--plan-only` and `--fail-on never`.
+
 `check --deferred fail|warn` controls only busy-host process status, for named,
 changed and gate checks. The default `fail` retains exit 3, even with
 `--fail-on never`. `warn` prints an explicit incomplete-review warning on stderr
@@ -939,6 +993,26 @@ MCP deferral semantics are unchanged.
 For the implementing caller after a failed check: Fix the top three findings in rank order (function before appearance), re-run, and stop after three rounds, reporting what remains. One round is one repair batch followed by one check; the initial check is not a repair round. Stop earlier when nothing remains. Repair only within the caller's authorization; remaining blocking findings still withhold completion and do not permit suppressions. The verify agent runs once and deposits its verdict; this does not change the pipeline retry policy.
 
 Interactive init/upgrade offer the pathless `idiom-check` agent gate by default, installing the shared `idiom-verify` skill and discovery link. Gate builds with `--gate --deferred warn`, and move full coverage to a scheduled run. The full run also refreshes the timing history and probe fingerprints the gate plans from:
+
+#### Fix findings inside the build
+
+The **fix step** makes the gate act like the director at verify time: instead of only reporting, the `idiom-check` agent step fixes what it finds before the pull request exists, and returns only what it could not fix. Interactive `idiom init --wire` and `idiom upgrade` offer it (the `autobuild-fix` row) once the gate is wired; it is the one-line swap
+
+```toml
+[verify.idiom-check]
+kind = "agent"
+skill = "idiom-fix"  # fixes up to 3 new major findings per round, 3 rounds
+```
+
+with the same command, step name and order, plus the `idiom-fix` skill and its discovery link. A custom `idiom-check` (a check step or another skill) is never rewritten. The skill runs `idiom check --gate --fail-on major --deferred warn --json --handoff .ab/idiom-fix`:
+
+- **No UI change:** `ab verdict skip` with the gate's skip line, in under a second of Idiom time (agent start-up is Autobuild's).
+- **Clean:** `ab verdict pass`.
+- **New major findings:** the agent edits the application source for the handoff's top three, re-runs the gate, and commits a round the CLI judged `commit` (it fixed a target and introduced nothing); otherwise it reverts its own edits (never stash, reset or clean) and the next attempt works from the last kept round. At most three repair rounds.
+- **All fixed:** Autobuild certifies the head it verified, so the step fails with a "fixed in-build" report naming the commits (with a patch fallback). The build returns to implement, which keeps the commits (the managed `ab-implement` section says so) and publishes them; the next verify cycle's gate is clean and passes.
+- **Still blocked after three rounds:** the step fails with the CLI's short summary, which becomes the escalation text when verify attempts run out: one line per finding with selector, state, viewport, measured value, the rule in the director's words and the suggested fix. The full transcript and crops attach to the PR as `idiom-fix-report` and `idiom-fix-crop-NNN`.
+
+Decisions (gate exit 4) and guidance rounds behave exactly as in the `idiom-verify` gate. Four gate runs fit the default one-hour session; raise `[roles.idiom-check] sessionBudgetSeconds` for slow gates. Evidence from a fixture build: [docs/field-test/idiom-fix-step.md](field-test/idiom-fix-step.md).
 
 ```sh
 idiom check studio-lab
@@ -1010,9 +1084,123 @@ When the latest run recorded [where its new findings came from](#where-a-new-fin
 
 Each digest also reports applied human and agent judgments side by side (accept/reject and separate acknowledgement counts). Counts deduplicate exact decision sources across coordinates; occurrence/disposition totals keep their existing meaning. Historical snapshots without sources say attribution unavailable, and unknown legacy actors have an unattributed bucket. Later corrections update the actor partition of an existing snapshot without recapturing or changing its dispositions.
 
+## scorecard
+
+A weekly reading of two numbers: who found each UI problem first, Idiom or the director, and how many of the findings the director decided were accepted. Experimental. It reads only what Idiom already wrote and needs no network, browser or server:
+
+```sh
+idiom scorecard                      # the last four ISO weeks, ending this week
+idiom scorecard --weeks 8
+idiom scorecard --since 2026-10-01   # from that day's week through this week
+idiom scorecard --since 2026-10-01 --weeks 2 --json
+idiom scorecard --verbose            # every learned record matched to a finding, and why
+```
+
+```
+Scorecard 2026-W43 to 2026-W46 (ISO weeks, UTC)
+Found first (UI problems first found by Idiom vs by the director)
+  2026-W43  Idiom 2  director 1  director share 33% (n=3)
+  2026-W44  Idiom 1  director 1  director share 50% (n=2)
+  2026-W45  no UI problems recorded
+  2026-W46  Idiom 1  director 2  director share 67% (n=3)
+  Window    Idiom 4  director 4  director share 50% (n=8)
+  By category: contrast 1/0, control-gap 1/0, copy 0/1, target-size 1/0, visual 0/1, unrecorded 1/2 (Idiom/director)
+  By surface:  store 4/3, cart drawer 0/1 (Idiom/director)
+Acceptance (director decisions on findings)
+  2026-W43  1 accepted, 1 rejected, 0 acknowledged — 50% accepted (n=2); 1 agent decision excluded
+  2026-W44  2 accepted, 1 rejected, 1 acknowledged — 67% accepted (n=3)
+  2026-W45  no director accept/reject decisions
+  2026-W46  no director accept/reject decisions (1 acknowledged)
+  Window    3 accepted, 2 rejected, 2 acknowledged — 60% accepted (n=5); 1 agent decision excluded
+Sources: 3 runs (oldest 2026-10-20; 1 watch root), 2 filed tickets, 7 learned (1 undated, not placed), 10 decisions
+note: Idiom runs before 2026-10-20 are not stored; Idiom-first may be undercounted
+```
+
+**Weeks.** ISO 8601 weeks in UTC, Monday 00:00 to the next Monday, labelled `2026-W46`. By default the last four, ending with the current week. `--weeks <n>` (1 to 52) sets how many. `--since <YYYY-MM-DD>` starts at the week containing that day: alone it runs through the current week, with `--weeks` it is that many weeks. A `--since` after today is an error.
+
+**What it reads.**
+
+- Idiom's side: the `digest.json` record every `check`, `check --gate`, `nightly` and `watch` run writes in its run directory under `.idiom/reports/`, and, when `idiom watch` has run, the same records in the watch tree (`<git common dir>/idiom/watch/<project>/tree/<project path>/.idiom/reports`). A run found in both is counted once. The filing ledger `.idiom/filed-tickets.json` adds the day each finding was filed.
+- The director's side: every record in `.idiom/learned.jsonl`, whether from `idiom learn`, the MCP tool `idiom_learn`, `learn --harvest` or `learn --import`.
+- Acceptance: `.idiom/decisions.jsonl`, with `reattribute` corrections applied.
+
+**An Idiom problem** is one digest occurrence group in a flow: occurrences sharing a group key, else a fingerprint, so one element failing at three viewports is one problem. Coverage problems (failed or interrupted captures, unmet declared expectations) are not UI problems and are skipped. Open, acknowledged and rejected findings all count: a rejected finding was still found. It was **first seen** at the earliest stored run containing it, or the earliest ticket filed for it, whichever is earlier. A filed ticket whose findings appear in no stored run (its runs were pruned, or ran in a build worktree that was discarded) is its own Idiom problem, first seen when it was filed, with an unrecorded category; it matches no learned record.
+
+**A director catch** is one learned record, dated by the date its imported row gives (`YYYY-MM-DD` is the whole UTC day), else when its harvested comment was written, else when it was recorded. An imported record whose row gives no readable date is *undated*: it is counted in the sources line and never placed in a week, since the day it was imported is not the day it was found. Its category is the imported row's, else the harvested correction's first; its surface is the imported row's, else its flow's.
+
+**Matching.** A learned record and an Idiom problem are the same UI problem when they are in the same flow and the first of these holds (`--verbose` shows which, as `via`):
+
+1. `rule`: the same state, and the record's learned rule, an imported row's check ids or its `target.check` names the finding's rule or category.
+2. `selector`: the record's selector or law scope appears verbatim in the finding's group key or problem text.
+3. `words`: the same state, and the record's words and the finding's problem text share at least two content words (lowercase, singular, three letters or more, common words dropped), covering at least 60% of the record's.
+
+**Found first.** Matches join records and problems into groups; each group is one UI problem. It was found by **Idiom** when Idiom first saw it strictly before every dated director catch in the group, and otherwise by the **director**. A director date given as a day beats any Idiom finding on that same UTC day. The problem is counted in the week of whoever found it first, under that finder's category and surface; a group of only undated records is not counted. **Director share** = director / (Idiom + director). Category names are shown as each side records them (finding categories are check names; harvested and imported categories are the director's) and are not merged.
+
+**Acceptance.** Of the `accept`, `reject` and `acknowledge` decisions the director (actor `human`, after corrections) recorded in a week, each finding counts once, by its last such decision that week. Rate = accepted / (accepted + rejected), and **n = accepted + rejected**; acknowledged findings are shown beside it, outside the rate. Agent decisions are left out and counted as excluded. The window total sums the weeks.
+
+**Empty weeks.** A week with no UI problems says `no UI problems recorded`, and a week with no director accept or reject says `no director accept/reject decisions`, never 0%. In `--json` their rates are `null`.
+
+**Limits.** The scorecard knows only what was stored. Gate runs inside build worktrees that were thrown away are seen only through the tickets they filed, and runs older than the oldest stored one are gone; the `note:` line says when the window starts before the oldest stored run, so Idiom-first may be undercounted.
+
+`--json` (experimental) prints `{ interfaceVersion, window: { from, to, start, end, weeks }, weeks: [{ week, start, end, idiom, director, total, directorShare, byCategory, bySurface }], overall, acceptance: { weeks: [{ week, start, end, accepted, rejected, acknowledged, n, rate, agentExcluded }], overall }, pairs?, sources, notes }`; `pairs` is present with `--verbose`. A malformed filing ledger prints a warning on stderr and the scorecard runs without it. The exit code is 0 whenever a scorecard is printed.
+
+## escalations
+
+Autobuild builds stop and ask when an agent cannot decide something. Many of those questions are about the UI (which control, what spacing, what wording) and are already settled: a recorded ruling in `DESIGN.md`, a finding the director accepted or rejected with a reason, or a learned law. `idiom escalations` finds those and answers them with the precedent, so only new questions reach a person. Experimental. It reads the local Autobuild store through `ab` and needs no network:
+
+```sh
+idiom escalations                # list open escalations, classified, with matching precedent
+idiom escalations --answer       # answer the ones precedent settles through ab answer
+idiom escalations --history      # every answer Idiom gave, newest first
+idiom escalations --json
+```
+
+**What it reads.** `ab builds --json`, then `ab build status <slug> --json` for each `blocked` or `paused` build. Every `ab` call drops the ambient build identity (`AB_BUILD`, `AB_PHASE`, `AB_SESSION`, …), as [`learn --harvest`](#harvest-corrections-you-already-wrote) does, so it works inside a build step too. Without `ab` on `PATH` it exits 1 with `idiom escalations needs the autobuild CLI (ab) on PATH`.
+
+**Which escalations are design questions.** Only agent escalations; stall and policy escalations are process by definition and are never touched. The question text is classified with the same deterministic vocabulary harvest uses: UI category words (layout, spacing, copy, interaction, visual), UI nouns (button, footer, dropdown, …), pixel sizes, and the question nouns `control`, `spacing`, `wording`, `copy`, `empty state` and `component`, against build-process words (verify, lockfile paths, spec, scope, test, …). Code spans, fenced code and file paths are masked first. A question is a design question when it has at least two UI hits and more UI hits than process hits. No model is involved.
+
+**Precedent.** Three sources, read-only:
+
+- **Rulings**: recorded rulings with a rule outcome, from `DESIGN.md` and the decision log (one effective law, as `idiom ruling` sees it). Located as `DESIGN.md (recorded ruling ruling-1)`, or `.idiom/decisions.jsonl (ruling ruling-1)` when the ruling is only in the log.
+- **Decisions**: the latest accept or reject of each finding in `.idiom/decisions.jsonl`, when its reason is itself about the design (a reason such as "false positive, Idiom bug" is left out). A later decision on the same finding supersedes an earlier one. Located as `.idiom/decisions.jsonl line N`.
+- **Learned laws**: `.idiom/learned.jsonl` records that became more than an observation; their rule candidate is the text. Located as `.idiom/learned.jsonl (learned-N)`.
+
+**Matching.** Deterministic term overlap: words are lowercased, stop words and question scaffolding ("should", "which", "spec", …) are dropped and plurals folded; each term is weighted by how rare it is across the precedent (`ln(1 + N/df)`), and a precedent is scored by the cosine of the weighted term sets. Precedents with identical text (a batch of rejections sharing one reason) count once. Each match lists the terms it shares with the question as the reason it matched.
+
+| Threshold | Value | Meaning |
+| --- | --- | --- |
+| Match floor | 0.15 | A precedent below this score is not listed |
+| Minimum shared terms | 2 | A precedent sharing fewer terms is not a match, however rare the term |
+| Decisive | 0.35 | The top match must reach this to settle the question |
+| Conflict | 0.25 | Any other match at or above this is conflicting precedent; the question is left open |
+
+**Verdicts.** Each escalation is `decisive` (one clear match settles it), `open` (no precedent, below threshold, conflicting precedent, or a guard below), `not-design`, or `answered-before`. Even when precedent settles the question, Idiom answers only when it is safe:
+
+- **Blocked builds only.** A `paused` build is never answered, because `ab answer` on a paused build asks it to resume once its blockers clear; the escalation is left open with `build is paused`.
+- **One open escalation.** `ab answer` answers every open escalation on a build at once, so a build with more than one is left open (`build has 2 open escalations`).
+- **No answer loop.** A new escalation on a build Idiom already answered usually means the agent pushed back on the precedent; it is left for a person.
+
+Each open design escalation gets one paragraph for the human: the question, the closest precedent with its score and shared terms, and why it was left open.
+
+**Answers.** With `--answer`, each decisive escalation is answered with `ab answer <build> <guidance>`, always with guidance text. Idiom never sends a bare retry, `--dismiss`, `--revise-spec` or `ab abort`, and never answers the same escalation twice. The guidance quotes the precedent verbatim (cut to 600 characters only when longer) and names where it lives:
+
+```text
+Idiom precedent answer: this design question is already settled.
+Recorded ruling ruling-1 in DESIGN.md says: "Filters with five or fewer options use a segmented control, never a dropdown."
+Follow it. If it does not apply to this case, escalate again and say why; a person will answer.
+```
+
+A failed `ab answer` leaves the escalation open with a warning on stderr and is not retried. An answering pass holds `.idiom/escalations.lock`, so a manual run and `idiom watch` never answer at the same time; the second fails fast.
+
+**History.** Every answer is appended to `.idiom/escalation-answers.jsonl` (commit it like `decisions.jsonl`) with the build, escalation, phase, question, guidance, precedent (kind, id, location, text, stance, score, shared terms) and time. `--history` lists them newest first with the hint to overrule: answer the build again, or revise the precedent. [`learn --harvest`](#harvest-corrections-you-already-wrote) never records these answers as director corrections. Limit: a record is written only after `ab answer` succeeds, so if Idiom is killed between the two the escalation is answered (and closed) but the history line is missing; it is never answered twice.
+
+**In watch.** Set `"escalations": { "watch": true }` in the project file ([configuration](configuration.md#escalations)) and [`idiom watch`](#watch) runs one answering pass each time it has processed what is pending, logging a line only when it answered something or the pass failed.
+
+`--json` (experimental) prints `{ interfaceVersion, escalations: [{ build, buildStatus, id, phase, source, question, classification, matches, verdict, reason?, summary?, guidance?, answered? }], answered, warnings }`, or `{ interfaceVersion, history }` with `--history`. The exit code is 0 whenever the list prints.
+
 ## nightly
 
-The scheduled full check. Builds check only what they change; `idiom nightly` checks every flow against its recorded baseline and files each new problem where the team triages work:
+The scheduled full check. Builds check only what they change; `idiom nightly` checks every flow against its recorded baseline and files each new problem where the team triages work. To react to each merge as it lands instead of once a night, see [`idiom watch`](#watch).
 
 ```sh
 idiom nightly                          # every flow; file into autobuild triage or a directory
@@ -1042,7 +1230,7 @@ In directory mode, a missing proposal is restored at its recorded path from the 
 
 A cluster matching two recorded tickets is reported as a `conflict` and filed nowhere. Without the ledger, as on a fresh CI checkout, identities are recovered from the `idiom:finding` blocks of tickets carrying the first label (`ab ticket list --labels <label>`), or of the proposals already in the directory. The ledger is written after every successful filing, so a failure partway through never refiles what already succeeded. A ticket source that refuses unknown labels reports `ab`'s message as an `error`; create the labels once.
 
-**Exit codes.** `0` when every flow was checked and every filing succeeded (new findings are the output, not a failure); `2` when a flow could not be checked, such as `baseline-missing` (the other flows still run and file); `3` when the host was too busy to finish a flow, unless `--deferred warn` (the completed findings still file); `1` when a filing failed. `--json` prints `flows`, `sink`, `triageState` or `outDirectory`, `outcomes` and the `digest`.
+**Exit codes.** `0` when every flow was checked and every filing succeeded (new findings are the output, not a failure); `2` when a flow could not be checked, or on any [unattended condition](#unattended-runs-never-fail-quietly): the app could not start, a baseline is missing, stale or covers nothing checked, or a state's expectation no longer matches. Each condition prints one `idiom nightly: …` line and files or updates one triage ticket (the other flows still run and file); `3` when the host was too busy to finish a flow, unless `--deferred warn` (the completed findings still file); `1` when a filing failed. `--json` prints `flows`, `sink`, `triageState` or `outDirectory`, `outcomes`, the `digest`, `conditions` and `conditionOutcomes`.
 
 **Schedule it.** `idiom init --wire --nightly` adds a nightly job to the GitHub workflow (see [Wire agents, CI, hooks and Autobuild](#wire-agents-ci-hooks-and-autobuild)). On a machine, `--print-schedule cron` prints a crontab line for 03:17 that runs in the project root with your current `PATH`, appending to `.idiom/reports/nightly.log`; `--print-schedule launchd` prints a macOS launch agent and the `launchctl bootstrap` command that loads it. Neither installs anything:
 
@@ -1052,6 +1240,50 @@ idiom nightly --print-schedule cron
 idiom nightly --print-schedule launchd > ~/Library/LaunchAgents/build.idiom.nightly.shop.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/build.idiom.nightly.shop.plist
 ```
+
+## watch
+
+The merge watcher. A nightly run finds an afternoon regression the next morning; `idiom watch` is a long-running process that notices each new commit on the base branch and checks it within minutes:
+
+```sh
+idiom watch                            # watch the base branch from its current tip
+idiom watch --target origin/main       # a remote-tracking branch: fetched before every look
+idiom watch --since main~5             # first start only: also process the last five merges
+idiom watch --once                     # process what is pending, then exit
+idiom watch --poll 30s --tracker autobuild --severity major --label design-qa
+idiom watch --install-service          # run it as a login service (launchd or systemd)
+idiom watch --uninstall-service        # stop it cleanly and remove it
+```
+
+**What each merge gets.** Every first-parent commit after the last one processed counts as one merge, so a squash merge and a `--no-ff` merge each appear once and a merged branch's own commits are never visited. For each, oldest first:
+
+1. **Gate.** The merge is checked out in a watch-owned worktree and gated against its first parent, as [`idiom check --gate`](#gate-a-build) would on the branch before it landed. Base records come from the shared base cache, so after a clean merge the next gate usually captures no base. Watch never reuses a running dev server: one on the configured port serves other code.
+2. **File.** New findings at or above the severity are clustered and filed exactly as [`idiom nightly`](#nightly) files them: the same `--tracker`, `--severity`, `--label` and `--out` resolution, the same `nightly` config block, and the same `.idiom/filed-tickets.json` ledger. A finding nightly already filed is updated, not filed again, and the reverse.
+3. **Advance.** Only when the gate is clean (no finding at or above the severity, nothing deferred or failed) is the baseline advanced to the merge, as [`idiom baseline advance`](#gate-a-build) does on every clean merge. A merge with findings is not advanced: the next merge's gate captures it as its base, so the regression it carried is not filed a second time as new.
+4. **Harvest.** [`idiom learn --harvest`](#harvest-corrections-you-already-wrote) reads new escalation answers and pull request comments when `ab` or `gh` is available. Harvest never fails a merge.
+
+When `escalations.watch` is on, each look that finds nothing more pending also runs one [`idiom escalations --answer`](#escalations) pass. It logs `escalations: answered 2 (booking-filter esc_1, …); 1 left open` only when it answered something, and a failing pass is logged once until it recovers; it never stops the watch.
+
+**One line per merge.** Each finished merge logs one line; `--json` logs every event (`start`, `resume`, `merge`, `retry`, `rewritten`, `fetch-failed`, `escalations`, `stop`) as a JSON line:
+
+```text
+2026-11-15T14:02:11.000Z a1b2c3d4e5f6 "Merge feature-2" gate: 1 new (1 at threshold); tickets: file-7 created; baseline: not advanced (findings); harvest: unavailable (ab is not installed); 41.2s
+```
+
+**Order, restarts and failures.** One watcher runs per project (a second fails fast naming the holder), and merges are processed one at a time. The position is recorded only after a merge's steps finish, so a stop or crash redoes at most the merge that was in flight, and that redo files nothing twice. A merge whose steps fail (a gate that cannot start, a filing error) is retried once on the next look, then logged with its error and passed. If the branch is rewritten so the last processed commit is no longer on it, watch logs it and continues from the new tip without replaying.
+
+**State.** Watch keeps its position, lock and worktree in the Git common directory (`.git/idiom/watch/<key>/`), shared by every worktree and never tracked. Delete `state.json` there to start again from the tip. `--since` applies only when there is no state yet. Like every capture, the gate and the advance use the configured server port: stop a dev server holding it, or the merge's gate fails and is retried.
+
+**Run it as a login service.** `--install-service` writes and starts a service that runs `idiom watch` in the project root with your current `PATH`, logging to `.idiom/reports/watch.log`. It passes on the `--target`, `--tracker`, `--severity`, `--label` and `--poll` you give it. A crash restarts after a minute; a stop does not. `--uninstall-service` stops it with SIGTERM, which ends the watcher cleanly between steps (an interrupted merge is redone on the next start), and removes it. `--print-service` prints the definition and the manual load command without installing anything:
+
+```sh
+idiom watch --install-service
+# macOS: ~/Library/LaunchAgents/build.idiom.watch.<project>.plist, loaded with launchctl bootstrap gui/$(id -u)
+# Linux: ~/.config/systemd/user/idiom-watch-<project>.service, started with systemctl --user enable --now
+idiom watch --uninstall-service        # launchctl bootout, or systemctl --user disable --now
+```
+
+Other platforms: run `idiom watch` under your own supervisor and send SIGTERM to stop it.
 
 ## bisect
 
@@ -1257,10 +1489,16 @@ Every learning also appends a line to `.idiom/learned.jsonl` naming the observat
    Matched screenshot to studio-lab/editor @ desktop (run 2026-11-14T10-02-11-000Z), 97% similar, high confidence; next closest studio-lab/menu-open @ desktop, 71%.
    ```
 
-   A match needs at least 60% similarity. Confidence is **high** at 90% or more and at least 5 points clear of the closest other state, **medium** when it is clear but below 90%, and **low** when another state is within 5 points. The matched capture is the one learn resolves the subject's selector in and records as provenance.
-2. **The words.** With no screenshot, a state whose whole id appears in the observation ("the **settings** toggle labels…") is used, the most specific id winning. Otherwise a state is used if it is the only one sharing two or more words with its description. A tie matches nothing.
+   A match needs at least 60% similarity. Confidence is **high** at 90% or more and at least 5 points clear of the closest other state, **medium** when it is clear but below 90%, and **low** when another state is within 5 points. The matched capture is the one learn resolves the subject's selector in and records as provenance. When the match is low confidence because a state of a different flow is within 5 points, the words decide between them: if they name exactly one of those states, learn uses it; otherwise it names the candidates and asks for `--flow` instead of guessing:
+
+   ```text
+   The screenshot matches states in several flows: studio-lab/settings (88%), tablet-guide/options (87%); pass --flow <id> to choose.
+   ```
+
+   Learn reads only complete runs under `.idiom/reports/`. Other folders there (a hidden folder, a hand-made folder, a run that never finished) are skipped when it searches; only a run named with `--from` is checked, and refused if it is not a complete run.
+2. **The words.** With no screenshot, a state whose whole id appears in the observation ("the **settings** toggle labels…") is used, the most specific id winning. Otherwise a state is used if it is the only one sharing two or more words with its description. A tie inside one flow matches nothing; a tie between states of different flows (two flows that both declare `editor`) is reported with the candidates, and nothing is recorded until `--flow` or `--state` settles it.
 3. **The only state.** A project that declares exactly one state uses it.
-4. **A draft state.** When nothing matches well enough, learn never fails for want of a state. It records the miss as **open** against a draft flow state and writes the draft to `.idiom/proposals/states/<learned-id>.json`:
+4. **A draft state.** When nothing matches well enough, learn never fails for want of a state. It records the miss as **open** against a draft flow state and writes the draft to `.idiom/proposals/states/<learned-id>.json`. The draft goes on the flow `--flow` names, the only flow, or the flow the screenshot pointed to (its closest capture at least 5 points ahead of any other flow's). With several flows and nothing that says which, learn names the candidate flows and asks for `--flow`; it never puts the draft on the first declared flow by default:
 
    ```json
    {
@@ -1466,7 +1704,7 @@ Every table with id, observation and rule columns is imported, in file order; ot
 
 **Checks.** `import.checks` lists the shipped check ids the row names: any id in the `check` column (`contrast, target-size`, with or without `idiom:`); in the `how` column, hyphenated ids such as `target-size` as whole words, and single-word ids such as `contrast` or `motion` only when backticked or written `idiom:contrast` (plain English would over-match). A size, wording or mirrored rule also adds the check its kind maps to (`component-size`, `copy-lint`, `layout-invariants`, `mirrored-control`). A row with checks is **covered by an existing rule**.
 
-**Nothing is dropped silently.** A body row that is not imported is reported with its line, id and reason: `empty row`, too many cells (`8 cells, header has 6; escape | in a cell as \|`; fewer cells count as blank), `blank id`, `blank observation`, `blank rule`, `duplicate id M-03 (first on line 22)` (the first wins), an ambiguous state (`state editor is declared by a, b; pass --flow or write flow/state`) or an unknown flow in `flow/state`. Skipped rows do not fail the command.
+**Nothing is dropped silently.** A body row that is not imported is reported with its line, id and reason: `empty row`, too many cells (`8 cells, header has 6; escape | in a cell as \|`; fewer cells count as blank), `blank id`, `blank observation`, `blank rule`, `duplicate id M-03 (first on line 22)` (the first wins), an ambiguous state (`state editor is declared by a, b; pass --flow or write flow/state`), an unknown flow in `flow/state`, or a row with no state whose flow cannot be told on a project with several flows (`ambiguous-flow`, with the candidate flows; pass `--flow`). Skipped rows do not fail the command.
 
 **Re-importing** the same file updates records by row id instead of duplicating them: ids, `recordedAt` and any `--covered` mark are kept, an edited row is rewritten in place with `import.updatedAt`, an unchanged row is left byte-for-byte, a new row gets the next id, and a record whose row is gone is kept and listed. A row is re-placed only when its observation, state cell or `--flow` changed.
 
@@ -1486,20 +1724,28 @@ Commit .idiom/learned.jsonl and .idiom/proposals/.
 
 **`--list --import <name|file>`** lists only that import's records, with `import <name>#<row>`, `surface <surface>` when the row has one, and `checks <ids>` on each line, and ends with `Import misses: 20 records, 3 covered, 17 open, 6 need a new state.` An imported record is covered, as in the table above, by a finding whose category is one of its checks on the same flow and state **after the record was logged**.
 
-**`--replay <name|file>`** answers a different question: how many of the import's misses do the latest checks catch, whenever they were logged? For each record it reads the newest complete stored run that captured its flow state and counts the record caught when that run has a finding on that state from one of its checks. It writes nothing and captures nothing:
+**`--replay <name|file>`** answers a different question: how many of the import's misses do the latest checks catch, whenever they were logged? For each record it reads the newest **reviewable** stored run that captured its flow state: a complete run with `findings.json` or a digest record. Capture-only runs and run directories that no longer exist are skipped, so the search moves on to an older reviewed run. A record is **caught** when that run has a finding on that state from one of its checks, **missed** when it has none, and **unmeasured** when it cannot be measured at all. It writes nothing and captures nothing:
 
 ```text
-Replay "misses": the latest checks catch 7 of 20.
-  caught  learned-4   M-04  studio-lab/settings                 target-size (run 2026-11-14T12-00-00-000Z)
-  open    learned-1   M-01  studio-lab/editor                   no contrast finding in run 2026-11-15T12-00-00-000Z
-  open    learned-5   M-05  studio-lab/layer-list-row-jump      no check named
-  open    learned-8   M-08  studio-lab/template-card-uneven-gap state not declared (.idiom/proposals/states/learned-8.json)
-  open    learned-3   M-03  studio-lab/publish-dialog           never captured
+Replay "misses": caught 2, missed 7, unmeasured 11 of 20. Catch rate 22% of 9 measured.
+Unmeasured, by reason:
+  no reviewed run captured the state               2  capture the flow: idiom check studio-lab
+  state proposed but not added                     4  add the proposed state (drafts in .idiom/proposals/states/)
+  state not declared in any flow                   1  declare it in a flow, or re-import with --flow or flow/state
+  no check named and no matching finding category  4  record a ruling: idiom learn "<rule>" --ruling
+  caught      learned-4   M-04  studio-lab/settings                  target-size (run 2026-11-14T12-00-00-000Z)
+  missed      learned-1   M-01  studio-lab/editor                    no contrast finding in run 2026-11-15T12-00-00-000Z
+  unmeasured  learned-5   M-05  studio-lab/layer-list-row-jump       no check named
+  unmeasured  learned-8   M-08  studio-lab/template-card-uneven-gap  state proposed but not added (.idiom/proposals/states/learned-8.json)
+  unmeasured  learned-3   M-03  studio-lab/publish-dialog            no reviewed run captured this state
 Read runs: studio-lab 2026-11-15T12-00-00-000Z, 2026-11-14T12-00-00-000Z
+Newest reviewed run: studio-lab 2026-11-15T12-00-00-000Z
 To replay against the current checks, run idiom check <flow> (or idiom review <flow> --from <run> --deterministic-only) first.
 ```
 
-Replay reports stored evidence, so it is only as current as the runs it names: run `idiom check <flow>` (or re-review a stored capture with `idiom review <flow> --from <run> --deterministic-only`) after upgrading Idiom before quoting "catches N of M". `--json` prints the import result or the replay (`name`, `total`, `caught`, `notCaught`, `runs`, `records[]` with `status`, `reason`, `runId` and `check`).
+Each unmeasured record has exactly one reason, taken in this order: no check named (the row names no check and no finding category can match it; record a ruling), then a state that is not declared (proposed by the import but not added yet, or not declared in any flow), then no reviewed run of the state (capture the flow). The breakdown comes first, listing only reasons with a count. The catch rate is over measured rows (caught plus missed) only, with n. When every record is unmeasured, the headline says `nothing measured`, and replay exits 1 with the counts by reason on stderr.
+
+Replay reports stored evidence, so it is only as current as the runs it names: run `idiom check <flow>` (or re-review a stored capture with `idiom review <flow> --from <run> --deterministic-only`) after upgrading Idiom before quoting the catch rate. `--json` prints the import result or the replay (`name`, `total`, `caught`, `missed`, `unmeasured`, `measured`, `catchRate` (null when nothing is measured), `unmeasuredBy` with `no-run`, `proposed`, `undeclared` and `no-check`, `runs` (flow → the runs read), `newestRuns` (flow → its newest reviewed run, or null), and `records[]` with `status` (`caught`, `missed` or `unmeasured`), `reason` (unmeasured only), `detail`, `runId` and `check`). With `--json`, the payload is printed before the exit 1.
 
 Choose exactly one learn mode: an observation, `--list`, `--covered`, `--fixture`, `--harvest`, `--confirm`, `--import <file.md>` or `--replay <import>`.
 `--by` requires `--covered`, `--out` requires `--fixture`, `--since` and `--dry-run` require `--harvest`, and `--json` requires `--list`, `--harvest`, `--import` or `--replay`.
@@ -1938,6 +2184,7 @@ idiom brief triage "Fix the typo in the Publish dialog" --no-model
 idiom brief plan triage-3f9c0a1b2d                     # research instructions for the agent
 idiom brief plan "Add a pin button to every tile" --question "How large is the pin?" --minutes 5
 idiom brief "Add a pin button to every tile" --research
+idiom brief research "selection toolbar offset chip"   # capture and measure comparables, propose criteria
 idiom brief record brief.json        # or: idiom brief record - < brief.json
 idiom brief record brief.json --json
 idiom brief decide pinned-group-in-the-add-drawer --option corner-pin
@@ -1948,9 +2195,13 @@ idiom brief export pinned-group-in-the-add-drawer --out design/pinned-group
 idiom brief attach pinned-group-in-the-add-drawer --ticket file-281   # in an autobuild project
 idiom brief gate tickets/pin.md                        # warn when a ticket lacks a decided brief
 idiom brief gate .autobuild/tickets/ready/file-12.md --strict --json
+idiom brief lint tickets/pin.md                        # warn when a criterion caps with no floor or outcome
+idiom brief lint .ab/spec.md --strict --json
 ```
 
 `triage <request>` takes the request text, or a path to an existing draft ticket file (up to 64 KB). It applies the shipped rubric with one bounded call to the configured review provider (`model.provider`, then `model.fallback` once if that fails, with a warning on stderr): no tools, no capture, a 90-second limit. It prints `no design decision: <reason>`, or `design decision: <reason>` followed by one `- <question>` line per open question, then `Triage id: <id>` (and `Next: idiom brief plan <id>` for a design decision), and exits 0 either way. It stores the result as `.idiom/briefs/triage/<id>.json`. `--json` prints exactly `{ id, verdict, reason, questions }`. `--no-model` makes no call and works outside a project: it prints the rubric, the request, any project context and the JSON answer shape for the calling agent to apply itself (`--json` returns the same as one object). Without `--no-model`, triage needs an initialized project for its provider.
+
+`research <request>` (experimental) names two or three comparable products from `brief.references` (or PRODUCT.md's `## Comparable products` section) and says why each was chosen, captures each one's equivalent public page as a managed reference at `--viewport` (default: the first project viewport), measures the elements the request names, and prints proposed acceptance criteria with a floor and a cap, each citing the reference it came from. Pages behind a sign-in are reported as not reachable and never logged into. `--json` prints the comparables, measurements and criteria. It needs an initialized project and no model; see [comparable research](brief.md#comparable-research).
 
 `plan <target>` prints research instructions for the calling agent: the open questions with what to check (hover, touch, keyboard, small screen, empty and error states), the reference products by tier, standards to look for, a time budget, the research rules and the exact JSON shape `record` accepts. The target is a triage id (no model call), or the request text or a draft-ticket path. With `--question <text>` (repeatable, up to 8) it plans those questions with no model call, also outside a project; without, it runs and stores a model triage first. `--minutes <n>` sets the budget (1–60, default 10). `--json` prints the plan object.
 
@@ -1972,11 +2223,13 @@ See [opened-state configuration](configuration.md#capture-opened-drawers-dialogs
 
 `gate <tickets...>` checks ticket files (up to 64 KB each) for a decided brief. A ticket that links one (`brief: <slug>`, or `brief = "<slug>"` in leading TOML front matter) or embeds a rendered brief is judged by that brief with no model call: `decided` passes, while `proposed`, `superseded` and a slug with no stored brief warn. A ticket with no brief is triaged once, as `triage` does, and warns with its open questions, `idiom brief plan <id>` and `idiom brief "<ticket>" --research` when it holds a design decision. It prints nothing when every ticket passes, otherwise one warning per ticket and `N of M ticket(s) need a decided brief.`, and exits 0. `--strict` exits 1 when any ticket warns; a failed triage counts as a warning. `--json` prints `{ strict, warnings, tickets }`. A missing or empty ticket, or a missing project when one is needed, exits 1 before any model call. Details and hook recipes are in [brief.md](brief.md#gate-tickets).
 
+`lint <files...>` reads each ticket or spec's acceptance criteria section (up to 64 KB per file) and warns on every criterion that caps a size, time, count or length with no floor or observable outcome, such as "the chip adds at most 64px to the toolbar" with no minimum gap, no overlap condition and no "stays on one row". Each warning quotes the criterion and suggests paired criteria, using the project's `checks.controlGap.min`, `checks.targetSize`, viewports and rulings when there is a project and Idiom's defaults when there is not. It makes no model call. It prints nothing when every file has a criteria section and every cap is paired, and exits 0; `--strict` exits 1 when any criterion warns. `--json` prints `{ strict, warnings, files }`. `record` and `--research` run the same lint over the brief's criteria. The rule, where the false-positive line sits, and the autobuild recipes are in [brief.md](brief.md#lint-acceptance-criteria).
+
 `export <slug> --out <dir> [--capture]` writes a decided brief as a self-contained design asset: `README.md` (the decision, rejected options, acceptance criteria and the Idiom rule that verifies each), `criteria.json` (the machine-readable assertions) and `screenshots/`, one per asserted state at each configured viewport and scheme. Screenshots come from the latest capture of each flow; `--capture` takes a fresh capture of just those states. It prints `Exported brief <slug> to <dir>: N screenshot(s) of M state(s)`; `--json` prints `{ slug, out, files, screenshots, states }`. It refuses a brief that is not decided, a "don't build" decision, a choice other than the recommendation, a missing screenshot (naming it and suggesting `--capture`) and a `--out` that is not empty. Nothing written holds an absolute path.
 
 `attach <slug> --ticket <id> [--capture]` exports the brief to a temporary directory and runs `ab ticket attach <id> design <dir> --name <slug> --json` from the directory holding `autobuild.toml`, then records the ticket on the brief. It runs no other `ab` command, so the ticket's state never moves. It prints `Attached brief <slug> to ticket <id> as design asset <slug> (N screenshot(s)). The ticket's state is unchanged.`; `--json` prints `{ slug, ticket, asset, screenshots, states, ab }`. Without `autobuild.toml` or the `ab` CLI on PATH it exits 1 before exporting or capturing; a failing `ab` exits 1 with its stderr and leaves the brief unchanged. Details are in [brief.md](brief.md#attach-to-an-autobuild-ticket).
 
-`list` prints one line per brief, newest first: `<slug>  <status>[ by <decidedBy>]  <title>[ (research incomplete)]`, or `No briefs.`; a stored file that no longer parses is listed as `invalid` with the reason. `list --json` prints `{ interfaceVersion, briefs }`, where `briefs[]` holds the stored records, newest first, and `{ slug, error }` for one that no longer parses. `list --json --array` prints the old bare array instead, with a deprecation warning on stderr; it will be removed in 0.24.0 ([deprecation policy](stability.md#deprecation-policy)). `--array` without `--json` exits 1. `show <slug>` prints the rendered Markdown, and `show --json` the stored record.
+`list` prints one line per brief, newest first: `<slug>  <status>[ by <decidedBy>]  <title>[ (research incomplete)]`, or `No briefs.`; a stored file that no longer parses is listed as `invalid` with the reason. `list --json` prints `{ interfaceVersion, briefs }`, where `briefs[]` holds the stored records, newest first, and `{ slug, error }` for one that no longer parses. `show <slug>` prints the rendered Markdown, and `show --json` the stored record.
 
 ## explore
 
