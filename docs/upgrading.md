@@ -62,6 +62,12 @@ What you must do after moving past each release, newest first. Everything else i
 
 None.
 
+### v0.24.1
+
+- **Recapture to pick up the merged negative-spacing word-spacing finding.** A chip with negative `word-spacing` whose child has another font size is now one finding, at the chip; stored runs and baselines keep the duplicate child finding until a new capture ([negative-spacing](rules.md#negative-spacing)).
+- **Re-vendor the `idiom-fix` skill.** If your gate runs `skill = "idiom-fix"`, run `idiom upgrade` so `fixed.md` opens with the line saying nothing needs a human decision. `idiom doctor` now reports the gate `stale` when `idiom-fix` is wired but its skill is not installed; `idiom upgrade` installs it.
+- **`paths` on the agent gate step is kept.** `idiom init --wire` and `idiom upgrade` no longer remove a `paths` list from a `kind = "agent"` `[verify.idiom-check]` step, so you can add one to skip agent start-up on non-UI changes ([Autobuild](configuration.md#autobuild)). `paths` on the old `kind = "check"` step is still removed when it is migrated.
+
 ### v0.24.0
 
 - **A gate with no baseline now stops instead of passing.** `idiom check --gate`, `idiom nightly` and `idiom verify` exit `2` with one `baseline` line when no recorded baseline is reachable from the base and the base could not be captured; before, the gate gated every open finding. Record a baseline on your target branch (`idiom baseline record <flow>`, committed), or let `idiom upgrade --yes` add the Autobuild finalize step that runs `idiom baseline advance --fetch` as builds land. The same exit applies when an app cannot start or a state's `expect` no longer matches ([unattended runs](commands.md#unattended-runs-never-fail-quietly)).

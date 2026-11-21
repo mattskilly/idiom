@@ -98,6 +98,10 @@ export async function checkChanged(
     validated.projectDirectory,
     validated.flows.map((record) => record.flow),
     changes,
+    {
+      design: validated.project.design,
+      nonUi: resolveGateConfig(validated.project).nonUi,
+    },
   );
   options.dependencies?.capture?.signal?.throwIfAborted();
   // Validate every candidate scope and every selected baseline before starting any server.

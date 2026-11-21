@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { parse, type TomlTable, type TomlValue } from "smol-toml";
+import type { StepSkill } from "../autobuild/setup.js";
 import {
   gateCommand,
   isCompatibleIdiomCommand,
@@ -200,7 +201,13 @@ async function readAutobuild(root: string): Promise<Autobuild> {
   }
 }
 
-async function autobuildGate(autobuild: Autobuild): Promise<Row> {
+/** Gate step skills idiom ships, so `idiom upgrade` can reinstall them. */
+const STEP_SKILLS: ReadonlySet<string> = new Set<StepSkill>([
+  "idiom-verify",
+  "idiom-fix",
+]);
+
+async function autobuildGate(autobuild: Autobuild, root: string): Promise<Row> {
   const path = "autobuild.toml";
   if (autobuild.kind === "absent")
     return { status: "not-applicable", detail: "no autobuild.toml" };
@@ -215,13 +222,39 @@ async function autobuildGate(autobuild: Autobuild): Promise<Row> {
     autobuild.source,
     await readAutobuildTemplate(),
   );
-  if (plan.kind === "ready" && plan.complete)
+  const { commands, verify } = autobuild.document;
+  if (plan.kind === "ready" && plan.complete) {
+    const wired = isTable(verify) ? verify["idiom-check"] : undefined;
+    const skill =
+      isTable(wired) && typeof wired.skill === "string"
+        ? wired.skill
+        : "idiom-verify";
+    if (STEP_SKILLS.has(skill)) {
+      const file = `.agents/skills/${skill}/SKILL.md`;
+      const installed = await inspect(root, file).catch(() => ({
+        kind: "absent" as const,
+      }));
+      if (installed.kind !== "file")
+        return {
+          status: "stale",
+          path,
+          detail: `[verify.idiom-check] runs ${skill} but ${file} is not installed, so the step fails every build`,
+          fix: "idiom upgrade",
+        };
+    }
+    const paths =
+      isTable(wired) &&
+      Array.isArray(wired.paths) &&
+      wired.paths.length &&
+      wired.paths.every((glob) => typeof glob === "string")
+        ? `; paths: ${wired.paths.join(", ")}`
+        : "";
     return {
       status: "wired",
       path,
-      detail: `[verify.idiom-check] runs \`${gateCommand}\``,
+      detail: `[verify.idiom-check] runs ${skill} on \`${gateCommand}\`${paths}`,
     };
-  const { commands, verify } = autobuild.document;
+  }
   const command = isTable(commands) ? commands["idiom-check"] : undefined;
   const step = isTable(verify) ? verify["idiom-check"] : undefined;
   const steps = isTable(verify) ? verify.steps : undefined;
@@ -242,7 +275,7 @@ async function autobuildGate(autobuild: Autobuild): Promise<Row> {
           ? "[commands].idiom-check is set but no [verify.idiom-check] step runs it"
           : typeof command === "string" && words(command) === OLD_GATE_COMMAND
             ? `old template: \`${OLD_GATE_COMMAND}\` without --deferred warn, so busy hosts fail the build`
-            : isTable(step) && step.paths !== undefined
+            : isTable(step) && step.kind === "check" && step.paths !== undefined
               ? "old template: [verify.idiom-check].paths can skip UI changes"
               : plan.kind === "manual"
                 ? manualReason(plan.reason)
@@ -901,7 +934,7 @@ export async function inspectSurfaces(
   const autobuild = await readAutobuild(root);
   const [gate, verifier, workflow, instructions, plugin, codex, hook] =
     await Promise.all([
-      guard("autobuild.toml", () => autobuildGate(autobuild)),
+      guard("autobuild.toml", () => autobuildGate(autobuild, root)),
       guard("autobuild.toml", () => autobuildVerifier(autobuild, root)),
       guard(".github/workflows", () => github(root)),
       agentInstructions(root),

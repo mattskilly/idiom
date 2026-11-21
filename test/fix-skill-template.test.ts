@@ -51,6 +51,16 @@ test("idiom-fix names its step, the exact gate, the handoff, three rounds and fo
   expect(fix).not.toMatch(/say[\s_-]?when|builder[\s_-]?core|unb[o]unce/i);
 });
 
+test("fixed.md opens by saying nothing needs a human decision", async () => {
+  const fix = await read("idiom-fix/SKILL.md");
+  expect(fix).toContain(
+    "write `.ab/idiom-fix/fixed.md`. Its first line is exactly\n     `Idiom fixed every finding in this build; nothing needs a human decision.`",
+  );
+  expect(fix).toContain(
+    "This round uses one\n     verify attempt (`[policy].maxVerifyAttempts`)",
+  );
+});
+
 test("the managed implement section keeps idiom-fix commits", () => {
   const implement = AUTOBUILD_SKILLS.find(
     (skill) => skill.surface === "autobuild-implement",

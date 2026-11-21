@@ -5,7 +5,10 @@ idiom-check = "idiom check --gate --fail-on major --deferred warn"
 [verify.idiom-check]
 kind = "agent"
 skill = "idiom-verify"
-# No paths: the gate detects UI changes itself. Busy hosts warn; run errors fail.
+# No paths by default: the gate detects UI changes itself. Busy hosts warn; run
+# errors fail. An optional paths = [...] on this step skips agent start-up for
+# non-UI changes, but any change touching nothing in the list skips the gate
+# entirely, so the list must cover every file that affects what renders.
 # Optional finding verification is offered separately for Idiom-originated tickets.
 
 # Fix step (optional, offered by idiom init and idiom upgrade): swap the one
@@ -17,7 +20,8 @@ skill = "idiom-verify"
 # (at most three repair rounds), and commits what verifies. Autobuild certifies
 # the head it verified, so a step that committed fixes fails with a "fixed
 # in-build" report: the build returns to implement, which keeps the commits,
-# and the next verify cycle's gate is clean and passes. Findings it cannot fix
+# and the next verify cycle's gate is clean and passes. A fixed-in-build round
+# uses one verify attempt ([policy].maxVerifyAttempts). Findings it cannot fix
 # fail the step with a short summary that becomes the escalation text; the full
 # transcript and crops attach to the PR. Four gate runs fit the default session
 # hour; for slow gates raise it with

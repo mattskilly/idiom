@@ -108,7 +108,14 @@ export const changedSelectionContract = z.looseObject({
   files: z.array(
     z.looseObject({
       path: z.string(),
-      kind: z.enum(["route", "import", "global", "unresolved"]),
+      kind: z.enum([
+        "route",
+        "import",
+        "global",
+        "unresolved",
+        "documentation",
+        "non-ui",
+      ]),
       reason: z.string(),
       routes: z.array(z.string()),
       states: z.array(stateIdentityContract),

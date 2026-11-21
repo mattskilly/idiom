@@ -137,6 +137,41 @@ test("no-op and explicit empty intersections launch nothing; invalid combination
   }
 });
 
+test("a docs-only change selects nothing, names the gate's reason and launches nothing", async () => {
+  const f = await changedFixture();
+  try {
+    await f.write("README.md", "# Readme, revised\n");
+    const json = await cli(f.directory, ["--changed", "--json"]);
+    expect(json.status, json.err).toBe(0);
+    const output = JSON.parse(json.out);
+    expect(output.checkedStates).toBe(0);
+    expect(output.checks).toEqual([
+      { flow: "site", status: "not-checked", reason: expect.any(String) },
+    ]);
+    expect(output.selection.selected).toEqual([]);
+    expect(output.selection.fallbackFiles).toEqual([]);
+    expect(output.selection.files).toEqual([
+      {
+        path: "README.md",
+        kind: "non-ui",
+        reason: "documentation",
+        routes: [],
+        states: [],
+      },
+    ]);
+    const text = await cli(f.directory, ["--changed"]);
+    expect(text.status, text.err).toBe(0);
+    expect(text.out).toContain('"README.md": non-ui — documentation');
+    expect(text.out).toContain("checked 0 of 2 states");
+    expect(text.out).toContain(
+      "No affected states selected; no capture or review was run.",
+    );
+    await expect(access(join(f.directory, "audit.txt"))).rejects.toThrow();
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test("flowless checking skips unaffected flows and MCP shares selection and registers only real evidence", async () => {
   const f = await changedFixture();
   let close: (() => Promise<unknown>) | undefined;

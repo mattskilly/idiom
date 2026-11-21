@@ -5,7 +5,6 @@ import {
   mkdtemp,
   readdir,
   readFile,
-  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -52,13 +51,12 @@ import { runSystemLearning } from "../src/system/learn/run.js";
 import type { DesignToken } from "../src/system/learn/schema.js";
 import { runSystem } from "../src/system/run.js";
 import { fixtureCommand } from "./support/fixture-server.js";
+import { removeTempDirectory } from "./support/temp-directory.js";
 
 const roots: string[] = [];
 const fixtures = join(import.meta.dirname, "fixtures", "system-learning");
 afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((p) => rm(p, { recursive: true, force: true })),
-  );
+  await Promise.all(roots.splice(0).map((p) => removeTempDirectory(p)));
 });
 async function temporary() {
   const root = await mkdtemp(join(tmpdir(), "idiom-system-learning-"));

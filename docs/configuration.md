@@ -1404,7 +1404,30 @@ kind = "agent"
 skill = "idiom-verify"
 ```
 
-The step has no `paths` filter: the gate detects UI changes itself. `--deferred warn` prints a busy-host warning for incomplete coverage and allows an otherwise passing check to exit zero. Genuine findings still fail the severity gate, and a check that cannot run still exits 2. JSON retains its deferred verdict and coordinates.
+**Fix findings inside the build.** To have the gate repair what it finds instead of escalating it, swap the one line:
+
+```toml
+[verify.idiom-check]
+kind = "agent"
+skill = "idiom-fix"  # fixes up to 3 new major findings per round, 3 rounds
+```
+
+Keep the same command, step name and order. Interactive `idiom init --wire` and `idiom upgrade` offer the swap (the `autobuild-fix` row) once the gate is wired, and install the `idiom-fix` skill with its discovery link. The swap stays an explicit choice: `--yes` does not apply it. A custom `idiom-check` (a check step or another skill) is never rewritten. `idiom doctor` names the wired skill and reports the gate `stale` if `idiom-fix` is wired but `.agents/skills/idiom-fix/SKILL.md` is not installed (fix: `idiom upgrade`). The full behaviour is in [commands.md](commands.md#fix-findings-inside-the-build).
+
+A round that fixes every finding fails the step on purpose with a "fixed in-build" report, because Autobuild certifies the head it verified. That round uses one verify attempt (`[policy].maxVerifyAttempts`, default 3). The build returns to implement, which keeps the commits, and the next verify cycle passes. If the build has no attempts left, it escalates with that report as the text; its first line, `Idiom fixed every finding in this build; nothing needs a human decision.`, tells the human to let it continue.
+
+**Skipping agent start-up on non-UI changes.** The step has no `paths` filter by default: the gate detects UI changes itself and skips in about a second. But `kind = "agent"` starts an agent session before that skip happens. To avoid the start-up on changes that cannot affect the UI, add an optional `paths` list:
+
+```toml
+[verify.idiom-check]
+kind = "agent"
+skill = "idiom-fix"
+paths = ["src/**", "public/**", "styles/**", ".idiom/**", "DESIGN.md"]
+```
+
+When no changed file matches, Autobuild starts no agent and records the step `skipped` with `excluded by [verify.idiom-check].paths: …`. Patterns are literals, `*`, `?` and whole-segment `**`; an empty or malformed list is a configuration error, and `always = true` does not stop the skip. A change that touches nothing in the list skips the gate entirely, so the list must cover every file that affects what renders. `idiom init --wire` and `idiom upgrade` keep `paths` on the agent step, and `idiom doctor` reports it on the gate row. (`paths` on the old `kind = "check"` gate step is still treated as the old template and removed when the step is migrated.)
+
+`--deferred warn` prints a busy-host warning for incomplete coverage and allows an otherwise passing check to exit zero. Genuine findings still fail the severity gate, and a check that cannot run still exits 2. JSON retains its deferred verdict and coordinates.
 
 The gate checks only what the build changed, within `checks.gate.budgetMs`, and skips at once when no UI file changed. For complete coverage, run the full check on a schedule (nightly CI or cron): `idiom nightly` checks every flow since its baseline and files new findings into the tracker's triage. A slow gate's last stderr line (`Timing: …; slowest: …`) says where the time went. Keep the managed command canonical; shell wrappers are custom wiring and are protected. The scheduled digest recipe is in [commands.md](commands.md#run-in-autobuild).
 

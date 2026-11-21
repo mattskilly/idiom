@@ -3471,7 +3471,9 @@
                         "route",
                         "import",
                         "global",
-                        "unresolved"
+                        "unresolved",
+                        "documentation",
+                        "non-ui"
                       ]
                     },
                     "reason": {
@@ -4796,7 +4798,9 @@
                             "route",
                             "import",
                             "global",
-                            "unresolved"
+                            "unresolved",
+                            "documentation",
+                            "non-ui"
                           ]
                         },
                         "reason": {
@@ -16316,7 +16320,9 @@
                           "route",
                           "import",
                           "global",
-                          "unresolved"
+                          "unresolved",
+                          "documentation",
+                          "non-ui"
                         ]
                       },
                       "reason": {

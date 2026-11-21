@@ -1417,7 +1417,26 @@ test("compiled laws appear in the craft brief", async () => {
     expect.arrayContaining([
       "- Parts inside one control (text runs, icons, nested buttons) keep at least 4px between them (control-gap).",
       "- No negative letter- or word-spacing on interface text: controls, labels, navigation, menus, toolbars and tooltips (negative-spacing).",
+      "- Display tracking is the exception: letter-spacing down to -0.03em is fine on text whose own computed font size is at least 20px. Smaller text, tighter tracking and any negative word-spacing still count (negative-spacing).",
     ]),
+  );
+  // The display exemption is stated with the configured values.
+  expect(
+    craftCheckEntries(
+      checksConfigSchema.parse({
+        negativeSpacing: { displaySize: 28, displayTracking: -0.02 },
+      }),
+    ).flat(),
+  ).toContain(
+    "- Display tracking is the exception: letter-spacing down to -0.02em is fine on text whose own computed font size is at least 28px. Smaller text, tighter tracking and any negative word-spacing still count (negative-spacing).",
+  );
+  // displayTracking 0 turns the exemption off, so the brief doesn't state it.
+  const noExemption = craftCheckEntries(
+    checksConfigSchema.parse({ negativeSpacing: { displayTracking: 0 } }),
+  ).flat();
+  expect(noExemption.some((l) => l.includes("Display tracking"))).toBe(false);
+  expect(noExemption).toContain(
+    "- No negative letter- or word-spacing on interface text: controls, labels, navigation, menus, toolbars and tooltips (negative-spacing).",
   );
   const disabled = craftCheckEntries(
     checksConfigSchema.parse({

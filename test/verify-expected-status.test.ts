@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -17,6 +17,7 @@ import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
 import { runVerify } from "../src/verify/run.js";
 import { fixtureCommand } from "./support/fixture-server.js";
+import { removeTempDirectory } from "./support/temp-directory.js";
 import { artifactV2, freePort, png } from "./verify-support.js";
 
 // Wrap the real loader so every verify load path is observable.
@@ -36,9 +37,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
+    directories.splice(0).map((directory) => removeTempDirectory(directory)),
   );
 });
 

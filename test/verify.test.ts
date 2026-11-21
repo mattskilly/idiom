@@ -1,12 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { PNG } from "pngjs";
@@ -57,6 +50,7 @@ import {
   fixtureCommand,
   fixtureEvalCommand,
 } from "./support/fixture-server.js";
+import { removeTempDirectory } from "./support/temp-directory.js";
 import {
   artifactV2,
   freePort,
@@ -70,9 +64,7 @@ const directories: string[] = [];
 afterEach(async () => {
   vi.unstubAllGlobals();
   await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
+    directories.splice(0).map((directory) => removeTempDirectory(directory)),
   );
 });
 

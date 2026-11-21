@@ -17,7 +17,10 @@
 // this build's head, so the next build's gate finds a record at its base
 // whether or not this merge changed the site. Records are keyed by the
 // check+capture fingerprint, so the next build reuses them when its check and
-// capture code is identical. Advance writes only the untracked cache.
+// capture code is identical. Advance writes the untracked cache and, like the
+// gate, can rewrite the finding-name registry, so it shares the gate's
+// clean-tree check and restores the registry afterwards: finalize refuses to
+// publish a build whose worktree is dirty.
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
@@ -40,13 +43,9 @@ const spawnStatus = (command, args, options) =>
     child.on("error", () => done({ status: 1 }));
   });
 
-export async function runSiteGate({
-  build = buildLocalCli,
-  run = spawnStatus,
-  log = (line) => console.error(line),
-} = {}) {
-  // Check the index and worktree separately: a staged change can be undone in
-  // the worktree while still differing in the index (and checkout uses it).
+// Check the index and worktree separately: a staged change can be undone in
+// the worktree while still differing in the index (and checkout uses it).
+async function trackedIdiomClean(run, log, step) {
   for (const args of [
     ["diff", "--quiet", "--", ".idiom"],
     ["diff", "--cached", "--quiet", "--", ".idiom"],
@@ -55,12 +54,32 @@ export async function runSiteGate({
     if (status !== 0) {
       log(
         status === 1
-          ? "idiom-check: commit or stash tracked .idiom/ changes before running the gate (exit 2)"
-          : "idiom-check: could not check tracked .idiom/ changes (exit 2)",
+          ? `${step}: commit or stash tracked .idiom/ changes before running the ${step === "idiom-check" ? "gate" : "advance"} (exit 2)`
+          : `${step}: could not check tracked .idiom/ changes (exit 2)`,
       );
-      return 2;
+      return false;
     }
   }
+  return true;
+}
+
+async function restoreRegistry(run, log, step) {
+  const restore = await run("git", [
+    "checkout",
+    "--",
+    ".idiom/finding-names.json",
+  ]).catch(() => ({ status: 1 }));
+  if (restore.status === 0) return true;
+  log(`${step}: could not restore tracked .idiom/finding-names.json`);
+  return false;
+}
+
+export async function runSiteGate({
+  build = buildLocalCli,
+  run = spawnStatus,
+  log = (line) => console.error(line),
+} = {}) {
+  if (!(await trackedIdiomClean(run, log, "idiom-check"))) return 2;
   let built;
   try {
     built = await build();
@@ -91,15 +110,8 @@ export async function runSiteGate({
     } catch {
       // A leftover temp directory is harmless.
     }
-    const restore = await run("git", [
-      "checkout",
-      "--",
-      ".idiom/finding-names.json",
-    ]).catch(() => ({ status: 1 }));
-    if (restore.status !== 0) {
-      log("idiom-check: could not restore tracked .idiom/finding-names.json");
-      if (status === 0) status = 1;
-    }
+    if (!(await restoreRegistry(run, log, "idiom-check")) && status === 0)
+      status = 1;
   }
   return status;
 }
@@ -116,6 +128,7 @@ export async function runSiteAdvance({
   run = spawnStatus,
   log = (line) => console.error(line),
 } = {}) {
+  if (!(await trackedIdiomClean(run, log, "idiom-advance"))) return 2;
   let built;
   try {
     built = await build();
@@ -140,6 +153,8 @@ export async function runSiteAdvance({
     } catch {
       // A leftover temp directory is harmless.
     }
+    if (!(await restoreRegistry(run, log, "idiom-advance")) && status === 0)
+      status = 1;
   }
   return status;
 }

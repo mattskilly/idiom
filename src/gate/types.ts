@@ -83,7 +83,14 @@ export type GateEstimate = {
 };
 
 export type GateFile = FileClass & {
-  kind?: "route" | "import" | "global" | "unresolved" | undefined;
+  kind?:
+    | "route"
+    | "import"
+    | "global"
+    | "unresolved"
+    | "documentation"
+    | "non-ui"
+    | undefined;
   routes?: string[] | undefined;
   states?: string[] | undefined;
 };

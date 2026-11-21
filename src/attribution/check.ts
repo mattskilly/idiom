@@ -5,6 +5,7 @@ import { buildDigestRecord, digestInputs } from "../digest/record.js";
 import type { ReportCoverage } from "../report/coverage.js";
 import type { IssueRankingContext } from "../review/ranking.js";
 import type { Finding } from "../schemas/finding.js";
+import { resolveGateConfig } from "../schemas/project.js";
 import type { ValidationResult } from "../validation.js";
 import { attributeIntroductions } from "./attribute.js";
 import {
@@ -67,6 +68,8 @@ export async function recordRunAttribution(options: {
       ticketPattern:
         validated.project.attribution?.ticketPattern ?? DEFAULT_TICKET_PATTERN,
       git: options.git,
+      design: validated.project.design,
+      nonUi: resolveGateConfig(validated.project).nonUi,
     });
     await writeAttributionRecord(options.runDirectory, record);
     return { introductions: introductionsByKey(record) };

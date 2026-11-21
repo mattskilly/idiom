@@ -17,7 +17,7 @@ Start from a clean `main` checkout with the intended release commit integrated. 
 - Run `bun run check:plugins`; the same guard runs before build and public snapshot check/export, and in the disabled publication workflow's identity checks if that workflow is ever deliberately enabled again.
 - The annotated tag will be `v<version>`.
 - `server.json.version` and its npm package version match `package.json.version` exactly; `package.json.mcpName` equals `server.json.name`. Audit tool catalog parity, publisher metadata size and the marker-bearing npm release prerequisite in [distribution.md](distribution.md).
-- Before the following release, add each newly released tag to the offline skill catalog: run `node scripts/generate-skill-history.mjs` with all immutable release tags available, then `node scripts/generate-skill-history.mjs --check`. Review tag/peeled-commit provenance, exact blob digests and absence-aware file mappings in `templates/skill-history/`, and commit the generated data. Generation is a maintainer action, never an installation/runtime hook.
+- Before the following release, add each newly released tag to the offline skill catalog: run `node scripts/generate-skill-history.mjs` with all immutable release tags available, then `node scripts/generate-skill-history.mjs --check`. Review tag/peeled-commit provenance, exact blob digests and absence-aware file mappings in `templates/skill-history/`, and commit the generated data. Advance the release count and newest version asserted in `test/skill-pristine.test.ts` to match. Generation is a maintainer action, never an installation/runtime hook.
 - Run `bun run generate:skill` and `bun run generate:skill --check`; commit both generated copies (`skills/idiom/` and `plugins/claude/skills/idiom/`) and inspect them in the public snapshot and npm pack.
 - `playwright` is pinned to an exact version in `package.json` and `bun.lock`.
 - Both browser-install commands in `README.md` use that exact Playwright version.
@@ -28,7 +28,7 @@ Start from a clean `main` checkout with the intended release commit integrated. 
 - **Interface check.** Run `bun run contract:update`. If `test/contract/interface.json` changed, or `INTERFACE_VERSION` moved since the previous tag, list every change in its diff under an `### Interface` heading in the release's CHANGELOG section, and commit the snapshot. A breaking change names the interface bump and the replacement ([stability](stability.md)). Otherwise the section has no Interface heading.
 - `site/index.html` and the hand-written docs in `site/docs/*.md` (including the two guides) describe exactly this release: the install lines in the landing page, `getting-started.md` and both guides use `npm install -g @mattskilly/idiom`, the `codex mcp add` lines and the guides' "For Idiom" version tags name it, and every user-visible command, rule, default and MCP tool added or changed in its changelog section is reflected, while nothing unreleased is claimed. idiom.build production serves the `release` branch, which only this process moves ([Move idiom.build to the release](#move-idiombuild-to-the-release)); `main` and pull requests deploy as previews. A feature PR may update the site alongside the behaviour it ships, and those changes go live when the release moves `release`. This pass still confirms the site describes exactly this release. The reference pages under idiom.build/docs (commands, rules, configuration, MCP, design comparison) are rendered from `docs/*.md` at build time and need no separate pass. The README (the public GitHub page, carried by the public snapshot) gets the same pass: what Idiom does, how it works and why it helps, accurate to this release.
 
-The current smoke pair is `previous_version="0.23.0"` and `version="0.24.0"`. When preparing the next release, advance both literals — the candidate becomes `version` and the newest released heading becomes `previous_version` — as part of the source commit. The published `v0.6.0` predates embedded provenance and prints a bare version; `v0.7.0` is the first release that prints `<version> (<short source commit>)`.
+The current smoke pair is `previous_version="0.24.0"` and `version="0.24.1"`. When preparing the next release, advance both literals — the candidate becomes `version` and the newest released heading becomes `previous_version` — as part of the source commit. The published `v0.6.0` predates embedded provenance and prints a bare version; `v0.7.0` is the first release that prints `<version> (<short source commit>)`.
 
 Before recording the source, check that `release` carries nothing `main` lacks, so the release push below is a fast-forward:
 
@@ -393,8 +393,8 @@ Every release after the first must also prove replacement in place. Create anoth
   test "$(bun pm cache)" = "$BUN_INSTALL_CACHE_DIR"
   bun pm cache rm
   cd "$smoke_root/work"
-  previous_version="0.23.0"
-  version="0.24.0"
+  previous_version="0.24.0"
+  version="0.24.1"
   interface_version="1"
   expected_display="$version ($(printf '%s' "$build_source_commit" | cut -c1-7)) · interface $interface_version"
   idiom_bin="$BUN_INSTALL/bin/idiom"
@@ -504,7 +504,7 @@ Check them all in one pass after `release` has moved, production has deployed an
 
 ```sh
 (
-  X="0.24.0"
+  X="0.24.1"
   gh release view "v$X" --repo mattskilly/idiom-dev --json tagName --jq .tagName
   gh release list --repo mattskilly/idiom --limit 1
   gh release view "v$X" --repo mattskilly/idiom --json assets --jq '.assets[].name'

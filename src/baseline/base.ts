@@ -1,10 +1,13 @@
-import { relative, sep } from "node:path";
 import type { ProbeRegion } from "../capture/probe.js";
 import { withRefWorktree } from "../capture/ref-worktree.js";
 import type { CaptureScope } from "../capture/scope.js";
+import {
+  defaultDesignContext,
+  projectPrefix,
+} from "../changed/design-context.js";
 import { type GitRead, readGit } from "../changed/git.js";
 import { IdiomError } from "../errors.js";
-import { classifyByPath } from "../gate/classify.js";
+import { classifyByPath, designContextPaths } from "../gate/classify.js";
 import { type ReviewDependencies, runReview } from "../review/run.js";
 import type { ColorScheme } from "../schemas/project.js";
 import type { ValidationResult } from "../validation.js";
@@ -154,11 +157,17 @@ export async function resolveBaseComparison(options: {
   const repository = (
     await git(projectDirectory, ["rev-parse", "--show-toplevel"])
   ).trim();
-  const prefix = relative(repository, projectDirectory).split(sep).join("/");
+  // Git reports the repository's real path; match it for a symlinked project.
+  const prefix = await projectPrefix(repository, projectDirectory);
   const local = (path: string) =>
     prefix && path.startsWith(`${prefix}/`)
       ? path.slice(prefix.length + 1)
       : path;
+  // The project's own design context, repo-relative: render-affecting.
+  const context = designContextPaths(
+    validated.project.design ?? defaultDesignContext,
+    prefix,
+  );
   const equivalence = new Map<string, boolean>();
   const equivalent = async (commit: string) => {
     if (commit === base) return true;
@@ -181,8 +190,9 @@ export async function resolveBaseComparison(options: {
         .filter(Boolean)
         .filter((path) => !bookkeeping.test(path));
       result = !classifyByPath(
-        files.map((path) => ({ path: local(path) })),
+        files.map((path) => ({ path: local(path), repoPath: path })),
         options.nonUi,
+        [context.design, context.product],
       ).some((file) => file.ui);
     } catch {
       result = false;

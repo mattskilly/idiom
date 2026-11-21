@@ -1679,11 +1679,15 @@ export function installLegibilityDom(limits: typeof legibilityLimits) {
             parent = parent.parentElement
           ) {
             const parentStyle = style(parent);
-            // A different size is a different judgement: never merge a small
+            // Letter-spacing is judged by size (the display exemption), so a
+            // different size is a different judgement: never merge a small
             // child up into a tight display-size parent (or vice versa).
+            // Word-spacing is never size-exempt, so one declaration stays one
+            // record even when a child (a count badge) has another size.
             if (
               parentStyle[key] !== raw ||
-              parentStyle.fontSize !== ownSize ||
+              (property === "letter-spacing" &&
+                parentStyle.fontSize !== ownSize) ||
               !spacingInScope(parent)
             )
               break;

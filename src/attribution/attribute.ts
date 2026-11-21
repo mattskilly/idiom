@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import type { DesignContext } from "../changed/design-context.js";
 import { type GitRead, readGit } from "../changed/git.js";
 import { selectChangedStates, stateKey } from "../changed/select.js";
 import { classifyOccurrences } from "../digest/build.js";
@@ -37,6 +38,10 @@ export async function attributeIntroductions(options: {
   ticketPattern: string;
   git?: GitRead | undefined;
   select?: typeof selectChangedStates | undefined;
+  /** The project's design context, so the mapping matches `check --changed`. */
+  design?: DesignContext | undefined;
+  /** The project's `checks.gate.nonUi` globs, as `check --changed` applies them. */
+  nonUi?: string[] | undefined;
 }): Promise<AttributionRecord> {
   const { current, previous } = options;
   const git = options.git ?? readGit;
@@ -114,17 +119,22 @@ export async function attributeIntroductions(options: {
         });
       }
       const union = [...new Set(details.flatMap(({ files }) => files))].sort();
-      const selection = await select(options.projectDirectory, options.flows, {
-        repository,
-        head: to,
-        requestedBase: from,
-        resolvedBase: from,
-        baseReason: "first-seen range",
-        files: union.map((path) => ({
-          path,
-          absolute: resolve(repository, path),
-        })),
-      });
+      const selection = await select(
+        options.projectDirectory,
+        options.flows,
+        {
+          repository,
+          head: to,
+          requestedBase: from,
+          resolvedBase: from,
+          baseReason: "first-seen range",
+          files: union.map((path) => ({
+            path,
+            absolute: resolve(repository, path),
+          })),
+        },
+        { design: options.design, nonUi: options.nonUi },
+      );
       const statesByFile = new Map(
         selection.files.map((file) => [
           file.path,

@@ -11,7 +11,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { gateCommand, planAutobuildWiring } from "../src/autobuild/wiring.js";
+import {
+  gateCommand,
+  planAutobuildWiring,
+  planFixStep,
+} from "../src/autobuild/wiring.js";
 import {
   inspectSurfaces,
   NOT_INITIALIZED_NOTICE,
@@ -113,6 +117,10 @@ kind = "check"
 command = "test"
 `;
 const WIRE = "idiom init --wire";
+const installSkill = (
+  f: { write: (path: string, content: string) => Promise<unknown> },
+  skill: string,
+) => f.write(`.agents/skills/${skill}/SKILL.md`, `---\nname: ${skill}\n---\n`);
 
 // ── Autobuild gate ───────────────────────────────────────────────────────
 
@@ -136,9 +144,18 @@ test("autobuild gate: missing, wired from the shipped template, unparseable", as
   const plan = planAutobuildWiring(BASE_TOML, await readAutobuildTemplate());
   await f.write("autobuild.toml", plan.candidate);
   expect(await f.entry("autobuild-gate")).toMatchObject({
+    status: "stale",
+    path: "autobuild.toml",
+    detail:
+      "[verify.idiom-check] runs idiom-verify but .agents/skills/idiom-verify/SKILL.md is not installed, so the step fails every build",
+    fix: "idiom upgrade",
+  });
+
+  await installSkill(f, "idiom-verify");
+  expect(await f.entry("autobuild-gate")).toMatchObject({
     status: "wired",
     path: "autobuild.toml",
-    detail: `[verify.idiom-check] runs \`${gateCommand}\``,
+    detail: `[verify.idiom-check] runs idiom-verify on \`${gateCommand}\``,
   });
 
   await f.write("autobuild.toml", "[commands\n");
@@ -151,7 +168,48 @@ test("autobuild gate: missing, wired from the shipped template, unparseable", as
   });
 });
 
-test("autobuild gate: stale when not in steps, on the old command, or path-gated", async () => {
+test("autobuild gate: names the idiom-fix step and requires its skill", async () => {
+  const f = await fixture();
+  const gate = planAutobuildWiring(BASE_TOML, await readAutobuildTemplate());
+  const fix = planFixStep(gate.candidate, await readAutobuildTemplate());
+  expect(fix.kind).toBe("ready");
+  await f.write("autobuild.toml", fix.candidate);
+  expect(await f.entry("autobuild-gate")).toMatchObject({
+    status: "stale",
+    path: "autobuild.toml",
+    detail:
+      "[verify.idiom-check] runs idiom-fix but .agents/skills/idiom-fix/SKILL.md is not installed, so the step fails every build",
+    fix: "idiom upgrade",
+  });
+
+  await f.write(
+    ".agents/skills/idiom-fix/SKILL.md",
+    "---\nname: idiom-fix\n---\n",
+  );
+  expect(await f.entry("autobuild-gate")).toMatchObject({
+    status: "wired",
+    detail: `[verify.idiom-check] runs idiom-fix on \`${gateCommand}\``,
+  });
+});
+
+test("autobuild gate: paths on the agent step is a wired opt-in", async () => {
+  const f = await fixture();
+  const gate = planAutobuildWiring(BASE_TOML, await readAutobuildTemplate());
+  await f.write(
+    "autobuild.toml",
+    gate.candidate.replace(
+      'skill = "idiom-verify"',
+      'skill = "idiom-verify"\npaths = ["apps/web/**", "DESIGN.md"]',
+    ),
+  );
+  await installSkill(f, "idiom-verify");
+  expect(await f.entry("autobuild-gate")).toMatchObject({
+    status: "wired",
+    detail: `[verify.idiom-check] runs idiom-verify on \`${gateCommand}\`; paths: apps/web/**, DESIGN.md`,
+  });
+});
+
+test("autobuild gate: stale when not in steps, on the old command, or path-gated check step", async () => {
   const f = await fixture();
   const step = `
 [verify.idiom-check]
@@ -677,6 +735,7 @@ test("read-only, offline and under a second with every surface wired", async () 
   const f = await fixture({ executables: ["claude", "codex"] });
   const plan = planAutobuildWiring(BASE_TOML, await readAutobuildTemplate());
   await f.write("autobuild.toml", plan.candidate);
+  await installSkill(f, "idiom-verify");
   await f.write(".github/workflows/idiom.yml", workflow());
   await f.write("AGENTS.md", instructionWriter("").candidate);
   await f.write("CLAUDE.md", instructionWriter("").candidate);

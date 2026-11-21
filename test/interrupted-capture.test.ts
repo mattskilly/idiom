@@ -39,6 +39,7 @@ import {
 import type { BrowserSession, BrowserTuple } from "../src/capture/types.js";
 import { freePort } from "./doctor-support.js";
 import { fixtureCommand } from "./support/fixture-server.js";
+import { removeTempDirectory } from "./support/temp-directory.js";
 import { toggleFlow, toggleProject } from "./toggle-support.js";
 
 // A killed run leaves a visible record of what it finished. A graceful
@@ -57,9 +58,7 @@ const cleanups: Array<() => void> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
+    directories.splice(0).map((directory) => removeTempDirectory(directory)),
   );
 });
 

@@ -182,13 +182,18 @@ Stop the loop when `next` is `pass` or `stop`.
    - **Pass** — the initial gate passed and HEAD equals `startHead`:
      `ab verdict pass --notes .ab/idiom-fix/transcript.md`.
    - **Fixed in-build** — `next` is `pass` and HEAD differs from `startHead`:
-     write `.ab/idiom-fix/fixed.md`. Say that Idiom fixed and re-verified N
+     write `.ab/idiom-fix/fixed.md`. Its first line is exactly
+     `Idiom fixed every finding in this build; nothing needs a human decision.`
+     Then say that Idiom fixed and re-verified N
      findings in this build in commits `<sha list>` (`git log --format=%H startHead..HEAD`),
      that the re-verify passed on that head, and that implement must keep
      these commits and finish without reverting them. Append the output of
      `git format-patch --stdout startHead..HEAD` in a fenced block as a
      fallback if the commits are missing. Then
-     `ab verdict fail --report .ab/idiom-fix/fixed.md`.
+     `ab verdict fail --report .ab/idiom-fix/fixed.md`. This round uses one
+     verify attempt (`[policy].maxVerifyAttempts`); if the build has none
+     left, this file becomes the escalation text, and its first line tells the
+     human there is nothing to decide.
    - **Stopped** — `next` is `stop` (three repair rounds and blockers remain):
      `ab verdict fail --report .ab/idiom-fix/summary.md`. You may add at most
      one "why it remains" line per finding under the CLI's summary; never

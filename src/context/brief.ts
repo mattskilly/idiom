@@ -453,6 +453,13 @@ export function craftCheckEntries(
       entries.push([
         `- No negative letter- or word-spacing on text inside ${selector} (negative-spacing).`,
       ]);
+    // State the display exemption in the check's own terms, so agents don't
+    // strip intended display tracking to satisfy a stricter rule than exists.
+    const { displaySize, displayTracking } = checks.negativeSpacing;
+    if (displayTracking < 0)
+      entries.push([
+        `- Display tracking is the exception: letter-spacing down to ${displayTracking}em is fine on text whose own computed font size is at least ${displaySize}px. Smaller text, tighter tracking and any negative word-spacing still count (negative-spacing).`,
+      ]);
   }
   if (checks.toolbarLayout.enabled) {
     entries.push([

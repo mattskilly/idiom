@@ -1,12 +1,28 @@
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { expect, test } from "vitest";
+import {
+  projectPrefix,
+  designContextPaths as sharedDesignContextPaths,
+} from "../src/changed/design-context.js";
 import { collectChanges } from "../src/changed/git.js";
+import { classifyByPath as sharedClassifyByPath } from "../src/changed/non-ui.js";
 import { selectChangedStates } from "../src/changed/select.js";
 import {
   classifyByPath,
   classifySelection,
+  designContextPaths,
   detectStyleScope,
 } from "../src/gate/classify.js";
 import { planGate } from "../src/gate/plan.js";
@@ -283,5 +299,275 @@ test("style scope: @media, md:, dark:, prefers-color-scheme, removed lines and u
     expect(scope.theme.sort()).toEqual(["b.tsx", "d.css"]);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("design context: only the project's own DESIGN.md and PRODUCT.md are UI", () => {
+  const byDefault = classifyByPath([
+    { path: "DESIGN.md" },
+    { path: "PRODUCT.md" },
+    { path: "test/fixtures/x/DESIGN.md" },
+    { path: "templates/foo/PRODUCT.md" },
+    { path: "packages/other/DESIGN.md" },
+  ]);
+  expect(byDefault.map((file) => [file.path, file.ui, file.reason])).toEqual([
+    ["DESIGN.md", true, "design context"],
+    ["PRODUCT.md", true, "design context"],
+    ["test/fixtures/x/DESIGN.md", false, "documentation"],
+    ["templates/foo/PRODUCT.md", false, "documentation"],
+    ["packages/other/DESIGN.md", false, "documentation"],
+  ]);
+  const configured = classifyByPath(
+    [{ path: "design/brand.md" }, { path: "DESIGN.md" }],
+    [],
+    ["design/brand.md", "PRODUCT.md"],
+  );
+  expect(configured.map((file) => [file.path, file.ui])).toEqual([
+    ["design/brand.md", true],
+    ["DESIGN.md", false],
+  ]);
+});
+
+test("design context paths are repo-relative and never localized", () => {
+  const defaults = { designFile: "DESIGN.md", productFile: "PRODUCT.md" };
+  expect(designContextPaths(defaults, "")).toEqual({
+    design: "DESIGN.md",
+    product: "PRODUCT.md",
+  });
+  expect(designContextPaths(defaults, "packages/web")).toEqual({
+    design: "packages/web/DESIGN.md",
+    product: "packages/web/PRODUCT.md",
+  });
+  expect(
+    designContextPaths(
+      { ...defaults, designFile: "../../DESIGN.md" },
+      "packages/web",
+    ).design,
+  ).toBe("DESIGN.md");
+  expect(
+    designContextPaths({ ...defaults, designFile: "./design/brand.md" }, "")
+      .design,
+  ).toBe("design/brand.md");
+});
+
+test("--changed and --gate share one design-context definition", async () => {
+  expect(designContextPaths).toBe(sharedDesignContextPaths);
+  const root = await mkdtemp(join(tmpdir(), "idiom-prefix-"));
+  try {
+    await mkdir(join(root, "packages/web"), { recursive: true });
+    expect(await projectPrefix(root, root)).toBe("");
+    expect(await projectPrefix(root, join(root, "packages/web"))).toBe(
+      "packages/web",
+    );
+    await symlink(join(root, "packages/web"), join(root, "web-link"));
+    expect(await projectPrefix(root, join(root, "web-link"))).toBe(
+      "packages/web",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("under --project a repo-root DESIGN.md is not the project's own", () => {
+  const classes = classifyByPath(
+    [
+      { path: "DESIGN.md", repoPath: "DESIGN.md" },
+      { path: "DESIGN.md", repoPath: "packages/web/DESIGN.md" },
+    ],
+    [],
+    ["packages/web/DESIGN.md", "packages/web/PRODUCT.md"],
+  );
+  expect(classes.map((file) => [file.ui, file.reason])).toEqual([
+    [false, "documentation"],
+    [true, "design context"],
+  ]);
+});
+
+const themeLines = (n: number) =>
+  `# Design\n\ndark: surfaces use color-scheme dark (${n})\n`;
+
+async function twoSchemes(f: Awaited<ReturnType<typeof changedFixture>>) {
+  const path = join(f.directory, ".idiom/project.json");
+  const project = JSON.parse(await readFile(path, "utf8"));
+  project.colorSchemes = ["light", "dark"];
+  await writeFile(path, JSON.stringify(project));
+}
+
+const host = {
+  readHost: () => ({
+    load: [0, 0, 0] as [number, number, number],
+    coreCount: 11,
+  }),
+};
+
+test("--changed and --gate share one non-UI classifier and agree on a docs-only diff", async () => {
+  expect(classifyByPath).toBe(sharedClassifyByPath);
+  const f = await changedFixture();
+  try {
+    await f.write("README.md", "# Readme\n");
+    await f.write("bun.lock", "lock\n");
+    const gate = await planGate({ project: f.directory, dependencies: host });
+    expect(gate.skipped).toBe(true);
+    const validated = await validateProject({ project: f.directory });
+    const selection = await selectChangedStates(
+      f.directory,
+      validated.flows.map((record) => record.flow),
+      await collectChanges(f.directory),
+      { design: validated.project.design },
+    );
+    expect(selection.selected).toEqual([]);
+    const reasons = (files: Array<{ path: string; reason: string }>) =>
+      Object.fromEntries(files.map((file) => [file.path, file.reason]));
+    expect(reasons(selection.files)).toEqual({
+      "README.md": "documentation",
+      "bun.lock": "lockfile",
+    });
+    if (gate.skipped)
+      expect(reasons(gate.files)).toEqual(reasons(selection.files));
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a fixture DESIGN.md never widens the gate; the project's own does", async () => {
+  const f = await changedFixture({
+    "test/fixtures/x/DESIGN.md": themeLines(0),
+    "DESIGN.md": themeLines(0),
+  });
+  try {
+    await twoSchemes(f);
+    await f.commit("two schemes");
+    // AC1: the fixture alone skips.
+    await f.write("test/fixtures/x/DESIGN.md", themeLines(1));
+    const skipped = await planGate({
+      project: f.directory,
+      dependencies: host,
+    });
+    expect(skipped.skipped).toBe(true);
+    if (skipped.skipped) {
+      expect(skipped.line).toMatch(
+        /^no UI changes since [0-9a-f]{12}; skipped$/,
+      );
+      expect(
+        skipped.files.find((file) => file.path === "test/fixtures/x/DESIGN.md")
+          ?.reason,
+      ).toBe("documentation");
+    }
+    // AC1: with a page change, still one scheme and no widened line.
+    await f.write(
+      "app/r0/page.tsx",
+      "export default function Page() { return <main>changed</main>; }\n",
+    );
+    const plan = await gatePlan(f.directory);
+    expect(plan.styleScope.theme).toEqual([]);
+    expect(plan.states.every((state) => state.schemes.length === 1)).toBe(true);
+    expect(
+      renderGatePlan(plan).some((line) => line.startsWith("widened schemes")),
+    ).toBe(false);
+    await f.commit("fixture and page");
+    // AC2: the project's own DESIGN.md widens as before.
+    await f.write("DESIGN.md", themeLines(2));
+    const own = await gatePlan(f.directory);
+    expect(own.styleScope.theme).toContain("DESIGN.md");
+    expect(own.states.length).toBeGreaterThan(0);
+    expect(own.states.every((state) => state.schemes.length === 2)).toBe(true);
+    expect(renderGatePlan(own)).toContain(
+      "widened schemes: theme styles in DESIGN.md",
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a configured design file widens; the default-named one then does not", async () => {
+  const f = await changedFixture({
+    "design/brand.md": themeLines(0),
+    "DESIGN.md": themeLines(0),
+  });
+  try {
+    await twoSchemes(f);
+    const path = join(f.directory, ".idiom/project.json");
+    const project = JSON.parse(await readFile(path, "utf8"));
+    project.design = { designFile: "design/brand.md" };
+    await writeFile(path, JSON.stringify(project));
+    await f.commit("configured design file");
+    await f.write("DESIGN.md", themeLines(1));
+    const skipped = await planGate({
+      project: f.directory,
+      dependencies: host,
+    });
+    expect(skipped.skipped).toBe(true);
+    await f.commit("root DESIGN.md");
+    await f.write("design/brand.md", themeLines(1));
+    const plan = await gatePlan(f.directory);
+    expect(plan.graph.complete).toBe(true);
+    expect(plan.styleScope.theme).toContain("design/brand.md");
+    expect(
+      plan.files.find((file) => file.path === "design/brand.md"),
+    ).toMatchObject({ ui: true, reason: "design context", kind: "global" });
+    expect(renderGatePlan(plan)).toContain(
+      "widened schemes: theme styles in design/brand.md",
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("under --project only the project's own DESIGN.md widens, not a sibling's or the repo root's", async () => {
+  const f = await changedFixture({});
+  const outer = await mkdtemp(join(tmpdir(), "idiom-outer-"));
+  const git = async (...args: string[]) =>
+    (await promisify(execFile)("git", args, { cwd: outer })).stdout;
+  const commit = async (message: string) => {
+    await git("add", ".");
+    await git(
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--quiet",
+      "-m",
+      message,
+    );
+  };
+  try {
+    await twoSchemes(f);
+    const web = join(outer, "packages/web");
+    await cp(f.directory, web, {
+      recursive: true,
+      filter: (source) => !source.split(/[\\/]/).includes(".git"),
+    });
+    await writeFile(join(web, "DESIGN.md"), themeLines(0));
+    await cp(join(web, "DESIGN.md"), join(outer, "packages/other/DESIGN.md"));
+    await writeFile(join(outer, "DESIGN.md"), themeLines(0));
+    await git("init", "--quiet", "--initial-branch=main");
+    await commit("outer");
+    const plan = () => planGate({ project: web, dependencies: host });
+
+    await writeFile(join(outer, "packages/other/DESIGN.md"), themeLines(1));
+    expect((await plan()).skipped).toBe(true);
+    await commit("sibling");
+
+    await writeFile(join(outer, "DESIGN.md"), themeLines(1));
+    const root = await plan();
+    expect(root.skipped).toBe(true);
+    if (root.skipped)
+      expect(root.files.find((file) => file.path === "DESIGN.md")?.reason).toBe(
+        "documentation",
+      );
+    await commit("root");
+
+    await writeFile(join(web, "DESIGN.md"), themeLines(1));
+    const own = await plan();
+    if (own.skipped) throw new Error(`unexpected skip: ${own.line}`);
+    expect(own.styleScope.theme).toContain("packages/web/DESIGN.md");
+    expect(own.states.every((state) => state.schemes.length === 2)).toBe(true);
+    expect(renderGatePlan(own)).toContain(
+      "widened schemes: theme styles in packages/web/DESIGN.md",
+    );
+  } finally {
+    await f.cleanup();
+    await rm(outer, { recursive: true, force: true });
   }
 });

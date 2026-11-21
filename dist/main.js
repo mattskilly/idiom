@@ -12352,23 +12352,78 @@ var init_ref_worktree = __esm({
   }
 });
 
-// src/gate/classify.ts
-import { existsSync as existsSync2 } from "fs";
-import { readFile as readFile19 } from "fs/promises";
-import { join as join19 } from "path";
-function classifyByPath(files, nonUi = []) {
+// src/changed/design-context.ts
+import { realpath as realpath7 } from "fs/promises";
+import { posix as posix2, relative as relative14, sep as sep9 } from "path";
+async function projectPrefix(repository, projectDirectory) {
+  const [root2, project] = await Promise.all([
+    realpath7(repository).catch(() => repository),
+    realpath7(projectDirectory).catch(() => projectDirectory)
+  ]);
+  return relative14(root2, project).split(sep9).join("/");
+}
+function designContextPaths(design, prefix) {
+  const resolve92 = (file) => {
+    const normalized2 = file.replaceAll("\\", "/");
+    return posix2.normalize(prefix ? `${prefix}/${normalized2}` : normalized2);
+  };
+  return {
+    design: resolve92(design.designFile),
+    product: resolve92(design.productFile)
+  };
+}
+var defaultDesignContext;
+var init_design_context = __esm({
+  "src/changed/design-context.ts"() {
+    "use strict";
+    defaultDesignContext = {
+      designFile: "DESIGN.md",
+      productFile: "PRODUCT.md"
+    };
+  }
+});
+
+// src/changed/non-ui.ts
+function classifyByPath(files, nonUi = [], designContext = ["DESIGN.md", "PRODUCT.md"]) {
   const globs = nonUi.map((glob) => [glob, globRegex(glob)]);
-  return files.map(({ path }) => {
+  return files.map(({ path, repoPath }) => {
     const normalized2 = path.replaceAll("\\", "/");
+    if (designContext.includes((repoPath ?? path).replaceAll("\\", "/")))
+      return { path, ui: true, reason: "design context" };
     for (const [pattern, reason2] of nonUiPatterns)
-      if (pattern.test(normalized2))
-        return reason2 ? { path, ui: false, reason: reason2 } : { path, ui: true, reason: "design context" };
+      if (pattern.test(normalized2)) return { path, ui: false, reason: reason2 };
     const glob = globs.find(([, regex]) => regex.test(normalized2));
     if (glob)
       return { path, ui: false, reason: `checks.gate.nonUi ${glob[0]}` };
     return { path, ui: true, reason: "may affect the UI" };
   });
 }
+var nonUiPatterns;
+var init_non_ui = __esm({
+  "src/changed/non-ui.ts"() {
+    "use strict";
+    init_lib();
+    nonUiPatterns = [
+      [/\.md$/i, "documentation"],
+      [/^docs\//, "documentation"],
+      [/(?:^|\/)(?:test|tests|__tests__)\//, "tests"],
+      [/\.(?:test|spec)\.[^/]+$/, "tests"],
+      [/^\.github\//, "CI configuration"],
+      [/^\.ab\//, "build scratch"],
+      [/^\.autobuild\//, "build scratch"],
+      [
+        /(?:^|\/)(?:[^/]+\.lock|bun\.lockb?|package-lock\.json|pnpm-lock\.yaml)$/,
+        "lockfile"
+      ],
+      [/(?:^|\/)\.idiom\/(?:reports|cache)\//, "Idiom run output"]
+    ];
+  }
+});
+
+// src/gate/classify.ts
+import { existsSync as existsSync2 } from "fs";
+import { readFile as readFile19 } from "fs/promises";
+import { join as join19 } from "path";
 function classifySelection(selection2, htmlDirectories = []) {
   const complete = selection2.graph?.complete === true;
   return selection2.files.map((file) => {
@@ -12514,27 +12569,13 @@ async function detectStyleScope(options) {
       scope.theme.push(path);
   return scope;
 }
-var nonUiPatterns, uiExtension, styleModule, assetDirectory, buildConfig, tailwindBreakpoints, responsivePatterns, themePatterns;
+var uiExtension, styleModule, assetDirectory, buildConfig, tailwindBreakpoints, responsivePatterns, themePatterns;
 var init_classify = __esm({
   "src/gate/classify.ts"() {
     "use strict";
-    init_lib();
     init_git();
-    nonUiPatterns = [
-      [/(?:^|\/)(?:DESIGN|PRODUCT)\.md$/i, ""],
-      [/\.md$/i, "documentation"],
-      [/^docs\//, "documentation"],
-      [/(?:^|\/)(?:test|tests|__tests__)\//, "tests"],
-      [/\.(?:test|spec)\.[^/]+$/, "tests"],
-      [/^\.github\//, "CI configuration"],
-      [/^\.ab\//, "build scratch"],
-      [/^\.autobuild\//, "build scratch"],
-      [
-        /(?:^|\/)(?:[^/]+\.lock|bun\.lockb?|package-lock\.json|pnpm-lock\.yaml)$/,
-        "lockfile"
-      ],
-      [/(?:^|\/)\.idiom\/(?:reports|cache)\//, "Idiom run output"]
-    ];
+    init_design_context();
+    init_non_ui();
     uiExtension = /\.(?:css|scss|sass|less|tsx|jsx|vue|svelte|astro|html|mdx|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf)$/i;
     styleModule = /\.(?:css\.[jt]s|styles?\.[^/]+|styled\.[^/]+)$/i;
     assetDirectory = /(?:^|\/)(?:public|static|assets)\//;
@@ -15892,11 +15933,11 @@ var init_types = __esm({
 
 // src/design/artifacts.ts
 import { createHash as createHash7 } from "crypto";
-import { mkdir as mkdir10, readFile as readFile22, realpath as realpath7, writeFile as writeFile10 } from "fs/promises";
-import { isAbsolute as isAbsolute7, join as join22, relative as relative14, resolve as resolve16, sep as sep9 } from "path";
+import { mkdir as mkdir10, readFile as readFile22, realpath as realpath8, writeFile as writeFile10 } from "fs/promises";
+import { isAbsolute as isAbsolute7, join as join22, relative as relative15, resolve as resolve16, sep as sep10 } from "path";
 import { PNG } from "pngjs";
 async function writeDesignArtifacts(options) {
-  const { design } = options, base = `${options.base.split(sep9).join("/")}/design${options.subdirectory ? `/${options.subdirectory}` : ""}`;
+  const { design } = options, base = `${options.base.split(sep10).join("/")}/design${options.subdirectory ? `/${options.subdirectory}` : ""}`;
   const image2 = design.resolved?.kind === "image" ? design.image : void 0;
   const figma = design.figma !== void 0;
   const artifacts = design.resolved?.kind === "image" ? {
@@ -16001,11 +16042,11 @@ async function loadDesignArtifacts(runDirectory, raw, tuple) {
     const coordinate7 = descriptor.coordinate;
     if (coordinate7.state !== tuple.state || coordinate7.viewport !== tuple.viewport || coordinate7.width !== tuple.width || coordinate7.height !== tuple.height || coordinate7.colorScheme !== (tuple.colorScheme ?? "light"))
       throw new Error("design coordinate disagrees with app tuple");
-    const base = `${relative14(
+    const base = `${relative15(
       runDirectory,
       resolve16(runDirectory, tuple.metadataPath, "..")
-    ).split(sep9).join("/")}/design/`;
-    const root2 = await realpath7(runDirectory);
+    ).split(sep10).join("/")}/design/`;
+    const root2 = await realpath8(runDirectory);
     const missing2 = [];
     for (const path of Object.values(descriptor.artifacts)) {
       if (path === void 0) continue;
@@ -16013,14 +16054,14 @@ async function loadDesignArtifacts(runDirectory, raw, tuple) {
         throw new Error("design artifact is outside its owning tuple");
       let physical;
       try {
-        physical = await realpath7(resolve16(runDirectory, path));
+        physical = await realpath8(resolve16(runDirectory, path));
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
         missing2.push(path);
         continue;
       }
-      const rel = relative14(root2, physical);
-      if (rel === ".." || rel.startsWith(`..${sep9}`) || isAbsolute7(rel))
+      const rel = relative15(root2, physical);
+      if (rel === ".." || rel.startsWith(`..${sep10}`) || isAbsolute7(rel))
         throw new Error("design artifact escapes run directory");
       tuple.artifactPaths.push(path);
     }
@@ -16323,7 +16364,7 @@ var init_compare = __esm({
 
 // src/review/artifacts.ts
 import { access as access4, readdir as readdir7, readFile as readFile24 } from "fs/promises";
-import { isAbsolute as isAbsolute8, join as join23, relative as relative15, resolve as resolve17, sep as sep10 } from "path";
+import { isAbsolute as isAbsolute8, join as join23, relative as relative16, resolve as resolve17, sep as sep11 } from "path";
 import { z as z30 } from "zod";
 function validBuild(value) {
   if (value === null || typeof value !== "object") return false;
@@ -16367,7 +16408,7 @@ function metadata(value, path) {
   return item;
 }
 function reportPath(runDirectory, path) {
-  return relative15(runDirectory, path).split(sep10).join("/");
+  return relative16(runDirectory, path).split(sep11).join("/");
 }
 async function exists5(path) {
   try {
@@ -16473,7 +16514,7 @@ function resolveStoredRun(projectDirectory, runId) {
   }
   const reports2 = resolve17(projectDirectory, ".idiom", "reports");
   const run2 = resolve17(reports2, runId);
-  if (relative15(reports2, run2).startsWith("..") || isAbsolute8(relative15(reports2, run2))) {
+  if (relative16(reports2, run2).startsWith("..") || isAbsolute8(relative16(reports2, run2))) {
     throw new IdiomError("--from must remain beneath .idiom/reports");
   }
   return run2;
@@ -16644,7 +16685,7 @@ async function loadCaptureRun(options) {
       tuples: [],
       commit: "unavailable (capture contains no tuples)",
       ...runBuild === void 0 ? {} : { build: runBuild },
-      runId: runDirectory.split(sep10).at(-1) ?? "run"
+      runId: runDirectory.split(sep11).at(-1) ?? "run"
     };
   }
   const tuples = [];
@@ -16913,14 +16954,14 @@ async function loadCaptureRun(options) {
     commit: storedCommit ?? runRecord?.source.commit ?? "",
     record: runRecord,
     ...build === void 0 ? {} : { build },
-    runId: runDirectory.split(sep10).at(-1) ?? "run"
+    runId: runDirectory.split(sep11).at(-1) ?? "run"
   };
 }
 async function assertEvidencePaths(runDirectory, paths) {
   const base = resolve17(runDirectory);
   for (const item of paths) {
     const path = resolve17(base, item);
-    const escaped = relative15(base, path);
+    const escaped = relative16(base, path);
     if (escaped.startsWith("..") || isAbsolute8(escaped) || !await exists5(path)) {
       throw new IdiomError(
         `finding evidence does not resolve to a capture artifact: ${item}`
@@ -17902,7 +17943,7 @@ var init_presentation2 = __esm({
 
 // src/tickets/render.ts
 import { createHash as createHash10 } from "crypto";
-import { relative as relative16, resolve as resolve18, sep as sep11 } from "path";
+import { relative as relative17, resolve as resolve18, sep as sep12 } from "path";
 function ticketId(fingerprint3, findingId) {
   return `idiom-${createHash10("sha256").update(fingerprint3).update("\0").update(findingId).digest("hex")}`;
 }
@@ -17916,7 +17957,7 @@ function ticketIdsForIdentities(identities3) {
   ];
 }
 function markdownPath(fromDirectory, target3) {
-  const path = relative16(fromDirectory, resolve18(target3)).split(sep11).join("/");
+  const path = relative17(fromDirectory, resolve18(target3)).split(sep12).join("/");
   return path.split("/").map((segment2) => encodeURIComponent(segment2)).join("/");
 }
 function jsonFence(value) {
@@ -18072,7 +18113,7 @@ function renderClusterTicket(options) {
       const label7 = `${path.includes("/crops/") ? "Crop" : "Screenshot"} ${index + 1}`;
       const absolute = resolve18(member.record.runDirectory, path);
       lines2.push(
-        options.evidenceRoot === void 0 ? `- [${label7}](${markdownPath(ticketDirectory, absolute)})` : `- ${label7}: \`${relative16(options.evidenceRoot, absolute).split(sep11).join("/")}\``
+        options.evidenceRoot === void 0 ? `- [${label7}](${markdownPath(ticketDirectory, absolute)})` : `- ${label7}: \`${relative17(options.evidenceRoot, absolute).split(sep12).join("/")}\``
       );
     }
     const serialized = JSON.stringify(finding, null, 2);
@@ -24571,7 +24612,7 @@ function installLegibilityDom(limits) {
           let rootElement = element;
           for (let parent = rootElement.parentElement; parent !== null && parent !== document.documentElement; parent = parent.parentElement) {
             const parentStyle = style(parent);
-            if (parentStyle[key5] !== raw || parentStyle.fontSize !== ownSize || !spacingInScope(parent))
+            if (parentStyle[key5] !== raw || property === "letter-spacing" && parentStyle.fontSize !== ownSize || !spacingInScope(parent))
               break;
             rootElement = parent;
           }
@@ -39279,16 +39320,16 @@ function recordsSignature(profile, root2, includeGeometry, suppressed) {
   let stripped = 0;
   const records = regionRecords(profile, root2).map(
     ({ selector: _selector, path, geometry, ...record5 }) => {
-      const relative62 = relativePath(root2, path);
+      const relative61 = relativePath(root2, path);
       let kept = record5;
-      if (suppressed.has(relative62) && record5.text !== void 0) {
+      if (suppressed.has(relative61) && record5.text !== void 0) {
         const { text: _text, ...rest } = record5;
         kept = rest;
         stripped += 1;
       }
       return {
         ...kept,
-        path: relative62,
+        path: relative61,
         ...includeGeometry && geometry !== void 0 ? { geometry } : {}
       };
     }
@@ -40069,9 +40110,9 @@ var init_compare2 = __esm({
 });
 
 // src/baseline/summary.ts
-import { relative as relative17 } from "path";
+import { relative as relative18 } from "path";
 function displayPath(base, absolute) {
-  const local = relative17(base, absolute);
+  const local = relative18(base, absolute);
   return local.startsWith("..") ? absolute : local;
 }
 function summarizeFinding(finding, result2, base) {
@@ -40219,7 +40260,7 @@ var init_presentation_order = __esm({
 
 // src/digest/record.ts
 import { readFile as readFile29, rename as rename12, writeFile as writeFile13 } from "fs/promises";
-import { basename as basename6, join as join30, relative as relative18 } from "path";
+import { basename as basename6, join as join30, relative as relative19 } from "path";
 import { z as z32 } from "zod";
 async function writeDigestRecord(runDirectory, record5) {
   const path = join30(runDirectory, DIGEST_RECORD_FILE);
@@ -40329,7 +40370,7 @@ function buildDigestRecord(options) {
     completedAt: options.now.toISOString(),
     commit: options.commit,
     dirty: options.dirty,
-    reportPath: relative18(options.projectDirectory, options.reportPath),
+    reportPath: relative19(options.projectDirectory, options.reportPath),
     configHash: options.configHash,
     scope: options.scope === void 0 || options.scope.selected.length === options.scope.declared.length ? "full" : "partial",
     coverage: {
@@ -40724,11 +40765,11 @@ var init_build = __esm({
 });
 
 // src/changed/select.ts
-import { realpath as realpath8 } from "fs/promises";
-import { dirname as dirname17, relative as relative19, resolve as resolve23, sep as sep12 } from "path";
+import { realpath as realpath9 } from "fs/promises";
+import { dirname as dirname17, relative as relative20, resolve as resolve23, sep as sep13 } from "path";
 function isGlobalFile(path) {
-  const normalized2 = path.replaceAll(sep12, "/");
-  return /(?:^|\/)\.idiom\//.test(normalized2) || /(?:^|\/)DESIGN\.md$/i.test(normalized2) || /(?:^|\/)(?:layout|template|_app|_document|\+layout(?:\.server)?|root)\.[^.]+$/.test(
+  const normalized2 = path.replaceAll(sep13, "/");
+  return /(?:^|\/)\.idiom\//.test(normalized2) || /(?:^|\/)(?:layout|template|_app|_document|\+layout(?:\.server)?|root)\.[^.]+$/.test(
     normalized2
   ) || /(?:^|\/)(?:tailwind|postcss|theme)(?:\.config)?\.[^/]+$/.test(
     normalized2
@@ -40736,8 +40777,16 @@ function isGlobalFile(path) {
     normalized2
   ) || /(?:^|\/)(?:(?:design[-.]?)?tokens)(?:\/|\.[^/]+$)/i.test(normalized2);
 }
-async function selectChangedStates(project, flows, changes2) {
-  project = await realpath8(project);
+async function selectChangedStates(project, flows, changes2, options = {}) {
+  project = await realpath9(project);
+  const repository = await realpath9(changes2.repository).catch(
+    () => changes2.repository
+  );
+  const prefix = await projectPrefix(repository, project);
+  const context2 = designContextPaths(
+    options.design ?? defaultDesignContext,
+    prefix
+  );
   const candidates = flows.flatMap(
     (flow) => flow.states.map((state) => ({ flow: flow.id, state: state.id }))
   );
@@ -40751,6 +40800,39 @@ async function selectChangedStates(project, flows, changes2) {
     fallbackFiles: []
   };
   if (!changedFiles.length) return result2;
+  const local = (path) => prefix && path.startsWith(`${prefix}/`) ? path.slice(prefix.length + 1) : path;
+  const byPath = classifyByPath(
+    changedFiles.map((file) => {
+      const repoPath = file.path.replaceAll(sep13, "/");
+      return { path: local(repoPath), repoPath };
+    }),
+    options.nonUi ?? [],
+    [context2.design, context2.product]
+  );
+  const quietMappings = changedFiles.map(
+    (file, index) => {
+      const path = file.path.replaceAll(sep13, "/");
+      if (path === context2.design || path === context2.product) return void 0;
+      if (isDesignDocument(path))
+        return {
+          kind: "documentation",
+          reason: "a DESIGN.md outside this project's design context (design.designFile): documentation"
+        };
+      const pathClass = byPath[index];
+      if (pathClass && !pathClass.ui)
+        return { kind: "non-ui", reason: pathClass.reason };
+      return void 0;
+    }
+  );
+  if (quietMappings.every(Boolean)) {
+    result2.files = changedFiles.map((file, index) => ({
+      path: file.path,
+      ...quietMappings[index],
+      routes: [],
+      states: []
+    }));
+    return result2;
+  }
   const topology = await discoverRouteTopology(project);
   const unmappable = candidates.filter(({ flow: id2, state: stateId }) => {
     const flow = flows.find((candidate2) => candidate2.id === id2);
@@ -40789,13 +40871,10 @@ async function selectChangedStates(project, flows, changes2) {
         if (resolve23(project, entry2.source) === source)
           suspectRoutes.add(entry2.route);
   }
-  const repository = await realpath8(changes2.repository).catch(
-    () => changes2.repository
-  );
   const relativeReason = (reason2) => {
     for (const root2 of [repository, project])
-      if (reason2.startsWith(`${root2}${sep12}`))
-        return reason2.slice(root2.length + 1).replaceAll(sep12, "/");
+      if (reason2.startsWith(`${root2}${sep13}`))
+        return reason2.slice(root2.length + 1).replaceAll(sep13, "/");
     return reason2;
   };
   const graphReasons = [
@@ -40819,12 +40898,22 @@ async function selectChangedStates(project, flows, changes2) {
     ...suspectReasons
   ];
   const selected2 = /* @__PURE__ */ new Set();
-  for (const file of changedFiles) {
+  for (const [index, file] of changedFiles.entries()) {
+    const quietMapping = quietMappings[index];
     let kind = "route";
     let reason2 = "route module or nearest route directory";
     const routes = /* @__PURE__ */ new Set();
     const chains = [];
-    if (isGlobalFile(file.path) || graph.globalDependencies.has(file.absolute)) {
+    const path = file.path.replaceAll(sep13, "/");
+    if (path === context2.design) {
+      kind = "global";
+      reason2 = "the project's design file (design.designFile)";
+    } else if (path === context2.product) {
+      kind = "global";
+      reason2 = "the project's product file (design.productFile)";
+    } else if (quietMapping) {
+      ({ kind, reason: reason2 } = quietMapping);
+    } else if (isGlobalFile(file.path) || graph.globalDependencies.has(file.absolute)) {
       kind = "global";
       reason2 = "global design, configuration, layout or its dependency";
     } else {
@@ -40856,7 +40945,7 @@ async function selectChangedStates(project, flows, changes2) {
           for (const entry2 of topology.entries)
             if (resolve23(project, entry2.source) === source)
               routes.add(entry2.route);
-          chains.push(chain.map((path) => relative19(changes2.repository, path)));
+          chains.push(chain.map((path2) => relative20(changes2.repository, path2)));
         }
       }
       if (!routes.size || globalUncertainties.length) {
@@ -40865,7 +40954,8 @@ async function selectChangedStates(project, flows, changes2) {
       }
     }
     const fallback = kind === "global" || kind === "unresolved";
-    const states = fallback ? candidates : [
+    const quiet = kind === "documentation" || kind === "non-ui";
+    const states = fallback ? candidates : quiet ? [] : [
       ...routeCoverage(
         [...routes].map((route) => ({ route, source: file.path })),
         flows
@@ -40884,23 +40974,26 @@ async function selectChangedStates(project, flows, changes2) {
       routes: [...routes].sort(),
       states: affected,
       ...chains.length ? { importChains: chains } : {},
-      ...kind === "unresolved" && globalUncertainties.length ? { uncertainties: globalUncertainties } : !fallback && broadening.length ? { uncertainties: broadening } : {}
+      ...kind === "unresolved" && globalUncertainties.length ? { uncertainties: globalUncertainties } : !fallback && !quiet && broadening.length ? { uncertainties: broadening } : {}
     });
   }
   result2.selected = candidates.filter((state) => selected2.has(stateKey(state)));
   result2.skipped = candidates.filter((state) => !selected2.has(stateKey(state)));
   return result2;
 }
-var stateKey, within4;
+var stateKey, within4, isDesignDocument;
 var init_select = __esm({
   "src/changed/select.ts"() {
     "use strict";
     init_routes();
+    init_design_context();
+    init_non_ui();
     stateKey = (state) => `${state.flow}\0${state.state}`;
     within4 = (directory, file) => {
-      const path = relative19(directory, file);
-      return path === "" || !path.startsWith(`..${sep12}`) && path !== "..";
+      const path = relative20(directory, file);
+      return path === "" || !path.startsWith(`..${sep13}`) && path !== "..";
     };
+    isDesignDocument = (path) => /(?:^|\/)DESIGN\.md$/i.test(path.replaceAll(sep13, "/"));
   }
 });
 
@@ -41053,17 +41146,22 @@ async function attributeIntroductions(options) {
         });
       }
       const union3 = [...new Set(details.flatMap(({ files }) => files))].sort();
-      const selection2 = await select(options.projectDirectory, options.flows, {
-        repository,
-        head: to,
-        requestedBase: from,
-        resolvedBase: from,
-        baseReason: "first-seen range",
-        files: union3.map((path) => ({
-          path,
-          absolute: resolve24(repository, path)
-        }))
-      });
+      const selection2 = await select(
+        options.projectDirectory,
+        options.flows,
+        {
+          repository,
+          head: to,
+          requestedBase: from,
+          resolvedBase: from,
+          baseReason: "first-seen range",
+          files: union3.map((path) => ({
+            path,
+            absolute: resolve24(repository, path)
+          }))
+        },
+        { design: options.design, nonUi: options.nonUi }
+      );
       const statesByFile = new Map(
         selection2.files.map((file) => [
           file.path,
@@ -41158,7 +41256,9 @@ async function recordRunAttribution(options) {
         current.runId
       ),
       ticketPattern: validated.project.attribution?.ticketPattern ?? DEFAULT_TICKET_PATTERN,
-      git: options.git
+      git: options.git,
+      design: validated.project.design,
+      nonUi: resolveGateConfig(validated.project).nonUi
     });
     await writeAttributionRecord(options.runDirectory, record5);
     return { introductions: introductionsByKey(record5) };
@@ -41174,6 +41274,7 @@ var init_check = __esm({
     "use strict";
     init_build();
     init_record2();
+    init_project();
     init_attribute();
     init_record();
     init_tickets();
@@ -41439,8 +41540,8 @@ var init_mapping = __esm({
 });
 
 // src/system/learn/css.ts
-import { lstat as lstat6, readFile as readFile32, realpath as realpath9 } from "fs/promises";
-import { dirname as dirname18, isAbsolute as isAbsolute9, relative as relative20, resolve as resolve26 } from "path";
+import { lstat as lstat6, readFile as readFile32, realpath as realpath10 } from "fs/promises";
+import { dirname as dirname18, isAbsolute as isAbsolute9, relative as relative21, resolve as resolve26 } from "path";
 import postcss from "postcss";
 function cssKind(name, value) {
   if (/^--color(?:-|$)/.test(name) || /^(?:#|(?:rgb|hsl|oklch|oklab|lab|lch|color|light-dark|color-mix)\()/i.test(
@@ -41450,15 +41551,15 @@ function cssKind(name, value) {
   return dimensionKind(name);
 }
 async function extractCss(root2, paths, options = {}) {
-  const rootReal = await realpath9(root2);
+  const rootReal = await realpath10(root2);
   const visited = /* @__PURE__ */ new Set();
   const tokens3 = [];
   const visit = async (path, conditional = false, cascade = path) => {
-    const lexical = relative20(root2, resolve26(root2, path));
+    const lexical = relative21(root2, resolve26(root2, path));
     if (lexical.split(/[\\/]/).some((part) => excludedDirectories.has(part)))
       return;
-    const actual = await realpath9(resolve26(root2, path));
-    const rel = relative20(rootReal, actual);
+    const actual = await realpath10(resolve26(root2, path));
+    const rel = relative21(rootReal, actual);
     if (rel.startsWith("..") || isAbsolute9(rel))
       throw new Error(`${path}: stylesheet import escapes the project`);
     let directory = root2;
@@ -41487,7 +41588,7 @@ async function extractCss(root2, paths, options = {}) {
             );
             try {
               await visit(
-                relative20(root2, target3),
+                relative21(root2, target3),
                 uncertain || (match[2] ?? "").trim() !== "",
                 cascade
               );
@@ -41564,7 +41665,7 @@ async function extractCss(root2, paths, options = {}) {
     const text7 = await readFile32(resolve26(root2, path), "utf8");
     for (const match of text7.matchAll(/@import\s+["']([^"']+)["']/g))
       imported.add(
-        relative20(root2, resolve26(root2, dirname18(path), match[1]))
+        relative21(root2, resolve26(root2, dirname18(path), match[1]))
       );
   }
   for (const path of [
@@ -44043,7 +44144,7 @@ var init_visual_blank_dom = __esm({
 
 // src/checks/observe.ts
 import { readdir as readdir12, readFile as readFile33 } from "fs/promises";
-import { dirname as dirname19, isAbsolute as isAbsolute10, relative as relative21, resolve as resolve27 } from "path";
+import { dirname as dirname19, isAbsolute as isAbsolute10, relative as relative22, resolve as resolve27 } from "path";
 import postcss2 from "postcss";
 async function loadTokenDeclarations(projectDirectory, tokensFile, inlineTokens = []) {
   if (tokensFile === void 0)
@@ -44060,7 +44161,7 @@ async function loadTokenDeclarations(projectDirectory, tokensFile, inlineTokens 
     throw new IdiomError("design.tokensFile must be project-relative");
   }
   const path = resolve27(projectDirectory, tokensFile);
-  const escaped = relative21(projectDirectory, path);
+  const escaped = relative22(projectDirectory, path);
   if (escaped.startsWith("..") || isAbsolute10(escaped)) {
     throw new IdiomError("design.tokensFile must remain inside the project");
   }
@@ -44093,8 +44194,8 @@ async function loadTokenDeclarations(projectDirectory, tokensFile, inlineTokens 
       `design.tokensFile ${JSON.stringify(tokensFile)} contains no custom-property declarations`
     );
   }
-  const siblings = (await readdir12(dirname19(path), { withFileTypes: true })).filter((e) => e.isFile() && e.name.endsWith(".css")).map((e) => relative21(projectDirectory, resolve27(dirname19(path), e.name)));
-  const fileTokens = (await extractCss(projectDirectory, siblings, { ignoreOutsideImports: true })).filter((t) => t.source.path === relative21(projectDirectory, path));
+  const siblings = (await readdir12(dirname19(path), { withFileTypes: true })).filter((e) => e.isFile() && e.name.endsWith(".css")).map((e) => relative22(projectDirectory, resolve27(dirname19(path), e.name)));
+  const fileTokens = (await extractCss(projectDirectory, siblings, { ignoreOutsideImports: true })).filter((t) => t.source.path === relative22(projectDirectory, path));
   return {
     status: "configured",
     fileTokens,
@@ -52079,7 +52180,7 @@ function figmaObservation(frame2, options) {
     stableIslandPath: fields.path,
     relativeRect: fields.rect
   });
-  const relative62 = (node) => {
+  const relative61 = (node) => {
     const box2 = node.absoluteBoundingBox;
     if (!box2) return void 0;
     return {
@@ -52155,7 +52256,7 @@ function figmaObservation(frame2, options) {
     for (const child2 of node.children ?? []) {
       if (!visible(child2) || child2.opacity === 0 || SKIPPED_TYPES.has(child2.type))
         continue;
-      const rect4 = relative62(child2);
+      const rect4 = relative61(child2);
       if (!rect4 || rect4.width <= 0 || rect4.height <= 0) continue;
       const childPath = `${path}/${index++}`, selector2 = `figma:${child2.id}`, layer = child2.name?.trim() ?? "", layerNames = [...names, layer || child2.id];
       const visibleKids = (child2.children ?? []).filter(
@@ -52264,7 +52365,7 @@ var init_normalize2 = __esm({
 });
 
 // src/design/figma/capture.ts
-import { relative as relative22, sep as sep13 } from "path";
+import { relative as relative23, sep as sep14 } from "path";
 import { PNG as PNG3 } from "pngjs";
 function figmaFrameLoader(options) {
   const frames = /* @__PURE__ */ new Map();
@@ -52350,7 +52451,7 @@ async function captureFigmaDesign(options) {
         frame: { width: box2?.width ?? 1, height: box2?.height ?? 1 },
         variables: frame2.meta.variables,
         link: frame2.meta.link,
-        cache: relative22(options.projectDirectory, frame2.cacheDirectory).split(sep13).join("/") || "."
+        cache: relative23(options.projectDirectory, frame2.cacheDirectory).split(sep14).join("/") || "."
       },
       figmaDocument: frame2.document,
       result: result2
@@ -52542,7 +52643,7 @@ var init_limits = __esm({
 
 // src/design/source.ts
 import { createHash as createHash19 } from "crypto";
-import { readdir as readdir13, readFile as readFile35, realpath as realpath10, stat as stat5 } from "fs/promises";
+import { readdir as readdir13, readFile as readFile35, realpath as realpath11, stat as stat5 } from "fs/promises";
 import {
   createServer as createServer2
 } from "http";
@@ -52551,9 +52652,9 @@ import {
   dirname as dirname20,
   extname,
   isAbsolute as isAbsolute11,
-  relative as relative23,
+  relative as relative24,
   resolve as resolve28,
-  sep as sep14
+  sep as sep15
 } from "path";
 function isFigmaHost2(source) {
   try {
@@ -52681,8 +52782,8 @@ async function resolveDesignSource(reference3, cwd, signal) {
   }
   if (!/\.html?$/i.test(entry2) || !(await stat5(entry2)).isFile())
     throw new Error(`Design entry must be an HTML file: ${entry2}`);
-  const root2 = await realpath10(dirname20(entry2));
-  if (!contained2(root2, await realpath10(entry2)))
+  const root2 = await realpath11(dirname20(entry2));
+  if (!contained2(root2, await realpath11(entry2)))
     throw new Error("Design entry escapes its resource root");
   const server = await listen2(async (request2, response) => {
     try {
@@ -52694,7 +52795,7 @@ async function resolveDesignSource(reference3, cwd, signal) {
       let file = resolve28(root2, `.${path}`);
       if (!contained2(root2, file)) throw new Error("path escapes design root");
       if ((await stat5(file)).isDirectory()) file = resolve28(file, "index.html");
-      file = await realpath10(file);
+      file = await realpath11(file);
       if (!contained2(root2, file))
         throw new Error("symlink escapes design root");
       const data = await readFile35(file);
@@ -52846,8 +52947,8 @@ var init_source = __esm({
       ".mp4": "video/mp4"
     };
     contained2 = (root2, file) => {
-      const path = relative23(root2, file);
-      return path !== ".." && !path.startsWith(`..${sep14}`) && !isAbsolute11(path);
+      const path = relative24(root2, file);
+      return path !== ".." && !path.startsWith(`..${sep15}`) && !isAbsolute11(path);
     };
     remedy = "Use an accessible direct prototype or export standalone HTML and configure that file.";
     siteRemedy = "Reference a page that loads without signing in, or export it as standalone HTML or a PNG and configure that file.";
@@ -55208,7 +55309,7 @@ var init_version2 = __esm({
     init_version();
     SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
     IDIOM_VERSION = readPackageVersion();
-    IDIOM_BUILD_COMMIT = true ? "676a739f19e626de944b4577470606ce2e38926a" : "unknown";
+    IDIOM_BUILD_COMMIT = true ? "14a7f3678246e3b91e39534b75c352d61447fa08" : "unknown";
     IDIOM_VERSION_DISPLAY = `${IDIOM_VERSION} (${IDIOM_BUILD_COMMIT.slice(0, 7)}) \xB7 interface ${INTERFACE_VERSION}`;
     IDIOM_PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
   }
@@ -55227,7 +55328,7 @@ import {
   writeFile as writeFile16
 } from "fs/promises";
 import { arch, release, tmpdir } from "os";
-import { basename as basename8, dirname as dirname21, join as join37, relative as relative24 } from "path";
+import { basename as basename8, dirname as dirname21, join as join37, relative as relative25 } from "path";
 function stateCombination(state) {
   return "combination" in state ? state.combination : void 0;
 }
@@ -55705,7 +55806,7 @@ function createSecretScanner(clock = () => performance.now()) {
           for (const { name, value } of secrets) {
             if (contents.includes(value)) {
               throw new IdiomError(
-                `secret scan found ${name} in ${relative24(directory, file)}; no capture was published`
+                `secret scan found ${name} in ${relative25(directory, file)}; no capture was published`
               );
             }
           }
@@ -61773,7 +61874,7 @@ var init_timeouts = __esm({
 
 // src/capture/web-steps.ts
 import { open as open2 } from "fs/promises";
-import { isAbsolute as isAbsolute12, relative as relative25, resolve as resolve29 } from "path";
+import { isAbsolute as isAbsolute12, relative as relative26, resolve as resolve29 } from "path";
 import { StringDecoder } from "string_decoder";
 import {
   errors as errors3
@@ -61783,7 +61884,7 @@ function resolveWebHealth(projectDirectory, flow, state) {
   if (flow.serverLog !== void 0) {
     const path = projectLogPathSchema.parse(flow.serverLog);
     serverLog = resolve29(projectDirectory, path.replaceAll("\\", "/"));
-    const within6 = relative25(resolve29(projectDirectory), serverLog);
+    const within6 = relative26(resolve29(projectDirectory), serverLog);
     if (within6 === ".." || within6.startsWith("../") || isAbsolute12(within6)) {
       throw new Error("serverLog must remain inside the project");
     }
@@ -73238,7 +73339,7 @@ var init_run = __esm({
 
 // src/references/catalog.ts
 import { lstat as lstat7, readdir as readdir15, readFile as readFile39 } from "fs/promises";
-import { extname as extname2, join as join40, relative as relative26, resolve as resolve32, sep as sep15 } from "path";
+import { extname as extname2, join as join40, relative as relative27, resolve as resolve32, sep as sep16 } from "path";
 function referenceRoot(projectDirectory, polarity2) {
   return join40(
     projectDirectory,
@@ -73290,11 +73391,11 @@ async function loadManagedReference(directory, polarity2) {
       metadataPath,
       parsed.error.issues.map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`).join("; ")
     );
-  const name = directory.split(sep15).at(-1);
+  const name = directory.split(sep16).at(-1);
   if (name !== parsed.data.name)
     throw entryError(metadataPath, "name must match its entry directory");
   const imagePath = resolve32(directory, parsed.data.image);
-  if (relative26(directory, imagePath).startsWith("..") || imagePath === directory)
+  if (relative27(directory, imagePath).startsWith("..") || imagePath === directory)
     throw entryError(
       metadataPath,
       "image must remain inside its entry directory"
@@ -73384,7 +73485,7 @@ async function loadLegacyReferences(projectDirectory) {
   for (const polarity2 of ["reference", "anti-reference"]) {
     const root2 = referenceRoot(projectDirectory, polarity2);
     for (const path of await legacyFiles(root2, root2)) {
-      const name = relative26(root2, path).split(sep15).join("/");
+      const name = relative27(root2, path).split(sep16).join("/");
       const label7 = `${polarity2}:${name}`;
       const mediaType = mediaTypeForPath(path);
       if (mediaType !== void 0)
@@ -78767,11 +78868,11 @@ var init_catalog2 = __esm({
 });
 
 // src/artifact-path.ts
-import { realpath as realpath11 } from "fs/promises";
-import { isAbsolute as isAbsolute14, relative as relative27, resolve as resolve39, sep as sep16 } from "path";
+import { realpath as realpath12 } from "fs/promises";
+import { isAbsolute as isAbsolute14, relative as relative28, resolve as resolve39, sep as sep17 } from "path";
 function inside3(root2, target3) {
-  const path = relative27(root2, target3);
-  return path !== ".." && !path.startsWith(`..${sep16}`) && !isAbsolute14(path);
+  const path = relative28(root2, target3);
+  return path !== ".." && !path.startsWith(`..${sep17}`) && !isAbsolute14(path);
 }
 async function evidencePath(runDirectory, path) {
   if (isAbsolute14(path) || /\\|\0/.test(path) || !inside3(runDirectory, resolve39(runDirectory, path)))
@@ -78779,8 +78880,8 @@ async function evidencePath(runDirectory, path) {
       `Evidence path escapes its source run: ${path}. Obtain a fresh check.`
     );
   const [root2, target3] = await Promise.all([
-    realpath11(runDirectory),
-    realpath11(resolve39(runDirectory, path))
+    realpath12(runDirectory),
+    realpath12(resolve39(runDirectory, path))
   ]);
   if (!inside3(root2, target3))
     throw new IdiomError(
@@ -81238,12 +81339,12 @@ import { createHash as createHash23, randomUUID as randomUUID9 } from "crypto";
 import {
   mkdir as mkdir19,
   readFile as readFile52,
-  realpath as realpath12,
+  realpath as realpath13,
   rename as rename21,
   rm as rm15,
   writeFile as writeFile29
 } from "fs/promises";
-import { dirname as dirname28, join as join54, relative as relative28, resolve as resolve40, sep as sep17 } from "path";
+import { dirname as dirname28, join as join54, relative as relative29, resolve as resolve40, sep as sep18 } from "path";
 import { z as z38 } from "zod";
 function engineIdentity() {
   const pinned = true ? "" : "";
@@ -81263,7 +81364,7 @@ async function commonStateDirectory(projectDirectory, area2, git2 = readGit) {
     (await git2(projectDirectory, ["rev-parse", "--git-common-dir"])).trim()
   );
   const top = (await git2(projectDirectory, ["rev-parse", "--show-toplevel"])).trim();
-  const local = relative28(await realpath12(top), await realpath12(projectDirectory)).split(sep17).join("/");
+  const local = relative29(await realpath13(top), await realpath13(projectDirectory)).split(sep18).join("/");
   const key5 = createHash23("sha256").update(local).digest("hex").slice(0, 12);
   return join54(common3, "idiom", area2, key5);
 }
@@ -81573,7 +81674,6 @@ var init_record3 = __esm({
 });
 
 // src/baseline/base.ts
-import { relative as relative29, sep as sep18 } from "path";
 async function resolveBaseComparison(options) {
   const { validated, base } = options;
   const git2 = options.git ?? readGit;
@@ -81610,8 +81710,12 @@ async function resolveBaseComparison(options) {
   const records = options.sources === void 0 ? allRecords : allRecords.filter((entry2) => options.sources?.includes(entry2.source));
   const reachable = [];
   const repository = (await git2(projectDirectory, ["rev-parse", "--show-toplevel"])).trim();
-  const prefix = relative29(repository, projectDirectory).split(sep18).join("/");
+  const prefix = await projectPrefix(repository, projectDirectory);
   const local = (path) => prefix && path.startsWith(`${prefix}/`) ? path.slice(prefix.length + 1) : path;
+  const context2 = designContextPaths(
+    validated.project.design ?? defaultDesignContext,
+    prefix
+  );
   const equivalence = /* @__PURE__ */ new Map();
   const equivalent = async (commit) => {
     if (commit === base) return true;
@@ -81629,8 +81733,9 @@ async function resolveBaseComparison(options) {
         "--"
       ])).split("\0").filter(Boolean).filter((path) => !bookkeeping.test(path));
       result2 = !classifyByPath(
-        files.map((path) => ({ path: local(path) })),
-        options.nonUi
+        files.map((path) => ({ path: local(path), repoPath: path })),
+        options.nonUi,
+        [context2.design, context2.product]
       ).some((file) => file.ui);
     } catch {
       result2 = false;
@@ -81966,6 +82071,7 @@ var init_base = __esm({
   "src/baseline/base.ts"() {
     "use strict";
     init_ref_worktree();
+    init_design_context();
     init_git();
     init_errors();
     init_classify();
@@ -81983,7 +82089,7 @@ var init_base = __esm({
 });
 
 // src/baseline/advance.ts
-import { realpath as realpath13 } from "fs/promises";
+import { realpath as realpath14 } from "fs/promises";
 import { basename as basename10, join as join56, relative as relative30, sep as sep19 } from "path";
 async function advanceBaselines(options) {
   const dependencies = options.dependencies ?? {};
@@ -81999,8 +82105,8 @@ async function advanceBaselines(options) {
   const stateDirectory = validated.stateProjectDirectory ?? projectDirectory;
   const repository = (await git2(projectDirectory, ["rev-parse", "--show-toplevel"])).trim();
   const prefix = relative30(
-    await realpath13(repository),
-    await realpath13(projectDirectory)
+    await realpath14(repository),
+    await realpath14(projectDirectory)
   ).split(sep19).join("/");
   const inRepository = (path) => prefix ? `${prefix}/${path}` : path;
   const cacheDirectory = await baseCacheDirectory(stateDirectory, git2);
@@ -82428,12 +82534,12 @@ function resumeRefusal(record5, current) {
   return void 0;
 }
 async function tupleDirectory(runDirectory, tuple) {
-  for (const relative62 of [
+  for (const relative61 of [
     join57(tuple.state, tuple.viewport, tuple.colorScheme),
     join57(tuple.state, tuple.viewport)
   ])
-    if (await exists10(join57(runDirectory, relative62, "metadata.json")))
-      return relative62;
+    if (await exists10(join57(runDirectory, relative61, "metadata.json")))
+      return relative61;
   return void 0;
 }
 async function resumePlan(interrupted, flow) {
@@ -82443,10 +82549,10 @@ async function resumePlan(interrupted, flow) {
   for (const tuple of record5.selected) {
     const key5 = captureTupleKey(tuple);
     if (!finals.has(key5)) continue;
-    const relative62 = await tupleDirectory(directory, tuple);
-    if (relative62 === void 0) continue;
+    const relative61 = await tupleDirectory(directory, tuple);
+    if (relative61 === void 0) continue;
     const metadata2 = await readJson(
-      join57(directory, relative62, "metadata.json")
+      join57(directory, relative61, "metadata.json")
     );
     if (metadata2 === void 0) continue;
     if (metadata2.failure?.stage === STATE_BUDGET_STAGE) continue;
@@ -82485,10 +82591,10 @@ async function resumePlan(interrupted, flow) {
   const carriedProbes = [];
   for (const tuple of carried) {
     if (!probed.has(captureTupleKey(tuple))) continue;
-    const relative62 = await tupleDirectory(directory, tuple);
-    if (relative62 === void 0) continue;
+    const relative61 = await tupleDirectory(directory, tuple);
+    if (relative61 === void 0) continue;
     const observations = await readJson(
-      join57(directory, relative62, "observations.json")
+      join57(directory, relative61, "observations.json")
     );
     if (observations?.version === 2 && observations.probe !== void 0)
       carriedProbes.push({ coordinate: tuple, probe: observations.probe });
@@ -82522,10 +82628,10 @@ async function composedCombinations(options) {
     const schemes2 = new Set(options.selected.map((tuple) => tuple.colorScheme));
     for (const tuple of options.selected) {
       if (!options.carried.has(captureTupleKey(tuple))) continue;
-      const relative62 = await tupleDirectory(options.interrupted, tuple);
-      if (relative62 === void 0) continue;
+      const relative61 = await tupleDirectory(options.interrupted, tuple);
+      if (relative61 === void 0) continue;
       const metadata2 = await readJson(
-        join57(options.interrupted, relative62, "metadata.json")
+        join57(options.interrupted, relative61, "metadata.json")
       );
       const representative = metadata2?.layoutRepresentative;
       const own = combinationOf.get(tuple.state);
@@ -82595,16 +82701,16 @@ async function composeResumedRun(options) {
     for (const tuple of source.selected) {
       const key5 = captureTupleKey(tuple);
       const from = carried.has(key5) ? interrupted.directory : partial?.directory;
-      const relative62 = from === void 0 ? void 0 : await tupleDirectory(from, tuple);
-      if (from === void 0 || relative62 === void 0)
+      const relative61 = from === void 0 ? void 0 : await tupleDirectory(from, tuple);
+      if (from === void 0 || relative61 === void 0)
         throw refuse2(`tuple ${label6(tuple)} has no captured evidence`);
-      await cp2(join57(from, relative62), join57(staging, relative62), {
+      await cp2(join57(from, relative61), join57(staging, relative61), {
         recursive: true,
         errorOnExist: true
       });
       metadata2.set(
         key5,
-        await readJson(join57(staging, relative62, "metadata.json"))
+        await readJson(join57(staging, relative61, "metadata.json"))
       );
     }
     const combinations = await composedCombinations({
@@ -85666,12 +85772,12 @@ var init_rubric = __esm({
 });
 
 // src/tickets/target.ts
-import { readFile as readFile63, realpath as realpath14, stat as stat12 } from "fs/promises";
+import { readFile as readFile63, realpath as realpath15, stat as stat12 } from "fs/promises";
 import { basename as basename12, dirname as dirname30, join as join68, resolve as resolve47 } from "path";
 import { parse as parse4 } from "smol-toml";
 async function physicalPath(path) {
   try {
-    return await realpath14(path);
+    return await realpath15(path);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
     const parent = dirname30(path);
@@ -85864,10 +85970,10 @@ async function entry(path) {
     throw error;
   }
 }
-async function inspect2(root2, relative62, snapshots) {
-  if (!safeRelative(relative62))
-    throw new Error(`Unsafe relative path: ${relative62}`);
-  const parts2 = relative62.split("/");
+async function inspect2(root2, relative61, snapshots) {
+  if (!safeRelative(relative61))
+    throw new Error(`Unsafe relative path: ${relative61}`);
+  const parts2 = relative61.split("/");
   for (let i = 0; i < parts2.length; i++) {
     const path = parts2.slice(0, i).join("/");
     const value2 = await entry(join69(root2, path));
@@ -85875,8 +85981,8 @@ async function inspect2(root2, relative62, snapshots) {
     if (value2.kind !== "directory" && value2.kind !== "absent")
       throw new Error(`Protected ancestor: ${path || root2}`);
   }
-  const value = await entry(join69(root2, relative62));
-  snapshots?.set(relative62, fingerprint2(value));
+  const value = await entry(join69(root2, relative61));
+  snapshots?.set(relative61, fingerprint2(value));
   return value;
 }
 async function unchanged(root2, snapshots) {
@@ -85892,8 +85998,8 @@ async function applyWrites(root2, writes, dependencies = {}) {
   const backups = /* @__PURE__ */ new Map();
   const applied = [];
   const createdDirectories = [];
-  async function parents(relative62) {
-    const parts2 = relative62.split("/").slice(0, -1);
+  async function parents(relative61) {
+    const parts2 = relative61.split("/").slice(0, -1);
     for (let i = 1; i <= parts2.length; i++) {
       const path = parts2.slice(0, i).join("/");
       const state = await inspect2(root2, path);
@@ -85904,14 +86010,14 @@ async function applyWrites(root2, writes, dependencies = {}) {
         throw new Error(`Protected directory: ${path}`);
     }
   }
-  async function stage(relative62, content, mode, target3 = staged) {
-    await parents(relative62);
+  async function stage(relative61, content, mode, target3 = staged) {
+    await parents(relative61);
     const temporary = join69(
       root2,
-      dirname31(relative62),
+      dirname31(relative61),
       `.idiom-${randomUUID13()}.tmp`
     );
-    target3.set(relative62, temporary);
+    target3.set(relative61, temporary);
     await writeFile35(temporary, content, { flag: "wx", encoding: "utf8" });
     if (mode !== void 0) await chmod2(temporary, mode);
   }
@@ -86306,7 +86412,7 @@ Cite any mismatch in the normal review.`
 // src/wiring/detect.ts
 import { constants } from "fs";
 import { access as access12, stat as stat13 } from "fs/promises";
-import { posix as posix2, win32 as win322 } from "path";
+import { posix as posix3, win32 as win322 } from "path";
 async function executableOnPath(name, dependencies = {}) {
   const environment = dependencies.environment ?? process.env;
   const windows = (dependencies.platform ?? process.platform) === "win32";
@@ -86325,7 +86431,7 @@ async function executableOnPath(name, dependencies = {}) {
   for (const directory of pathValue.split(windows ? ";" : ":").filter(Boolean))
     for (const extension of extensions)
       if (await executable(
-        (windows ? win322 : posix2).join(directory, name + extension)
+        (windows ? win322 : posix3).join(directory, name + extension)
       ))
         return true;
   return false;
@@ -89931,7 +90037,11 @@ async function checkChanged(options) {
   const selection2 = await selectChangedStates(
     validated.projectDirectory,
     validated.flows.map((record5) => record5.flow),
-    changes2
+    changes2,
+    {
+      design: validated.project.design,
+      nonUi: resolveGateConfig(validated.project).nonUi
+    }
   );
   options.dependencies?.capture?.signal?.throwIfAborted();
   const scopes2 = /* @__PURE__ */ new Map();
@@ -90326,7 +90436,7 @@ var init_condition = __esm({
 // src/verify/attachments.ts
 import { createHash as createHash27 } from "crypto";
 import { access as access14, readFile as readFile74, writeFile as writeFile39 } from "fs/promises";
-import { isAbsolute as isAbsolute15, join as join83, relative as relative36, resolve as resolve55 } from "path";
+import { isAbsolute as isAbsolute15, join as join83, relative as relative35, resolve as resolve55 } from "path";
 import { z as z40 } from "zod";
 function canonicalAttachmentKind(ordinal) {
   return `idiom-before-after-${ordinal.toString().padStart(3, "0")}`;
@@ -90409,7 +90519,7 @@ async function validateAttachmentManifest(options) {
   if (options.requireFiles !== false) {
     for (const path of [parsed.data.report.path, ...paths]) {
       const absolute = resolve55(options.outputDirectory, path);
-      const escaped = relative36(resolve55(options.outputDirectory), absolute);
+      const escaped = relative35(resolve55(options.outputDirectory), absolute);
       if (escaped.startsWith("..") || isAbsolute15(escaped) || !await present2(absolute))
         throw new IdiomError(
           `attachment file is missing or escapes output: ${path}`
@@ -90934,6 +91044,11 @@ function craftCheckEntries(checks, inferred = [], flowKind) {
     for (const selector2 of checks.negativeSpacing.include)
       entries2.push([
         `- No negative letter- or word-spacing on text inside ${selector2} (negative-spacing).`
+      ]);
+    const { displaySize, displayTracking } = checks.negativeSpacing;
+    if (displayTracking < 0)
+      entries2.push([
+        `- Display tracking is the exception: letter-spacing down to ${displayTracking}em is fine on text whose own computed font size is at least ${displaySize}px. Smaller text, tighter tracking and any negative word-spacing still count (negative-spacing).`
       ]);
   }
   if (checks.toolbarLayout.enabled) {
@@ -92154,7 +92269,7 @@ var init_decide2 = __esm({
 // src/commands/design.ts
 import { randomUUID as randomUUID15 } from "crypto";
 import { readFile as readFile79, rename as rename27, rm as rm30, writeFile as writeFile41 } from "fs/promises";
-import { isAbsolute as isAbsolute17, relative as relative37, resolve as resolve59, sep as sep22 } from "path";
+import { isAbsolute as isAbsolute17, relative as relative36, resolve as resolve59, sep as sep21 } from "path";
 async function addDesignCommand(options) {
   const source = designSourceSchema.parse(options.source), cwd = resolve59(options.cwd ?? process.cwd());
   const validated = await validateProject(options);
@@ -92176,8 +92291,8 @@ async function addDesignCommand(options) {
   if (!entry2) throw new IdiomError("State not found");
   let stored = source;
   if (!/^https?:/i.test(source)) {
-    const absolute = resolve59(cwd, source), local = relative37(validated.projectDirectory, absolute);
-    stored = !isAbsolute17(local) && local !== ".." && !local.startsWith(`..${sep22}`) ? local.split(sep22).join("/") || "." : absolute;
+    const absolute = resolve59(cwd, source), local = relative36(validated.projectDirectory, absolute);
+    stored = !isAbsolute17(local) && local !== ".." && !local.startsWith(`..${sep21}`) ? local.split(sep21).join("/") || "." : absolute;
   }
   if (options.viewport !== void 0 && !validated.project.viewports.some((v) => v.name === options.viewport))
     throw new IdiomError(
@@ -92611,7 +92726,7 @@ function planAutobuildWiring(original, manualAddition) {
           ([key5, value]) => `${key5} = ${JSON.stringify(value)}`
         )
       );
-    else if (gate && isRecord(existing) && existing.paths !== void 0) {
+    else if (gate && isRecord(existing) && existing.kind === "check" && existing.paths !== void 0) {
       const span2 = assignmentValueSpan(
         candidate2,
         `verify.${stepName}`,
@@ -92646,7 +92761,7 @@ function planAutobuildWiring(original, manualAddition) {
     const after = parse5(candidate2);
     const ac = after.commands;
     const av = after.verify;
-    if (!isRecord(ac) || !isRecord(av) || !Array.isArray(av.steps) || av.steps.filter((step) => step === stepName).length !== 1 || !isRecord(av[stepName]) || av[stepName].kind !== expected.kind || (gate ? ac[commandKey] !== gateCommand && normalized2 !== gateCommand || !(av[stepName].skill === expected.skill || isRecord(existing) && existing.kind === "agent" && av[stepName].skill === existing.skill) || av[stepName].paths !== void 0 : !isCompatibleIdiomCommand(ac[commandKey]) || av[stepName].skill !== "idiom-verify"))
+    if (!isRecord(ac) || !isRecord(av) || !Array.isArray(av.steps) || av.steps.filter((step) => step === stepName).length !== 1 || !isRecord(av[stepName]) || av[stepName].kind !== expected.kind || (gate ? ac[commandKey] !== gateCommand && normalized2 !== gateCommand || !(av[stepName].skill === expected.skill || isRecord(existing) && existing.kind === "agent" && av[stepName].skill === existing.skill) || av[stepName].paths !== void 0 && !(isRecord(existing) && existing.kind === "agent") : !isCompatibleIdiomCommand(ac[commandKey]) || av[stepName].skill !== "idiom-verify"))
       throw new Error("Patched configuration did not validate semantically");
     if (endsWithNewline(candidate2) !== endsWithNewline(original))
       throw new Error("Patch changed trailing-newline convention");
@@ -93378,7 +93493,7 @@ var init_instructions = __esm({
 });
 
 // src/doctor/surfaces.ts
-import { access as access16, lstat as lstat11, readdir as readdir23, readFile as readFile81, realpath as realpath15 } from "fs/promises";
+import { access as access16, lstat as lstat11, readdir as readdir23, readFile as readFile81, realpath as realpath16 } from "fs/promises";
 import { homedir as homedir3 } from "os";
 import { dirname as dirname38, join as join91, resolve as resolve60 } from "path";
 import { performance as performance2 } from "perf_hooks";
@@ -93405,7 +93520,7 @@ async function readOutside(path) {
 async function same(left, right) {
   const real = async (path) => {
     try {
-      return await realpath15(path);
+      return await realpath16(path);
     } catch {
       return resolve60(path);
     }
@@ -93453,7 +93568,7 @@ async function readAutobuild(root2) {
     };
   }
 }
-async function autobuildGate(autobuild) {
+async function autobuildGate(autobuild, root2) {
   const path = "autobuild.toml";
   if (autobuild.kind === "absent")
     return { status: "not-applicable", detail: "no autobuild.toml" };
@@ -93468,13 +93583,30 @@ async function autobuildGate(autobuild) {
     autobuild.source,
     await readAutobuildTemplate()
   );
-  if (plan.kind === "ready" && plan.complete)
+  const { commands, verify: verify2 } = autobuild.document;
+  if (plan.kind === "ready" && plan.complete) {
+    const wired = isTable(verify2) ? verify2["idiom-check"] : void 0;
+    const skill = isTable(wired) && typeof wired.skill === "string" ? wired.skill : "idiom-verify";
+    if (STEP_SKILLS.has(skill)) {
+      const file = `.agents/skills/${skill}/SKILL.md`;
+      const installed = await inspect2(root2, file).catch(() => ({
+        kind: "absent"
+      }));
+      if (installed.kind !== "file")
+        return {
+          status: "stale",
+          path,
+          detail: `[verify.idiom-check] runs ${skill} but ${file} is not installed, so the step fails every build`,
+          fix: "idiom upgrade"
+        };
+    }
+    const paths = isTable(wired) && Array.isArray(wired.paths) && wired.paths.length && wired.paths.every((glob) => typeof glob === "string") ? `; paths: ${wired.paths.join(", ")}` : "";
     return {
       status: "wired",
       path,
-      detail: `[verify.idiom-check] runs \`${gateCommand}\``
+      detail: `[verify.idiom-check] runs ${skill} on \`${gateCommand}\`${paths}`
     };
-  const { commands, verify: verify2 } = autobuild.document;
+  }
   const command = isTable(commands) ? commands["idiom-check"] : void 0;
   const step = isTable(verify2) ? verify2["idiom-check"] : void 0;
   const steps = isTable(verify2) ? verify2.steps : void 0;
@@ -93486,7 +93618,7 @@ async function autobuildGate(autobuild) {
       detail: "no idiom-check step in [verify]",
       fix: `${WIRE} (accept the Autobuild gate at the prompt)`
     };
-  const detail = step !== void 0 && !listed3 ? "[verify.idiom-check] is defined but not in [verify].steps, so it never runs" : step === void 0 && listed3 ? "idiom-check is in [verify].steps but [verify.idiom-check] is not defined" : step === void 0 ? "[commands].idiom-check is set but no [verify.idiom-check] step runs it" : typeof command === "string" && words3(command) === OLD_GATE_COMMAND ? `old template: \`${OLD_GATE_COMMAND}\` without --deferred warn, so busy hosts fail the build` : isTable(step) && step.paths !== void 0 ? "old template: [verify.idiom-check].paths can skip UI changes" : plan.kind === "manual" ? manualReason(plan.reason) : `${WIRE} would still change the gate`;
+  const detail = step !== void 0 && !listed3 ? "[verify.idiom-check] is defined but not in [verify].steps, so it never runs" : step === void 0 && listed3 ? "idiom-check is in [verify].steps but [verify.idiom-check] is not defined" : step === void 0 ? "[commands].idiom-check is set but no [verify.idiom-check] step runs it" : typeof command === "string" && words3(command) === OLD_GATE_COMMAND ? `old template: \`${OLD_GATE_COMMAND}\` without --deferred warn, so busy hosts fail the build` : isTable(step) && step.kind === "check" && step.paths !== void 0 ? "old template: [verify.idiom-check].paths can skip UI changes" : plan.kind === "manual" ? manualReason(plan.reason) : `${WIRE} would still change the gate`;
   return {
     status: "stale",
     path,
@@ -93993,7 +94125,7 @@ async function inspectSurfaces(options = {}) {
   };
   const autobuild = await readAutobuild(root2);
   const [gate, verifier, workflow, instructions, plugin, codex2, hook] = await Promise.all([
-    guard("autobuild.toml", () => autobuildGate(autobuild)),
+    guard("autobuild.toml", () => autobuildGate(autobuild, root2)),
     guard("autobuild.toml", () => autobuildVerifier(autobuild, root2)),
     guard(".github/workflows", () => github(root2)),
     agentInstructions(root2),
@@ -94051,7 +94183,7 @@ function renderSurfaces(report) {
   }
   return lines2;
 }
-var SURFACE_STATUSES, SURFACE_IDS, LABELS, WIRE, NOT_INITIALIZED_NOTICE, WORKFLOW_READ_LIMIT, OLD_GATE_COMMAND, message, words3, runsIdiomCheck, manualReason, PIN_PATTERNS, usesIdiom, isObject, CODEX_PINS, MARK, WORD2;
+var SURFACE_STATUSES, SURFACE_IDS, LABELS, WIRE, NOT_INITIALIZED_NOTICE, WORKFLOW_READ_LIMIT, OLD_GATE_COMMAND, message, words3, runsIdiomCheck, STEP_SKILLS, manualReason, PIN_PATTERNS, usesIdiom, isObject, CODEX_PINS, MARK, WORD2;
 var init_surfaces2 = __esm({
   "src/doctor/surfaces.ts"() {
     "use strict";
@@ -94107,6 +94239,10 @@ var init_surfaces2 = __esm({
     message = (error) => error instanceof Error ? error.message : String(error);
     words3 = (value) => value.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "").split(/[\t\n\f\r ]+/).join(" ");
     runsIdiomCheck = (text7) => /\bidiom check\b/.test(text7);
+    STEP_SKILLS = /* @__PURE__ */ new Set([
+      "idiom-verify",
+      "idiom-fix"
+    ]);
     manualReason = (reason2) => reason2.replace(/^Autobuild configuration could not be edited safely: /, "");
     PIN_PATTERNS = [
       /mattskilly\/idiom@v?(\d+\.\d+\.\d+)\b/g,
@@ -94164,13 +94300,13 @@ import {
   mkdir as mkdir30,
   open as open4,
   readFile as readFile82,
-  realpath as realpath16,
+  realpath as realpath17,
   rename as rename29,
   rm as rm31,
   stat as stat18,
   writeFile as writeFile43
 } from "fs/promises";
-import { dirname as dirname39, join as join92, relative as relative38, resolve as resolve61 } from "path";
+import { dirname as dirname39, join as join92, relative as relative37, resolve as resolve61 } from "path";
 import { promisify as promisify8 } from "util";
 import { z as z41 } from "zod";
 async function exists15(path) {
@@ -94195,9 +94331,9 @@ async function conditionStorePath(options) {
     );
     const top = resolve61(stdout11.trim());
     if (resolve61(primary) === top) return local;
-    const within6 = relative38(
+    const within6 = relative37(
       top,
-      await realpath16(options.projectDirectory).catch(
+      await realpath17(options.projectDirectory).catch(
         () => resolve61(options.projectDirectory)
       )
     );
@@ -95443,7 +95579,7 @@ import {
   dirname as dirname44,
   isAbsolute as isAbsolute23,
   join as join109,
-  relative as relative45,
+  relative as relative44,
   resolve as resolve71
 } from "path";
 function verifyConditions(options) {
@@ -95713,7 +95849,7 @@ async function runVerify(options) {
     annotateDeclaredExpectations(loadedB.tuples, flow);
     const { conditions, cleared } = verifyConditions({
       flow: flow.id,
-      flowFile: relative45(
+      flowFile: relative44(
         validated.projectDirectory,
         validated.flows[0]?.file ?? ""
       ),
@@ -96243,13 +96379,13 @@ var init_prompt2 = __esm({
 // src/autobuild/first-baseline.ts
 import { execFile as execFile15 } from "child_process";
 import { existsSync as existsSync6 } from "fs";
-import { join as join112, relative as relative46 } from "path";
+import { join as join112, relative as relative45 } from "path";
 import { promisify as promisify12 } from "util";
 async function committedAtHead(projectDirectory, path) {
   try {
     await execFileAsync8(
       "git",
-      ["cat-file", "-e", `HEAD:./${relative46(projectDirectory, path)}`],
+      ["cat-file", "-e", `HEAD:./${relative45(projectDirectory, path)}`],
       { cwd: projectDirectory }
     );
     return true;
@@ -96267,7 +96403,7 @@ async function recordFirstBaselines(projectDirectory, dependencies = {}) {
     return void 0;
   }
   const root2 = validated.stateProjectDirectory ?? validated.projectDirectory;
-  const directory = relative46(
+  const directory = relative45(
     root2,
     baselineDirectory(root2, validated.project)
   ).replaceAll("\\", "/");
@@ -96303,7 +96439,7 @@ async function recordFirstBaselines(projectDirectory, dependencies = {}) {
   for (const flow of missing2) {
     try {
       const result2 = await record5({ flow, cwd: validated.projectDirectory });
-      paths.push(relative46(root2, result2.path).replaceAll("\\", "/"));
+      paths.push(relative45(root2, result2.path).replaceAll("\\", "/"));
     } catch (error) {
       failed.push({
         flow,
@@ -98217,11 +98353,11 @@ var init_drift = __esm({
 });
 
 // src/system/tokens.ts
-import { readdir as readdir27, readFile as readFile100, realpath as realpath21, stat as stat19 } from "fs/promises";
-import { dirname as dirname46, isAbsolute as isAbsolute24, join as join117, relative as relative47, resolve as resolve74 } from "path";
+import { readdir as readdir27, readFile as readFile100, realpath as realpath22, stat as stat19 } from "fs/promises";
+import { dirname as dirname46, isAbsolute as isAbsolute24, join as join117, relative as relative46, resolve as resolve74 } from "path";
 import postcss4 from "postcss";
 function contained5(root2, path) {
-  const rel = relative47(root2, path);
+  const rel = relative46(root2, path);
   return rel === "" || !rel.startsWith("..") && !isAbsolute24(rel);
 }
 function importTarget(params) {
@@ -98286,8 +98422,8 @@ async function cssFiles(projectDirectory, configuredPath) {
   let configuredReal;
   try {
     [rootReal, configuredReal] = await Promise.all([
-      realpath21(projectDirectory),
-      realpath21(configuredPath)
+      realpath22(projectDirectory),
+      realpath22(configuredPath)
     ]);
   } catch (error) {
     throw new IdiomError(
@@ -98302,7 +98438,7 @@ async function cssFiles(projectDirectory, configuredPath) {
     siblings = (await readdir27(siblingDirectory, { withFileTypes: true })).filter((entry2) => entry2.isFile() && entry2.name.endsWith(".css")).map((entry2) => join117(siblingDirectory, entry2.name)).sort();
   } catch (error) {
     throw new IdiomError(
-      `cannot enumerate token support sources ${relative47(projectDirectory, siblingDirectory)}: ${error instanceof Error ? error.message : String(error)}`
+      `cannot enumerate token support sources ${relative46(projectDirectory, siblingDirectory)}: ${error instanceof Error ? error.message : String(error)}`
     );
   }
   const accepted = [];
@@ -98313,7 +98449,7 @@ async function cssFiles(projectDirectory, configuredPath) {
     visited.add(path);
     let actual;
     try {
-      actual = await realpath21(path);
+      actual = await realpath22(path);
       const entry2 = await stat19(path);
       if (!entry2.isFile() || !contained5(rootReal, actual)) return;
     } catch (error) {
@@ -98326,7 +98462,7 @@ async function cssFiles(projectDirectory, configuredPath) {
       parsed = postcss4.parse(await readFile100(path, "utf8"), { from: path });
     } catch (error) {
       throw new IdiomError(
-        `cannot parse token support stylesheet ${relative47(projectDirectory, path)}: ${error instanceof Error ? error.message : String(error)}`
+        `cannot parse token support stylesheet ${relative46(projectDirectory, path)}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
     const imports = parsed.nodes.flatMap((node) => {
@@ -98455,7 +98591,7 @@ var init_tokens = __esm({
 
 // src/system/collect.ts
 import { lstat as lstat14, readdir as readdir28, readFile as readFile101 } from "fs/promises";
-import { isAbsolute as isAbsolute25, join as join118, relative as relative48, resolve as resolve75 } from "path";
+import { isAbsolute as isAbsolute25, join as join118, relative as relative47, resolve as resolve75 } from "path";
 async function requiredText2(path, label7) {
   try {
     return await readFile101(path, "utf8");
@@ -98725,7 +98861,7 @@ function aggregateObservedTuples(capture) {
 function safeEvidencePath(runDirectory, path) {
   if (path === "" || isAbsolute25(path) || path.includes("\\")) return void 0;
   const target3 = resolve75(runDirectory, path);
-  const rel = relative48(runDirectory, target3);
+  const rel = relative47(runDirectory, target3);
   if (rel.startsWith("..") || isAbsolute25(rel)) return void 0;
   return target3;
 }
@@ -99249,7 +99385,7 @@ var init_extract = __esm({
 });
 
 // src/system/learn/figma.ts
-import { relative as relative49, sep as sep28 } from "path";
+import { relative as relative48, sep as sep27 } from "path";
 function hexColor(color, opacity = 1) {
   const alpha = (color.a ?? 1) * opacity;
   return `#${hex3(color.r)}${hex3(color.g)}${hex3(color.b)}${alpha < 1 ? hex3(alpha) : ""}`;
@@ -99310,7 +99446,7 @@ async function extractFigmaVariables(projectDirectory, ref, options = {}) {
     refresh: options.refresh,
     deps: options.deps
   });
-  const path = relative49(projectDirectory, fetched.path).split(sep28).join("/");
+  const path = relative48(projectDirectory, fetched.path).split(sep27).join("/");
   const { tokens: tokens3, diagnostics } = figmaVariableTokens(fetched.variables, path);
   return {
     sources: [{ path, kind: "figma" }],
@@ -99508,7 +99644,7 @@ var init_confirmation = __esm({
 
 // src/autobuild/setup.ts
 import { mkdir as mkdir43, rm as rm42, rmdir as rmdir6, symlink as symlink4 } from "fs/promises";
-import { join as join120, relative as relative50 } from "path";
+import { join as join120, relative as relative49 } from "path";
 import { stdin as stdin6, stdout as stdout6 } from "process";
 import { parse as parse8 } from "smol-toml";
 function gateSkill(source) {
@@ -99762,7 +99898,7 @@ async function prepareOptionalVerifier(options) {
     if (routes.length && !graph.uncertainties.length)
       paths = [
         ...routes.map(({ source }) => source),
-        ...[...graph.consumers.keys()].map((path) => relative50(root2, path))
+        ...[...graph.consumers.keys()].map((path) => relative49(root2, path))
       ];
   }
   paths = [
@@ -100175,8 +100311,8 @@ async function find(idiom, formats) {
   const found2 = /* @__PURE__ */ new Map();
   for (const format of formats)
     for (const location2 of format.locations)
-      for (const relative62 of await expand(idiom, location2))
-        if (!found2.has(relative62)) found2.set(relative62, { relative: relative62, format });
+      for (const relative61 of await expand(idiom, location2))
+        if (!found2.has(relative61)) found2.set(relative61, { relative: relative61, format });
   return [...found2.values()];
 }
 function outcome(path, format, values) {
@@ -100351,11 +100487,11 @@ async function backupDirectory(idiom, now2) {
     }
   }
 }
-async function write(idiom, relative62, backup, original, migrated) {
-  const copy2 = join122(idiom, backup, relative62);
+async function write(idiom, relative61, backup, original, migrated) {
+  const copy2 = join122(idiom, backup, relative61);
   await mkdir45(dirname48(copy2), { recursive: true });
   await writeFile57(copy2, original, { flag: "wx" });
-  const target3 = join122(idiom, relative62);
+  const target3 = join122(idiom, relative61);
   const temporary = `${target3}.${randomBytes2(6).toString("hex")}.tmp`;
   try {
     await writeFile57(temporary, `${JSON.stringify(migrated, null, 2)}
@@ -102569,7 +102705,7 @@ var init_init_validate = __esm({
 
 // src/learn/capture.ts
 import { readdir as readdir31, readFile as readFile109, stat as stat22 } from "fs/promises";
-import { join as join127, relative as relative51 } from "path";
+import { join as join127, relative as relative50 } from "path";
 async function exists18(path) {
   try {
     await stat22(path);
@@ -102651,7 +102787,7 @@ async function findStateCapture(options) {
         runId,
         viewport,
         domPath: join127(tuple, "dom.html"),
-        ...await exists18(screenshot2) ? { screenshot: relative51(runDirectory, screenshot2) } : {}
+        ...await exists18(screenshot2) ? { screenshot: relative50(runDirectory, screenshot2) } : {}
       };
     }
   }
@@ -102707,7 +102843,7 @@ async function listStateCaptures(options) {
             runId,
             viewport,
             domPath: join127(tuple.path, "dom.html"),
-            screenshot: relative51(runDirectory, screenshotPath),
+            screenshot: relative50(runDirectory, screenshotPath),
             flow,
             state,
             ...tuple.colorScheme === void 0 ? {} : { colorScheme: tuple.colorScheme },
@@ -102995,7 +103131,7 @@ var init_target2 = __esm({
 
 // src/learn/draft.ts
 import { readFile as readFile110 } from "fs/promises";
-import { join as join128, relative as relative52 } from "path";
+import { join as join128, relative as relative51 } from "path";
 import { isDeepStrictEqual as isDeepStrictEqual5 } from "util";
 async function optionalText(path) {
   try {
@@ -103063,7 +103199,7 @@ async function nextLearnedId(projectDirectory) {
 }
 async function draftLearning(options) {
   const { projectDirectory, interpretation } = options;
-  const display = (path) => relative52(projectDirectory, path);
+  const display = (path) => relative51(projectDirectory, path);
   const flowId = options.flowId ?? options.flow?.flow.id;
   if (flowId === void 0) throw new IdiomError("unreachable: no flow");
   const stateLabel = `${flowId}/${options.state}`;
@@ -103600,7 +103736,7 @@ var init_match2 = __esm({
 
 // src/learn/place.ts
 import { readdir as readdir32, readFile as readFile112 } from "fs/promises";
-import { join as join129, relative as relative53 } from "path";
+import { join as join129, relative as relative52 } from "path";
 function contentTokens(text7) {
   return subjectTokens(text7).filter((token) => !fillerWords.has(token));
 }
@@ -103854,14 +103990,14 @@ async function placeObservation(options) {
     ownProposal: options.ownProposal
   });
   const path = join129(proposalsDirectory, `${options.learnedId}.json`);
-  const displayPath2 = relative53(projectDirectory, path);
+  const displayPath2 = relative52(projectDirectory, path);
   const state = draftState({
     flow,
     stateId,
     description: explicit ?? options.text ?? options.observation,
     nearest: nearest !== void 0 && nearest.candidate.flow === flowId ? nearest.candidate.state : void 0
   });
-  const flowFile = flow === void 0 ? void 0 : relative53(projectDirectory, flow.file);
+  const flowFile = flow === void 0 ? void 0 : relative52(projectDirectory, flow.file);
   const content = `${JSON.stringify(
     {
       version: 1,
@@ -103993,7 +104129,7 @@ var init_place = __esm({
 
 // src/commands/learn.ts
 import { copyFile as copyFile7, mkdir as mkdir47 } from "fs/promises";
-import { dirname as dirname50, relative as relative54 } from "path";
+import { dirname as dirname50, relative as relative53 } from "path";
 import { stdin as stdin9, stdout as stdout9 } from "process";
 import { createInterface as createInterface7 } from "readline/promises";
 async function defaultConfirmation3() {
@@ -104210,7 +104346,7 @@ async function learnCommand(options) {
     placement,
     entry: draft.entry,
     ...proposed === void 0 ? {} : { proposal: proposed.proposal.displayPath },
-    next: proposed !== void 0 ? proposed.flow === void 0 ? `Next: add the draft state in ${proposed.proposal.displayPath} to a flow, then idiom capture it.` : `Next: add the draft state in ${proposed.proposal.displayPath} to ${relative54(validated.projectDirectory, proposed.flow.file)}, then idiom capture ${flowLabel}.` : interpretation.kind === "brief-invariants" ? `Next: idiom check ${flowLabel} \u2014 the brief's size criteria are now flow invariants.` : interpretation.kind === "law" ? `Next: idiom check ${flowLabel} \u2014 ${interpretation.law.check} enforces it from the next capture.` : draft.kind === "ruling" ? `Next: idiom review ${flowLabel} \u2014 the ruling is now design law.` : draft.kind === "glossary" ? `Next: idiom check ${flowLabel} \u2014 the glossary applies to the next check.` : `Next: idiom check ${flowLabel} \u2014 ${draft.kind} entries are measured at capture time, so runs captured before this change will not show it.`
+    next: proposed !== void 0 ? proposed.flow === void 0 ? `Next: add the draft state in ${proposed.proposal.displayPath} to a flow, then idiom capture it.` : `Next: add the draft state in ${proposed.proposal.displayPath} to ${relative53(validated.projectDirectory, proposed.flow.file)}, then idiom capture ${flowLabel}.` : interpretation.kind === "brief-invariants" ? `Next: idiom check ${flowLabel} \u2014 the brief's size criteria are now flow invariants.` : interpretation.kind === "law" ? `Next: idiom check ${flowLabel} \u2014 ${interpretation.law.check} enforces it from the next capture.` : draft.kind === "ruling" ? `Next: idiom review ${flowLabel} \u2014 the ruling is now design law.` : draft.kind === "glossary" ? `Next: idiom check ${flowLabel} \u2014 the glossary applies to the next check.` : `Next: idiom check ${flowLabel} \u2014 ${draft.kind} entries are measured at capture time, so runs captured before this change will not show it.`
   };
 }
 var init_learn = __esm({
@@ -105034,7 +105170,7 @@ var init_group = __esm({
 
 // src/sweep/report.ts
 import { rename as rename41, writeFile as writeFile65 } from "fs/promises";
-import { relative as relative60, sep as sep32 } from "path";
+import { relative as relative59, sep as sep31 } from "path";
 function renderProductSweep(s) {
   return [
     `idiom sweep --all: ${s.flows.length} flow(s), ${s.findings.length} actionable finding(s), ${s.occurrenceCount} occurrence(s), ${s.proposalCount} proposal(s).`,
@@ -105141,7 +105277,7 @@ var init_report3 = __esm({
     init_coverage();
     init_html();
     init_emit();
-    href = (s, path) => relative60(s.runDirectory, path).split(sep32).map(encodeURIComponent).join("/");
+    href = (s, path) => relative59(s.runDirectory, path).split(sep31).map(encodeURIComponent).join("/");
     text5 = (s) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/([\\`*_[\]])/g, "\\$1");
   }
 });
@@ -105767,15 +105903,15 @@ var init_repeat = __esm({
 });
 
 // src/mcp/evidence.ts
-import { readFile as readFile128, realpath as realpath24 } from "fs/promises";
+import { readFile as readFile128, realpath as realpath25 } from "fs/promises";
 import {
   basename as basename31,
   dirname as dirname55,
   isAbsolute as isAbsolute28,
   join as join151,
-  relative as relative61,
+  relative as relative60,
   resolve as resolve90,
-  sep as sep33
+  sep as sep32
 } from "path";
 function result(text7, data) {
   const { interfaceVersion: _stamp, ...rest } = JSON.parse(
@@ -105787,17 +105923,17 @@ function result(text7, data) {
   };
 }
 function inside4(root2, target3) {
-  const path = relative61(root2, target3);
-  return path !== ".." && !path.startsWith(`..${sep33}`) && !isAbsolute28(path);
+  const path = relative60(root2, target3);
+  return path !== ".." && !path.startsWith(`..${sep32}`) && !isAbsolute28(path);
 }
 async function insideRoot(root2, supplied, label7 = "path") {
   const target3 = resolve90(root2, supplied);
-  const physicalRoot = await realpath24(root2);
+  const physicalRoot = await realpath25(root2);
   let existing = target3;
   let rest = "";
   for (; ; ) {
     try {
-      existing = await realpath24(existing);
+      existing = await realpath25(existing);
       break;
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
@@ -106247,7 +106383,14 @@ var init_contracts = __esm({
       files: z48.array(
         z48.looseObject({
           path: z48.string(),
-          kind: z48.enum(["route", "import", "global", "unresolved"]),
+          kind: z48.enum([
+            "route",
+            "import",
+            "global",
+            "unresolved",
+            "documentation",
+            "non-ui"
+          ]),
           reason: z48.string(),
           routes: z48.array(z48.string()),
           states: z48.array(stateIdentityContract)
@@ -108847,7 +108990,7 @@ init_base();
 init_timings();
 init_git();
 init_errors();
-import { relative as relative35 } from "path";
+import { relative as relative34 } from "path";
 
 // src/gate/plan.ts
 init_base();
@@ -108859,13 +109002,14 @@ init_rendered_surface();
 init_run();
 init_scope();
 init_timings();
+init_design_context();
 init_git();
 init_select();
 init_flow();
 init_project();
 init_validation();
 init_classify();
-import { relative as relative34, resolve as resolve54, sep as sep21 } from "path";
+import { resolve as resolve54 } from "path";
 
 // src/gate/estimate.ts
 init_run_record();
@@ -110022,11 +110166,22 @@ async function planGate(options) {
   const changes2 = await collectChanges(projectDirectory, options.base, git2);
   const base = shortBase(changes2.resolvedBase);
   const allFlows = validated.flows.map((record5) => record5.flow.id);
-  const prefix = relative34(changes2.repository, projectDirectory).split(sep21).join("/");
+  const prefix = await projectPrefix(changes2.repository, projectDirectory);
   const local = (path) => prefix && path.startsWith(`${prefix}/`) ? path.slice(prefix.length + 1) : path;
+  const context2 = designContextPaths(project.design, prefix);
+  const designContextFiles = new Set(
+    changes2.files.map((file) => file.path).filter((path) => path === context2.design || path === context2.product)
+  );
+  const designFiles = [...designContextFiles].filter(
+    (path) => path === context2.design
+  );
   const byPath = classifyByPath(
-    changes2.files.map((file) => ({ path: local(file.path) })),
-    gate.nonUi
+    changes2.files.map((file) => ({
+      path: local(file.path),
+      repoPath: file.path
+    })),
+    gate.nonUi,
+    [context2.design, context2.product]
   ).map((file, index) => ({
     ...file,
     path: changes2.files[index]?.path ?? file.path
@@ -110059,7 +110214,10 @@ async function planGate(options) {
     files: changes2.files.filter((file) => uiPaths.has(file.path))
   };
   const { files: _files, ...changeGit } = changes2;
-  let selection2 = uiChanged ? await select(projectDirectory, flows, uiChanges) : {
+  let selection2 = uiChanged ? await select(projectDirectory, flows, uiChanges, {
+    design: project.design,
+    nonUi: gate.nonUi
+  }) : {
     git: changeGit,
     files: [],
     candidates: [],
@@ -110074,7 +110232,9 @@ async function planGate(options) {
   const htmlDirectories = (await git2(changes2.repository, ["ls-files", "-z", "--", "*.html"]).catch(
     () => ""
   )).split("\0").filter(Boolean).map((path) => path.split("/").slice(0, -1).join("/"));
-  const byGraph = classifySelection(selection2, htmlDirectories);
+  const byGraph = classifySelection(selection2, htmlDirectories).filter(
+    (file) => !designContextFiles.has(file.path)
+  );
   const serverOnly2 = new Set(
     byGraph.filter((file) => !file.ui).map((file) => file.path)
   );
@@ -110088,10 +110248,12 @@ async function planGate(options) {
         ...byGraph.filter((file) => !file.ui)
       ]);
     selection2 = remaining.length ? {
-      ...await select(projectDirectory, flows, {
-        ...uiChanges,
-        files: remaining
-      }),
+      ...await select(
+        projectDirectory,
+        flows,
+        { ...uiChanges, files: remaining },
+        { design: project.design, nonUi: gate.nonUi }
+      ),
       graph
     } : { ...selection2, files: [], selected: [], candidates: [], graph };
   }
@@ -110141,7 +110303,14 @@ async function planGate(options) {
     base: changes2.resolvedBase,
     files: uiFiles,
     untracked,
-    globalFiles: selection2.files.filter((file) => file.kind === "global").map((file) => file.path),
+    globalFiles: [
+      .../* @__PURE__ */ new Set([
+        ...selection2.files.filter((file) => file.kind === "global").map((file) => file.path),
+        ...designFiles.filter(
+          (path) => uiFiles.some((file) => file.path === path)
+        )
+      ])
+    ],
     colorSchemeAttribute: project.capture.colorSchemeAttribute,
     git: git2
   });
@@ -110816,7 +110985,7 @@ async function checkGate(options) {
         mode: "gate",
         flow: entry2.flow,
         broken: summary2.brokenCoverage,
-        flowFile: file === void 0 ? void 0 : relative35(execution.validated.projectDirectory, file)
+        flowFile: file === void 0 ? void 0 : relative34(execution.validated.projectDirectory, file)
       })
     );
     cleared.push(
@@ -112774,12 +112943,12 @@ init_exploration();
 import {
   access as access18,
   readFile as readFile85,
-  realpath as realpath17,
+  realpath as realpath18,
   rename as rename30,
   rm as rm33,
   writeFile as writeFile44
 } from "fs/promises";
-import { isAbsolute as isAbsolute18, join as join97, relative as relative39, resolve as resolve62 } from "path";
+import { isAbsolute as isAbsolute18, join as join97, relative as relative38, resolve as resolve62 } from "path";
 function runPath(projectDirectory, runId) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runId) || runId === "." || runId === "..")
     throw new IdiomError(
@@ -112787,14 +112956,14 @@ function runPath(projectDirectory, runId) {
     );
   const reports2 = resolve62(projectDirectory, ".idiom", "reports");
   const directory = resolve62(reports2, runId);
-  const escaped = relative39(reports2, directory);
+  const escaped = relative38(reports2, directory);
   if (escaped.startsWith("..") || isAbsolute18(escaped))
     throw new IdiomError("exploration run must remain beneath .idiom/reports");
   return directory;
 }
 function contained3(directory, item) {
   const path = resolve62(directory, item);
-  const escaped = relative39(directory, path);
+  const escaped = relative38(directory, path);
   if (escaped.startsWith("..") || isAbsolute18(escaped))
     throw new IdiomError(
       `exploration candidate capture escapes its run: ${item}`
@@ -112831,10 +113000,10 @@ async function loadExplorationRun(options) {
   let runDirectory;
   try {
     const [canonicalReports, canonicalRun] = await Promise.all([
-      realpath17(reportsDirectory),
-      realpath17(lexicalRun)
+      realpath18(reportsDirectory),
+      realpath18(lexicalRun)
     ]);
-    const escaped = relative39(canonicalReports, canonicalRun);
+    const escaped = relative38(canonicalReports, canonicalRun);
     if (escaped.startsWith("..") || isAbsolute18(escaped))
       throw new IdiomError(
         `exploration run ${options.runId} escapes .idiom/reports`
@@ -112870,8 +113039,8 @@ async function loadExplorationRun(options) {
   for (const candidate2 of manifest.candidates)
     try {
       const lexicalCapture = contained3(runDirectory, candidate2.capture);
-      const capture = await realpath17(lexicalCapture);
-      const escaped = relative39(runDirectory, capture);
+      const capture = await realpath18(lexicalCapture);
+      const escaped = relative38(runDirectory, capture);
       if (escaped.startsWith("..") || isAbsolute18(escaped))
         throw new IdiomError(
           `exploration candidate capture escapes its run: ${candidate2.capture}`
@@ -113301,8 +113470,8 @@ init_errors();
 init_anthropic();
 init_claude_code();
 init_errors();
-import { readFile as readFile87, realpath as realpath18 } from "fs/promises";
-import { isAbsolute as isAbsolute19, relative as relative40, resolve as resolve64, sep as sep23 } from "path";
+import { readFile as readFile87, realpath as realpath19 } from "fs/promises";
+import { isAbsolute as isAbsolute19, relative as relative39, resolve as resolve64, sep as sep22 } from "path";
 import Anthropic3 from "@anthropic-ai/sdk";
 
 // src/explore/prompt.ts
@@ -113404,28 +113573,28 @@ function jsonOutput(response) {
 async function contained4(root2, requested) {
   if (isAbsolute19(requested) || requested.includes("\\") || requested.split("/").includes(".."))
     throw new IdiomError("provider requested an unsafe source path");
-  const realRoot = await realpath18(root2);
-  const target3 = await realpath18(resolve64(realRoot, requested));
-  const escaped = relative40(realRoot, target3);
-  if (escaped === "" || isAbsolute19(escaped) || escaped === ".." || escaped.startsWith(`..${sep23}`))
+  const realRoot = await realpath19(root2);
+  const target3 = await realpath19(resolve64(realRoot, requested));
+  const escaped = relative39(realRoot, target3);
+  if (escaped === "" || isAbsolute19(escaped) || escaped === ".." || escaped.startsWith(`..${sep22}`))
     throw new IdiomError(
       "provider requested a source path outside the exploration mirror"
     );
   return target3;
 }
 async function mirrorManifest(root2, paths) {
-  const realRoot = await realpath18(root2);
+  const realRoot = await realpath19(root2);
   const absolute = [];
   const relativePaths = [];
   for (const path of paths) {
-    const realEntry = await realpath18(resolve64(path));
-    const escaped = relative40(realRoot, realEntry);
-    if (escaped === "" || isAbsolute19(escaped) || escaped === ".." || escaped.startsWith(`..${sep23}`))
+    const realEntry = await realpath19(resolve64(path));
+    const escaped = relative39(realRoot, realEntry);
+    if (escaped === "" || isAbsolute19(escaped) || escaped === ".." || escaped.startsWith(`..${sep22}`))
       throw new IdiomError(
         `exploration readable path escapes the source mirror: ${path}`
       );
     absolute.push(realEntry);
-    relativePaths.push(escaped.split(sep23).join("/"));
+    relativePaths.push(escaped.split(sep22).join("/"));
   }
   return { absolute, relative: relativePaths };
 }
@@ -113492,7 +113661,7 @@ var AnthropicExplorationAdapter = class {
       }
     ];
     const imagePaths = options.readablePaths.filter(
-      (path) => path.includes(`${sep23}.idiom-explore-evidence${sep23}`) && /\.(?:png|jpe?g|webp|gif)$/i.test(path)
+      (path) => path.includes(`${sep22}.idiom-explore-evidence${sep22}`) && /\.(?:png|jpe?g|webp|gif)$/i.test(path)
     );
     if (imagePaths.length > MAX_IMAGES2)
       throw new IdiomError(
@@ -113675,9 +113844,9 @@ Return a complete replacement refinement.`
 init_claude_code();
 init_subscription_environment();
 init_errors();
-import { realpath as realpath19 } from "fs/promises";
+import { realpath as realpath20 } from "fs/promises";
 import { tmpdir as tmpdir10 } from "os";
-import { isAbsolute as isAbsolute20, relative as relative41, resolve as resolve65, sep as sep24 } from "path";
+import { isAbsolute as isAbsolute20, relative as relative40, resolve as resolve65, sep as sep23 } from "path";
 function structuredOutput2(source) {
   let envelope;
   try {
@@ -113701,12 +113870,12 @@ function structuredOutput2(source) {
   return result2.structured_output;
 }
 async function canonicalReadablePaths(root2, paths) {
-  const realRoot = await realpath19(root2);
+  const realRoot = await realpath20(root2);
   const output2 = [];
   for (const item of paths) {
-    const realEntry = await realpath19(resolve65(item));
-    const escaped = relative41(realRoot, realEntry);
-    if (escaped === "" || isAbsolute20(escaped) || escaped === ".." || escaped.startsWith(`..${sep24}`))
+    const realEntry = await realpath20(resolve65(item));
+    const escaped = relative40(realRoot, realEntry);
+    if (escaped === "" || isAbsolute20(escaped) || escaped === ".." || escaped.startsWith(`..${sep23}`))
       throw new IdiomError(
         `exploration readable path escapes the source mirror: ${item}`
       );
@@ -113788,7 +113957,7 @@ var ClaudeCodeExplorationAdapter = class {
       evidence: { ...input.evidence, readablePaths }
     });
     const value = await this.invoke({
-      cwd: await realpath19(input.evidence.mirrorRoot),
+      cwd: await realpath20(input.evidence.mirrorRoot),
       stdin: prompt,
       schema,
       tools: "Read,Glob,Grep"
@@ -113798,7 +113967,7 @@ var ClaudeCodeExplorationAdapter = class {
       initial: value,
       permittedReferenceLabels,
       repair: async (issues5) => this.invoke({
-        cwd: await realpath19(input.evidence.mirrorRoot),
+        cwd: await realpath20(input.evidence.mirrorRoot),
         stdin: `${prompt}
 
 Rejected structured output:
@@ -113826,7 +113995,7 @@ Return a complete replacement batch.`,
       evidence: { ...input.evidence, readablePaths }
     });
     const value = await this.invoke({
-      cwd: await realpath19(input.evidence.mirrorRoot),
+      cwd: await realpath20(input.evidence.mirrorRoot),
       stdin: prompt,
       schema,
       tools: "Read,Glob,Grep"
@@ -113836,7 +114005,7 @@ Return a complete replacement batch.`,
       initial: value,
       permittedReferenceLabels,
       repair: async (issues5) => this.invoke({
-        cwd: await realpath19(input.evidence.mirrorRoot),
+        cwd: await realpath20(input.evidence.mirrorRoot),
         stdin: `${prompt}
 
 Rejected structured output:
@@ -113883,7 +114052,7 @@ function createExplorationAdapter(options) {
 init_html();
 init_exploration();
 import { readFile as readFile88, rename as rename32, writeFile as writeFile46 } from "fs/promises";
-import { join as join99, relative as relative42, sep as sep25 } from "path";
+import { join as join99, relative as relative41, sep as sep24 } from "path";
 async function atomic(path, source) {
   const temporary = `${path}.tmp`;
   await writeFile46(temporary, source);
@@ -113917,7 +114086,7 @@ async function writeExplorationReport(runDirectory, data) {
       return {
         ...candidate2,
         label: normalizeExplorationKey(candidate2.label).toUpperCase(),
-        capture: relative42(runDirectory, item.runDirectory).split(sep25).join("/"),
+        capture: relative41(runDirectory, item.runDirectory).split(sep24).join("/"),
         refined: item.refined === true
       };
     }),
@@ -114321,12 +114490,12 @@ init_findings();
 init_fingerprint();
 init_names();
 init_finding();
-import { relative as relative43, resolve as resolve67, sep as sep26 } from "path";
+import { relative as relative42, resolve as resolve67, sep as sep25 } from "path";
 function key3(tuple) {
   return `${tuple.state}\0${tuple.viewport}\0${tuple.colorScheme ?? "light"}`;
 }
 function reportPath2(root2, directory, path) {
-  return relative43(resolve67(root2), resolve67(directory, path)).split(sep26).join("/");
+  return relative42(resolve67(root2), resolve67(directory, path)).split(sep25).join("/");
 }
 async function publishExplorationRepairs(options) {
   const catalog = await loadReviewCatalog({
@@ -115029,7 +115198,7 @@ import {
   readdir as readdir24,
   readFile as readFile93,
   readlink as readlink3,
-  realpath as realpath20,
+  realpath as realpath21,
   rename as rename35,
   rm as rm36,
   symlink,
@@ -115041,9 +115210,9 @@ import {
   dirname as dirname42,
   isAbsolute as isAbsolute22,
   join as join103,
-  relative as relative44,
+  relative as relative43,
   resolve as resolve69,
-  sep as sep27
+  sep as sep26
 } from "path";
 import { promisify as promisify10 } from "util";
 var execFileAsync6 = promisify10(execFile13);
@@ -115056,11 +115225,11 @@ function secretName(name) {
   return SECRET_NAME2.test(name) || !DESIGN_TOKEN_NAME.test(name) && TOKEN_SECRET_NAME.test(name);
 }
 function excludedRuntime(path) {
-  const normalized2 = path.split(sep27).join("/");
+  const normalized2 = path.split(sep26).join("/");
   return normalized2 === ".git" || normalized2.startsWith(".git/") || normalized2 === ".idiom/reports" || normalized2.startsWith(".idiom/reports/") || normalized2 === ".autobuild/worktrees" || normalized2.startsWith(".autobuild/worktrees/");
 }
 function excludedMirror(path) {
-  const normalized2 = path.split(sep27).join("/");
+  const normalized2 = path.split(sep26).join("/");
   const parts2 = normalized2.split("/");
   return excludedRuntime(normalized2) || normalized2 === EVIDENCE || normalized2.startsWith(`${EVIDENCE}/`) || parts2.some(secretName) || parts2.includes("node_modules") || parts2.includes("dist") || parts2.includes("build") || normalized2.startsWith(".autobuild/tickets/");
 }
@@ -115076,7 +115245,7 @@ async function copyTree(source, target3, root2 = source) {
   await mkdir36(target3, { recursive: true });
   for (const entry2 of await readdir24(source, { withFileTypes: true })) {
     const from = join103(source, entry2.name);
-    const relativePath4 = relative44(root2, from);
+    const relativePath4 = relative43(root2, from);
     if (excludedRuntime(relativePath4) || EXCLUDED_ROOTS.has(relativePath4))
       continue;
     const to = join103(target3, entry2.name);
@@ -115117,7 +115286,7 @@ function assertEditPath(path) {
 }
 async function containedRegular(root2, path) {
   assertEditPath(path);
-  const realRoot = await realpath20(root2);
+  const realRoot = await realpath21(root2);
   const target3 = resolve69(realRoot, path);
   let status2;
   try {
@@ -115129,9 +115298,9 @@ async function containedRegular(root2, path) {
     throw new IdiomError(
       `exploration edit target is not a regular file: ${path}`
     );
-  const realTarget = await realpath20(target3);
-  const escaped = relative44(realRoot, realTarget);
-  if (isAbsolute22(escaped) || escaped === ".." || escaped.startsWith(`..${sep27}`))
+  const realTarget = await realpath21(target3);
+  const escaped = relative43(realRoot, realTarget);
+  if (isAbsolute22(escaped) || escaped === ".." || escaped.startsWith(`..${sep26}`))
     throw new IdiomError(
       `exploration edit target escapes its workspace: ${path}`
     );
@@ -115233,7 +115402,7 @@ async function createExplorationWorkspace(projectDirectory) {
           `${namespace}-${String(index + 1).padStart(3, "0")}-${basename17(path)}`
         );
         await reflink(path, target3);
-        staged.push(await realpath20(target3));
+        staged.push(await realpath21(target3));
       }
       return staged;
     },
@@ -116482,7 +116651,7 @@ import { dirname as dirname51 } from "path";
 // src/learn/harvest.ts
 init_errors();
 import { readFile as readFile113 } from "fs/promises";
-import { join as join130, relative as relative55 } from "path";
+import { join as join130, relative as relative54 } from "path";
 init_learned();
 init_candidate();
 init_draft2();
@@ -116630,7 +116799,7 @@ async function harvestCorrections(options) {
       observation,
       kind: "observation",
       target: {
-        file: proposed !== void 0 ? proposed.proposal.displayPath : relative55(projectDirectory, matched2?.flow.file ?? "")
+        file: proposed !== void 0 ? proposed.proposal.displayPath : relative54(projectDirectory, matched2?.flow.file ?? "")
       },
       entry: observationEntry(interpretation),
       candidate: candidateFor3(interpretation, observation),
@@ -116724,9 +116893,9 @@ import {
   extname as extname6,
   isAbsolute as isAbsolute26,
   join as join131,
-  relative as relative56,
+  relative as relative55,
   resolve as resolve79,
-  sep as sep29
+  sep as sep28
 } from "path";
 
 // src/learn/import-table.ts
@@ -117117,8 +117286,8 @@ async function learnImportCommand(options) {
     throw new IdiomError(
       `cannot name an import from ${options.file}; rename the file to letters, digits or hyphens`
     );
-  const fromProject = relative56(projectDirectory, path);
-  const source = fromProject.startsWith("..") || isAbsolute26(fromProject) ? path : fromProject.split(sep29).join("/");
+  const fromProject = relative55(projectDirectory, path);
+  const source = fromProject.startsWith("..") || isAbsolute26(fromProject) ? path : fromProject.split(sep28).join("/");
   const parsed = parseImportTable(text7);
   const skipped3 = [...parsed.skipped];
   const logPath = join131(projectDirectory, ".idiom", "learned.jsonl");
@@ -117985,7 +118154,7 @@ function renderConfirm(outcomes) {
 // src/commands/nightly.ts
 init_build();
 import { readFile as readFile116 } from "fs/promises";
-import { basename as basename26, relative as relative58, resolve as resolve82 } from "path";
+import { basename as basename26, relative as relative57, resolve as resolve82 } from "path";
 
 // src/digest/render.ts
 init_render2();
@@ -118252,7 +118421,7 @@ init_render2();
 init_log();
 import { createHash as createHash31 } from "crypto";
 import { mkdir as mkdir50, stat as stat24, writeFile as writeFile61 } from "fs/promises";
-import { basename as basename25, dirname as dirname52, join as join134, relative as relative57, resolve as resolve81, sep as sep30 } from "path";
+import { basename as basename25, dirname as dirname52, join as join134, relative as relative56, resolve as resolve81, sep as sep29 } from "path";
 
 // src/findings/gate.ts
 function severityGateEligible(finding, failOn, failOnJudged = false) {
@@ -118665,7 +118834,7 @@ async function exists19(path) {
     throw error;
   }
 }
-var projectRelative = (projectDirectory, path) => relative57(projectDirectory, path).split(sep30).join("/");
+var projectRelative = (projectDirectory, path) => relative56(projectDirectory, path).split(sep29).join("/");
 async function fileToDirectory(options) {
   const { item, entry: entry2, ledger, dryRun, out, projectDirectory } = options;
   const at = options.now().toISOString();
@@ -119042,7 +119211,7 @@ async function nightlyCommand(options) {
   let appStarted = false;
   const flowFile = (id2) => {
     const file = validated.flows.find((entry2) => entry2.flow.id === id2)?.file;
-    return file === void 0 ? void 0 : relative58(projectDirectory, file);
+    return file === void 0 ? void 0 : relative57(projectDirectory, file);
   };
   for (const flow of flows) {
     try {
@@ -120304,12 +120473,12 @@ import { randomUUID as randomUUID22 } from "crypto";
 import {
   mkdir as mkdir51,
   readFile as readFile121,
-  realpath as realpath22,
+  realpath as realpath23,
   rename as rename40,
   rm as rm47,
   writeFile as writeFile64
 } from "fs/promises";
-import { dirname as dirname53, join as join140, relative as relative59, sep as sep31 } from "path";
+import { dirname as dirname53, join as join140, relative as relative58, sep as sep30 } from "path";
 import { z as z47 } from "zod";
 var WATCH_RECENT_LIMIT = 50;
 var outcomeSchema = z47.object({
@@ -120370,10 +120539,10 @@ async function watchDirectory(projectDirectory, git2 = readGit) {
 }
 async function repositoryProjectPath(projectDirectory, git2 = readGit) {
   const repository = (await git2(projectDirectory, ["rev-parse", "--show-toplevel"])).trim();
-  const projectRelative2 = relative59(
-    await realpath22(repository),
-    await realpath22(projectDirectory)
-  ).split(sep31).join("/");
+  const projectRelative2 = relative58(
+    await realpath23(repository),
+    await realpath23(projectDirectory)
+  ).split(sep30).join("/");
   return { repository, projectRelative: projectRelative2 };
 }
 function watchTreeReports(watchDir, projectRelative2) {
@@ -121840,7 +122009,7 @@ init_condition();
 init_process();
 init_ref_worktree();
 init_errors();
-import { access as access22, mkdir as mkdir55, realpath as realpath23, rm as rm48 } from "fs/promises";
+import { access as access22, mkdir as mkdir55, realpath as realpath24, rm as rm48 } from "fs/promises";
 import { join as join146 } from "path";
 var exists21 = (path) => access22(path).then(
   () => true,
@@ -121884,7 +122053,7 @@ async function prepareTree(options) {
       "watch tree creation"
     );
   }
-  const root2 = await realpath23(tree2);
+  const root2 = await realpath24(tree2);
   const treeProject = join146(root2, options.projectRelative);
   if (!await exists21(join146(treeProject, ".idiom/project.json")))
     throw new IdiomError(

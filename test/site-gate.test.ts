@@ -219,7 +219,7 @@ describe("idiom-advance", () => {
   test("advances the main tip, then this build's head, with this checkout's CLI", async () => {
     const h = advance([0, 0]);
     expect(await h.result).toBe(0);
-    expect(h.calls).toEqual([
+    expect(h.gateCalls()).toEqual([
       {
         command: process.execPath,
         args: [cli, "baseline", "advance", "--fetch"],
@@ -248,13 +248,69 @@ describe("idiom-advance", () => {
       throw new Error("tsup exited with 1");
     });
     expect(await h.result).toBe(2);
-    expect(h.calls).toEqual([]);
+    expect(h.gateCalls()).toEqual([]);
+    expect(h.restoreCalls()).toEqual([]);
     expect(h.lines.join("\n")).toContain("could not build the CLI");
   });
 
-  test("never touches the tracked tree", async () => {
+  test("restores the finding-name registry once, after both advances", async () => {
     const h = advance([0, 0]);
-    await h.result;
-    expect(h.calls.some((call) => call.command === "git")).toBe(false);
+    expect(await h.result).toBe(0);
+    expect(h.restoreCalls()).toEqual([
+      { command: "git", args: ["checkout", "--", ".idiom/finding-names.json"] },
+    ]);
+    expect(h.calls.at(-1)?.args[0]).toBe("checkout");
+  });
+
+  test("a failed restore fails an otherwise passing advance", async () => {
+    const h = harness([0, 0], 1);
+    expect(await runSiteAdvance(h.options)).toBe(1);
+    expect(h.lines.join("\n")).toContain(
+      "idiom-advance: could not restore tracked .idiom/finding-names.json",
+    );
+  });
+
+  test("leaves the worktree clean after the CLI rewrites the registry", async () => {
+    const { root, git, registry } = await trackedProject();
+    const h = harness([0, 0]);
+    try {
+      const run = async (command: string, args: string[]) => {
+        if (command === process.execPath) {
+          await writeFile(registry, '{"newFinding":"finding-1"}\n');
+          return { status: 0 };
+        }
+        return { status: spawnSync(command, args, { cwd: root }).status };
+      };
+      expect(await runSiteAdvance({ ...h.options, run })).toBe(0);
+      expect(await readFile(registry, "utf8")).toBe("{}\n");
+      expect(git(["status", "--porcelain"])).toBe("");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses pre-existing tracked .idiom edits before building", async () => {
+    const { root, git, decisions } = await trackedProject();
+    try {
+      const edited = '{"reason":"new decision must survive"}\n';
+      await writeFile(decisions, edited);
+      const build = vi.fn();
+      const log = vi.fn();
+      const run = vi.fn(async (command: string, args: string[]) => ({
+        status: spawnSync(command, args, { cwd: root }).status,
+      }));
+      expect(await runSiteAdvance({ build, run, log })).toBe(2);
+      expect(build).not.toHaveBeenCalled();
+      expect(run.mock.calls.some(([, args]) => args[0] === "checkout")).toBe(
+        false,
+      );
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining("idiom-advance: commit or stash"),
+      );
+      expect(await readFile(decisions, "utf8")).toBe(edited);
+      expect(git(["diff", "--name-only"])).toBe(".idiom/decisions.jsonl\n");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ElectronApplication } from "playwright";
@@ -11,14 +11,13 @@ import { type CaptureDependencies, runCapture } from "../src/capture/run.js";
 import type { BrowserSession, TupleResult } from "../src/capture/types.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
+import { removeTempDirectory } from "./support/temp-directory.js";
 
 const directories: string[] = [];
 afterEach(async () => {
   vi.useRealTimers();
   await Promise.all(
-    directories
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
+    directories.splice(0).map((path) => removeTempDirectory(path)),
   );
 });
 const never = () => new Promise<never>(() => {});

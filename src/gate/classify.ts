@@ -1,33 +1,9 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { globRegex } from "../../plugins/claude/hooks/lib.mjs";
 import { type GitRead, readGit } from "../changed/git.js";
+import type { FileClass } from "../changed/non-ui.js";
 import type { ChangedSelection, FileMapping } from "../changed/select.js";
-
-export type FileClass = {
-  path: string;
-  ui: boolean;
-  /** Why the gate called the file non-UI or UI. */
-  reason: string;
-};
-
-/** Changed paths that never reach a rendered page. */
-const nonUiPatterns: Array<[RegExp, string]> = [
-  [/(?:^|\/)(?:DESIGN|PRODUCT)\.md$/i, ""],
-  [/\.md$/i, "documentation"],
-  [/^docs\//, "documentation"],
-  [/(?:^|\/)(?:test|tests|__tests__)\//, "tests"],
-  [/\.(?:test|spec)\.[^/]+$/, "tests"],
-  [/^\.github\//, "CI configuration"],
-  [/^\.ab\//, "build scratch"],
-  [/^\.autobuild\//, "build scratch"],
-  [
-    /(?:^|\/)(?:[^/]+\.lock|bun\.lockb?|package-lock\.json|pnpm-lock\.yaml)$/,
-    "lockfile",
-  ],
-  [/(?:^|\/)\.idiom\/(?:reports|cache)\//, "Idiom run output"],
-];
 
 const uiExtension =
   /\.(?:css|scss|sass|less|tsx|jsx|vue|svelte|astro|html|mdx|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf)$/i;
@@ -40,25 +16,8 @@ const assetDirectory = /(?:^|\/)(?:public|static|assets)\//;
 const buildConfig =
   /(?:^|\/)(?:package\.json|[^/]+\.config\.[cm]?[jt]s|(?:middleware|proxy)\.[cm]?[jt]s|\.env(?:\.[^/]*)?|[tj]sconfig(?:\.[^/]*)?\.json)$/i;
 
-/** Pattern pass: no import graph, so a docs-only change exits in milliseconds. */
-export function classifyByPath(
-  files: Array<{ path: string }>,
-  nonUi: string[] = [],
-): FileClass[] {
-  const globs = nonUi.map((glob) => [glob, globRegex(glob)] as const);
-  return files.map(({ path }) => {
-    const normalized = path.replaceAll("\\", "/");
-    for (const [pattern, reason] of nonUiPatterns)
-      if (pattern.test(normalized))
-        return reason
-          ? { path, ui: false, reason }
-          : { path, ui: true, reason: "design context" };
-    const glob = globs.find(([, regex]) => regex.test(normalized));
-    if (glob)
-      return { path, ui: false, reason: `checks.gate.nonUi ${glob[0]}` };
-    return { path, ui: true, reason: "may affect the UI" };
-  });
-}
+export { designContextPaths } from "../changed/design-context.js";
+export { classifyByPath, type FileClass } from "../changed/non-ui.js";
 
 /**
  * Import pass over a changed selection: a module no route reaches is non-UI,

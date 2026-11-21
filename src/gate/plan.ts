@@ -1,4 +1,4 @@
-import { relative, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import {
   type BaseResolution,
   fallbackComparison,
@@ -22,6 +22,7 @@ import {
   resolveCaptureScope,
 } from "../capture/scope.js";
 import { formatDuration } from "../capture/timings.js";
+import { projectPrefix } from "../changed/design-context.js";
 import { collectChanges, type GitRead, readGit } from "../changed/git.js";
 import {
   type ChangedSelection,
@@ -34,6 +35,7 @@ import { type ValidationResult, validateProject } from "../validation.js";
 import {
   classifyByPath,
   classifySelection,
+  designContextPaths,
   detectStyleScope,
   type FileClass,
   orderSchemes,
@@ -212,16 +214,29 @@ export async function planGate(
   const base = shortBase(changes.resolvedBase);
   const allFlows = validated.flows.map((record) => record.flow.id);
   // Globs are project-relative; changed paths are repository-relative.
-  const prefix = relative(changes.repository, projectDirectory)
-    .split(sep)
-    .join("/");
+  const prefix = await projectPrefix(changes.repository, projectDirectory);
   const local = (path: string) =>
     prefix && path.startsWith(`${prefix}/`)
       ? path.slice(prefix.length + 1)
       : path;
+  // Only the project's own design context is UI; matched repo-relative so a
+  // repo-root DESIGN.md never stands in for a subdirectory project's own.
+  const context = designContextPaths(project.design, prefix);
+  const designContextFiles = new Set(
+    changes.files
+      .map((file) => file.path)
+      .filter((path) => path === context.design || path === context.product),
+  );
+  const designFiles = [...designContextFiles].filter(
+    (path) => path === context.design,
+  );
   const byPath = classifyByPath(
-    changes.files.map((file) => ({ path: local(file.path) })),
+    changes.files.map((file) => ({
+      path: local(file.path),
+      repoPath: file.path,
+    })),
     gate.nonUi,
+    [context.design, context.product],
   ).map((file, index) => ({
     ...file,
     path: changes.files[index]?.path ?? file.path,
@@ -260,7 +275,10 @@ export async function planGate(
   };
   const { files: _files, ...changeGit } = changes;
   let selection: ChangedSelection = uiChanged
-    ? await select(projectDirectory, flows, uiChanges)
+    ? await select(projectDirectory, flows, uiChanges, {
+        design: project.design,
+        nonUi: gate.nonUi,
+      })
     : {
         git: changeGit,
         files: [],
@@ -281,7 +299,11 @@ export async function planGate(
     .split("\0")
     .filter(Boolean)
     .map((path) => path.split("/").slice(0, -1).join("/"));
-  const byGraph = classifySelection(selection, htmlDirectories);
+  // No route imports the design context, yet it is the project's design: the
+  // graph pass never demotes it.
+  const byGraph = classifySelection(selection, htmlDirectories).filter(
+    (file) => !designContextFiles.has(file.path),
+  );
   const serverOnly = new Set(
     byGraph.filter((file) => !file.ui).map((file) => file.path),
   );
@@ -296,10 +318,12 @@ export async function planGate(
       ]);
     selection = remaining.length
       ? {
-          ...(await select(projectDirectory, flows, {
-            ...uiChanges,
-            files: remaining,
-          })),
+          ...(await select(
+            projectDirectory,
+            flows,
+            { ...uiChanges, files: remaining },
+            { design: project.design, nonUi: gate.nonUi },
+          )),
           graph,
         }
       : { ...selection, files: [], selected: [], candidates: [], graph };
@@ -360,9 +384,16 @@ export async function planGate(
     base: changes.resolvedBase,
     files: uiFiles,
     untracked,
-    globalFiles: selection.files
-      .filter((file) => file.kind === "global")
-      .map((file) => file.path),
+    globalFiles: [
+      ...new Set([
+        ...selection.files
+          .filter((file) => file.kind === "global")
+          .map((file) => file.path),
+        ...designFiles.filter((path) =>
+          uiFiles.some((file) => file.path === path),
+        ),
+      ]),
+    ],
     colorSchemeAttribute: project.capture.colorSchemeAttribute,
     git,
   });

@@ -605,4 +605,7 @@ test("the interface-reach spacing law re-enables its check and shows in idiom co
   expect(stdout.join("")).toContain(
     "- No negative letter- or word-spacing on interface text: controls, labels, navigation, menus, toolbars and tooltips (negative-spacing).",
   );
+  expect(stdout.join("")).toContain(
+    "- Display tracking is the exception: letter-spacing down to -0.03em is fine on text whose own computed font size is at least 20px. Smaller text, tighter tracking and any negative word-spacing still count (negative-spacing).",
+  );
 });

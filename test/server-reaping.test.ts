@@ -1,5 +1,5 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -12,6 +12,7 @@ import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
 import { doctorProject, freePort, SERVER } from "./doctor-support.js";
 import { fixtureCommand } from "./support/fixture-server.js";
+import { removeTempDirectory } from "./support/temp-directory.js";
 
 // An Idiom run killed mid-capture cannot stop its server. The next run in
 // the same project finds the record it left and stops that server.
@@ -23,9 +24,7 @@ const cleanups: Array<() => void> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
+    directories.splice(0).map((directory) => removeTempDirectory(directory)),
   );
 });
 

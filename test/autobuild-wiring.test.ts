@@ -5,6 +5,7 @@ import {
   gateCommand,
   isCompatibleIdiomCommand,
   planAutobuildWiring,
+  planFixStep,
   renameVerifierReferences,
 } from "../src/autobuild/wiring.js";
 import {
@@ -101,6 +102,34 @@ test("upgrades managed commands and removes gate paths without disturbing commen
     )["idiom-check"].paths,
   ).toBeUndefined();
 });
+const agentGateWithPaths = (skill: string, paths = '["src/**", "DESIGN.md"]') =>
+  `[commands]\nidiom-check = "${gateCommand}"\n[verify]\nsteps=["idiom-check"]\n[verify.idiom-check]\nkind="agent"\nskill="${skill}"\npaths = ${paths}\n`;
+const gatePaths = (source: string) =>
+  (parse(source).verify as { "idiom-check": { paths?: string[] } })[
+    "idiom-check"
+  ].paths;
+
+test.each(["idiom-verify", "idiom-fix"])(
+  "keeps paths on an agent %s gate step as a deliberate opt-in",
+  (skill) => {
+    const source = agentGateWithPaths(skill);
+    expect(ready(source)).toMatchObject({ complete: true, candidate: source });
+  },
+);
+
+test("the fix-step swap keeps paths on the agent gate step", () => {
+  const plan = planFixStep(agentGateWithPaths("idiom-verify"), template);
+  expect(plan.kind).toBe("ready");
+  expect(plan.candidate).toMatch(/skill\s*=\s*"idiom-fix"/);
+  expect(gatePaths(plan.candidate)).toEqual(["src/**", "DESIGN.md"]);
+});
+
+test("an empty paths list on the agent gate step still needs a hand edit", () => {
+  expect(
+    planAutobuildWiring(agentGateWithPaths("idiom-verify", "[]"), template),
+  ).toMatchObject({ kind: "manual" });
+});
+
 test.each([
   "bad = [",
   '[commands]\nidiom-check="echo custom"\n',

@@ -1,9 +1,14 @@
+import { execFile } from "node:child_process";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { expect, test } from "vitest";
 import { collectChanges } from "../src/changed/git.js";
 import { selectChangedStates } from "../src/changed/select.js";
 import { discoverRouteEntries } from "../src/coverage/routes.js";
 import { flowSchema } from "../src/schemas/flow.js";
+import { resolveGateConfig } from "../src/schemas/project.js";
 import { validateProject } from "../src/validation.js";
 import { changedFixture } from "./changed-support.js";
 
@@ -13,6 +18,10 @@ async function select(f: Awaited<ReturnType<typeof changedFixture>>) {
     f.directory,
     validated.flows.map((record) => record.flow),
     await collectChanges(f.directory),
+    {
+      design: validated.project.design,
+      nonUi: resolveGateConfig(validated.project).nonUi,
+    },
   );
 }
 const ids = (result: Awaited<ReturnType<typeof select>>) =>
@@ -81,6 +90,284 @@ test.each([
     expect(selection.fallbackFiles).toEqual([path]);
   } finally {
     await f.cleanup();
+  }
+});
+
+test("the project's own DESIGN.md is global with its own reason", async () => {
+  const f = await changedFixture();
+  try {
+    await f.write("DESIGN.md", "# Design\n");
+    const selection = await select(f);
+    expect(ids(selection)).toEqual(["s0", "s1"]);
+    expect(selection.files[0]).toMatchObject({
+      kind: "global",
+      reason: "the project's design file (design.designFile)",
+    });
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a DESIGN.md outside the project's design context is documentation and selects nothing", async () => {
+  const f = await changedFixture();
+  try {
+    await f.write("test/fixtures/x/DESIGN.md", "# Fixture\n");
+    const alone = await select(f);
+    expect(alone.selected).toEqual([]);
+    expect(alone.fallbackFiles).toEqual([]);
+    expect(alone.files).toEqual([
+      {
+        path: "test/fixtures/x/DESIGN.md",
+        kind: "documentation",
+        reason:
+          "a DESIGN.md outside this project's design context (design.designFile): documentation",
+        routes: [],
+        states: [],
+      },
+    ]);
+    await f.write("examples/y/design.md", "# Example\n");
+    await f.write("app/r0/page.tsx", "export default 2");
+    const mixed = await select(f);
+    expect(ids(mixed)).toEqual(["s0"]);
+    expect(mixed.fallbackFiles).toEqual([]);
+    expect(
+      mixed.files.find((file) => file.path === "examples/y/design.md")?.kind,
+    ).toBe("documentation");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test.each([
+  ["README.md", "documentation"],
+  ["docs/x.md", "documentation"],
+  ["test/foo.test.ts", "tests"],
+  [".github/workflows/ci.yml", "CI configuration"],
+  ["bun.lock", "lockfile"],
+])(
+  "%s alone is non-UI by the gate's path pass and selects nothing",
+  async (path, reason) => {
+    const f = await changedFixture();
+    try {
+      await f.write(path, "changed\n");
+      const selection = await select(f);
+      expect(selection.selected).toEqual([]);
+      expect(selection.fallbackFiles).toEqual([]);
+      expect(selection.files).toEqual([
+        { path, kind: "non-ui", reason, routes: [], states: [] },
+      ]);
+    } finally {
+      await f.cleanup();
+    }
+  },
+);
+
+test("a checks.gate.nonUi glob makes a path non-UI for --changed too", async () => {
+  const f = await changedFixture({ "server/db.ts": "export const db = 1;\n" });
+  try {
+    await f.write("server/db.ts", "export const db = 2;\n");
+    expect((await select(f)).files[0]).toMatchObject({
+      kind: "unresolved",
+    });
+    await f.git("checkout", "--", "server/db.ts");
+    const path = join(f.directory, ".idiom/project.json");
+    const project = JSON.parse(await readFile(path, "utf8"));
+    project.checks.gate = { nonUi: ["server/**"] };
+    await writeFile(path, JSON.stringify(project));
+    await f.commit("nonUi glob");
+    await f.write("server/db.ts", "export const db = 2;\n");
+    const selection = await select(f);
+    expect(selection.selected).toEqual([]);
+    expect(selection.fallbackFiles).toEqual([]);
+    expect(selection.files[0]).toMatchObject({
+      path: "server/db.ts",
+      kind: "non-ui",
+      reason: "checks.gate.nonUi server/**",
+      states: [],
+    });
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("the project's own PRODUCT.md is global with its own reason", async () => {
+  const f = await changedFixture();
+  try {
+    await f.write("PRODUCT.md", "# Product\n");
+    const selection = await select(f);
+    expect(ids(selection)).toEqual(["s0", "s1"]);
+    expect(selection.files[0]).toMatchObject({
+      kind: "global",
+      reason: "the project's product file (design.productFile)",
+    });
+    expect(selection.fallbackFiles).toEqual(["PRODUCT.md"]);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a non-UI path beside a route edit is reported and selects only the route", async () => {
+  const f = await changedFixture();
+  try {
+    await f.write("README.md", "# Readme\n");
+    await f.write("app/r0/page.tsx", "export default 2");
+    const selection = await select(f);
+    expect(ids(selection)).toEqual(["s0"]);
+    expect(selection.fallbackFiles).toEqual([]);
+    expect(
+      selection.files.find((file) => file.path === "README.md"),
+    ).toMatchObject({ kind: "non-ui", reason: "documentation", states: [] });
+    expect(
+      selection.files.find((file) => file.path === "app/r0/page.tsx")?.kind,
+    ).toBe("route");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("a configured design file is global; the default-named one then is documentation", async () => {
+  const f = await changedFixture({
+    "design/brand.md": "# Brand\n",
+    "DESIGN.md": "# Design\n",
+  });
+  try {
+    const path = join(f.directory, ".idiom/project.json");
+    const project = JSON.parse(await readFile(path, "utf8"));
+    project.design = { designFile: "design/brand.md" };
+    await writeFile(path, JSON.stringify(project));
+    await f.commit("configured design file");
+    await f.write("design/brand.md", "# Brand, revised\n");
+    const own = await select(f);
+    expect(ids(own)).toEqual(["s0", "s1"]);
+    expect(own.files[0]).toMatchObject({
+      path: "design/brand.md",
+      kind: "global",
+    });
+    await f.commit("brand");
+    await f.write("DESIGN.md", "# Design, revised\n");
+    const other = await select(f);
+    expect(other.selected).toEqual([]);
+    expect(other.files[0]?.kind).toBe("documentation");
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("under --project only the project's own DESIGN.md is global", async () => {
+  const f = await changedFixture();
+  const outer = await mkdtemp(join(tmpdir(), "idiom-outer-"));
+  const git = async (...args: string[]) =>
+    (await promisify(execFile)("git", args, { cwd: outer })).stdout;
+  try {
+    const web = join(outer, "packages/web");
+    await cp(f.directory, web, {
+      recursive: true,
+      filter: (source) => !source.split(/[\\/]/).includes(".git"),
+    });
+    for (const path of [
+      "packages/web/DESIGN.md",
+      "packages/other/DESIGN.md",
+      "DESIGN.md",
+    ])
+      await cp(join(web, "app/r0/page.tsx"), join(outer, path));
+    await git("init", "--quiet", "--initial-branch=main");
+    await git("add", ".");
+    await git(
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--quiet",
+      "-m",
+      "outer",
+    );
+    const validated = await validateProject({ project: web });
+    const flows = validated.flows.map((record) => record.flow);
+    const kindOf = async (path: string) => {
+      await writeFile(join(outer, path), "# Revised\n");
+      const selection = await selectChangedStates(
+        web,
+        flows,
+        await collectChanges(web),
+        { design: validated.project.design },
+      );
+      await git("checkout", "--", path);
+      return {
+        kind: selection.files[0]?.kind,
+        selected: ids(selection),
+      };
+    };
+    expect(await kindOf("packages/web/DESIGN.md")).toEqual({
+      kind: "global",
+      selected: ["s0", "s1"],
+    });
+    expect(await kindOf("DESIGN.md")).toEqual({
+      kind: "documentation",
+      selected: [],
+    });
+    expect(await kindOf("packages/other/DESIGN.md")).toEqual({
+      kind: "documentation",
+      selected: [],
+    });
+  } finally {
+    await f.cleanup();
+    await rm(outer, { recursive: true, force: true });
+  }
+});
+
+test("under --project a project-relative checks.gate.nonUi glob matches the repo path", async () => {
+  const f = await changedFixture({ "server/db.ts": "export const db = 1;\n" });
+  const outer = await mkdtemp(join(tmpdir(), "idiom-outer-"));
+  const git = async (...args: string[]) =>
+    (await promisify(execFile)("git", args, { cwd: outer })).stdout;
+  try {
+    const web = join(outer, "packages/web");
+    await cp(f.directory, web, {
+      recursive: true,
+      filter: (source) => !source.split(/[\\/]/).includes(".git"),
+    });
+    const config = join(web, ".idiom/project.json");
+    const project = JSON.parse(await readFile(config, "utf8"));
+    project.checks.gate = { nonUi: ["server/**"] };
+    await writeFile(config, JSON.stringify(project));
+    await git("init", "--quiet", "--initial-branch=main");
+    await git("add", ".");
+    await git(
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--quiet",
+      "-m",
+      "outer",
+    );
+    await writeFile(join(web, "server/db.ts"), "export const db = 2;\n");
+    await writeFile(join(web, "PRODUCT.md"), "# Product\n");
+    const validated = await validateProject({ project: web });
+    const selection = await selectChangedStates(
+      web,
+      validated.flows.map((record) => record.flow),
+      await collectChanges(web),
+      {
+        design: validated.project.design,
+        nonUi: resolveGateConfig(validated.project).nonUi,
+      },
+    );
+    expect(
+      selection.files.find((file) => file.path === "packages/web/server/db.ts"),
+    ).toMatchObject({
+      kind: "non-ui",
+      reason: "checks.gate.nonUi server/**",
+    });
+    expect(
+      selection.files.find((file) => file.path === "packages/web/PRODUCT.md"),
+    ).toMatchObject({ kind: "global" });
+    expect(ids(selection)).toEqual(["s0", "s1"]);
+  } finally {
+    await f.cleanup();
+    await rm(outer, { recursive: true, force: true });
   }
 });
 

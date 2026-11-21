@@ -542,7 +542,14 @@ export function planAutobuildWiring(
           ([key, value]) => `${key} = ${JSON.stringify(value)}`,
         ),
       );
-    else if (gate && isRecord(existing) && existing.paths !== undefined) {
+    else if (
+      gate &&
+      isRecord(existing) &&
+      existing.kind === "check" &&
+      existing.paths !== undefined
+    ) {
+      // Old check-step template: its paths could skip UI changes. On the agent
+      // step, paths is a deliberate opt-in (skip agent start-up) and is kept.
       const span = assignmentValueSpan(
         candidate,
         `verify.${stepName}`,
@@ -604,7 +611,8 @@ export function planAutobuildWiring(
               existing.kind === "agent" &&
               av[stepName].skill === existing.skill)
           ) ||
-          av[stepName].paths !== undefined
+          (av[stepName].paths !== undefined &&
+            !(isRecord(existing) && existing.kind === "agent"))
         : !isCompatibleIdiomCommand(ac[commandKey]) ||
           av[stepName].skill !== "idiom-verify")
     )

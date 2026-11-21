@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,7 @@ import { RUN_FAILURE_EXIT_CODE, RunFailure } from "../src/errors.js";
 import { flowSchema } from "../src/schemas/flow.js";
 import { projectSchema } from "../src/schemas/project.js";
 import { fixtureEvalCommand } from "./support/fixture-server.js";
+import { removeTempDirectory } from "./support/temp-directory.js";
 
 // The startup failure branches of startServer and the server build failure
 // that precedes it. Real children prove cleanup; fake children pin the exact
@@ -42,9 +43,7 @@ afterEach(async () => {
     }
   }
   await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
+    directories.splice(0).map((directory) => removeTempDirectory(directory)),
   );
 });
 

@@ -177,6 +177,30 @@ test("negative letter-spacing on display-size text within the tracking range is 
   });
 });
 
+test("negative-spacing merges word-spacing across font-size changes and stops letter-spacing at them", async () => {
+  const expected = [
+    ["idiom:negative-spacing", "span.badge"],
+    ["idiom:negative-spacing", "span.chip"],
+  ];
+  for (const viewport of [desktop, mobile]) {
+    const found = await review("negative-spacing-walkup", { viewport });
+    expect(summary(found), `at ${viewport.width}`).toEqual(expected);
+    // One word-spacing declaration, one record, at the chip that set it.
+    const words = found.filter(
+      (c) => c.verification.params?.property === "word-spacing",
+    );
+    expect(words, `at ${viewport.width}`).toHaveLength(1);
+    expect(
+      found.find((c) => c.selectorHint === "span.chip")?.verification.params,
+    ).toMatchObject({ property: "word-spacing", value: -2 });
+    // The 12px badge is judged at its own size, not merged into the exempt
+    // 24px link.
+    expect(
+      found.find((c) => c.selectorHint === "span.badge")?.verification.params,
+    ).toMatchObject({ property: "letter-spacing", em: -0.04 });
+  }
+});
+
 test("displayTracking and displaySize configure the display exemption", async () => {
   const displayIn = ["idiom:negative-spacing", "a.display-in"];
   expect(
